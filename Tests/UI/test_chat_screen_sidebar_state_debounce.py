@@ -17,8 +17,10 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
 import toml
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -39,7 +41,41 @@ async def _mounted_console_screen(pilot):
     return screen
 
 
-async def test_toggle_does_not_write_synchronously_on_the_event_loop():
+@pytest.mark.parametrize("saved_states", [{}, {"notes": True, "chat": False}])
+@private_profile_test
+async def test_saved_sidebar_state_restores_during_fresh_screen_construction(
+    request, saved_states, monkeypatch, tmp_path, captured_lines
+):
+    """Restoration must reach the reactive watcher after its timer state exists."""
+    sidebar = {
+        "collapsible_states": saved_states,
+        "search_query": "saved search",
+        "last_active_section": "notes",
+    }
+    _ui_state_path().write_text(toml.dumps({"sidebar": sidebar}), encoding="utf-8")
+
+    async with ConsoleHarness(_build_test_app()).run_test(size=APP_SIZE) as pilot:
+        screen = await _mounted_console_screen(pilot)
+        assert screen.sidebar_state == saved_states
+        assert screen.ui_state.collapsible_states == saved_states
+        assert screen.ui_state.sidebar_search_query == "saved search"
+        assert screen.ui_state.last_active_section == "notes"
+        assert not any(
+            "Failed to load sidebar state" in line for line in captured_lines
+        )
+
+        # A restored screen must still save a new toggle when quit beats debounce.
+        screen.ui_state.set_collapsible_state("restored-toggle", True)
+        screen.sidebar_state = dict(screen.ui_state.collapsible_states)
+
+    persisted = toml.load(_ui_state_path())["sidebar"]
+    assert persisted["collapsible_states"] == {**saved_states, "restored-toggle": True}
+    assert persisted["search_query"] == "saved search"
+    assert persisted["last_active_section"] == "notes"
+
+
+@private_profile_test
+async def test_toggle_does_not_write_synchronously_on_the_event_loop(request):
     """AC #2: a sidebar toggle performs no synchronous file I/O.
 
     Reassigning `sidebar_state` (what every `Collapsible.Toggled` handler
@@ -63,14 +99,14 @@ async def test_toggle_does_not_write_synchronously_on_the_event_loop():
                 "collapsible_states", {}
             )
             assert "task-15470-probe" not in collapsible_states, (
-                "the toggle wrote to disk synchronously instead of "
-                "debouncing"
+                "the toggle wrote to disk synchronously instead of debouncing"
             )
         assert screen._sidebar_state_dirty is True
         assert screen._sidebar_state_save_timer is not None
 
 
-async def test_debounced_write_lands_after_the_timer_fires():
+@private_profile_test
+async def test_debounced_write_lands_after_the_timer_fires(request):
     """The debounce mechanism itself must actually persist -- not just skip.
 
     A mutant that deleted the timer callback's write (or never armed a
@@ -93,12 +129,11 @@ async def test_debounced_write_lands_after_the_timer_fires():
             await pilot.pause(0.05)
 
         on_disk = toml.load(_ui_state_path())
-        assert (
-            on_disk["sidebar"]["collapsible_states"]["task-15470-lands"] is True
-        )
+        assert on_disk["sidebar"]["collapsible_states"]["task-15470-lands"] is True
 
 
-async def test_quit_immediately_after_toggle_flushes_the_pending_write():
+@private_profile_test
+async def test_quit_immediately_after_toggle_flushes_the_pending_write(request):
     """AC #2 flush test: toggle, then quit before the debounce fires.
 
     Exiting the harness's `run_test()` context tears the app down through
@@ -123,12 +158,11 @@ async def test_quit_immediately_after_toggle_flushes_the_pending_write():
         # survive on the unmount path alone.
 
     on_disk = toml.load(_ui_state_path())
-    assert (
-        on_disk["sidebar"]["collapsible_states"]["task-15470-quit-flush"] is True
-    )
+    assert on_disk["sidebar"]["collapsible_states"]["task-15470-quit-flush"] is True
 
 
-async def test_reset_settings_schedules_a_write_even_from_an_empty_state():
+@private_profile_test
+async def test_reset_settings_schedules_a_write_even_from_an_empty_state(request):
     """`handle_reset_settings` must not silently drop its persistence.
 
     Resetting from an already-empty `sidebar_state` reassigns `{}` to `{}`,
@@ -154,7 +188,8 @@ async def test_reset_settings_schedules_a_write_even_from_an_empty_state():
         assert screen._sidebar_state_dirty is True
 
 
-async def test_toggle_during_in_flight_write_survives_a_quit(monkeypatch):
+@private_profile_test
+async def test_toggle_during_in_flight_write_survives_a_quit(request, monkeypatch):
     """Review round (task-15470): a toggle landing WHILE a debounced write
     is still in flight must survive a quit -- not just a toggle landing
     before the debounce timer ever fires (the case
@@ -182,7 +217,9 @@ async def test_toggle_during_in_flight_write_survives_a_quit(monkeypatch):
         real_dump = toml.dump
 
         def slow_dump(data, stream, *args, **kwargs):
-            if "task-15470-inflight-1" in data.get("sidebar", {}).get("collapsible_states", {}):
+            if "task-15470-inflight-1" in data.get("sidebar", {}).get(
+                "collapsible_states", {}
+            ):
                 write_started.set()
                 assert proceed.wait(timeout=5), "test stalled waiting to proceed"
             return real_dump(data, stream, *args, **kwargs)
@@ -197,8 +234,7 @@ async def test_toggle_during_in_flight_write_survives_a_quit(monkeypatch):
         assert write_started.wait(timeout=2), "worker never started its write"
         worker = screen._sidebar_state_persist_worker
         assert worker is not None and not worker.is_finished, (
-            "toggle 1's worker must still be in flight for this test to "
-            "mean anything"
+            "toggle 1's worker must still be in flight for this test to mean anything"
         )
 
         # Toggle 2 lands while toggle 1's write is still blocked in flight.
@@ -226,22 +262,25 @@ async def test_toggle_during_in_flight_write_survives_a_quit(monkeypatch):
     assert collapsible_states.get("task-15470-inflight-1") is True, (
         "toggle 1 should have landed"
     )
-    assert collapsible_states.get("task-15470-inflight-2") is True, (
-        "toggle 2 LOST"
-    )
+    assert collapsible_states.get("task-15470-inflight-2") is True, "toggle 2 LOST"
 
 
-async def test_exclusive_sidebar_cancel_preserves_running_writer_and_latest_toggle(monkeypatch):
+@private_profile_test
+async def test_exclusive_sidebar_cancel_preserves_running_writer_and_latest_toggle(
+    request, monkeypatch
+):
     """A replacement Textual worker must wait for the cancelled worker's real IO."""
     app = _build_test_app()
     started, finish = threading.Event(), threading.Event()
     real_dump = toml.dump
+
     def gated(data, stream, *args, **kwargs):
         states = data.get("sidebar", {}).get("collapsible_states", {})
         if states.get("phase7-first") and not states.get("phase7-latest"):
             started.set()
             assert finish.wait(8)
         return real_dump(data, stream, *args, **kwargs)
+
     monkeypatch.setattr(toml, "dump", gated)
     async with ConsoleHarness(app).run_test(size=APP_SIZE) as pilot:
         screen = await _mounted_console_screen(pilot)
@@ -275,7 +314,8 @@ async def test_exclusive_sidebar_cancel_preserves_running_writer_and_latest_togg
         assert states["phase7-first"] and states["phase7-latest"]
 
 
-async def test_queued_textual_sidebar_cancel_keeps_dirty_and_flushes_later():
+@private_profile_test
+async def test_queued_textual_sidebar_cancel_keeps_dirty_and_flushes_later(request):
     """Cancel the real Textual worker while its executor callback is still queued."""
     from concurrent.futures import ThreadPoolExecutor
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
@@ -309,10 +349,14 @@ async def test_queued_textual_sidebar_cancel_keeps_dirty_and_flushes_later():
             assert not screen._sidebar_state_persist_lock.locked()
             assert screen._sidebar_state_dirty
             if _ui_state_path().exists():
-                assert "phase7-queued" not in toml.load(_ui_state_path()).get("sidebar", {}).get("collapsible_states", {})
+                assert "phase7-queued" not in toml.load(_ui_state_path()).get(
+                    "sidebar", {}
+                ).get("collapsible_states", {})
             gate.set()
             assert await screen._flush_sidebar_state_now()
-            assert toml.load(_ui_state_path())["sidebar"]["collapsible_states"]["phase7-queued"]
+            assert toml.load(_ui_state_path())["sidebar"]["collapsible_states"][
+                "phase7-queued"
+            ]
         finally:
             gate.set()
             occupied.result(5)
@@ -320,8 +364,12 @@ async def test_queued_textual_sidebar_cancel_keeps_dirty_and_flushes_later():
             loop._default_executor = original
 
 
-async def test_sidebar_refusal_failure_and_retry_preserve_latest_state(monkeypatch):
+@private_profile_test
+async def test_sidebar_refusal_failure_and_retry_preserve_latest_state(
+    request, monkeypatch
+):
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
     app = _build_test_app()
     async with ConsoleHarness(app).run_test(size=APP_SIZE) as pilot:
         screen = await _mounted_console_screen(pilot)
@@ -342,8 +390,10 @@ async def test_sidebar_refusal_failure_and_retry_preserve_latest_state(monkeypat
         finally:
             participant.resume()
         original = toml.dump
+
         def failed(*args, **kwargs):
             raise OSError("test write error")
+
         monkeypatch.setattr(toml, "dump", failed)
         assert await screen._flush_sidebar_state_now() is False
         assert screen._sidebar_state_dirty
@@ -358,7 +408,10 @@ async def test_sidebar_refusal_failure_and_retry_preserve_latest_state(monkeypat
         assert saved["sidebar"]["collapsible_states"]["phase7-dirty"]
 
 
-async def test_queued_sidebar_snapshot_cannot_switch_config_profiles(monkeypatch, tmp_path):
+@private_profile_test
+async def test_queued_sidebar_snapshot_cannot_switch_config_profiles(
+    request, monkeypatch, tmp_path
+):
     from concurrent.futures import ThreadPoolExecutor
     from tldw_chatbook.UI.Screens import chat_screen
 
@@ -385,16 +438,24 @@ async def test_queued_sidebar_snapshot_cannot_switch_config_profiles(monkeypatch
                 await asyncio.sleep(0.01)
             assert screen._sidebar_state_persist_lock.locked()
             other = tmp_path / "different-profile" / "config.toml"
-            monkeypatch.setattr(chat_screen, "_get_effective_config_path", lambda: other)
+            monkeypatch.setattr(
+                chat_screen, "_get_effective_config_path", lambda: other
+            )
             gate.set()
             assert await task is False
             assert screen._sidebar_state_dirty
             assert not other.parent.exists()
-            monkeypatch.setattr(chat_screen, "_get_effective_config_path", original_selector)
+            monkeypatch.setattr(
+                chat_screen, "_get_effective_config_path", original_selector
+            )
             assert await screen._flush_sidebar_state_now()
-            assert toml.load(selected)["sidebar"]["collapsible_states"]["phase7-profile"]
+            assert toml.load(selected)["sidebar"]["collapsible_states"][
+                "phase7-profile"
+            ]
         finally:
-            monkeypatch.setattr(chat_screen, "_get_effective_config_path", original_selector)
+            monkeypatch.setattr(
+                chat_screen, "_get_effective_config_path", original_selector
+            )
             gate.set()
             occupied.result(5)
             executor.shutdown(wait=True)

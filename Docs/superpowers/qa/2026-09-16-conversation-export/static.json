@@ -1,0 +1,54 @@
+{
+  "checks": [
+    {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "check",
+        "Docs/superpowers/qa/2026-09-16-conversation-export/native_check.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-export/verify_artifacts.py",
+        "Tests/UI/test_library_export_destination_validation.py"
+      ],
+      "exit_code": 0,
+      "output": "All checks passed!"
+    },
+    {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "format",
+        "--check",
+        "Docs/superpowers/qa/2026-09-16-conversation-export/native_check.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-export/verify_artifacts.py",
+        "Tests/UI/test_library_export_destination_validation.py"
+      ],
+      "exit_code": 0,
+      "output": "3 files already formatted"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "format",
+        "--check",
+        "--range",
+        "359-442",
+        "Tests/UI/test_library_multiselect_conversations.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted"
+    }
+  ],
+  "native_and_checker_hashes_match_receipts": true,
+  "svg_xml_and_raw_stored_hashes_valid": 12,
+  "readme_links_valid_except_pending_review": true,
+  "qa_whitespace_valid": true,
+  "production_css_changed": false,
+  "full_suite_run": false
+}

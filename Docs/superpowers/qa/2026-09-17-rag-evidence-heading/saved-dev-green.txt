@@ -1,0 +1,6 @@
+Package under test: /private/tmp/tldw-15390-dev-check/tldw_chatbook/__init__.py
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+3 passed in 1.83s

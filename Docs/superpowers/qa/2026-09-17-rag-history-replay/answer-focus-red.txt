@@ -1,0 +1,39 @@
+....FF..........                                                         [100%]
+=================================== FAILURES ===================================
+_ test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-dark] _
+Tests/UI/test_library_rag_history_keyboard.py:148: in test_keyboard_replay_uses_current_mode_scope_and_visible_focus
+    _assert_painted(screen, screen.focused)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: (None, Region(x=42, y=48, width=19, height=3))
+E   assert None is not None
+_ test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-light] _
+Tests/UI/test_library_rag_history_keyboard.py:148: in test_keyboard_replay_uses_current_mode_scope_and_visible_focus
+    _assert_painted(screen, screen.focused)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: (None, Region(x=42, y=48, width=19, height=3))
+E   assert None is not None
+============================= slowest 25 durations =============================
+4.04s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size1-textual-dark]
+4.01s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-dark]
+3.95s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[search-size0-textual-light]
+3.93s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size1-textual-light]
+3.90s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[search-size1-textual-light]
+3.87s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[search-size0-textual-dark]
+3.86s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[search-size1-textual-dark]
+3.74s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-light]
+3.60s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size0-textual-dark]
+3.55s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size1-textual-dark]
+3.53s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size0-textual-light]
+3.36s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size1-textual-light]
+3.28s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[search-size0-textual-light]
+3.23s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[search-size1-textual-dark]
+3.22s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[search-size0-textual-dark]
+3.11s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[search-size1-textual-light]
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-dark]
+FAILED Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-light]
+2 failed, 14 passed in 62.62s (0:01:02)

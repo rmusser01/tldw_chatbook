@@ -1,0 +1,3 @@
+Exit status: 0
+Known startup errors (no new Library failure observed):
+2026-09-14 20:04:03 [ERROR   ] root:11981 - !!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup.

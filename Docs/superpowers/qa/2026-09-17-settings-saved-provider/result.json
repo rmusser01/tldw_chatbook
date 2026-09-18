@@ -1,0 +1,82 @@
+{
+  "pid": 7986,
+  "runner_sha256": "635bb7e1462dc140dcad901f1db2987999012a303638c1ae3a67f4951fc8647e",
+  "settings_source_sha256": "32d1487aeec703b7daf84231c2f5d208417e8539d8c0d3dc7dffc43a7c7616ab",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "saved_model": "local-1",
+      "clean_screen_retained": false,
+      "draft_screen_retained": false,
+      "draft_preserved": true,
+      "discard_followed_new_default": true,
+      "catalog_result": "Configuration check | llama.cpp configuration is complete. No API key is required. | model=local-1 | LLAMA_CPP_API_KEY=<redacted> | Endpoint: api_settings.llama_cpp.api_url=http://127.0.0.1:51611 | configuration=complete | credential present, not verified | model listing reached | selected model confirmed | generation not tested"
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "saved_model": "local-2",
+      "clean_screen_retained": false,
+      "draft_screen_retained": false,
+      "draft_preserved": true,
+      "discard_followed_new_default": true,
+      "catalog_result": "Configuration check | llama.cpp configuration is complete. No API key is required. | model=local-2 | LLAMA_CPP_API_KEY=<redacted> | Endpoint: api_settings.llama_cpp.api_url=http://127.0.0.1:51611 | configuration=complete | credential present, not verified | model listing reached | selected model confirmed | generation not tested"
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "saved_model": "local-3",
+      "clean_screen_retained": false,
+      "draft_screen_retained": false,
+      "draft_preserved": true,
+      "discard_followed_new_default": true,
+      "catalog_result": "Configuration check | llama.cpp configuration is complete. No API key is required. | model=local-3 | LLAMA_CPP_API_KEY=<redacted> | Endpoint: api_settings.llama_cpp.api_url=http://127.0.0.1:51611 | configuration=complete | credential present, not verified | model listing reached | selected model confirmed | generation not tested"
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "saved_model": "local-4",
+      "clean_screen_retained": false,
+      "draft_screen_retained": false,
+      "draft_preserved": true,
+      "discard_followed_new_default": true,
+      "catalog_result": "Configuration check | llama.cpp configuration is complete. No API key is required. | model=local-4 | LLAMA_CPP_API_KEY=<redacted> | Endpoint: api_settings.llama_cpp.api_url=http://127.0.0.1:51611 | configuration=complete | credential present, not verified | model listing reached | selected model confirmed | generation not tested"
+    }
+  ],
+  "waiting_for": "Discard complete",
+  "passed": true,
+  "http_requests": [
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ]
+  ],
+  "generation_requests": 0,
+  "app_run_returned": true,
+  "server_closed": true
+}

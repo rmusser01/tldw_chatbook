@@ -1,0 +1,412 @@
+...........FF                                                            [100%]
+=================================== FAILURES ===================================
+_ test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark] _
+
+self = <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]>>, 'theme': 'textual-dark', 'size': (80, 24)}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1327/test_console_rail_toggle_is_pa2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark] _
+E
+E           request = <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]>>
+E           theme = 'textual-dark', size = (80, 24)
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E               @private_profile_test
+E               async def test_console_rail_toggle_is_painted_with_production_styles(
+E                   request, theme, size
+E               ):
+E                   """The scrolled rail control must paint its label and glyph before toggling."""
+E                   app = _build_test_app()
+E                   app.app_config["console"] = {"stack_collapsed_rail_labels": False}
+E                   host = _StyledDestinationHarness(app, "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=size) as pilot:
+E                       await _category(host, pilot, "Console Behavior")
+E                       screen = host.screen
+E           >           await _toggle_rail_label(pilot, screen)
+E
+E           Tests/UI/test_settings_console_rail_labels.py:448:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           pilot = <Pilot app=_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})>
+E           screen = SettingsScreen(classes='shell-header-compact')
+E
+E               async def _toggle_rail_label(pilot, screen):
+E                   toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
+E                   toggle.focus()
+E                   await pilot.wait_for_scheduled_animations()
+E                   await pilot.pause()
+E                   assert screen.focused is toggle
+E                   viewport = screen.query_one("#settings-detail-pane-body")
+E           >       assert viewport.content_region.contains_region(toggle.region), (
+E                       "Rail label checkbox is outside the visible Settings viewport",
+E                       toggle.region,
+E                       viewport.content_region,
+E                   )
+E           E       AssertionError: ('Rail label checkbox is outside the visible Settings viewport', Region(x=43, y=12, width=36, height=3), Region(x=39, y=9, width=39, height=12))
+E           E       assert False
+E           E        +  where False = contains_region(Region(x=43, y=12, width=36, height=3))
+E           E        +    where contains_region = Region(x=39, y=9, width=39, height=12).contains_region
+E           E        +      where Region(x=39, y=9, width=39, height=12) = VerticalScroll(id='settings-detail-pane-body', classes='h-fill').content_region
+E           E        +    and   Region(x=43, y=12, width=36, height=3) = Checkbox(id='settings-console-stack-collapsed-rail-labels').region
+E
+E           Tests/UI/test_settings_console_rail_labels.py:44: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:26:18.038 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:26:18.044 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:26:18.044 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:26:18.045 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:26:18.124 | INFO     | tldw_chatbook.app:__init__:7995 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:26:18.147 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:26:18.147 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:26:18.148 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:26:18.148 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:26:18.219 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1327/test_console_rail_toggle_is_pa2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:18.281 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zu29sw0n/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:18.439 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zu29sw0n/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:18.452 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:18.453 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zu29sw0n/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:18.453 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zu29sw0n/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:18.561 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:26:18.596 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:26:18.633 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:26:18.669 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:26:18.704 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:26:18.739 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:26:18.739 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zu29sw0n/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:26:18.786 | DEBUG    | tldw_chatbook.app:__init__:8175 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:26:18.786 | DEBUG    | tldw_chatbook.app:__init__:8178 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:26:18.794 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:26:18.864 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:26:18.864 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1327/test_console_rail_toggle_is_pa2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:26:18.864 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:26:18.930 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:26:18.931 | INFO     | tldw_chatbook.app:_init_worker_handlers:11998 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:26:18.931 | INFO     | tldw_chatbook.app:__init__:8356 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:26:18.931 | INFO     | tldw_chatbook.app:__init__:8357 - Total initialization time: 0.877 seconds
+E           2026-09-17 15:26:18.931 | INFO     | tldw_chatbook.app:__init__:8363 -   basic_init: 0.091s (10.4%)
+E           2026-09-17 15:26:18.932 | INFO     | tldw_chatbook.app:__init__:8363 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:26:18.932 | INFO     | tldw_chatbook.app:__init__:8363 -   parallel_init: 0.001s (0.2%)
+E           2026-09-17 15:26:18.932 | INFO     | tldw_chatbook.app:__init__:8376 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:26:18.933 | INFO     | tldw_chatbook.app:__init__:8376 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:26:18.933 | INFO     | tldw_chatbook.app:__init__:8376 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:26:18.933 | INFO     | tldw_chatbook.app:__init__:8376 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:26:18.933 | INFO     | tldw_chatbook.app:__init__:8380 - ==============================
+E           2026-09-17 15:26:19.132 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:26:19.219 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:26:21.982 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8129 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8233 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           3.94s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]
+E           1 failed in 5.75s
+
+Tests/private_profile.py:84: Failed
+_ test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light] _
+
+self = <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]>>, 'theme': 'textual-light', 'size': (80, 24)}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1327/test_console_rail_toggle_is_pa3/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light] _
+E
+E           request = <FixtureRequest for <Coroutine test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]>>
+E           theme = 'textual-light', size = (80, 24)
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E               @private_profile_test
+E               async def test_console_rail_toggle_is_painted_with_production_styles(
+E                   request, theme, size
+E               ):
+E                   """The scrolled rail control must paint its label and glyph before toggling."""
+E                   app = _build_test_app()
+E                   app.app_config["console"] = {"stack_collapsed_rail_labels": False}
+E                   host = _StyledDestinationHarness(app, "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=size) as pilot:
+E                       await _category(host, pilot, "Console Behavior")
+E                       screen = host.screen
+E           >           await _toggle_rail_label(pilot, screen)
+E
+E           Tests/UI/test_settings_console_rail_labels.py:448:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           pilot = <Pilot app=_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-theme-textual-light', '-light-mode'}, pseudo_classes={'light', 'focus', 'nocolor'})>
+E           screen = SettingsScreen(classes='shell-header-compact')
+E
+E               async def _toggle_rail_label(pilot, screen):
+E                   toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
+E                   toggle.focus()
+E                   await pilot.wait_for_scheduled_animations()
+E                   await pilot.pause()
+E                   assert screen.focused is toggle
+E                   viewport = screen.query_one("#settings-detail-pane-body")
+E           >       assert viewport.content_region.contains_region(toggle.region), (
+E                       "Rail label checkbox is outside the visible Settings viewport",
+E                       toggle.region,
+E                       viewport.content_region,
+E                   )
+E           E       AssertionError: ('Rail label checkbox is outside the visible Settings viewport', Region(x=43, y=12, width=36, height=3), Region(x=39, y=9, width=39, height=12))
+E           E       assert False
+E           E        +  where False = contains_region(Region(x=43, y=12, width=36, height=3))
+E           E        +    where contains_region = Region(x=39, y=9, width=39, height=12).contains_region
+E           E        +      where Region(x=39, y=9, width=39, height=12) = VerticalScroll(id='settings-detail-pane-body', classes='h-fill').content_region
+E           E        +    and   Region(x=43, y=12, width=36, height=3) = Checkbox(id='settings-console-stack-collapsed-rail-labels').region
+E
+E           Tests/UI/test_settings_console_rail_labels.py:44: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:26:24.847 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:26:24.853 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:26:24.853 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:26:24.854 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:26:24.940 | INFO     | tldw_chatbook.app:__init__:7995 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:26:24.965 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:26:24.965 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:26:24.965 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:26:24.966 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:26:25.043 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1327/test_console_rail_toggle_is_pa3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:25.115 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-l3nhp9kw/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:25.283 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-l3nhp9kw/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:25.297 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:25.298 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-l3nhp9kw/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:25.299 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-l3nhp9kw/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:26:25.426 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:26:25.469 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:26:25.510 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:26:25.551 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:26:25.586 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:26:25.621 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:26:25.621 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-l3nhp9kw/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:26:25.668 | DEBUG    | tldw_chatbook.app:__init__:8175 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:26:25.668 | DEBUG    | tldw_chatbook.app:__init__:8178 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:26:25.676 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:26:25.746 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:26:25.746 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1327/test_console_rail_toggle_is_pa3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:26:25.747 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:26:25.815 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:26:25.815 | INFO     | tldw_chatbook.app:_init_worker_handlers:11998 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:26:25.816 | INFO     | tldw_chatbook.app:__init__:8356 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:26:25.816 | INFO     | tldw_chatbook.app:__init__:8357 - Total initialization time: 0.951 seconds
+E           2026-09-17 15:26:25.816 | INFO     | tldw_chatbook.app:__init__:8363 -   basic_init: 0.098s (10.3%)
+E           2026-09-17 15:26:25.817 | INFO     | tldw_chatbook.app:__init__:8363 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:26:25.817 | INFO     | tldw_chatbook.app:__init__:8363 -   parallel_init: 0.001s (0.2%)
+E           2026-09-17 15:26:25.817 | INFO     | tldw_chatbook.app:__init__:8376 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:26:25.818 | INFO     | tldw_chatbook.app:__init__:8376 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:26:25.818 | INFO     | tldw_chatbook.app:__init__:8376 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:26:25.818 | INFO     | tldw_chatbook.app:__init__:8376 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:26:25.818 | INFO     | tldw_chatbook.app:__init__:8380 - ==============================
+E           2026-09-17 15:26:26.021 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:26:26.181 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:26:28.776 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8129 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8233 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           3.92s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]
+E           1 failed in 5.73s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+8.79s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_setting_saves_exact_payload_and_runtime_value
+8.73s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_failed_save_keeps_draft_and_active_style
+7.41s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size0-textual-dark]
+6.93s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size0-textual-light]
+6.67s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]
+6.67s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]
+6.02s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_layout_scope_search_lands_with_persistence_guidance
+5.86s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_setting_is_searchable_and_has_focused_guidance
+5.86s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_setting_carries_state_and_stages_from_keyboard
+5.43s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_layout_scope_keyboard_stages_and_saves_exact_payload
+5.35s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_label_revert_discards_every_console_behavior_draft
+4.78s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_layout_scope_failed_save_keeps_draft_and_global_active
+4.52s call     Tests/UI/test_settings_console_rail_labels.py::test_console_rail_layout_scope_is_global_nonblank_and_under_presentation
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-dark]
+FAILED Tests/UI/test_settings_console_rail_labels.py::test_console_rail_toggle_is_painted_with_production_styles[size1-textual-light]
+2 failed, 11 passed in 85.50s (0:01:25)

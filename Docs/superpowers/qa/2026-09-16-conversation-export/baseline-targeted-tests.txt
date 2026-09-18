@@ -1,0 +1,42 @@
+F........................FF............................................. [ 58%]
+...................................................                      [100%]
+=================================== FAILURES ===================================
+______________________ test_convo_row_select_mode_toggles ______________________
+Tests/UI/test_library_multiselect_conversations.py:90: in test_convo_row_select_mode_toggles
+    LibraryScreen.handle_library_conversation_row(fake, ev)
+tldw_chatbook/UI/Screens/library_screen.py:22225: in handle_library_conversation_row
+    for button in self.query(f"#library-conversations-{action}"):
+                  ^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'query'
+_________ test_rejecting_the_normalized_path_leaves_the_form_untouched _________
+Tests/UI/test_library_export_destination_validation.py:70: in test_rejecting_the_normalized_path_leaves_the_form_untouched
+    assert "destination" not in form
+E   assert 'destination' not in {'destination': '', 'destination_exists': False, 'destination_error': "Can't save there: hostile normalized component"}
+_______________ test_hostile_raw_pick_is_rejected_with_a_reason ________________
+Tests/UI/test_library_export_destination_validation.py:86: in test_hostile_raw_pick_is_rejected_with_a_reason
+    assert form == {}
+E   assert {'destination...ttern: ../.."} == {}
+E
+E     Left contains 3 more items:
+E     {'destination': '',
+E      'destination_error': "Can't save there: Path contains dangerous pattern: "
+E                           '../..',
+E      'destination_exists': False}
+E     Use -v to get more diff
+============================= slowest 25 durations =============================
+1.62s call     Tests/UI/test_library_multiselect_conversations.py::test_every_click_on_a_conversation_row_toggles_it_in_select_mode
+1.53s call     Tests/Library/test_library_export_roundtrip.py::test_library_export_roundtrip_everything_scope_through_real_service_and_importer
+1.40s call     Tests/UI/test_library_multiselect_conversations.py::test_zero_checked_select_mode_keeps_reader_read_only_until_done
+1.39s call     Tests/UI/test_library_multiselect_conversations.py::test_conversations_toolbar_count_static_stays_bounded_width_with_real_css
+1.32s call     Tests/UI/test_library_multiselect_conversations.py::test_conversations_export_label_holds_its_column_across_the_first_selection
+1.27s call     Tests/UI/test_library_multiselect_conversations.py::test_library_conversation_selection_clears_on_page_exit_and_cannot_export
+1.26s call     Tests/UI/test_library_multiselect_conversations.py::test_conversations_select_labels_paint_in_full_like_media[size0]
+1.25s call     Tests/UI/test_library_multiselect_conversations.py::test_library_conversation_stale_state_disables_actions_but_allows_recovery
+1.11s call     Tests/UI/test_library_multiselect_conversations.py::test_conversations_select_labels_paint_in_full_like_media[size1]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_multiselect_conversations.py::test_convo_row_select_mode_toggles
+FAILED Tests/UI/test_library_export_destination_validation.py::test_rejecting_the_normalized_path_leaves_the_form_untouched
+FAILED Tests/UI/test_library_export_destination_validation.py::test_hostile_raw_pick_is_rejected_with_a_reason
+3 failed, 120 passed in 42.75s

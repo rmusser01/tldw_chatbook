@@ -1,0 +1,6 @@
+....................                                                     [100%]
+============================= slowest 25 durations =============================
+1.91s call     Tests/UI/test_console_session_settings.py::test_console_new_native_tab_receives_default_settings_snapshot
+
+(24 durations < 1s hidden.)
+20 passed, 422 deselected in 7.44s

@@ -1,0 +1,42 @@
+{
+  "base": "6144043362",
+  "full_suite_run": false,
+  "runs": [
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-options/directory-red.txt",
+      "command": ".venv/bin/python -m pytest Tests/UI/test_library_ingest_directory_journeys.py -q",
+      "note": "Stopped after four expected selection failures and one cancellation pass; wide cursor13 vs4, compact Browse y36 with no paint.",
+      "sha256": "0fbb686d076536e17e9654d26904c71f23fc0a4204efb3a767723c0da8f5cd00"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-options/directory-green.txt",
+      "command": ".venv/bin/python -m pytest Tests/UI/test_library_ingest_directory_journeys.py -q",
+      "note": "12 passed:8 real-picker journeys,4 unavailable-state cases.",
+      "sha256": "4acd226e41e414643ca2dc9434fe224fe25270e95e2a9524e5a9e911abfaf55f"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-options/targeted.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_canvas.py Tests/UI/test_library_ingest_structural.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/UI/test_fspicker_keyboard_save.py",
+      "note": "208 passed",
+      "sha256": "0eb2c1f8d8e16cdcc84202b6d93e7ad3260024af4f05fb9a58c99105db85a225"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-options/same-red.txt",
+      "command": ".venv/bin/python -m pytest Tests/UI/test_library_ingest_directory_journeys.py -q -k same -x",
+      "note": "One expected regression failure: stale confirmation class after same-folder selection.",
+      "sha256": "8a89e30fa668a5c5103fd9d851b08da2cc3774a25aea6a0dd2043f07a145a9ec"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-ingest-options/final-journeys-consent.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_directory_journeys.py Tests/UI/test_library_ingest_inline_consent.py",
+      "note": "71 passed:16 directory journeys and55 existing consent checks.",
+      "sha256": "f4a01aadadf2e40b3961c9c6d84e70e6827896e64268e4d845db6f76da29da83"
+    }
+  ],
+  "distinct_passed": 279,
+  "count_basis": "208 neighboring canvas/structural/token/bundle/picker +71 final directory/consent =279; earlier12 new cases superseded by final16.",
+  "native_run": "run-003",
+  "native_visual_inspection": "Seven run-002 captures inspected together; final run-003 compact return capture inspected as confirmation.",
+  "new_ruff_diagnostics": 0,
+  "review": "P2 same-folder stale confirmation fixed; follow-up review no remaining actionable findings."
+}

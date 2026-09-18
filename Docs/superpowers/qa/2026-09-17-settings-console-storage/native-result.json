@@ -1,0 +1,80 @@
+{
+  "pid": 14447,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "console_validation_and_revert": true,
+      "instant_toggles_saved_and_restored": true,
+      "storage_validation_check_navigation_revert_save": true,
+      "target_not_created": "/private/tmp/tldw-32761-native-004/next-launch-textual-dark-190x55/workspaces.db",
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "console_validation_and_revert": true,
+      "instant_toggles_saved_and_restored": true,
+      "storage_validation_check_navigation_revert_save": true,
+      "target_not_created": "/private/tmp/tldw-32761-native-004/next-launch-textual-dark-80x24/workspaces.db",
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        190,
+        55
+      ],
+      "console_validation_and_revert": true,
+      "instant_toggles_saved_and_restored": true,
+      "storage_validation_check_navigation_revert_save": true,
+      "target_not_created": "/private/tmp/tldw-32761-native-004/next-launch-textual-light-190x55/workspaces.db",
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "console_validation_and_revert": true,
+      "instant_toggles_saved_and_restored": true,
+      "storage_validation_check_navigation_revert_save": true,
+      "target_not_created": "/private/tmp/tldw-32761-native-004/next-launch-textual-light-80x24/workspaces.db",
+      "database_handles_unchanged": true
+    }
+  ],
+  "runner_sha256": "f64c0b84a3a10e987c0b46dce69a19c8ba2ab90bddd0d6923e26b1e3717dadb5",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "3f2dbd76ff0dc8668e0cf990f24d45ea3aaccd4858fcebd3ac7fd25c8dadc5ea",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3614411d7ad34a3a7aa14d9ea9816a9d0695a2b9db082efdc9f64fb3a3a11fc9",
+    "tldw_chatbook/css/features/_settings.tcss": "78b06c168be62d24d5a4ca5f5e3f117b4e1c78d4271b414e751e25b4eead88a9",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "c49b428c2ec0c00f33ca5db1487d224f16c2fb5954fe97e9e6c907714a8d3897"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Notices clear",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "toggle_attempt": {
+    "key": "status-row-position",
+    "attempt": 1,
+    "before": "Below composer"
+  },
+  "passed": true,
+  "app_run_returned": true
+}

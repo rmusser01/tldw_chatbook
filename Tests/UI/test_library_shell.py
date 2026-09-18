@@ -15,6 +15,8 @@ from typing import Mapping
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from loguru import logger as loguru_logger
 from rich.cells import cell_len
 from textual import events
@@ -25,7 +27,10 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+)
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.selection import Selection
@@ -245,6 +250,8 @@ _RAIL_STYLE_TEST_PREFERENCES = LibraryRailPreferences()
 
 class _LibraryRailStyleContractHarness(ConsolidatedCSSApp):
     """Mount the production rail in the grid relationship it uses in Library."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     CSS = """
     #rail-style-contract-host {
@@ -8226,7 +8233,7 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
         await pilot.pause()
         await pilot.pause()
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert "Select a provider/model" in _visible_text(screen)
+        assert "No analysis provider is configured" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -8296,18 +8303,16 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         # that (the pre-Task-7 bug), Run would be enabled here. It must
         # stay blocked because no credential resolves for that provider.
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        # ...and the copy must name the CREDENTIAL, not the provider (PR-T2
-        # review round 3, finding I1). This assertion previously read
-        # `"Select a provider/model" in ...` -- which was the regression:
-        # Task 7 widened this branch to cover "endpoint named, credential
-        # missing", making it the only way a user with a configured
-        # provider reaches the block, and the inherited copy then told them
-        # to select the provider they had already selected and pointed at
-        # Console controls instead of at a key.
+        # TASK-32236 moved the technical credential remedy to the recovery
+        # record/log. The painted surface names the Settings destination.
         visible = _visible_text(screen)
-        assert "Select a provider/model" not in visible
-        assert "OPENAI_API_KEY" in visible
-        assert "api_settings.openai" in visible
+        assert "No analysis provider is configured" in visible
+        assert "OPENAI_API_KEY" not in visible
+        assert "api_settings.openai" not in visible
+        assert screen.query_one("#library-rag-open-provider-settings", Button)
+        recovery = screen._library_rag_panel_state().query_state.recovery_copy
+        assert "OPENAI_API_KEY" in recovery
+        assert "api_settings.openai" in recovery
 
 
 @pytest.mark.asyncio
@@ -24452,7 +24457,10 @@ async def test_library_note_60x20_temporary_region_allocation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_note_compact_labels_round_trip_without_recompose() -> None:
+@private_profile_test
+async def test_library_note_compact_labels_round_trip_without_recompose(
+    request,
+) -> None:
     selector = "#library-notes-select-all"
     compact_label = "All 2"
     wide_label = "Select all 2 shown"
@@ -25130,7 +25138,7 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         for _ in range(120):
             if (
-                screen._media_state.selected_media_id == "media-1"
+                screen._media_state.reader_session.loaded_id == "local:media:1"
                 and screen._media_state.view == "viewer"
             ):
                 break
@@ -25143,7 +25151,7 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
         assert any(
-            call["media_id"] == "media-1"
+            call["media_id"] == 1
             for call in app.media_reading_scope_service.detail_calls
         )
 
@@ -32928,7 +32936,8 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
             focus_generation=stale_generation
         )
 
-        screen.query_one("#library-note-preview").press()
+        screen.query_one("#library-note-preview").focus()
+        await pilot.press("enter")
         await _wait_for_display(screen, pilot, "#library-note-preview-region")
         preview = screen.query_one("#library-note-preview-region")
         screen._mark_library_notes_user_interaction()

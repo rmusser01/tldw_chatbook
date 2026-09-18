@@ -1,0 +1,42 @@
+{
+  "targeted": {
+    "passed": 76,
+    "failed": 0,
+    "duration_seconds": 86.95,
+    "warnings": [
+      "Existing pytest temporary-directory cleanup warnings"
+    ],
+    "selection": [
+      "Tests/Library/test_library_ingest_jobs_restore.py",
+      "Tests/DB/test_library_ingest_jobs_db.py",
+      "Tests/Library/test_library_ingest_runner.py: five selected tests for duplicate/local/empty/pool failure",
+      "Tests/UI/test_library_ingest_entry_journeys.py",
+      "Tests/UI/test_library_ingest_recent_journeys.py"
+    ]
+  },
+  "real_spawn_test": {
+    "node": "Tests/Local_Ingestion/test_ingest_parse_worker.py::test_run_parse_job_through_real_spawn_pool",
+    "inside_sandbox": "failed: SemLock errno 28",
+    "outside_sandbox": "failed: SemLock errno 28",
+    "body_reached": false
+  },
+  "full_suite_run": false,
+  "task_complete": false,
+  "profile_guard": {
+    "red": "6 failures before validator existed",
+    "green": "6 passed",
+    "recorded_run003_profile_accepted": true,
+    "cases": [
+      "valid private profile",
+      "missing config without writes",
+      "external data path",
+      "external database path",
+      "symlink escape",
+      "missing data directory"
+    ],
+    "native_rerun_after_guard": false,
+    "scope": "Pre-import safety guard only; native journey unchanged"
+  },
+  "unique_targeted_passes": 82,
+  "production_ast_unchanged_excluding_docstrings": true
+}

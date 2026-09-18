@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import ClassVar
+
 import pytest
 from textual import on
 from textual.widgets import Static
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     LIBRARY_COLLECTIONS_READER_PROFILE,
 )
@@ -43,6 +46,9 @@ def test_collections_profile_has_pinned_pure_geometry(width, expected) -> None:
 
 
 class _GeometryApp(ConsolidatedCSSApp):
+    # Token-backed width utilities are app CSS, not widget defaults.
+    CSS_PATH: ClassVar[list[Path]] = list(APP_STYLESHEETS)
+
     def __init__(self) -> None:
         super().__init__()
         self.layout = resolve_adaptive_reader_layout(0, PREFERENCES, PROFILE)

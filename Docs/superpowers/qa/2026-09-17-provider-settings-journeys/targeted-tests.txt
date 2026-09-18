@@ -1,0 +1,31 @@
+........................................................................ [ 31%]
+........................................................................ [ 63%]
+........................................................................ [ 94%]
+............                                                             [100%]
+============================= slowest 25 durations =============================
+11.01s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-dark]
+10.92s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-light]
+10.23s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-dark]
+10.08s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-light]
+5.48s call     Tests/UI/test_settings_provider_switch_atomic.py::test_exact_draft_key_probe_evidence_survives_successful_commit
+5.37s call     Tests/UI/test_settings_provider_switch_atomic.py::test_exact_probe_evidence_survives_returned_model_selection_and_save
+2.33s call     Tests/UI/test_settings_save_commit_models.py::test_staged_fields_document_staged_save_in_the_inspector
+2.14s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_saves_and_clears_local_api_key
+2.02s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_redacts_secrets
+2.00s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_revert_restores_provider_dependent_placeholders
+1.99s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_streaming_and_enums_prevent_invalid_input
+1.99s call     Tests/UI/test_settings_provider_test_draft.py::test_test_provider_result_shows_draft_endpoint
+1.98s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_route_echoes_do_not_survive_widget_lifecycle[category_departure]
+1.93s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_saves_selected_runtime_models
+1.92s call     Tests/UI/test_settings_configuration_hub.py::test_settings_console_guided_save_revert_enable_only_when_dirty
+1.90s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_route_echoes_do_not_survive_widget_lifecycle[recompose]
+1.88s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_repopulation_is_not_a_user_edit
+1.85s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_saves_selected_model_profile
+1.83s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_does_not_depend_on_console_sampling_defaults
+1.77s call     Tests/UI/test_settings_provider_test_draft.py::test_test_provider_button_click_runs_the_check
+1.76s call     Tests/UI/test_settings_provider_test_draft.py::test_test_provider_button_runs_with_provider_input_focused
+1.74s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_picker_persistence_alias_saves_canonical_provider[custom-openai-api-custom]
+1.73s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_uses_api_settings_env_var_without_secret_leak
+1.71s call     Tests/UI/test_settings_provider_test_draft.py::test_probe_worker_unexpected_exception_settles_bounded_failure
+1.71s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_picker_persistence_alias_saves_canonical_provider[Hugging Face-huggingface]
+228 passed, 301 deselected in 285.02s (0:04:45)

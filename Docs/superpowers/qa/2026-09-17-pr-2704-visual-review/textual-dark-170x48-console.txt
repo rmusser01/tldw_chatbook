@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ·                              •                                                    *                                •                          ·           *
+                                                                                      *                •                                 *                       *
+                                                                       •
+     *                                                                     •                  *                                •     ·
+               ·                     ·                                                                                                     *  ·
+                                           ·                                                                        •                   ·    •         ·
+                                                             •                       *                                                                    *
+                                ·        ·                          ·                                                       ·   *
+                                                                          ·                                  •                           *
+                 •                                                                                •       •       *                       ·         •
+ ·                               •     *   ·                   ·                                    ·       ·                                                       *
+                ·         •                  •      ┌────────────────────────────────────────────────────────────────┐·                            *
+    ·                       *                       │                                                                │                  ·
+                                                    │  Get started                                                   │                                ·*•
+        *                                           │                                                                │          •
+                                                    │  A provider is the AI service that answers your messages —     │                                                •
+                                 •                  │  for example OpenAI, Anthropic, or a server running on this    │                       ·
+                                                    │  computer.                                                     │·                                  *
+                                                    │                                                                │
+                   *                                │  1. ● Connect a provider (API key or local server)             │         ··    •                                ·
+                                           •        │  2. ○ Pick a model                                             │                         *
+                                                    │  3. ○ Send your first message  Composer unlocks after setup    │ ·
+                *          •                        │                                                                │
+                                                 •  │  ┃───────────────────┃                                         │      •           *         •
+           •                                        │  ┃  Set up provider  ┃                                         │        •                    ·
+                                                    │  ┃───────────────────┃                                         │
+                                                •   │                                                                │
+  •                                                 │  ╭───────────────────────────╮                                 │     ·                 *
+                                                *   │  │  Write a note in Library  │                                 │           ·     ·•
+                                    •               │  ╰───────────────────────────╯                                 │
+                    *                               │                                                                │
+      ·                                             └────────────────────────────────────────────────────────────────┘                                            *
+ •  *                                                                                            *         •       ·    ·   •                           ·
+            ·                                                                                           *
+     •   •      ·            *                                  *                                         •               •
+                •                                  •                                   *        •
+                                      ·                                                                     *                                               ·
+                                  *                 ·                                                                                                    ·   •
+                                                        *                                                              *                    ·            •
+                                                                 *                                                                                            •
+                                            ·                •*                             •                          ·       •              •             ·
+                                                                                           •      *                               •
+                         *        •                                          •   *
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter continue setup | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

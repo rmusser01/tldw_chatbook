@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Overview | Runtime controls stay in MCP and ACP
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Read-only here | Review         │
+│     Storage                  │  │  │  readiness across Settings categories.  │
+│     Workspaces               │  │  │                                         │
+│     Tool Profiles            │  │  │  Overview                               │
+│     Privacy & Security       │  │  │  Backup & Restore                       │
+│     Network                  │  │  │ ┌────────────────────────────────────┐  │
+│     My Profile               │  │  │ │                                    │▅ │
+│  Troubleshooting           ▇ │  │  │ │  Status                            │  │
+│     Diagnostics (view)       │  │  │ │  Configuration: OpenAI / not       │  │
+│     About (view)             │  │  │ │  selected; Status: Not ready:      │  │
+│     Agents                   │  │  │ │  Missing API key                   │  │
+│  Expert                      │  │  │ │  Open Providers & Models           │  │
+│     Internal Prompts         │  │  │ │  Last connection test:             │  │
+│     Advanced Config          │  │  │ │  Configuration check has not run.  │  │
+│   Domain Defaults ▸ (11)     │  │  │ │  Storage & privacy: Config path:   │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Open the Providers & Models category.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

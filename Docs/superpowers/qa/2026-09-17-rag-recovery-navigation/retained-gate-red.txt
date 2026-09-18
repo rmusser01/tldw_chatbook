@@ -1,0 +1,43 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size0-textual-dark] _
+Tests/UI/test_library_rag_recovery_navigation.py:203: in test_retained_search_refreshes_provider_gate_on_resume_without_rerunning
+    assert screen.query_one("#library-rag-run-query", Button).disabled is (
+E   AssertionError: assert True is ('openai' is None)
+E    +  where True = Button(id='library-rag-run-query', classes='-style-default').disabled
+E    +    where Button(id='library-rag-run-query', classes='-style-default') = query_one('#library-rag-run-query', Button)
+E    +      where query_one = LibraryScreen(classes='shell-header-normal').query_one
+_ test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size0-textual-light] _
+Tests/UI/test_library_rag_recovery_navigation.py:203: in test_retained_search_refreshes_provider_gate_on_resume_without_rerunning
+    assert screen.query_one("#library-rag-run-query", Button).disabled is (
+E   AssertionError: assert True is ('openai' is None)
+E    +  where True = Button(id='library-rag-run-query', classes='-style-default').disabled
+E    +    where Button(id='library-rag-run-query', classes='-style-default') = query_one('#library-rag-run-query', Button)
+E    +      where query_one = LibraryScreen(classes='shell-header-normal').query_one
+_ test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size1-textual-dark] _
+Tests/UI/test_library_rag_recovery_navigation.py:203: in test_retained_search_refreshes_provider_gate_on_resume_without_rerunning
+    assert screen.query_one("#library-rag-run-query", Button).disabled is (
+E   AssertionError: assert True is ('openai' is None)
+E    +  where True = Button(id='library-rag-run-query', classes='-style-default').disabled
+E    +    where Button(id='library-rag-run-query', classes='-style-default') = query_one('#library-rag-run-query', Button)
+E    +      where query_one = LibraryScreen(classes='shell-header-compact').query_one
+_ test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size1-textual-light] _
+Tests/UI/test_library_rag_recovery_navigation.py:203: in test_retained_search_refreshes_provider_gate_on_resume_without_rerunning
+    assert screen.query_one("#library-rag-run-query", Button).disabled is (
+E   AssertionError: assert True is ('openai' is None)
+E    +  where True = Button(id='library-rag-run-query', classes='-style-default').disabled
+E    +    where Button(id='library-rag-run-query', classes='-style-default') = query_one('#library-rag-run-query', Button)
+E    +      where query_one = LibraryScreen(classes='shell-header-compact').query_one
+============================= slowest 25 durations =============================
+1.82s call     Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size0-textual-dark]
+1.77s call     Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size0-textual-light]
+1.41s call     Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size1-textual-light]
+1.35s call     Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size1-textual-dark]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size0-textual-dark]
+FAILED Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size0-textual-light]
+FAILED Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size1-textual-dark]
+FAILED Tests/UI/test_library_rag_recovery_navigation.py::test_retained_search_refreshes_provider_gate_on_resume_without_rerunning[size1-textual-light]
+4 failed, 17 deselected in 8.39s

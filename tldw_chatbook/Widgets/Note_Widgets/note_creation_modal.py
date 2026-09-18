@@ -57,7 +57,7 @@ class NoteCreationModal(ModalScreen[Optional[Dict[str, Any]]]):
         color: $primary;
     }
     
-    NoteCreationModal .field-label {
+    NoteCreationModal .form-label {
         margin-top: 1;
         margin-bottom: 0;
         color: $text;
@@ -143,7 +143,7 @@ class NoteCreationModal(ModalScreen[Optional[Dict[str, Any]]]):
             yield Static("", id="error-message", classes="error-message")
 
             # Title field
-            yield Label("Title:", classes="field-label")
+            yield Label("Title:", classes="form-label")
             yield Input(
                 value=self.initial_title,
                 placeholder="Enter note title...",
@@ -153,7 +153,7 @@ class NoteCreationModal(ModalScreen[Optional[Dict[str, Any]]]):
             )
 
             # Keywords field
-            yield Label("Keywords:", classes="field-label")
+            yield Label("Keywords:", classes="form-label")
             yield Static("Separate multiple keywords with commas", classes="help-text")
             yield Input(
                 value=self.initial_keywords,
@@ -163,7 +163,7 @@ class NoteCreationModal(ModalScreen[Optional[Dict[str, Any]]]):
             )
 
             # Content field
-            yield Label("Content:", classes="field-label")
+            yield Label("Content:", classes="form-label")
             yield TextArea(
                 self.initial_content,
                 id="note-content-textarea",

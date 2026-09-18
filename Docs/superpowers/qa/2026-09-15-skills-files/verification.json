@@ -1,0 +1,38 @@
+{
+  "base_commit": "f3dd181084",
+  "distinct_passed": 64,
+  "failed": 0,
+  "full_suite_run": false,
+  "groups": [
+    {
+      "command": ".venv/bin/python -m pytest Tests/UI/test_library_skills_reader.py Tests/Library/test_library_skills_state.py -q --tb=short",
+      "passed": 45,
+      "deselected": 0,
+      "summary": "45 passed, 2 warnings in 41.19s"
+    },
+    {
+      "command": ".venv/bin/python -m pytest Tests/UI/test_library_skill_files_journeys.py -q --tb=short",
+      "passed": 4,
+      "deselected": 0,
+      "summary": "4 passed, 2 warnings in 31.14s"
+    },
+    {
+      "command": ".venv/bin/python -m pytest Tests/Skills/test_local_skills_service.py -k 'support or bundle or binary' -q --tb=short",
+      "passed": 2,
+      "deselected": 39,
+      "summary": "2 passed, 39 deselected, 2 warnings in 0.88s"
+    },
+    {
+      "command": ".venv/bin/python -m pytest Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py -q --tb=short",
+      "passed": 13,
+      "deselected": 0,
+      "summary": "13 passed, 2 warnings in 3.88s"
+    }
+  ],
+  "warnings": "Two inherited pytest temporary-directory cleanup warnings per invocation.",
+  "static_checks": {
+    "ruff_check": "passed for both new Python files",
+    "ruff_format_check": "2 files already formatted"
+  },
+  "review": "Independent bounded review found no production defect; follow-up confirmed real Tab/Shift+Tab and real private trust-store preservation coverage."
+}

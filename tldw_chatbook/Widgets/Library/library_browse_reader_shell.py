@@ -258,9 +258,9 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         await self.mount(work, after=self.items_grip)
         self.work = work
         work.display = True
-        work.styles.width = "1fr"
+        work.add_class("w-fill")
         work.styles.min_width = 0
-        work.styles.height = "100%"
+        work.add_class("h-full")
         if previous is not None and previous.parent is self:
             await previous.remove()
 

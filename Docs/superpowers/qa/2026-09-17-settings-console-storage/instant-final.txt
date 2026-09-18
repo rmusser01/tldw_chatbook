@@ -1,0 +1,23 @@
+..................                                                       [100%]
+============================= slowest 25 durations =============================
+13.08s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_latest_choice_survives_pending_write[False-status-row-position]
+12.21s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_rebases_after_configuration_reload[status-row-position]
+11.88s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_rebases_after_configuration_reload[remote-images]
+11.36s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_latest_choice_survives_pending_write[True-remote-images]
+11.03s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[False-True-remote-images]
+10.71s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[False-False-remote-images]
+10.53s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_latest_choice_survives_pending_write[False-remote-images]
+10.45s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[False-False-status-row-position]
+10.37s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_latest_choice_survives_pending_write[True-status-row-position]
+10.33s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[True-True-remote-images]
+10.25s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[False-True-status-row-position]
+10.15s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[True-False-status-row-position]
+10.10s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[True-True-status-row-position]
+10.07s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_drains_across_settings_recreation[True-False-remote-images]
+8.30s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_keeps_replaced_file_value_on_cache_failure[status-row-position]
+7.16s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_keeps_replaced_file_value_on_cache_failure[remote-images]
+6.75s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_failed_save_rolls_back_and_retries[remote-images]
+6.67s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_instant_toggle_failed_save_rolls_back_and_retries[status-row-position]
+
+(7 durations < 1s hidden.)
+18 passed, 12 deselected in 184.24s (0:03:04)

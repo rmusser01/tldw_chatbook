@@ -1,0 +1,759 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+____ test_full_trace_view_requires_real_keyboard_confirmation[escape-size0] ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_full_trace_view_requires_real_keyboard_confirmation[escape-size0] ____
+E
+E   request = <FixtureRequest for <Coroutine test_full_trace_view_requires_real_keyboard_confirmation[escape-size0]>>
+E   size = (190, 55), choice = 'escape'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("choice", ["escape", "cancel-button", "confirm-button"])
+E       @private_profile_test
+E       async def test_full_trace_view_requires_real_keyboard_confirmation(request, size, choice):
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+E
+E           host, path = _setup()
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               screen = host.screen
+E               await _choose_viewer(host, pilot, "full")
+E               before = path.read_bytes()
+E               apply = await _apply(host, pilot)
+E               assert isinstance(host.screen, ConfirmationDialog)
+E               assert "PII detectors missed" in host.screen.message
+E               _assert_painted(host.screen, host.screen.query_one(".dialog-message"))
+E               for selector in ("#cancel-button", "#confirm-button"):
+E                   button = host.screen.query_one(selector, Button)
+E                   _assert_painted(host.screen, button)
+E                   assert str(button.label) in _painted(host, button)
+E               assert path.read_bytes() == before
+E               if choice == "escape":
+E                   await pilot.press("escape")
+E               else:
+E                   host.screen.query_one("#" + choice, Button).focus()
+E                   await pilot.press("enter")
+E               await _settle(host, pilot)
+E               assert host.screen is screen
+E   >           assert screen.focused is apply
+E   E           AssertionError: assert Checkbox(id='settings-console-show-model-thinking', classes='-on') is Button(id='settings-console-exchange-capture-apply', classes='-primary -style-default', variant='primary')
+E   E            +  where Checkbox(id='settings-console-show-model-thinking', classes='-on') = SettingsScreen(classes='shell-header-normal').focused
+E
+E   Tests/UI/test_settings_capture_journeys.py:88: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:58:00.621 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:58:00.626 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:58:00.627 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:58:00.627 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:58:00.641 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:00.650 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_0/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:00.651 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:00.652 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:00.652 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:00.653 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:00.667 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:00.668 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:00.669 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:00.729 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:58:00.746 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:58:00.746 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:58:00.747 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:58:00.747 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:58:00.809 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:00.864 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sytxnhr6/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:00.993 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sytxnhr6/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:01.004 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:01.005 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sytxnhr6/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:01.005 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sytxnhr6/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:01.114 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:58:01.147 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:58:01.182 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:58:01.217 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:58:01.252 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:58:01.286 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:58:01.287 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sytxnhr6/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:58:01.335 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:58:01.335 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:58:01.345 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:58:01.427 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:58:01.428 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:58:01.428 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:58:01.479 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:58:01.479 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:58:01.479 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:58:01.480 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.804 seconds
+E   2026-09-17 17:58:01.480 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.068s (8.4%)
+E   2026-09-17 17:58:01.480 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:58:01.480 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.001s (0.2%)
+E   2026-09-17 17:58:01.481 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:01.481 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:01.481 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:01.481 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:01.482 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:58:01.691 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:58:01.772 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:58:05.426 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.80s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size0]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size0]
+E   1 failed in 6.61s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 17:57:58.812 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 17:57:58.819 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 17:57:58.820 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 17:57:58.820 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+____ test_full_trace_view_requires_real_keyboard_confirmation[escape-size1] ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_full_trace_view_requires_real_keyboard_confirmation[escape-size1] ____
+E
+E   request = <FixtureRequest for <Coroutine test_full_trace_view_requires_real_keyboard_confirmation[escape-size1]>>
+E   size = (80, 24), choice = 'escape'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("choice", ["escape", "cancel-button", "confirm-button"])
+E       @private_profile_test
+E       async def test_full_trace_view_requires_real_keyboard_confirmation(request, size, choice):
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+E
+E           host, path = _setup()
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               screen = host.screen
+E               await _choose_viewer(host, pilot, "full")
+E               before = path.read_bytes()
+E               apply = await _apply(host, pilot)
+E               assert isinstance(host.screen, ConfirmationDialog)
+E               assert "PII detectors missed" in host.screen.message
+E               _assert_painted(host.screen, host.screen.query_one(".dialog-message"))
+E               for selector in ("#cancel-button", "#confirm-button"):
+E                   button = host.screen.query_one(selector, Button)
+E                   _assert_painted(host.screen, button)
+E                   assert str(button.label) in _painted(host, button)
+E               assert path.read_bytes() == before
+E               if choice == "escape":
+E                   await pilot.press("escape")
+E               else:
+E                   host.screen.query_one("#" + choice, Button).focus()
+E                   await pilot.press("enter")
+E               await _settle(host, pilot)
+E               assert host.screen is screen
+E   >           assert screen.focused is apply
+E   E           AssertionError: assert Checkbox(id='settings-console-show-model-thinking', classes='-on') is Button(id='settings-console-exchange-capture-apply', classes='-primary -style-default', variant='primary')
+E   E            +  where Checkbox(id='settings-console-show-model-thinking', classes='-on') = SettingsScreen(classes='shell-header-compact').focused
+E
+E   Tests/UI/test_settings_capture_journeys.py:88: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:58:08.566 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:58:08.573 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:58:08.573 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:58:08.574 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:58:08.592 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:08.604 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_1/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:08.606 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:08.607 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:08.608 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:08.609 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:08.634 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:08.635 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:08.636 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:08.724 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:58:08.745 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:58:08.745 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:58:08.746 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:58:08.747 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:58:08.838 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:08.926 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zxa4ys1r/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:09.123 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zxa4ys1r/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:09.141 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:09.142 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zxa4ys1r/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:09.143 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zxa4ys1r/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:09.277 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:58:09.323 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:58:09.378 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:58:09.420 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:58:09.465 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:58:09.511 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:58:09.511 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-zxa4ys1r/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:58:09.559 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:58:09.560 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:58:09.567 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:58:09.644 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:58:09.644 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:58:09.645 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:58:09.701 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:58:09.702 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:58:09.702 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:58:09.703 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 1.056 seconds
+E   2026-09-17 17:58:09.703 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.096s (9.1%)
+E   2026-09-17 17:58:09.703 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:58:09.704 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 17:58:09.704 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:09.704 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:09.704 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:09.705 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:09.705 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:58:09.924 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:58:10.008 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:58:14.151 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   5.58s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size1]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size1]
+E   1 failed in 7.64s
+_ test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size0] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size0] _
+E
+E   request = <FixtureRequest for <Coroutine test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size0]>>
+E   size = (190, 55), choice = 'cancel-button'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("choice", ["escape", "cancel-button", "confirm-button"])
+E       @private_profile_test
+E       async def test_full_trace_view_requires_real_keyboard_confirmation(request, size, choice):
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+E
+E           host, path = _setup()
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               screen = host.screen
+E               await _choose_viewer(host, pilot, "full")
+E               before = path.read_bytes()
+E               apply = await _apply(host, pilot)
+E               assert isinstance(host.screen, ConfirmationDialog)
+E               assert "PII detectors missed" in host.screen.message
+E               _assert_painted(host.screen, host.screen.query_one(".dialog-message"))
+E               for selector in ("#cancel-button", "#confirm-button"):
+E                   button = host.screen.query_one(selector, Button)
+E                   _assert_painted(host.screen, button)
+E                   assert str(button.label) in _painted(host, button)
+E               assert path.read_bytes() == before
+E               if choice == "escape":
+E                   await pilot.press("escape")
+E               else:
+E                   host.screen.query_one("#" + choice, Button).focus()
+E                   await pilot.press("enter")
+E               await _settle(host, pilot)
+E               assert host.screen is screen
+E   >           assert screen.focused is apply
+E   E           AssertionError: assert Checkbox(id='settings-console-show-model-thinking', classes='-on') is Button(id='settings-console-exchange-capture-apply', classes='-primary -style-default', variant='primary')
+E   E            +  where Checkbox(id='settings-console-show-model-thinking', classes='-on') = SettingsScreen(classes='shell-header-normal').focused
+E
+E   Tests/UI/test_settings_capture_journeys.py:88: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:58:17.815 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:58:17.824 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:58:17.825 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:58:17.825 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:58:17.846 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:17.856 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_2/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:17.858 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:17.858 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:17.859 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:17.859 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:17.874 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:17.875 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:17.876 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:17.941 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:58:17.962 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:58:17.962 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:58:17.963 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:58:17.963 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:58:18.046 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:18.115 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ohwo5be_/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:18.277 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ohwo5be_/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:18.289 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:18.290 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ohwo5be_/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:18.290 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ohwo5be_/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:18.405 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:58:18.448 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:58:18.495 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:58:18.542 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:58:18.587 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:58:18.632 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:58:18.633 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ohwo5be_/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:58:18.679 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:58:18.679 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:58:18.687 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:58:18.764 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:58:18.764 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:58:18.765 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:58:18.822 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:58:18.823 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:58:18.823 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:58:18.823 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.940 seconds
+E   2026-09-17 17:58:18.824 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.077s (8.2%)
+E   2026-09-17 17:58:18.824 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:58:18.824 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 17:58:18.825 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:18.825 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:18.825 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:18.825 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:18.826 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:58:19.049 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:58:19.149 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:58:23.022 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   5.20s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size0]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size0]
+E   1 failed in 7.59s
+_ test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size1] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_3/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size1] _
+E
+E   request = <FixtureRequest for <Coroutine test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size1]>>
+E   size = (80, 24), choice = 'cancel-button'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("choice", ["escape", "cancel-button", "confirm-button"])
+E       @private_profile_test
+E       async def test_full_trace_view_requires_real_keyboard_confirmation(request, size, choice):
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+E
+E           host, path = _setup()
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               screen = host.screen
+E               await _choose_viewer(host, pilot, "full")
+E               before = path.read_bytes()
+E               apply = await _apply(host, pilot)
+E               assert isinstance(host.screen, ConfirmationDialog)
+E               assert "PII detectors missed" in host.screen.message
+E               _assert_painted(host.screen, host.screen.query_one(".dialog-message"))
+E               for selector in ("#cancel-button", "#confirm-button"):
+E                   button = host.screen.query_one(selector, Button)
+E                   _assert_painted(host.screen, button)
+E                   assert str(button.label) in _painted(host, button)
+E               assert path.read_bytes() == before
+E               if choice == "escape":
+E                   await pilot.press("escape")
+E               else:
+E                   host.screen.query_one("#" + choice, Button).focus()
+E                   await pilot.press("enter")
+E               await _settle(host, pilot)
+E               assert host.screen is screen
+E   >           assert screen.focused is apply
+E   E           AssertionError: assert Checkbox(id='settings-console-show-model-thinking', classes='-on') is Button(id='settings-console-exchange-capture-apply', classes='-primary -style-default', variant='primary')
+E   E            +  where Checkbox(id='settings-console-show-model-thinking', classes='-on') = SettingsScreen(classes='shell-header-compact').focused
+E
+E   Tests/UI/test_settings_capture_journeys.py:88: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:58:26.187 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:58:26.193 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:58:26.193 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:58:26.194 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:58:26.208 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:26.217 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_3/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:26.219 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:26.219 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:26.220 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:26.220 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:26.235 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:26.235 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:26.236 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:26.296 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:58:26.314 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:58:26.314 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:58:26.315 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:58:26.315 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:58:26.376 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:26.431 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2uc57dha/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:26.561 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2uc57dha/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:26.572 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:26.573 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2uc57dha/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:26.573 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2uc57dha/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:26.681 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:58:26.715 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:58:26.751 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:58:26.785 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:58:26.819 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:58:26.853 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:58:26.853 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2uc57dha/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:58:26.889 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:58:26.890 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:58:26.897 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:58:26.957 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:58:26.957 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:58:26.958 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:58:27.008 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:58:27.008 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:58:27.009 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:58:27.009 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.765 seconds
+E   2026-09-17 17:58:27.009 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.069s (9.0%)
+E   2026-09-17 17:58:27.010 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:58:27.010 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.001s (0.2%)
+E   2026-09-17 17:58:27.010 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:27.011 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:27.011 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:27.011 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:27.011 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:58:27.210 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:58:27.292 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:58:31.214 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   5.02s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size1]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size1]
+E   1 failed in 6.97s
+_ test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size0] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_4/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size0] _
+E
+E   request = <FixtureRequest for <Coroutine test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size0]>>
+E   size = (190, 55), choice = 'confirm-button'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("choice", ["escape", "cancel-button", "confirm-button"])
+E       @private_profile_test
+E       async def test_full_trace_view_requires_real_keyboard_confirmation(request, size, choice):
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+E
+E           host, path = _setup()
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               screen = host.screen
+E               await _choose_viewer(host, pilot, "full")
+E               before = path.read_bytes()
+E               apply = await _apply(host, pilot)
+E               assert isinstance(host.screen, ConfirmationDialog)
+E               assert "PII detectors missed" in host.screen.message
+E               _assert_painted(host.screen, host.screen.query_one(".dialog-message"))
+E               for selector in ("#cancel-button", "#confirm-button"):
+E                   button = host.screen.query_one(selector, Button)
+E                   _assert_painted(host.screen, button)
+E                   assert str(button.label) in _painted(host, button)
+E               assert path.read_bytes() == before
+E               if choice == "escape":
+E                   await pilot.press("escape")
+E               else:
+E                   host.screen.query_one("#" + choice, Button).focus()
+E                   await pilot.press("enter")
+E               await _settle(host, pilot)
+E               assert host.screen is screen
+E   >           assert screen.focused is apply
+E   E           AssertionError: assert Checkbox(id='settings-console-show-model-thinking', classes='-on') is Button(id='settings-console-exchange-capture-apply', classes='-primary -style-default', variant='primary')
+E   E            +  where Checkbox(id='settings-console-show-model-thinking', classes='-on') = SettingsScreen(classes='shell-header-normal').focused
+E
+E   Tests/UI/test_settings_capture_journeys.py:88: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:58:34.324 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:58:34.331 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:58:34.331 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:58:34.331 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:58:34.347 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:34.357 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_4/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:34.358 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:34.358 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:34.359 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:34.360 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:34.376 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_4/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:34.377 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:34.378 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:34.446 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:58:34.466 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:58:34.466 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:58:34.466 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:58:34.467 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:58:34.538 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_4/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:34.598 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-k3v0ybyc/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:34.740 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-k3v0ybyc/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:34.752 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:34.753 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-k3v0ybyc/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:34.753 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-k3v0ybyc/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:34.878 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:58:34.918 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:58:34.962 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:58:35.002 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:58:35.043 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:58:35.084 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:58:35.085 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-k3v0ybyc/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:58:35.126 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:58:35.126 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:58:35.134 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:58:35.204 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:58:35.205 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_4/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:58:35.205 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:58:35.260 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:58:35.261 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:58:35.261 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:58:35.261 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.875 seconds
+E   2026-09-17 17:58:35.262 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.078s (8.9%)
+E   2026-09-17 17:58:35.262 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:58:35.262 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.001s (0.2%)
+E   2026-09-17 17:58:35.263 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:35.263 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:35.263 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:35.263 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:35.264 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:58:35.473 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:58:35.563 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:58:38.989 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_detail', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:39.001 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_4/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:39.004 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:39.004 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:39.005 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:39.006 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:39.033 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_4/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:39.034 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:39.035 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:39.330 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   5.00s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size0]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size0]
+E   1 failed in 7.05s
+_ test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size1] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_5/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size1] _
+E
+E   request = <FixtureRequest for <Coroutine test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size1]>>
+E   size = (80, 24), choice = 'confirm-button'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("choice", ["escape", "cancel-button", "confirm-button"])
+E       @private_profile_test
+E       async def test_full_trace_view_requires_real_keyboard_confirmation(request, size, choice):
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+E
+E           host, path = _setup()
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               screen = host.screen
+E               await _choose_viewer(host, pilot, "full")
+E               before = path.read_bytes()
+E               apply = await _apply(host, pilot)
+E               assert isinstance(host.screen, ConfirmationDialog)
+E               assert "PII detectors missed" in host.screen.message
+E               _assert_painted(host.screen, host.screen.query_one(".dialog-message"))
+E               for selector in ("#cancel-button", "#confirm-button"):
+E                   button = host.screen.query_one(selector, Button)
+E                   _assert_painted(host.screen, button)
+E                   assert str(button.label) in _painted(host, button)
+E               assert path.read_bytes() == before
+E               if choice == "escape":
+E                   await pilot.press("escape")
+E               else:
+E                   host.screen.query_one("#" + choice, Button).focus()
+E                   await pilot.press("enter")
+E               await _settle(host, pilot)
+E               assert host.screen is screen
+E   >           assert screen.focused is apply
+E   E           AssertionError: assert Checkbox(id='settings-console-show-model-thinking', classes='-on') is Button(id='settings-console-exchange-capture-apply', classes='-style-default -primary', variant='primary')
+E   E            +  where Checkbox(id='settings-console-show-model-thinking', classes='-on') = SettingsScreen(classes='shell-header-compact').focused
+E
+E   Tests/UI/test_settings_capture_journeys.py:88: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:58:42.950 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:58:42.959 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:58:42.959 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:58:42.960 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:58:42.974 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:42.984 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_5/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:42.986 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:42.986 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:42.987 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:42.987 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:43.003 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_5/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:43.004 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:43.004 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:43.070 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:58:43.089 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:58:43.089 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:58:43.090 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:58:43.090 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:58:43.162 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_5/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:43.220 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-8lxr090y/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:43.365 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-8lxr090y/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:43.377 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:43.378 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-8lxr090y/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:43.379 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-8lxr090y/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:58:43.501 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:58:43.542 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:58:43.586 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:58:43.629 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:58:43.670 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:58:43.711 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:58:43.711 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-8lxr090y/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:58:43.750 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:58:43.750 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:58:43.758 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:58:43.828 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:58:43.828 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_5/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:58:43.828 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:58:43.882 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:58:43.882 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:58:43.883 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:58:43.883 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.870 seconds
+E   2026-09-17 17:58:43.883 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.075s (8.6%)
+E   2026-09-17 17:58:43.884 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:58:43.884 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.001s (0.2%)
+E   2026-09-17 17:58:43.884 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:43.884 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:43.885 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:58:43.885 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:58:43.886 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:58:44.103 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:58:44.191 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:58:47.967 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['exchange_capture', 'exchange_capture_detail', 'exchange_capture_pii_redaction', 'trace_viewer_profile', 'trace_viewer_profile_version']}, deletes={}
+E   2026-09-17 17:58:47.977 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_5/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:58:47.979 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:47.980 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:58:47.980 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:58:47.981 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:58:48.021 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-matrix-001/test_full_trace_view_requires_5/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:58:48.021 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:58:48.022 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:58:48.263 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   5.30s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size1]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size1]
+E   1 failed in 7.60s
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size0]
+FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size1]
+FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size0]
+FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size1]
+FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size0]
+FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size1]
+6 failed in 52.71s

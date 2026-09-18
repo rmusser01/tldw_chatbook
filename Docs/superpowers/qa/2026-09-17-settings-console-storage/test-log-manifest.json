@@ -1,0 +1,98 @@
+[
+  {
+    "file": "instant-save-red.txt",
+    "source": "settings-32761-instant-red.txt",
+    "original_sha256": "d90a7c4e08e71837d182ae90cdaef527b711d444c0fb18eb85d649537ba4415d",
+    "stored_sha256": "0db68b86827c5e781eaa235b8031f0e38c83ac476d47a9062066641218cfc93a"
+  },
+  {
+    "file": "ordering-red.txt",
+    "source": "settings-32761-ordering-red.txt",
+    "original_sha256": "b0608cef30d5f79371da5f4c3b103a40879dbd4c2b4e79c244d0d4e31ce57705",
+    "stored_sha256": "3579b47cd0ba9717941a3f417673e0a5e0392492afc97e521e153bd849c5be1c"
+  },
+  {
+    "file": "recreation-red.txt",
+    "source": "settings-32761-recreation-red.txt",
+    "original_sha256": "d6cdd3051d15a6ea2a56a84f3c3b065488cb685419eb24a3ed3742d6be18b914",
+    "stored_sha256": "52aa15a010e3d65ff13d42d6c2e7a7b124349003d971f09fb686342996b1351c"
+  },
+  {
+    "file": "receipt-red.txt",
+    "source": "settings-32761-receipt-red.txt",
+    "original_sha256": "b488f84ca6e53fd3c356d8681dedfb1e972977714bb85432d3c1c47098758115",
+    "stored_sha256": "0c09484bb6ff490ae7672d14cb12c7ca8d1408b360d5297aa3fe0450ab7215c5"
+  },
+  {
+    "file": "instant-final.txt",
+    "source": "settings-32761-instant-receipts-final.txt",
+    "original_sha256": "837cc33175e1d69df6bb35bcc8044f3186fbbaeb884f0b5cd21b3ce57a6269ad",
+    "stored_sha256": "837cc33175e1d69df6bb35bcc8044f3186fbbaeb884f0b5cd21b3ce57a6269ad"
+  },
+  {
+    "file": "geometry-red.txt",
+    "source": "settings-32761-geometry-red.txt",
+    "original_sha256": "a660a69fdd8d98eadbb9375afdf3b809b322d51540ee60ce1beab58eb2a70def",
+    "stored_sha256": "2f88783dea8d3d5431544077b3240a19d664e11d995d00df48bd77cba658ca76"
+  },
+  {
+    "file": "geometry-final.txt",
+    "source": "settings-32761-geometry-final.txt",
+    "original_sha256": "aaefc915334e08fb4b2d5a9ba8c5a2357167c1a2e6cd4b399101b53c0b98ccb6",
+    "stored_sha256": "aaefc915334e08fb4b2d5a9ba8c5a2357167c1a2e6cd4b399101b53c0b98ccb6"
+  },
+  {
+    "file": "staged-recovery-final.txt",
+    "source": "settings-32761-layout-recovery-final.txt",
+    "original_sha256": "1aad09a45c55b214448fa8da0d6d066b5f46ef7fd82a66f7fb8d4171f1523759",
+    "stored_sha256": "1aad09a45c55b214448fa8da0d6d066b5f46ef7fd82a66f7fb8d4171f1523759"
+  },
+  {
+    "file": "originals-final.txt",
+    "source": "settings-32761-originals-final.txt",
+    "original_sha256": "4b692645cb46a93add6bedb876a3e42a8098869ea693b363bf7708ae359e5c45",
+    "stored_sha256": "4b692645cb46a93add6bedb876a3e42a8098869ea693b363bf7708ae359e5c45"
+  },
+  {
+    "file": "governance-final.txt",
+    "source": "settings-32761-governance-final.txt",
+    "original_sha256": "ae37a2074159ab90deca7ea31e473117849ba2c36c4145a3af58564551d5caa5",
+    "stored_sha256": "ae37a2074159ab90deca7ea31e473117849ba2c36c4145a3af58564551d5caa5"
+  },
+  {
+    "file": "preflight.txt",
+    "source": "settings-32761-preflight.txt",
+    "original_sha256": "75173b448e914bd8c809c2e341b06ff9e119193ba5fb8eb56856533537defcca",
+    "stored_sha256": "75173b448e914bd8c809c2e341b06ff9e119193ba5fb8eb56856533537defcca"
+  },
+  {
+    "file": "mermaid-final.txt",
+    "source": "settings-32761-mermaid-final.txt",
+    "original_sha256": "96875c87d12bfbdb5f17d16b6d61b68cf1c503158e7228385e0c1040d7d0bca7",
+    "stored_sha256": "96875c87d12bfbdb5f17d16b6d61b68cf1c503158e7228385e0c1040d7d0bca7"
+  },
+  {
+    "file": "static-small.txt",
+    "source": "settings-32761-static-small-final.txt",
+    "original_sha256": "cd7f41cf1ad5ba8b6263217889865f18d2b85df5ad631a05d6d321f51fd1b7b2",
+    "stored_sha256": "cd7f41cf1ad5ba8b6263217889865f18d2b85df5ad631a05d6d321f51fd1b7b2"
+  },
+  {
+    "file": "static-large.json",
+    "source": "settings-32761-static-large.json",
+    "original_sha256": "8f1c2d74ad2db186d0fd17955bd5c2073db31d38b584851f823e729686675b34",
+    "stored_sha256": "8f1c2d74ad2db186d0fd17955bd5c2073db31d38b584851f823e729686675b34"
+  },
+  {
+    "file": "diagnostics-review.txt",
+    "source": "settings-32761-diagnostics-review.txt",
+    "original_sha256": "d981d5f2ccde08d9e4eac06ff88d3d90d17535e5a0a00ebfcaceee59ecf18bd5",
+    "stored_sha256": "d981d5f2ccde08d9e4eac06ff88d3d90d17535e5a0a00ebfcaceee59ecf18bd5"
+  },
+  {
+    "file": "task-id-audit.json",
+    "source": "settings-32761-id-final.json",
+    "original_sha256": "0899b19475fb38e29900dc3c64e63e9b50ba509725052aa731fd2abac7381fde",
+    "stored_sha256": "0899b19475fb38e29900dc3c64e63e9b50ba509725052aa731fd2abac7381fde"
+  }
+]

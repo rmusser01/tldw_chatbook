@@ -2,7 +2,7 @@
 target: "Library ▸ Notes sub-screen: create / edit / Obsidian import / lasting sync / Folder files, first-timer and power user"
 total_score: 25
 max_score: 40
-na_heuristics: 
+na_heuristics:
 p0_count: 1
 p1_count: 7
 timestamp: 2026-09-15T06-47-45Z

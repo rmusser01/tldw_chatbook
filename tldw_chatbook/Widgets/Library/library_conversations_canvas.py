@@ -46,7 +46,7 @@ class LibraryConversationsCanvas(
     ) -> None:
         super().__init__(**kwargs)
         self.canvas = canvas
-        self.styles.width = "100%"
+        self.add_class("w-full")
 
     def sync_state(self, canvas: LibraryConversationsCanvasState) -> None:
         """Refresh the canvas from new state.
@@ -124,6 +124,7 @@ class LibraryConversationsCanvas(
                     value=self.canvas.query,
                     placeholder="Filter conversations… (Enter)",
                     id="library-conversations-filter",
+                    select_on_focus=False,
                 )
             yield Static(
                 self.canvas.empty_copy,
@@ -192,7 +193,7 @@ class LibraryConversationsCanvas(
             # pane's narrow floor. The ``> .ds-toolbar > .library-canvas-action``
             # width switches to ``auto`` alongside (_agentic_terminal.tcss).
             summary_row = Horizontal(classes="ds-toolbar")
-            summary_row.styles.height = "auto"
+            summary_row.add_class("h-auto")
             with summary_row:
                 # task-2853 review round 2: the SAME unbounded-width defect
                 # proved live in the Media canvas's identical counter --
@@ -224,7 +225,7 @@ class LibraryConversationsCanvas(
             actions_row = Horizontal(
                 id="library-conversations-select-actions", classes="ds-toolbar"
             )
-            actions_row.styles.height = "auto"
+            actions_row.add_class("h-auto")
             with actions_row:
                 clear = Button(
                     library_disabled_action_label("Clear", actions_disabled),
@@ -283,6 +284,7 @@ class LibraryConversationsCanvas(
             value=self.canvas.query,
             placeholder="Filter conversations… (Enter)",
             id="library-conversations-filter",
+            select_on_focus=False,
         )
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy
@@ -334,7 +336,7 @@ class LibraryConversationsCanvas(
                 )
                 button.set_class(row.selected, "library-conversation-row-selected")
                 button.disabled = actions_disabled
-                button.styles.height = 2
+                button.add_class("h-2")
                 button.styles.min_height = 2
                 yield button
 

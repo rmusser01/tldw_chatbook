@@ -1,0 +1,27 @@
+{
+  "pid": 1688,
+  "cells": [],
+  "runner_sha256": "e1fe2f53df2de61240f15ffce40ce6a8ad5687a86bfaf6933e7339fda3be85e4",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "93eb03e4c676fc1010362a01e048dcd437cf2dfa535a689f3f040dccf59a3fb7",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3614411d7ad34a3a7aa14d9ea9816a9d0695a2b9db082efdc9f64fb3a3a11fc9",
+    "tldw_chatbook/css/features/_settings.tcss": "78b06c168be62d24d5a4ca5f5e3f117b4e1c78d4271b414e751e25b4eead88a9",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "c49b428c2ec0c00f33ca5db1487d224f16c2fb5954fe97e9e6c907714a8d3897"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Immediate save",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-console-storage/native_check.py\", line 191, in journey\n    assert (str(toggle.label) == original_label) is (\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "app_run_returned": true
+}

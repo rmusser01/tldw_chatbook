@@ -18,7 +18,13 @@ Mechanical enforcement of the design-token system:
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+import pytest
+
+from Tests.private_profile import private_profile_test
+from tldw_chatbook.css.build_css import CSS_MODULES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CSS_ROOT = REPO_ROOT / "tldw_chatbook/css"
@@ -38,9 +44,11 @@ _RAW_SPACING_RE = re.compile(
 # stripped before counting, so documented measurements never consume
 # allowance and removing one never creates allowance for a real literal.
 # Active counts verified 2026-09-11 (_lists.tcss has comment-only hexes).
-_HEX_GRANDFATHERED: dict[str, int] = {
-    "components/_agentic_terminal.tcss": 1,
-}
+# ADR-161 task 10 (2026-09-14): the agentic monolith's single grandfathered
+# hex (#6f7782, the Console frame border) was tokenized to $ds-console-frame
+# when the console vocabulary moved to features/_console{,_panels}.tcss, so
+# the allowance is gone -- no sheet carries an active hex today.
+_HEX_GRANDFATHERED: dict[str, int] = {}
 
 # Every sheet that existed when ADR-150 landed (2026-09-11), including the
 # legacy files not in the build manifest (_unified_sidebar, _new_ingest,
@@ -83,20 +91,19 @@ def _strip_comments(css: str) -> str:
 
 
 def _source_modules() -> list[Path]:
-    """All TCSS source modules, excluding generated bundles and themes."""
-    modules: list[Path] = []
+    """Active manifest sources and owned TCSS sheets, excluding generated output."""
+    modules = {CSS_ROOT / relative for relative in CSS_MODULES}
     for subdir in ("core", "layout", "components", "features", "utilities"):
-        directory = CSS_ROOT / subdir
-        if directory.is_dir():
-            modules.extend(sorted(directory.glob("*.tcss")))
-    return modules
+        modules.update((CSS_ROOT / subdir).glob("*.tcss"))
+    return sorted(modules)
 
 
 def _defined_tokens() -> set[str]:
     return set(_DEFINITION_RE.findall(TOKENS_FILE.read_text(encoding="utf-8")))
 
 
-def test_all_referenced_ds_tokens_are_defined() -> None:
+@private_profile_test
+def test_all_referenced_ds_tokens_are_defined(request) -> None:
     """No sheet may reference a $ds-* token that _variables.tcss lacks."""
     defined = _defined_tokens()
     assert "$ds-space-1" in defined, "token catalog sanity check failed"
@@ -115,14 +122,16 @@ def test_all_referenced_ds_tokens_are_defined() -> None:
     )
 
 
-def test_defined_tokens_have_no_orphans_in_catalog() -> None:
+@private_profile_test
+def test_defined_tokens_have_no_orphans_in_catalog(request) -> None:
     """Token definitions must be unique — a redefinition is a silent override."""
     definitions = _DEFINITION_RE.findall(TOKENS_FILE.read_text(encoding="utf-8"))
     duplicates = sorted({tok for tok in definitions if definitions.count(tok) > 1})
     assert not duplicates, f"Duplicate token definitions: {duplicates}"
 
 
-def test_documented_design_vocabulary_is_available() -> None:
+@private_profile_test
+def test_documented_design_vocabulary_is_available(request) -> None:
     """ADR-150's catalog must exist even before a feature consumes a token."""
     required = {
         "$ds-space-0",
@@ -157,7 +166,8 @@ def test_documented_design_vocabulary_is_available() -> None:
     )
 
 
-def test_hex_literals_are_ratcheted_outside_token_definitions() -> None:
+@private_profile_test
+def test_hex_literals_are_ratcheted_outside_token_definitions(request) -> None:
     """Raw hex colors may only shrink, never grow, outside token definitions.
 
     Comments are stripped before counting: only active declarations are
@@ -178,13 +188,15 @@ def test_hex_literals_are_ratcheted_outside_token_definitions() -> None:
         )
 
 
-def test_hex_ratchet_ignores_comments() -> None:
+@private_profile_test
+def test_hex_ratchet_ignores_comments(request) -> None:
     """Regression: hex strings inside /* */ comments must not be counted."""
     css = "/* measured #51677e at 3:1 */\n.card { color: #ff8fa3; }\n"
     assert _HEX_RE.findall(_strip_comments(css)) == ["#ff8fa3"]
 
 
-def test_new_sheets_must_use_spacing_tokens() -> None:
+@private_profile_test
+def test_new_sheets_must_use_spacing_tokens(request) -> None:
     """Modules added after ADR-150 may not hardcode numeric padding/margin."""
     for module in _source_modules():
         relative = str(module.relative_to(CSS_ROOT))
@@ -197,3 +209,47 @@ def test_new_sheets_must_use_spacing_tokens() -> None:
             f"{relative} is a post-ADR-150 sheet and must use the "
             "$ds-space-* scale instead of raw numeric padding/margin."
         )
+
+
+@private_profile_test
+def test_active_css_extension_is_in_hex_floor(request, tmp_path, monkeypatch):
+    sheet = tmp_path / "components" / "active.css"
+    sheet.parent.mkdir()
+    sheet.write_text("Widget { color: #abcdef; }")
+    unused = sheet.parent / "unused.css"
+    unused.write_text("Widget { color: #123456; }")
+    monkeypatch.setattr(sys.modules[__name__], "CSS_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "CSS_MODULES", ["components/active.css"])
+    assert sheet in _source_modules()
+    assert unused not in _source_modules()
+    with pytest.raises(AssertionError, match="components/active.css"):
+        test_hex_literals_are_ratcheted_outside_token_definitions.__wrapped__(request)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_section_header_preserves_global_and_stats_computed_geometry(request):
+    """The former Stats duplicate contributes the same global header geometry."""
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical
+    from textual.widgets import Label
+
+    source = "\n".join((CSS_ROOT / name).read_text() for name in CSS_MODULES)
+
+    class HeaderProbe(App):
+        CSS = source
+
+        def compose(self) -> ComposeResult:
+            yield Label("Global", id="global-header", classes="section-header")
+            with Vertical(id="stats-container"):
+                yield Label("Stats", id="stats-header", classes="section-header")
+
+    async with HeaderProbe().run_test() as pilot:
+        await pilot.pause()
+        for widget_id in ("global-header", "stats-header"):
+            header = pilot.app.query_one(f"#{widget_id}")
+            assert tuple(header.styles.padding) == (0, 0, 0, 1)
+            # Screen .section-header in _chat.tcss overrides the generic margin.
+            assert tuple(header.styles.margin) == (1, 0, 1, 0)
+            assert header.styles.border_left[0] == "thick"
+            assert header.styles.border_left[1] == header.styles.color

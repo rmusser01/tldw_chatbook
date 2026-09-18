@@ -1,0 +1,77 @@
+{
+  "root": "/private/tmp/tldw-32748-generation-native-001",
+  "pid": 84145,
+  "passed": true,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "cells": 4,
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "2750c66c3ae7e38aa875be8ec4071f181a3dcbe2b341db0adc5800e53da864ef",
+    "tldw_chatbook/css/features/_settings.tcss": "aa9cda96e3218e701f105b3d3a7950b2fd8bed55af8e3b054424dd5ad3ed3f11",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "bfe422026c935a5c1133b2990315477bbe966f579456ee69e63a1fd4cd2c354f",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "5fdd48f3923c9b79712e385d9c4767632ea25e46aecae26e3f1701ed1b608e4e"
+  },
+  "database_checks": {
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_sync_state.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/library_collections.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/chachanotes.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/workspaces.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/agent_runs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/media.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/evals.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/prompts.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/subscriptions.db": [
+      [
+        "ok"
+      ]
+    ]
+  },
+  "defaults_unchanged": true,
+  "normal_stop": true,
+  "error_lines": [],
+  "qualification": "Earlier implementation before the focus-reveal fixes; final native run additionally qualifies live resize/paint against the final source. Captures from this earlier run were not used as final visual evidence.",
+  "pid_absent_before_terminal_close": true,
+  "owned_terminal_closed": true
+}

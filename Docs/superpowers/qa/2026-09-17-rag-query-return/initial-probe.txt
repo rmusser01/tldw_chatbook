@@ -1,0 +1,29 @@
+..FF....                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_reverse_tab_returns_to_current_query_after_resize[start1-end1-textual-dark] _
+Tests/UI/test_library_rag_query_return.py:121: in test_reverse_tab_returns_to_current_query_after_resize
+    assert screen.focused is current, trace
+E   AssertionError: [{'label': 'evidence action before resize', 'focus': 'library-rag-open-result-0', 'original_query_current': True, 'ori...t+tab', 'focus': 'library-row-browse-notes', 'original_query_current': True, 'original_query_mounted': True, ...}, ...]
+E   assert Vertical(id='library-rag-result-card-0', classes='library-rag-result-card') is SelectAllOnFocusingClickInput(id='library-rag-query-input', classes='-valid')
+E    +  where Vertical(id='library-rag-result-card-0', classes='library-rag-result-card') = LibraryScreen(classes='shell-header-compact').focused
+_ test_reverse_tab_returns_to_current_query_after_resize[start1-end1-textual-light] _
+Tests/UI/test_library_rag_query_return.py:121: in test_reverse_tab_returns_to_current_query_after_resize
+    assert screen.focused is current, trace
+E   AssertionError: [{'label': 'evidence action before resize', 'focus': 'library-rag-open-result-0', 'original_query_current': True, 'ori...t+tab', 'focus': 'library-row-browse-notes', 'original_query_current': True, 'original_query_mounted': True, ...}, ...]
+E   assert Vertical(id='library-rag-result-card-0', classes='library-rag-result-card') is SelectAllOnFocusingClickInput(id='library-rag-query-input', classes='-valid')
+E    +  where Vertical(id='library-rag-result-card-0', classes='library-rag-result-card') = LibraryScreen(classes='shell-header-compact').focused
+============================= slowest 25 durations =============================
+7.92s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start1-end1-textual-dark]
+7.77s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start1-end1-textual-light]
+6.77s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start0-end0-textual-dark]
+6.59s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start0-end0-textual-light]
+5.13s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start2-end2-textual-light]
+5.08s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start2-end2-textual-dark]
+5.05s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start3-end3-textual-dark]
+4.85s call     Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start3-end3-textual-light]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start1-end1-textual-dark]
+FAILED Tests/UI/test_library_rag_query_return.py::test_reverse_tab_returns_to_current_query_after_resize[start1-end1-textual-light]
+2 failed, 6 passed in 51.87s

@@ -1,0 +1,12 @@
+..........................                                               [100%]
+============================= slowest 25 durations =============================
+2.02s call     Tests/UI/test_console_live_work_handoffs.py::test_media_handoff_evidence_bundle_reaches_capture_as_real_context
+1.89s call     Tests/UI/test_console_live_work_handoffs.py::test_notes_handoff_evidence_bundle_reaches_capture_as_real_context
+1.80s call     Tests/UI/test_console_live_work_handoffs.py::test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context
+1.76s call     Tests/UI/test_console_live_work_handoffs.py::test_source_body_is_capped_and_sanitized_before_evidence_staging[media]
+1.73s call     Tests/UI/test_console_live_work_handoffs.py::test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged[None]
+1.64s call     Tests/UI/test_console_live_work_handoffs.py::test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged[Retrieved exact passage.]
+1.54s call     Tests/UI/test_console_live_work_handoffs.py::test_source_body_is_capped_and_sanitized_before_evidence_staging[conversation]
+
+(18 durations < 1s hidden.)
+26 passed, 65 deselected in 26.77s

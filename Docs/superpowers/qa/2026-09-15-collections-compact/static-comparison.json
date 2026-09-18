@@ -1,0 +1,30 @@
+{
+  "base": "72d59ca88f",
+  "files": [
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+      "base_diagnostics": 10,
+      "current_diagnostics": 10,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_collections_capture_reader.py",
+      "base_diagnostics": 1,
+      "current_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_collection_compact_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-15-collections-compact/native_check.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "new_diagnostics": 0
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "file": "failed-state.svg",
+    "original_sha256": "576510e7293f1854c8ae841fbb0a0d402cc591b72267204605151510554cf69d",
+    "stored_sha256": "8b9f175f1940b11dcc89eadbd1a5059eaafd7594604997d6c9511f05d3fe865a"
+  },
+  {
+    "file": "textual-dark-190x55-consent.svg",
+    "original_sha256": "98953f9c007a034100dc9e61c3c1dfc55ae04dea83028d3b81abb94fcd73553a",
+    "stored_sha256": "e87cc8b13e346c7c63889db2f69e9e600bf80d70cf82417f35f9de046d85a6e6"
+  },
+  {
+    "file": "textual-dark-190x55-consent.txt",
+    "original_sha256": "b546f03e87a41a144782f6816e8e75f50c504f676c2260bfd047b596049494d0",
+    "stored_sha256": "b546f03e87a41a144782f6816e8e75f50c504f676c2260bfd047b596049494d0"
+  },
+  {
+    "file": "textual-dark-190x55-failed.svg",
+    "original_sha256": "576510e7293f1854c8ae841fbb0a0d402cc591b72267204605151510554cf69d",
+    "stored_sha256": "8b9f175f1940b11dcc89eadbd1a5059eaafd7594604997d6c9511f05d3fe865a"
+  },
+  {
+    "file": "textual-dark-190x55-failed.txt",
+    "original_sha256": "eca60a0349b6922842f68bcd800ad9db7c2ad4a9fd1c5da4065e58f2242c3da9",
+    "stored_sha256": "eca60a0349b6922842f68bcd800ad9db7c2ad4a9fd1c5da4065e58f2242c3da9"
+  }
+]

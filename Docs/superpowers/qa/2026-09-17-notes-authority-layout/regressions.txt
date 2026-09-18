@@ -1,0 +1,28 @@
+.............................................                            [100%]
+============================= slowest 25 durations =============================
+21.56s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+19.01s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+7.78s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_repack_on_shrink_without_churning_on_growth[textual-light]
+7.44s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-dark-protected]
+6.87s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_repack_on_shrink_without_churning_on_growth[textual-dark]
+6.23s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-light-size0]
+5.94s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-light-size1]
+5.91s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-dark-size0]
+5.08s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-dark-size1]
+4.40s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+4.20s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-dark-folder]
+3.65s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-light-note]
+3.32s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-dark-note]
+3.20s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-light-protected]
+3.06s call     Tests/UI/test_library_notes_empty_toolbar.py::test_legacy_list_resize_does_not_repack_a_previous_tree
+3.06s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-light-folder]
+2.92s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+2.71s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+2.59s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.14s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.94s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.87s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.87s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_ignores_tokens_and_token_definitions
+1.84s call     Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
+1.81s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+45 passed in 166.19s (0:02:46)

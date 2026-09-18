@@ -1,0 +1,19 @@
+{
+  "captures": [
+    "recent-textual-dark-170.svg",
+    "recent-textual-dark-80.svg",
+    "recent-textual-light-170.svg",
+    "recent-textual-light-80.svg",
+    "title-textual-dark-80.svg",
+    "title-textual-light-80.svg"
+  ],
+  "rendered_with": "qlmanage, 1600 px",
+  "inspected": true,
+  "observations": [
+    "Compact title text and focus border are visible in both themes.",
+    "Focused Recent imports title and expanded history are visible at both sizes.",
+    "Focused controls sit above the Start dock and fold hint.",
+    "No toast overlays obscure the inspected states."
+  ],
+  "limits": "Representative title and Recent states captured; all four controls and all 32 resize steps asserted in the native runner."
+}

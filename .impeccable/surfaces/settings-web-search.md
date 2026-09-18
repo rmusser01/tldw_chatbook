@@ -9,7 +9,7 @@ This is an ordinary extension of the incumbent Textual Settings surface. The mai
 - `tldw_chatbook/Widgets/settings_web_search_panel.py` owns the form and its direction contract.
 - `tldw_chatbook/UI/Screens/settings_web_search.py` owns the live session draft, selected backend, save state, and test-result validity across destination recreation. The panel is a disposable view.
 - `tldw_chatbook/UI/Screens/settings_screen.py` supplies category placement, the pinned save contract, and native Settings Save/Revert behavior.
-- `tldw_chatbook/css/components/_agentic_terminal.tcss` supplies production styling. Backend fields, setup requirements, notices, and guide links come from the shared `Web_Scraping/search_backend_settings.py` catalog.
+- `tldw_chatbook/css/features/_settings.tcss` supplies source styling, rebuilt into the lazy Settings sheet. Backend fields, setup requirements, notices, and guide links come from the shared `Web_Scraping/search_backend_settings.py` catalog.
 
 ## Local extension contract
 
@@ -28,3 +28,9 @@ Capture pending input before applying Clear or confirmed Revert, so a status ref
 Reviewed captures under `.impeccable/review/web-search/`: `settings-120x35.png` and `settings-80x24.png` show entry; the corresponding `settings-120x35-test.png` and `settings-80x24-test.png` show scrolled test controls. These came from mounted Textual with production CSS. SVG-to-PNG rendering used Menlo because Fira Code was unavailable; this is layout evidence, not exact terminal-font evidence. No live provider requests were made, so authentication, network reachability, quota, and provider responses remain unverified by this review.
 
 User-facing walkthroughs live in `Docs/User_Guide/settings.md` (first setup and additional backends) and `Docs/User_Guide/console/agent-runs-and-tools.md` (shared default and per-call overrides).
+
+TASK-32753 requalified this workflow after the design-system/current-dev integration.
+See `Docs/superpowers/qa/2026-09-17-settings-overview-web-search/README.md` for
+private-process regressions, four native theme/size journeys with real local
+persistence and loopback HTTP failure/retry, and the explicit external-backend
+limits. The Settings source stylesheet is now owned by `features/_settings.tcss`.

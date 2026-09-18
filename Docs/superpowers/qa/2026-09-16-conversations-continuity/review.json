@@ -1,0 +1,14 @@
+{
+  "reviewer": "conversations_continuity_review",
+  "production_findings": [],
+  "initial_evidence_gaps": [
+    "Compact empty-result recovery missing",
+    "Newer-focus step did not hold the delayed callback"
+  ],
+  "resolution": [
+    "Added both sizes in each theme and native runner",
+    "Held actual resize callbacks until Info focus and paint settled, then verified scroll and visible Info unchanged"
+  ],
+  "followup": "Reviewer confirmed both evidence gaps closed and the F6/Escape test updates match the existing shell and asynchronous focus contracts. No actionable findings.",
+  "final_native_run": "run-004 passed; assessed by primary agent."
+}

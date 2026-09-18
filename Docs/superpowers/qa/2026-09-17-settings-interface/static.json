@@ -1,0 +1,61 @@
+{
+  "baseline": "11155c15c1ec4ded85d8a8fd63b6f8b2204773b1",
+  "files": [
+    {
+      "file": "Tests/UI/test_settings_interface_keyboard_journeys.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "Tests/UI/test_settings_theme_editor.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 1,
+      "inherited_format_hunks": 2
+    },
+    {
+      "file": "Tests/UI/test_settings_theme_editor_render.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 1,
+      "inherited_format_hunks": 1
+    },
+    {
+      "file": "Tests/UI/test_settings_splash_screen_viewer.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "tldw_chatbook/Widgets/settings_theme_editor.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 16,
+      "inherited_format_hunks": 12
+    },
+    {
+      "file": "tldw_chatbook/Widgets/settings_splash_screen_viewer.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 7,
+      "inherited_format_hunks": 6
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 117,
+      "inherited_format_hunks": 81
+    },
+    {
+      "file": "Docs/superpowers/qa/2026-09-17-settings-interface/native_check.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    }
+  ]
+}

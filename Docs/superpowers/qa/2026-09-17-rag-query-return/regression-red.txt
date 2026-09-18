@@ -1,0 +1,95 @@
+FFFFFFFFFFFF                                                             [100%]
+=================================== FAILURES ===================================
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-dark] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((80, 24), 'library-row-browse-search', 'Region(x=29, y=8, width=50, height=3)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is SelectAllOnFocusingClickInput(id='library-rag-query-input', classes='-valid')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-light] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((80, 24), 'library-row-browse-search', 'Region(x=29, y=8, width=50, height=3)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is SelectAllOnFocusingClickInput(id='library-rag-query-input', classes='-valid')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-dark] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((170, 48), 'library-rag-query-input', 'Region(x=40, y=6, width=125, height=3)'), ((80, 24), 'library-row-browse-search', 'Region(x=29, y=4, width=50, height=3)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is SelectAllOnFocusingClickInput(id='library-rag-query-input', classes='-valid')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-light] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((170, 48), 'library-rag-query-input', 'Region(x=40, y=6, width=125, height=3)'), ((80, 24), 'library-row-browse-search', 'Region(x=29, y=4, width=50, height=3)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is SelectAllOnFocusingClickInput(id='library-rag-query-input', classes='-valid')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-dark] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((80, 24), 'library-row-browse-search', 'Region(x=30, y=114, width=10, height=1)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is Button(id='library-rag-open-result-0', classes='console-action-primary -style-default library-rag-result-open')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-light] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((80, 24), 'library-row-browse-search', 'Region(x=30, y=114, width=10, height=1)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is Button(id='library-rag-open-result-0', classes='console-action-primary -style-default library-rag-result-open')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-dark] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((170, 48), 'library-rag-open-result-0', 'Region(x=41, y=40, width=10, height=1)'), ((80, 24), 'library-row-browse-search', 'Region(x=30, y=118, width=10, height=1)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is Button(id='library-rag-open-result-0', classes='console-action-primary -style-default library-rag-result-open')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+_ test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-light] _
+Tests/UI/test_library_rag_query_return.py:127: in test_resize_retains_visible_focus_and_reverse_tab_returns_to_query
+    assert screen.focused is retained, observations
+E   AssertionError: [((170, 48), 'library-rag-open-result-0', 'Region(x=41, y=40, width=10, height=1)'), ((80, 24), 'library-row-browse-search', 'Region(x=30, y=118, width=10, height=1)')]
+E   assert LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') is Button(id='library-rag-open-result-0', classes='console-action-primary -style-default library-rag-result-open')
+E    +  where LibraryRailRowButton(id='library-row-browse-search', classes='h-1 -style-default library-rail-row-selected -textual-compact library-rail-row') = LibraryScreen(classes='shell-header-compact').focused
+____________ test_deferred_resize_respects_newer_focus[size0-False] ____________
+Tests/UI/test_library_rag_query_return.py:165: in test_deferred_resize_respects_newer_focus
+    assert pending
+E   assert []
+____________ test_deferred_resize_respects_newer_focus[size0-True] _____________
+Tests/UI/test_library_rag_query_return.py:165: in test_deferred_resize_respects_newer_focus
+    assert pending
+E   assert []
+____________ test_deferred_resize_respects_newer_focus[size1-False] ____________
+Tests/UI/test_library_rag_query_return.py:165: in test_deferred_resize_respects_newer_focus
+    assert pending
+E   assert []
+____________ test_deferred_resize_respects_newer_focus[size1-True] _____________
+Tests/UI/test_library_rag_query_return.py:165: in test_deferred_resize_respects_newer_focus
+    assert pending
+E   assert []
+============================= slowest 25 durations =============================
+6.91s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-False]
+6.57s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-False]
+6.38s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-True]
+5.78s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-True]
+5.75s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-light]
+5.70s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-dark]
+4.28s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-dark]
+4.12s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-light]
+1.74s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-light]
+1.74s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-dark]
+1.73s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-dark]
+1.72s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-light]
+
+(13 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-dark]
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-light]
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-dark]
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-light]
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-dark]
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-light]
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-dark]
+FAILED Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-light]
+FAILED Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-False]
+FAILED Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-True]
+FAILED Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-False]
+FAILED Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-True]
+12 failed in 55.63s

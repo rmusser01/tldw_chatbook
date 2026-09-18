@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ ││  Changes not saved. Check    ││ │  │
+│     Web Search               │  │  │ │ ││  that the config file is     ││ │  │
+│     Speech & TTS             │  │  │ │ ││  writable, then choose       ││ │  │
+│  Interface                   │  │  │ │ ││  Retry.                      ││ │  │
+│     Appearance               │  │  │ │ ││      Retry                   ││ │  │
+│     Theme                  ▁ │  │  │ │ │└──────────────────────────────┘│ │▁ │
+│     Splash Screen            │  │  │ │ │                                │ │▁ │
+│   > Console Behavior         │  │  │ │ │ Selection side chat            │ │  │
+│  Data & Privacy              │  │  │ │ │ Ephemeral chat about selected  │ │  │
+│     Storage                  │  │  │ │ │ transcript text (More Details  │ │  │
+│     Workspaces               │  │  │ │ │ / Ask in Side Chat). Nothing   │ │  │
+│     Tool Profiles            │  │  │ │ │ is persisted.                  │ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

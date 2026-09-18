@@ -1,0 +1,232 @@
+{
+  "checked_at_utc": "2026-09-16T20:10:17.470499+00:00",
+  "read_only_database_connections": true,
+  "integrity": {
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ]
+  },
+  "private_database_count": 10,
+  "source_hashes": {
+    "alpha.txt": "c8952de8ba5e4863079a6b4955a2ee3a32e29bae1f9c792bb44d9a794663edf1",
+    "permission.txt": "5b5b86141631e357db9b3e933b78461ff79a1ac7371236fecaadeb3cc0558f59",
+    "interrupt.txt": "3f3694ec5e160d37f502a7cf77e42db7dc3b28371b5a75a3b91bf8da8b3ab343",
+    "beta.md": "aa8606559e96b6f15084bbdafa618ffa9146f4a1fa9359cf8fc2b0f5acf912f4"
+  },
+  "source_hashes_unchanged": true,
+  "default_profile_hashes_unchanged": true,
+  "default_profile_files_checked": [
+    "/Users/macbook-dev/.config/tldw_cli/config.toml",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json"
+  ],
+  "media": [
+    {
+      "id": 1,
+      "title": "alpha",
+      "type": "plaintext",
+      "version": 1,
+      "deleted": 0,
+      "is_trash": 0,
+      "source": "alpha.txt",
+      "content_bytes": 73,
+      "content_sha256": "c8952de8ba5e4863079a6b4955a2ee3a32e29bae1f9c792bb44d9a794663edf1"
+    },
+    {
+      "id": 2,
+      "title": "beta",
+      "type": "plaintext",
+      "version": 1,
+      "deleted": 0,
+      "is_trash": 0,
+      "source": "beta.md",
+      "content_bytes": 82,
+      "content_sha256": "aa8606559e96b6f15084bbdafa618ffa9146f4a1fa9359cf8fc2b0f5acf912f4"
+    },
+    {
+      "id": 3,
+      "title": "permission",
+      "type": "plaintext",
+      "version": 1,
+      "deleted": 0,
+      "is_trash": 0,
+      "source": "permission.txt",
+      "content_bytes": 65,
+      "content_sha256": "5b5b86141631e357db9b3e933b78461ff79a1ac7371236fecaadeb3cc0558f59"
+    },
+    {
+      "id": 4,
+      "title": "interrupt",
+      "type": "plaintext",
+      "version": 1,
+      "deleted": 0,
+      "is_trash": 0,
+      "source": "interrupt.txt",
+      "content_bytes": 18000000,
+      "content_sha256": "3f3694ec5e160d37f502a7cf77e42db7dc3b28371b5a75a3b91bf8da8b3ab343"
+    }
+  ],
+  "document_versions": [
+    {
+      "media_id": 1,
+      "version_number": 1,
+      "analysis_content": "",
+      "content_sha256": "c8952de8ba5e4863079a6b4955a2ee3a32e29bae1f9c792bb44d9a794663edf1"
+    },
+    {
+      "media_id": 2,
+      "version_number": 1,
+      "analysis_content": "",
+      "content_sha256": "aa8606559e96b6f15084bbdafa618ffa9146f4a1fa9359cf8fc2b0f5acf912f4"
+    },
+    {
+      "media_id": 3,
+      "version_number": 1,
+      "analysis_content": "",
+      "content_sha256": "5b5b86141631e357db9b3e933b78461ff79a1ac7371236fecaadeb3cc0558f59"
+    },
+    {
+      "media_id": 4,
+      "version_number": 1,
+      "analysis_content": "",
+      "content_sha256": "3f3694ec5e160d37f502a7cf77e42db7dc3b28371b5a75a3b91bf8da8b3ab343"
+    }
+  ],
+  "media_chunk_count": 0,
+  "unvectorized_chunks": [
+    {
+      "media_id": 4,
+      "count": 2778,
+      "processed": 0
+    }
+  ],
+  "jobs": [
+    {
+      "job_id": "ingest-job-1",
+      "state": "done",
+      "retry_count": 0,
+      "retry_of_job_id": null,
+      "media_id": 1,
+      "superseded": 0,
+      "error": "",
+      "perform_analysis": 0,
+      "chunk_enabled": false,
+      "generate_embeddings": false
+    },
+    {
+      "job_id": "ingest-job-2",
+      "state": "done",
+      "retry_count": 0,
+      "retry_of_job_id": null,
+      "media_id": 2,
+      "superseded": 0,
+      "error": "",
+      "perform_analysis": 0,
+      "chunk_enabled": false,
+      "generate_embeddings": false
+    },
+    {
+      "job_id": "ingest-job-3",
+      "state": "done",
+      "retry_count": 0,
+      "retry_of_job_id": null,
+      "media_id": 1,
+      "superseded": 0,
+      "error": "",
+      "perform_analysis": 0,
+      "chunk_enabled": false,
+      "generate_embeddings": false
+    },
+    {
+      "job_id": "ingest-job-4",
+      "state": "failed",
+      "retry_count": 0,
+      "retry_of_job_id": null,
+      "media_id": null,
+      "superseded": 1,
+      "error": "Failed to ingest plaintext file: [Errno 13] Permission denied: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-lifecycle/run-",
+      "perform_analysis": 0,
+      "chunk_enabled": false,
+      "generate_embeddings": false
+    },
+    {
+      "job_id": "ingest-job-5",
+      "state": "done",
+      "retry_count": 1,
+      "retry_of_job_id": "ingest-job-4",
+      "media_id": 3,
+      "superseded": 0,
+      "error": "",
+      "perform_analysis": 0,
+      "chunk_enabled": false,
+      "generate_embeddings": false
+    },
+    {
+      "job_id": "ingest-job-6",
+      "state": "failed",
+      "retry_count": 0,
+      "retry_of_job_id": null,
+      "media_id": null,
+      "superseded": 1,
+      "error": "Interrupted by app restart",
+      "perform_analysis": 0,
+      "chunk_enabled": true,
+      "generate_embeddings": false
+    },
+    {
+      "job_id": "ingest-job-7",
+      "state": "done",
+      "retry_count": 1,
+      "retry_of_job_id": "ingest-job-6",
+      "media_id": 4,
+      "superseded": 0,
+      "error": "",
+      "perform_analysis": 0,
+      "chunk_enabled": true,
+      "generate_embeddings": false
+    }
+  ],
+  "durable_attempt_count": 7,
+  "unsuperseded_visible_job_count": 5,
+  "conversations": 0,
+  "messages": 0,
+  "log_diagnostics": {
+    "error_lines": [
+      "2026-09-16 13:03:15 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'",
+      "2026-09-16 13:04:07 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'",
+      "2026-09-16 13:05:00 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'"
+    ],
+    "error_count": 3,
+    "traceback_header_count": 0,
+    "faulthandler_bytes": 0,
+    "app_stopping_mentions": 4,
+    "caught_chat_sidebar_startup_errors": 3
+  }
+}

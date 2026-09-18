@@ -620,12 +620,13 @@ async def _mounted_batch(app, pilot, count: int):
 def _task_surface_harness():
     """An app whose only content is the production task-card surface.
 
-    `APP_STYLESHEETS`, not `BUNDLED_STYLESHEET`: the console's rules were
-    split out of the bundle into `screen_agentic_console.tcss`, which the
-    real app parses on first visit to the Console (see the module docstring
-    in Tests/UI/consolidated_css.py). Pinning the bundle alone would drop
-    `#console-task-surface` and every other console rule on the floor and
-    measure a surface production never renders.
+    `APP_STYLESHEETS`, not `BUNDLED_STYLESHEET`: historically the console's
+    rules were split out of the bundle into a lazily-parsed screen sheet
+    (see the module docstring in Tests/UI/consolidated_css.py). ADR-161
+    task 10 dissolved that sheet -- the console vocabulary rides the
+    bundle via features/_console{,_panels}.tcss -- so the union and the
+    bundle now coincide for console rules; APP_STYLESHEETS stays the
+    future-proof form (the library/settings split sheets still differ).
     """
     from textual.app import ComposeResult
 

@@ -1,0 +1,21 @@
+.F.F                                                                     [100%]
+=================================== FAILURES ===================================
+_______ test_answer_failure_is_visible_beside_query[textual-dark-size1] ________
+Tests/UI/test_library_rag_answer_retry.py:60: in test_answer_failure_is_visible_beside_query
+    assert "Answer failed" in painted
+E   AssertionError: assert 'Answer failed' in '                       ╭────────────╮                                             ⌃1 Home  ⌃2 Console   │ ⌃3 Library ...                                         typing in field | esc leave field | F1 · F6 · Ctrl+P · Ctrl+Q                '
+_______ test_answer_failure_is_visible_beside_query[textual-light-size1] _______
+Tests/UI/test_library_rag_answer_retry.py:60: in test_answer_failure_is_visible_beside_query
+    assert "Answer failed" in painted
+E   AssertionError: assert 'Answer failed' in '                       ╭────────────╮                                             ⌃1 Home  ⌃2 Console   │ ⌃3 Library ...                                         typing in field | esc leave field | F1 · F6 · Ctrl+P · Ctrl+Q                '
+============================= slowest 25 durations =============================
+1.65s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query[textual-dark-size0]
+1.64s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query[textual-light-size0]
+1.29s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query[textual-dark-size1]
+1.25s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query[textual-light-size1]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query[textual-dark-size1]
+FAILED Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query[textual-light-size1]
+2 failed, 2 passed in 7.65s

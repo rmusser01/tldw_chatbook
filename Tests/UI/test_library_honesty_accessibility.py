@@ -29,7 +29,7 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Widgets.Library.library_emergency_return import (
     LibraryEmergencyReturn,
 )
@@ -661,6 +661,8 @@ def test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it(
 
 class _DatabaseNoteEditorApp(ConsolidatedCSSApp):
     """Mount one Database Note editor without the Library service layer."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         baseline = NormalizedDatabaseNote(

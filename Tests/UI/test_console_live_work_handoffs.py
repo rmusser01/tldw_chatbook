@@ -11,12 +11,17 @@ import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    _CssTrueDestinationHarness,
+    _wait_for_selector,
+)
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
@@ -105,6 +110,14 @@ def _load_console_live_work_contract():
     except ModuleNotFoundError:
         pytest.fail("Console live-work launch contract module is missing")
     return ConsoleLiveWorkLaunch
+
+
+@pytest.fixture(autouse=True)
+def _disable_unrelated_splash_animation(isolate_test_environment):
+    """Exercise handoffs after startup, without the seven-second splash."""
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    save_setting_to_cli_config("splash_screen", "enabled", False)
 
 
 def _load_console_live_work_status_card_state():
@@ -363,7 +376,9 @@ async def _wait_for_destination_recovery_state(
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_phase_five_destination_blockers_expose_taxonomy_recovery_fields(
+    request,
     route,
     button_selector,
     static_selector,
@@ -417,7 +432,8 @@ class StaticReadItLaterSnapshotService:
         return {"items": [], "total": 0}
 
 
-def test_app_exposes_open_console_for_live_work_helper():
+@private_profile_test
+def test_app_exposes_open_console_for_live_work_helper(request):
     app = _build_test_app()
 
     assert hasattr(app, "open_console_for_live_work")
@@ -479,7 +495,8 @@ def test_console_setup_staged_receipt_names_the_launch_source():
     assert "finish provider setup" in receipt.lower()
 
 
-def test_open_console_for_live_work_routes_to_chat_route():
+@private_profile_test
+def test_open_console_for_live_work_routes_to_chat_route(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     seen = []
@@ -512,7 +529,8 @@ def test_open_console_for_live_work_routes_to_chat_route():
     assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
 
-def test_open_console_for_live_work_preserves_minimal_call_defaults():
+@private_profile_test
+def test_open_console_for_live_work_preserves_minimal_call_defaults(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     app.post_message = lambda message: None
@@ -771,7 +789,8 @@ def test_console_live_work_primary_action_routes_acp_session_details():
     assert card_state.primary_action.target_id == "local:acp_session:session-1"
 
 
-def test_app_console_live_work_primary_action_routes_wc_run_details():
+@private_profile_test
+def test_app_console_live_work_primary_action_routes_wc_run_details(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     app.post_message = Mock()
@@ -802,7 +821,8 @@ def test_app_console_live_work_primary_action_routes_wc_run_details():
 
 
 @pytest.mark.asyncio
-async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
+@private_profile_test
+async def test_schedules_console_follow_uses_home_dashboard_app_inputs(request):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
     app.screen_state_store.save(
@@ -851,7 +871,9 @@ async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_skeletal_destination_console_actions_are_disabled_with_recovery_copy(
+    request,
     route,
     button_id,
     expected_copy,
@@ -883,7 +905,10 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_keeps_console_follow_disabled_without_active_run():
+@private_profile_test
+async def test_schedules_destination_keeps_console_follow_disabled_without_active_run(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.open_active_home_item_in_console = Mock()
@@ -904,7 +929,8 @@ async def test_schedules_destination_keeps_console_follow_disabled_without_activ
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_routes_latest_active_run_to_console():
+@private_profile_test
+async def test_schedules_destination_routes_latest_active_run_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -946,7 +972,8 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
     )
 
 
-def test_workflows_console_launch_uses_home_dashboard_app_inputs():
+@private_profile_test
+def test_workflows_console_launch_uses_home_dashboard_app_inputs(request):
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
     app.screen_state_store.save(
@@ -980,7 +1007,8 @@ def test_workflows_console_launch_uses_home_dashboard_app_inputs():
     ]
 
 
-def test_workflows_console_launch_accepts_route_style_source():
+@private_profile_test
+def test_workflows_console_launch_accepts_route_style_source(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1003,7 +1031,8 @@ def test_workflows_console_launch_accepts_route_style_source():
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_loads_console_follow_item_off_main_thread():
+@private_profile_test
+async def test_workflows_destination_loads_console_follow_item_off_main_thread(request):
     main_thread_id = threading.get_ident()
     app = _build_test_app()
     app.home_active_work_adapter = ThreadRecordingHomeActiveWorkAdapter(
@@ -1028,7 +1057,10 @@ async def test_workflows_destination_loads_console_follow_item_off_main_thread()
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_keeps_console_launch_disabled_without_active_run():
+@private_profile_test
+async def test_workflows_destination_keeps_console_launch_disabled_without_active_run(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.open_active_home_item_in_console = Mock()
@@ -1050,7 +1082,8 @@ async def test_workflows_destination_keeps_console_launch_disabled_without_activ
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_routes_latest_active_run_to_console():
+@private_profile_test
+async def test_workflows_destination_routes_latest_active_run_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1096,7 +1129,8 @@ async def test_workflows_destination_routes_latest_active_run_to_console():
 
 
 @pytest.mark.asyncio
-async def test_workflows_destination_preserves_existing_pending_status():
+@private_profile_test
+async def test_workflows_destination_preserves_existing_pending_status(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1123,7 +1157,10 @@ async def test_workflows_destination_preserves_existing_pending_status():
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_keeps_console_follow_disabled_without_active_run():
+@private_profile_test
+async def test_watchlists_destination_keeps_console_follow_disabled_without_active_run(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.open_active_home_item_in_console = Mock()
@@ -1148,7 +1185,8 @@ async def test_watchlists_destination_keeps_console_follow_disabled_without_acti
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_routes_latest_active_run_to_console():
+@private_profile_test
+async def test_watchlists_destination_routes_latest_active_run_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1171,7 +1209,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         )
     )
     app.open_active_home_item_in_console = Mock()
-    host = DestinationHarness(app, "watchlists_collections")
+    # The inspector action sits below its content and needs the real app's
+    # scrolling styles, which the lightweight destination harness omits.
+    host = _CssTrueDestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
@@ -1182,6 +1222,10 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         assert "Daily security feed" in str(button.label)
         assert "failed" in _screen_static_text(screen)
 
+        button.scroll_visible(immediate=True, force=True)
+        await pilot.pause()
+        assert button.region.bottom <= screen.region.bottom
+        assert screen.get_widget_at(*button.region.center)[0] is button
         await pilot.click("#watchlists-follow-in-console")
         await pilot.pause(0.1)
 
@@ -1192,7 +1236,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
+    request,
     monkeypatch,
 ):
     from tldw_chatbook.UI.Watchlists_Modules import watchlists_console_handoff
@@ -1230,7 +1276,10 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_retries_console_follow_after_initial_adapter_failure():
+@private_profile_test
+async def test_watchlists_destination_retries_console_follow_after_initial_adapter_failure(
+    request,
+):
     """Console follow recovers after the adapter's first build fails.
 
     **task-2769 -- this test is load-sensitive, and the residue is real.**
@@ -1342,7 +1391,8 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_click_uses_item_promised_by_button_label():
+@private_profile_test
+async def test_watchlists_destination_click_uses_item_promised_by_button_label(request):
     app = _build_test_app()
     app.home_active_work_adapter = RotatingHomeActiveWorkAdapter(
         (
@@ -1389,7 +1439,8 @@ async def test_watchlists_destination_click_uses_item_promised_by_button_label()
 
 
 @pytest.mark.asyncio
-async def test_watchlists_destination_escapes_console_follow_markup_labels():
+@private_profile_test
+async def test_watchlists_destination_escapes_console_follow_markup_labels(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
@@ -1418,7 +1469,10 @@ async def test_watchlists_destination_escapes_console_follow_markup_labels():
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_keeps_console_launch_disabled_without_digest_output():
+@private_profile_test
+async def test_schedules_destination_keeps_console_launch_disabled_without_digest_output(
+    request,
+):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.local_media_reading_service = StaticReadingDigestService(())
@@ -1447,7 +1501,8 @@ async def test_schedules_destination_keeps_console_launch_disabled_without_diges
 
 
 @pytest.mark.asyncio
-async def test_schedules_destination_routes_latest_digest_output_to_console():
+@private_profile_test
+async def test_schedules_destination_routes_latest_digest_output_to_console(request):
     app = _build_test_app()
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(())
     app.local_media_reading_service = StaticReadingDigestService(
@@ -1496,7 +1551,10 @@ async def test_schedules_destination_routes_latest_digest_output_to_console():
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_keeps_console_launch_disabled_without_chatbooks():
+@private_profile_test
+async def test_artifacts_destination_keeps_console_launch_disabled_without_chatbooks(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(())
     app.open_console_for_live_work = Mock()
@@ -1529,7 +1587,8 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_launches_latest_local_chatbook_in_console():
+@private_profile_test
+async def test_artifacts_destination_launches_latest_local_chatbook_in_console(request):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1593,7 +1652,10 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_reopens_console_saved_chatbook_with_provenance():
+@private_profile_test
+async def test_artifacts_destination_reopens_console_saved_chatbook_with_provenance(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1661,7 +1723,10 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_provena
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_reopens_console_saved_chatbook_with_citation_metadata():
+@private_profile_test
+async def test_artifacts_destination_reopens_console_saved_chatbook_with_citation_metadata(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1731,7 +1796,10 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_citatio
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch():
+@private_profile_test
+async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_launch(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1791,7 +1859,10 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbook():
+@private_profile_test
+async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbook(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = StaticLocalChatbookService(
         (
@@ -1828,7 +1899,10 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback():
+@private_profile_test
+async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback(
+    request,
+):
     app = _build_test_app()
     chatbook_service = StaticLocalChatbookService(
         (
@@ -1880,7 +1954,10 @@ async def test_artifacts_destination_consumes_pending_chatbook_target_before_lat
 
 
 @pytest.mark.asyncio
-async def test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state():
+@private_profile_test
+async def test_artifacts_destination_distinguishes_chatbook_service_failure_from_empty_state(
+    request,
+):
     app = _build_test_app()
     app.local_chatbook_service = RaisingLocalChatbookService()
     app.open_console_for_live_work = Mock()
@@ -1907,7 +1984,8 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
 
 
 @pytest.mark.asyncio
-async def test_console_renders_pending_launch_context():
+@private_profile_test
+async def test_console_renders_pending_launch_context(request):
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
     app.pending_handoffs.stage(
@@ -2021,8 +2099,8 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         context="live work handoffs screen",
         app_instance=resolved_app,
     )
-    screen._console_chat_store = ConsoleChatStore()
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._console_chat_store = ConsoleChatStore()
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     screen._task_resume_state = TaskResumeState()
@@ -2046,17 +2124,18 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
 
 
 @pytest.mark.asyncio
-async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it():
+@private_profile_test
+async def test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it(
+    request,
+):
     """D3: a staged live-work launch (with its real evidence bundle) must
     survive screen re-creation; PR-T1 C1: a launch staged AFTER it must
     supersede it on the next consume.
 
-    ``ChatScreen`` instances are never reused across navigation --
-    ``TldwCli._create_navigation_screen`` builds a fresh one on every
-    ``NavigateToScreen`` -- so continuity depends entirely on
-    ``save_state``/``restore_state`` carrying
-    ``_pending_console_launch_context`` (and its sibling
-    ``_console_evidence_sent_notice``) across. Before D3, neither
+    This test explicitly constructs a fresh screen to qualify the saved-state
+    fallback; ordinary navigation now reuses the mounted Console. The fresh
+    screen still needs ``save_state``/``restore_state`` to carry the launch
+    and its sent notice. Before D3, neither
     ``_serialize_native_console_state`` nor ``_restore_native_console_state``
     touched either field at all: ANY navigation away from Console silently
     dropped staged evidence with no error and no user-visible warning.
@@ -2069,7 +2148,7 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
     Once D3 made it survive, the leftover store entry was not a decoy at
     all -- it was the user's newest "Use in Console" click, left invisible
     and later spent on an unrelated message (see
-    ``_supersede_resident_console_launch_from_store``). The store entry is
+    ``_consume_pending_console_launch``). The store entry is
     now claimed and staged, and the assertions below are inverted to match:
     the newer launch becomes resident and the channel is drained.
 
@@ -2125,8 +2204,8 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
         # Simulate a leftover "evidence sent" memory from an earlier send in
         # this same screen instance (PR-4/task-1) coexisting with the launch
         # just consumed via the handoff store --
-        # `_consume_pending_console_launch` never touches this field, unlike
-        # `_stage_console_library_rag_launch`, which clears it on new staging.
+        # Fresh staging clears this field; subsequent state restoration must
+        # preserve a notice set after that staging.
         screen1._console_evidence_sent_notice = 2
 
         state = screen1.save_state()
@@ -2184,7 +2263,8 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
 
 
 @pytest.mark.asyncio
-async def test_locked_console_shows_staged_evidence_receipt_task_2852():
+@private_profile_test
+async def test_locked_console_shows_staged_evidence_receipt_task_2852(request):
     """Task-2852 AC#2, end to end: a Library "Use in Console" handoff that
     lands on a locked (setup-incomplete) Console must show a visible
     receipt naming what's staged -- the original UAT repro found zero trace
@@ -2227,7 +2307,8 @@ async def test_locked_console_shows_staged_evidence_receipt_task_2852():
 
 
 @pytest.mark.asyncio
-async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852():
+@private_profile_test
+async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852(request):
     """Task-2852 AC#3 regression guard: once Console is configured, PR
     #1320's staged-evidence strip must render exactly as before, and the
     new locked-Console receipt (which only exists inside the setup modal's
@@ -2278,7 +2359,8 @@ async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852()
 
 
 @pytest.mark.asyncio
-async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel():
+@private_profile_test
+async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel(request):
     """PR-T1 C1: superseding is scoped to an actually-pending store entry.
 
     The C1 fix loosened ``_consume_pending_console_launch``'s resident-wins
@@ -2324,53 +2406,57 @@ async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel()
 
 
 @pytest.mark.asyncio
-async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch():
-    """PR-T1 C1 pilot regression: the real stage A -> leave -> stage B flow.
-
-    Drives the exact user path the final review reconstructed, through the
-    production navigation machinery rather than direct restore calls:
-
-    1. A "Use in Console" handoff (A) lands and Console displays it.
-    2. The user navigates away; ``save_state`` persists A (D3).
-    3. A second handoff (B) is staged while Console is not mounted.
-    4. The user returns to Console.
-
-    Before the fix, ``restore_state`` (which runs BEFORE compose) made A
-    resident, compose's consume returned A, and B was never displayed --
-    the second click looked dead. B then sat in the store until some later
-    send claimed it from inside a send gate and silently prepended it to an
-    unrelated message.
-
-    Asserted here: B is what the rebuilt Console displays AND stages, and
-    the channel is empty afterwards so nothing is left to ambush a send.
-    """
+@pytest.mark.parametrize("resident_launch", [True, False])
+@private_profile_test
+async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch(
+    request,
+    resident_launch,
+):
+    """A first or replacement live-work launch paints on the reused Console."""
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
-
+    channel = HandoffChannel.CONSOLE_LIVE_WORK
     app = _build_test_app()
-    launch_a = ConsoleLiveWorkLaunch.from_values(
-        source="Library Search/RAG",
-        title="Launch A (stale survivor)",
-        payload={"source_id": "note-a"},
-        status="staged",
-        recovery="Review citations before sending.",
-        action_label="Review evidence in Console",
-    )
-    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
+    if resident_launch:
+        app.pending_handoffs.stage(
+            channel,
+            ConsoleLiveWorkLaunch.from_values(
+                source="Library Search/RAG",
+                title="Launch A (stale survivor)",
+                payload={"source_id": "note-a"},
+                status="staged",
+            ),
+        )
 
     async with app.run_test(size=(180, 40)) as pilot:
         screen1 = await _wait_for_production_chat_screen(app, pilot)
-        await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
-        assert screen1._pending_console_launch_context.title == (
-            "Launch A (stale survivor)"
+        initial_card = (
+            "#console-pending-launch-card"
+            if resident_launch
+            else "#console-live-work-source-readiness"
         )
+        await _wait_for_selector(screen1, pilot, initial_card)
+        if resident_launch:
+            assert (
+                screen1._pending_console_launch_context.title
+                == "Launch A (stale survivor)"
+            )
+        else:
+            assert screen1._pending_console_launch_context is None
+        draft = "Keep my unrelated unfinished draft."
+        composer = screen1._console_composer_or_none()
+        composer.load_draft(draft)
+        store = screen1._console_chat_store
+        keeper = store.active_session_id
 
-        # Leave Console. `save_state` persists A onto the app's per-screen
-        # state, which the next Console instance restores before compose.
         app.post_message(NavigateToScreen("library"))
-        await pilot.pause()
+        deadline = time.monotonic() + 6
+        while (
+            type(app.screen).__name__ != "LibraryScreen" and time.monotonic() < deadline
+        ):
+            await pilot.pause(0.02)
+        assert type(app.screen).__name__ == "LibraryScreen"
         await pilot.pause()
 
-        # The user stages a SECOND result while standing in Library.
         launch_b = ConsoleLiveWorkLaunch.from_values(
             source="Library Search/RAG",
             title="Launch B (the click that must not die)",
@@ -2379,25 +2465,75 @@ async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_
             recovery="Review citations before sending.",
             action_label="Review evidence in Console",
         )
-        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_b)
-
+        revision = app.pending_handoffs.stage(channel, launch_b)
         app.post_message(NavigateToScreen("chat"))
-        await pilot.pause()
         screen2 = await _wait_for_production_chat_screen(app, pilot)
+        assert screen2 is screen1
+        deadline = time.monotonic() + 3
+        while (
+            app.pending_handoffs.exact_revision_status(channel, revision) != "settled"
+            and time.monotonic() < deadline
+        ):
+            await pilot.pause(0.02)
+        assert (
+            app.pending_handoffs.exact_revision_status(channel, revision) == "settled"
+        )
         await _wait_for_selector(screen2, pilot, "#console-pending-launch-card")
+        await pilot.pause()
 
         staged = screen2._pending_console_launch_context
-        assert staged is not None
-        assert staged.title == "Launch B (the click that must not die)"
+        assert staged is not None and staged.title == launch_b.title
+        assert (
+            screen2.query_one("#console-live-work-title").renderable
+            == f"Title: {launch_b.title}"
+        )
+        assert len(screen2.query("#console-pending-launch-card")) == 1
+        assert not screen2.query("#console-live-work-source-readiness")
+        strip = screen2.query_one("#console-staged-evidence-strip")
+        assert strip.display
+        assert launch_b.title in _screen_static_text(strip)
+        assert (
+            "Launch B (the click that must not die)"
+            in screen2._build_console_staged_context_state(staged).summary
+        )
+        assert store.active_session_id == keeper
+        assert screen2._console_composer_or_none().draft_text() == draft
+        assert store.session_draft(keeper) == draft
+        assert not store.messages_for_session(keeper)
+        assert not app.pending_handoffs.has_pending(channel)
+        assert app.pending_handoffs.claim(channel) is None
 
-        # Displayed, not merely staged.
-        strip_state = screen2._build_console_staged_evidence_strip_state(staged)
-        assert strip_state.visible is True
-        tray_state = screen2._build_console_staged_context_state(staged)
-        assert "Launch B (the click that must not die)" in tray_state.summary
 
-        # And A is not lurking in the store to be spent on a later send.
-        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+@pytest.mark.parametrize("resident_launch", [True, False])
+@private_profile_test
+def test_console_live_work_presentation_failure_keeps_owned_claim_settled(
+    request,
+    resident_launch,
+):
+    """A failed repaint cannot put already-owned evidence back in the queue."""
+    launch_type = _load_console_live_work_contract()
+    app = _build_test_app()
+    screen = _bare_console_screen_for_restore(app)
+    if resident_launch:
+        screen._pending_console_launch_context = launch_type.from_values(
+            source="audit", title="Earlier launch", payload={}, status="staged"
+        )
+    screen._console_evidence_sent_notice = 2
+    stage = Mock(side_effect=RuntimeError("synthetic surface failure"))
+    screen._retrieval = SimpleNamespace(_stage_console_library_rag_launch=stage)
+    launch = launch_type.from_values(
+        source="audit", title="New launch", payload={}, status="staged"
+    )
+    channel = HandoffChannel.CONSOLE_LIVE_WORK
+    revision = app.pending_handoffs.stage(channel, launch)
+
+    assert screen._consume_pending_console_launch() == launch
+    assert app.pending_handoffs.exact_revision_status(channel, revision) == "settled"
+    assert screen._console_evidence_sent_notice is None
+    assert screen._pending_console_launch_auto_open_inspector is True
+    assert screen._consume_pending_console_launch() == launch
+    stage.assert_called_once_with(launch, allow_recompose=False)
+    assert app.pending_handoffs.claim(channel) is None
 
 
 @pytest.mark.asyncio
@@ -2495,7 +2631,8 @@ def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or
 
 
 @pytest.mark.asyncio
-async def test_console_renders_source_readiness_summary_without_pending_launch():
+@private_profile_test
+async def test_console_renders_source_readiness_summary_without_pending_launch(request):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2542,7 +2679,8 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
 
 
 @pytest.mark.asyncio
-async def test_console_wc_live_work_action_button_routes_run_details():
+@private_profile_test
+async def test_console_wc_live_work_action_button_routes_run_details(request):
     app = _build_test_app()
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
@@ -2626,7 +2764,10 @@ def _spy_screen_recompose(screen):
 
 
 @pytest.mark.asyncio
-async def test_stage_console_library_rag_launch_swaps_card_without_screen_recompose():
+@private_profile_test
+async def test_stage_console_library_rag_launch_swaps_card_without_screen_recompose(
+    request,
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2663,7 +2804,8 @@ async def test_stage_console_library_rag_launch_swaps_card_without_screen_recomp
 
 
 @pytest.mark.asyncio
-async def test_stage_console_library_rag_launch_restage_replaces_single_card():
+@private_profile_test
+async def test_stage_console_library_rag_launch_restage_replaces_single_card(request):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2693,15 +2835,18 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():
 
 
 @pytest.mark.asyncio
-async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom():
+@private_profile_test
+async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom(
+    request,
+):
     """Task-400: swaps keep the pre-move card slot; the tray stays on top.
 
     ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
     inline border, returns the same widget -- no wrapper container), so the
     tray is a direct child of the inspector rail body, mounted right after
-    the task-9 Environment/Tasks sections. Live-work cards keep anchoring
-    after the run-inspector block at the bottom. This drives the real swap
-    seam both directions.
+    the Environment, Tasks and Fleet sections. Live-work cards keep anchoring
+    inside the bounded live-work section after the run-inspector block at
+    the bottom. This drives the real swap seam both directions.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2714,12 +2859,22 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         rail_body = screen.query_one("#console-inspector-rail-body")
         tray = screen.query_one("#console-staged-context-tray")
         run_inspector = screen.query_one("#console-run-inspector")
+        live_work = screen.query_one("#console-live-work-section")
+        bounded = screen.query_one("#console-bounded-section-live-work")
+        assert live_work.parent is rail_body
+        assert bounded.parent is live_work
+        assert bounded.viewport.parent is bounded
         # Ancestry evidence: the framed tray is a DIRECT child of the rail
         # body (no frame wrapper), composed right after the task-9
-        # Environment/Tasks sections.
+        # Environment, Tasks and Fleet sections.
         assert tray.parent is rail_body
         assert tray.has_class("console-frame-quiet")
-        assert list(rail_body.children).index(tray) == 2
+        children = list(rail_body.children)
+        assert [child.id for child in children[: children.index(tray)]] == [
+            "console-environment-section",
+            "console-tasks-section",
+            "console-agent-section-subagents",
+        ]
 
         # Readiness -> pending-launch swap mounts after the run inspector.
         screen._retrieval._stage_console_library_rag_launch(
@@ -2729,9 +2884,13 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
         card = screen.query_one("#console-pending-launch-card")
         children = list(rail_body.children)
-        assert card.parent is rail_body
+        assert card.parent is bounded.viewport
+        assert len(screen.query("#console-pending-launch-card")) == 1
+        assert len(screen.query("#console-live-work-source-readiness")) == 0
         assert (
-            children.index(tray) < children.index(run_inspector) < children.index(card)
+            children.index(tray)
+            < children.index(run_inspector)
+            < children.index(live_work)
         )
 
         # Pending-launch -> readiness swap (launch resolved) re-anchors too.
@@ -2742,16 +2901,18 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         assert len(screen.query("#console-pending-launch-card")) == 0
         readiness = screen.query_one("#console-live-work-source-readiness")
         children = list(rail_body.children)
-        assert readiness.parent is rail_body
+        assert readiness.parent is bounded.viewport
+        assert len(screen.query("#console-live-work-source-readiness")) == 1
         assert (
             children.index(tray)
             < children.index(run_inspector)
-            < children.index(readiness)
+            < children.index(live_work)
         )
 
 
 @pytest.mark.asyncio
-async def test_stage_console_library_rag_launch_still_auto_opens_inspector():
+@private_profile_test
+async def test_stage_console_library_rag_launch_still_auto_opens_inspector(request):
     """The blocked-outcome auto-open must survive the recompose removal."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2825,7 +2986,8 @@ def _conversation_handoff_payload() -> ChatHandoffPayload:
         item_type="conversation",
         title="Prior planning chat",
         body=(
-            "Conversation: Prior planning chat\n"
+            "Conversation excerpt:\nuser: Schedule the review for Friday.\n\n"
+            "assistant: Bring the draft proposal.\n\nConversation: Prior planning chat\n"
             "Conversation ID: conv-9\n"
             "Messages: 12\n"
             "Workspace: unassigned\n"
@@ -2847,7 +3009,10 @@ def _conversation_handoff_payload() -> ChatHandoffPayload:
     (_media_handoff_payload, _notes_handoff_payload, _conversation_handoff_payload),
     ids=("media", "notes", "conversation"),
 )
-async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload):
+@private_profile_test
+async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(
+    request, build_payload
+):
     """A Library/Notes handoff (no "rag" token in its source) must still
     carry a real, non-empty `evidence_bundle` after staging -- the strip and
     the model must agree on what content is staged."""
@@ -2879,7 +3044,11 @@ async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload)
 
 
 @pytest.mark.asyncio
-async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
+@pytest.mark.parametrize("summary", [None, "Retrieved exact passage."])
+@private_profile_test
+async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged(
+    request, summary
+):
     """Pin: dropping the `"rag" in source` gate so every handoff builds a
     bundle must not change the bundle a RAG-labeled handoff already built.
     The expected shape below is hand-derived from the branch's own formula
@@ -2890,6 +3059,7 @@ async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
         item_type="rag-result",
         title="Transformer notes",
         body="Attention is all you need.",
+        display_summary=summary,
         source_id="media-77",
         content_ref="media-77#c1",
         suggested_prompt="Use this retrieved result as context.",
@@ -2905,7 +3075,7 @@ async def test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged():
                 source_id="media-77",
                 source_type="rag-result",
                 title="Transformer notes",
-                snippet="Attention is all you need.",
+                snippet=summary or "Attention is all you need.",
                 authority_label="local",
                 content_ref="media-77#c1",
             ),
@@ -2979,21 +3149,9 @@ class _ExistingChaChaDBDouble:
 
 
 @pytest.mark.asyncio
-async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
-    """The exact launch a media handoff stages must let
-    `capture_console_staged_evidence_for_chat` return REAL context, not the
-    `LocalRagContextResult(None, None)` it always returned before this fix
-    (the handoff carried no `evidence_bundle` key at all).
-
-    The pre-existing (byte-unchanged) snippet formula in
-    `_stage_handoff_as_console_live_work` is `payload.display_summary or
-    payload.body` -- and `library_screen.py`'s real media/conversation
-    handoffs set `display_summary` to a short "Media staged: <title>" label
-    rather than the body excerpt, so that label -- not the raw body -- is
-    what reaches the model here. This test asserts the actual production
-    formula's output, not the excerpt; see the report for this as a
-    separate, pre-existing content-fidelity note out of this task's scope.
-    """
+@private_profile_test
+async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(request):
+    """The send-time capture contains media text, not its display label."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -3012,11 +3170,13 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():
 
     assert isinstance(result, LocalRagContextResult)
     assert result.context is not None
-    assert "Media staged: Transformer notes" in result.context
+    assert "Attention is all you need. " * 4 in result.context
+    assert "Media staged:" not in result.context
 
 
 @pytest.mark.asyncio
-async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
+@private_profile_test
+async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context(request):
     """Same round trip as the media case, for a Library note handoff."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -3042,7 +3202,10 @@ async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():
 
 
 @pytest.mark.asyncio
-async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context():
+@private_profile_test
+async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context(
+    request,
+):
     """Same round trip as the media/notes cases, for a Library conversation
     handoff -- the third of the three brief-named kinds. Rounds out the
     suite so all three kinds this task actually fixes (media, notes,
@@ -3072,15 +3235,16 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
     # labeled "CHAT HISTORY" in the formatted context (`_SOURCE_LABELS` in
     # `RAG_Search/local_citation_capture.py`).
     assert "CHAT HISTORY" in result.context
-    # Same pre-existing `display_summary`-over-`body` snippet formula as the
-    # media case (see the report): the conversation handoff also sets a
-    # generic `display_summary`, so that -- not the multi-line body -- is
-    # what reaches the model here.
-    assert "Conversation staged: Prior planning chat" in result.context
+    assert "user: Schedule the review for Friday." in result.context
+    assert "assistant: Bring the draft proposal." in result.context
+    assert "Conversation staged:" not in result.context
 
 
 @pytest.mark.asyncio
-async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle():
+@private_profile_test
+async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle(
+    request,
+):
     """Send-gating blast radius: `_console_send_blocked_reason` only checks
     available evidence for a RAG-labeled source (`_source_mentions_rag`).
     `"library"` never matches that token, so a media handoff gaining a real
@@ -3109,3 +3273,34 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         assert isinstance(launch.payload.get("evidence_bundle"), dict)
         assert chat_screen_module._source_mentions_rag(launch.source) is False
         assert screen._console_send_blocked_reason() == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["media", "conversation"])
+@private_profile_test
+async def test_source_body_is_capped_and_sanitized_before_evidence_staging(
+    request, kind
+):
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = _active_console_screen(host)
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        screen._stage_handoff_as_console_live_work(
+            ChatHandoffPayload(
+                source="library",
+                item_type=kind,
+                title="Bounded source",
+                body="Keep [this] café\x00\x01\n" + "x" * 8000 + "OUTSIDE LIMIT",
+                display_summary="Generic label",
+                source_id="bounded-source",
+            )
+        )
+        launch = screen._pending_console_launch_context
+        assert launch is not None
+        snippet = launch.payload["evidence_bundle"]["references"][0]["snippet"]
+        assert snippet.startswith("Keep [this] café\n")
+        assert "OUTSIDE LIMIT" not in snippet
+        assert "\x00" not in snippet and "\x01" not in snippet
+        assert len(snippet) <= 4000
+        assert launch.payload["snippet"] == snippet

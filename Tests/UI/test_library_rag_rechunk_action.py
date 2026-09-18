@@ -22,7 +22,7 @@ import pytest
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp, app_css_text
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_rechunk_service import (
     BACKFILL_SLOT,
@@ -408,14 +408,9 @@ def test_rechunk_control_class_defines_all_states_with_ds_tokens():
     the pre-existing Open-Import button) defines rest/hover/focus/disabled
     from ``$ds-*`` design tokens with no raw hex. The button is DISABLED
     for a whole re-chunk batch, so its disabled legibility matters (the
-    Legible Disabled / TASK-1801 escape). Checked against the BUILT bundle
-    so a missing ``build_css.py`` run fails here too."""
-    from pathlib import Path
-
-    bundle = Path(__file__).resolve().parents[2] / (
-        "tldw_chatbook/css/tldw_cli_modular.tcss"
-    )
-    text = bundle.read_text(encoding="utf-8")
+    Legible Disabled / TASK-1801 escape). Checked against the built app
+    sheets, including the extracted Library screen stylesheet."""
+    text = app_css_text()
 
     rules = {
         "rest": _rule_bodies(text, ".library-rag-recovery-action"),
@@ -444,7 +439,7 @@ def test_rechunk_control_class_defines_all_states_with_ds_tokens():
 
 def test_rechunk_summary_and_report_lines_use_the_styled_quiet_line_class():
     """AC 47 for the two Static controls: they compose the existing,
-    bundle-styled `.library-rag-quiet-line` class (rest-only is the
+    app-styled `.library-rag-quiet-line` class (rest-only is the
     complete state set for a non-focusable Static) and introduce no new
     unstyled class token."""
     from pathlib import Path
@@ -455,11 +450,8 @@ def test_rechunk_summary_and_report_lines_use_the_styled_quiet_line_class():
     text = source.read_text(encoding="utf-8")
     quiet = re.findall(r'classes="([^"{}]+)"', text)
     assert "library-rag-quiet-line" in quiet
-    # Every class token composed by the panel is styled in the bundle.
-    bundle = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/tldw_cli_modular.tcss"
-    ).read_text(encoding="utf-8")
+    # Every class token is styled in the app's generated sheet set.
+    bundle = app_css_text()
     for attr in quiet:
         for token in attr.split():
             assert f".{token}" in bundle or f"#{token}" in bundle, (

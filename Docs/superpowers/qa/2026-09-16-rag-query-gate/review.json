@@ -1,0 +1,19 @@
+{
+  "agent": "/root/rag_query_gate_review",
+  "passes": [
+    {
+      "scope": "Run/disclosure scheduling repair",
+      "findings": [],
+      "assessment": "Shared synchronous helper retains disclosure, fails closed if missing, and is not overwritten after async yields; regressions cover both suspended and settled states."
+    },
+    {
+      "scope": "Expanded compact disclosure and mounted geometry regression",
+      "findings": [],
+      "assessment": "Recipient-first copy preserves direction and outgoing data; mode toggle retains local Search explanation. Painted-text checks catch observed clipping; mounted geometry replaces stale inline-height assertion."
+    }
+  ],
+  "reviewer_checks": [
+    "git diff --check"
+  ],
+  "reviewer_did_not_run_tests_or_native_checks": true
+}

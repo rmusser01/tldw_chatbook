@@ -1,0 +1,80 @@
+{
+  "pid": 31992,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "readonly_directory_failure": true,
+      "failed_opt_in_retained_with_runtime_off": true,
+      "keyboard_retry_and_model_save": true,
+      "category_return_retains_values": true,
+      "summaries_restored_off": true,
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "readonly_directory_failure": true,
+      "failed_opt_in_retained_with_runtime_off": true,
+      "keyboard_retry_and_model_save": true,
+      "category_return_retains_values": true,
+      "summaries_restored_off": true,
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        190,
+        55
+      ],
+      "readonly_directory_failure": true,
+      "failed_opt_in_retained_with_runtime_off": true,
+      "keyboard_retry_and_model_save": true,
+      "category_return_retains_values": true,
+      "summaries_restored_off": true,
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "readonly_directory_failure": true,
+      "failed_opt_in_retained_with_runtime_off": true,
+      "keyboard_retry_and_model_save": true,
+      "category_return_retains_values": true,
+      "summaries_restored_off": true,
+      "database_handles_unchanged": true
+    }
+  ],
+  "runner_sha256": "985c89c4df3097a165db6707e585a39ad03ef0c6c5ee8b7f21667a1d8b86c476",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "8b0ec8814036b6e4e5447d50b849d94f28a5b639408873d862c55080ff1f5bb5",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3614411d7ad34a3a7aa14d9ea9816a9d0695a2b9db082efdc9f64fb3a3a11fc9",
+    "tldw_chatbook/css/features/_settings.tcss": "78b06c168be62d24d5a4ca5f5e3f117b4e1c78d4271b414e751e25b4eead88a9",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "c49b428c2ec0c00f33ca5db1487d224f16c2fb5954fe97e9e6c907714a8d3897"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Off saved",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

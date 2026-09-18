@@ -1,0 +1,62 @@
+{
+  "pid": 47194,
+  "runner_sha256": "b2fbd2391fe55236cbe80c2b121ec1fc4ca70f447980689a230544aa4403d9ec",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "uncited",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 96
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 57
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 18
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 96
+        }
+      ]
+    }
+  ],
+  "waiting_for": "query ready",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-answer-navigation/native_check.py\", line 219, in journey\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-answer-navigation/native_check.py\", line 88, in wait_for\n    raise AssertionError(label)\nAssertionError: query ready\n",
+  "app_run_returned": true
+}

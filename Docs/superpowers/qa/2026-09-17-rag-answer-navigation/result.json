@@ -1,0 +1,1020 @@
+{
+  "pid": 48946,
+  "runner_sha256": "90f77dce3461becf19d8414bffaa54a6f97a7e5f77338cbba914096e7bf665b3",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "uncited",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 96
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 57
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 18
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 96
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "unverified",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 96
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 57
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 18
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 96
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "validated",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 94
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 55
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 16
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 94
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "citation_status": "uncited",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 196
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 177
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 158
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 139
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 120
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 101
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 82
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 63
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 44
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 25
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 6
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 19
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 38
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 57
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 76
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 95
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 114
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 133
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 152
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 171
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 190
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 197
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "citation_status": "unverified",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 196
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 177
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 158
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 139
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 120
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 101
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 82
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 63
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 44
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 25
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 6
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 19
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 38
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 57
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 76
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 95
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 114
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 133
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 152
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 171
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 190
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 197
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "citation_status": "validated",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 193
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 174
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 155
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 136
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 117
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 98
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 79
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 60
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 41
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 22
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 3
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 19
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 38
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 57
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 76
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 95
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 114
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 133
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 152
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 171
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 190
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 194
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "uncited",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 96
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 57
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 18
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 96
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "unverified",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 96
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 57
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 18
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 96
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "validated",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 94
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 55
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 16
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 94
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "citation_status": "uncited",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 196
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 177
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 158
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 139
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 120
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 101
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 82
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 63
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 44
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 25
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 6
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 19
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 38
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 57
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 76
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 95
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 114
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 133
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 152
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 171
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 190
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 197
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "citation_status": "unverified",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 196
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 177
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 158
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 139
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 120
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 101
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 82
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 63
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 44
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 25
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 6
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 19
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 38
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 57
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 76
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 95
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 114
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 133
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 152
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 171
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 190
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 197
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "citation_status": "validated",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 193
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 174
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 155
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 136
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 117
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 98
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 79
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 60
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 41
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 22
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 3
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 19
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 38
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 57
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 76
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 95
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 114
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 133
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 152
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 171
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 190
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 194
+        }
+      ]
+    }
+  ],
+  "waiting_for": "answer and citation feedback ready",
+  "real_keyword_searches": 12,
+  "controlled_provider_calls": 12,
+  "source_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

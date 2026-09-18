@@ -1,0 +1,157 @@
+{
+  "pid": 22033,
+  "runner_sha256": "3c1b60808f7455e019fe0ff4ba12b9154f642b2935e59ddbcebc1927b21b6422",
+  "scope": "injected snapshots; actual navigation, local retrieval and DB",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        40,
+        3,
+        125,
+        3
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        40,
+        10,
+        125,
+        3
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        29,
+        -19,
+        50,
+        3
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        29,
+        8,
+        50,
+        3
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        40,
+        3,
+        125,
+        3
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        40,
+        10,
+        125,
+        3
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        29,
+        -19,
+        50,
+        3
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false,
+      "focus_after_capture": "library-rag-query-input",
+      "query_region_after_capture": [
+        29,
+        8,
+        50,
+        3
+      ]
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "scope settled at 0",
+  "real_keyword_searches": 4,
+  "source_record_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

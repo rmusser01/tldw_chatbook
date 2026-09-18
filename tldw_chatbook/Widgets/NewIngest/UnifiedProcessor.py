@@ -215,7 +215,7 @@ class UnifiedProcessor(Widget):
         self._media_type = self._detect_media_type(self._selected_files)
         self._processing_mode = ProcessingMode.SIMPLE
         self._processing_status = ProcessingStatus()
-        self.styles.height = 8
+        self.add_class("h-8")
 
     def __iter__(self):
         yield self

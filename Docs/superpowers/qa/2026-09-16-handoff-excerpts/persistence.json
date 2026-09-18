@@ -1,0 +1,135 @@
+{
+  "profile": "/private/tmp/tldw-2376-run-007",
+  "database_integrity": {
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ]
+  },
+  "conversations": [
+    {
+      "id": "28d88341-0023-55a5-8789-71b05bf35e59",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "465fdc15-48ec-5953-a4ed-8c932c18e105",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "d31b09e9-5855-5dd3-ad58-de070b81a300",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "d41f5928-6d83-5577-ab33-2489c761f9c2",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    },
+    {
+      "id": "31a5303a-1823-5e51-aae6-27c379340c56",
+      "message_count": 2,
+      "active_leaf_message_id": null,
+      "version": 1
+    }
+  ],
+  "no_extra_conversations_or_messages": true,
+  "only_fixture_media_and_original_foreign_memberships_remain": true,
+  "all_media_fields_unchanged": true,
+  "memberships": [
+    {
+      "membership_id": "workspace-link-9b2647caea934cffbe1c8b253814a97b",
+      "workspace_id": "source-other-workspace",
+      "item_type": "conversation",
+      "item_id": "31a5303a-1823-5e51-aae6-27c379340c56",
+      "role": "source",
+      "transfer_policy": "reference",
+      "title": "Source audit Foreign",
+      "created_at": "2026-09-17T02:03:00.234829+00:00"
+    },
+    {
+      "membership_id": "workspace-link-b3481ce8111a4f1e8d36734f6df95547",
+      "workspace_id": "workspace-default",
+      "item_type": "media",
+      "item_id": "1",
+      "role": "source",
+      "transfer_policy": "reference",
+      "title": "Excerpt media DarkWide",
+      "created_at": "2026-09-17T02:03:00.264502+00:00"
+    },
+    {
+      "membership_id": "workspace-link-6962c7a739494dfdadc2cc566af8e5cb",
+      "workspace_id": "workspace-default",
+      "item_type": "media",
+      "item_id": "2",
+      "role": "source",
+      "transfer_policy": "reference",
+      "title": "Excerpt media DarkCompact",
+      "created_at": "2026-09-17T02:03:00.265196+00:00"
+    },
+    {
+      "membership_id": "workspace-link-a4e305398551403e9583e660778ad336",
+      "workspace_id": "workspace-default",
+      "item_type": "media",
+      "item_id": "3",
+      "role": "source",
+      "transfer_policy": "reference",
+      "title": "Excerpt media LightWide",
+      "created_at": "2026-09-17T02:03:00.265826+00:00"
+    },
+    {
+      "membership_id": "workspace-link-797b7ce9b5d24c8faf7c273aa5e0ff24",
+      "workspace_id": "workspace-default",
+      "item_type": "media",
+      "item_id": "4",
+      "role": "source",
+      "transfer_policy": "reference",
+      "title": "Excerpt media LightCompact",
+      "created_at": "2026-09-17T02:03:00.266432+00:00"
+    }
+  ],
+  "all_original_conversation_and_message_fields_unchanged": true,
+  "timestamp_normalization": "ISO datetime equivalence only",
+  "default_profile_hashes_unchanged": true,
+  "default_profile_files_checked": [
+    "/Users/macbook-dev/.config/tldw_cli/config.toml",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json"
+  ],
+  "error_lines": [],
+  "traceback_headers": 0,
+  "faulthandler_bytes": 0,
+  "sqlite_connection_mode": "ro",
+  "sqlite_version": "3.49.1"
+}

@@ -1,0 +1,5 @@
+Baseline: 2939afda6377097c89f3c5bbba69630e5ee0749c
+Native app exit status: 0
+No external model request made. Only the disposable profile was edited.
+Error/critical records in the native application log:
+2026-09-14 19:29:01 [ERROR   ] root:11981 - !!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup.

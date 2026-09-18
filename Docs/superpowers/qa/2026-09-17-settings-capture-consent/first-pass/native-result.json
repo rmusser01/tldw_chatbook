@@ -1,0 +1,105 @@
+{
+  "pid": 67739,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "full_disclosure_visible": true,
+      "escape_preserves_file_and_safe_view": true,
+      "readonly_failure_preserves_safe_view": true,
+      "keyboard_retry_saves_full_view": true,
+      "settings_removed_on_departure": true,
+      "recreated_settings_load_full_view": true,
+      "stale_consent_rejected": true,
+      "reload_then_confirmation_saves": true,
+      "pii_choice_preserved_independently": true,
+      "original_capture_and_viewer_values_restored": true,
+      "active_controller_session": true,
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "full_disclosure_visible": true,
+      "escape_preserves_file_and_safe_view": true,
+      "readonly_failure_preserves_safe_view": true,
+      "keyboard_retry_saves_full_view": true,
+      "settings_removed_on_departure": true,
+      "recreated_settings_load_full_view": true,
+      "stale_consent_rejected": true,
+      "reload_then_confirmation_saves": true,
+      "pii_choice_preserved_independently": true,
+      "original_capture_and_viewer_values_restored": true,
+      "active_controller_session": true,
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        190,
+        55
+      ],
+      "full_disclosure_visible": true,
+      "escape_preserves_file_and_safe_view": true,
+      "readonly_failure_preserves_safe_view": true,
+      "keyboard_retry_saves_full_view": true,
+      "settings_removed_on_departure": true,
+      "recreated_settings_load_full_view": true,
+      "stale_consent_rejected": true,
+      "reload_then_confirmation_saves": true,
+      "pii_choice_preserved_independently": true,
+      "original_capture_and_viewer_values_restored": true,
+      "active_controller_session": true,
+      "database_handles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "full_disclosure_visible": true,
+      "escape_preserves_file_and_safe_view": true,
+      "readonly_failure_preserves_safe_view": true,
+      "keyboard_retry_saves_full_view": true,
+      "settings_removed_on_departure": true,
+      "recreated_settings_load_full_view": true,
+      "stale_consent_rejected": true,
+      "reload_then_confirmation_saves": true,
+      "pii_choice_preserved_independently": true,
+      "original_capture_and_viewer_values_restored": true,
+      "active_controller_session": true,
+      "database_handles_unchanged": true
+    }
+  ],
+  "runner_sha256": "13c34cea68ce084ff9fa10e567415b753acaa9704b92e03393352ea27b678046",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "0bc0b79410ea183499826d1f4a2ad82096e00df65fb9fd73ad0872f3ea4d4383",
+    "tldw_chatbook/Chat/console_chat_controller.py": "dc965afa5ee791513e929a5c3cde70f14515028c30535a897e3904e96e5f6ca0",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3614411d7ad34a3a7aa14d9ea9816a9d0695a2b9db082efdc9f64fb3a3a11fc9",
+    "tldw_chatbook/css/features/_settings.tcss": "78b06c168be62d24d5a4ca5f5e3f117b4e1c78d4271b414e751e25b4eead88a9",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "c49b428c2ec0c00f33ca5db1487d224f16c2fb5954fe97e9e6c907714a8d3897"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Capture settings settled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

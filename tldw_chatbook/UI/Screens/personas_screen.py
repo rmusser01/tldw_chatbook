@@ -1584,7 +1584,7 @@ class PersonasScreen(BaseAppScreen):
                     open_tooltip="Open Library rail",
                     id="personas-library-rail-handle",
                 )
-                library_handle.styles.width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
+                library_handle.add_class("w-13")
                 library_handle.styles.min_width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
                 library_handle.styles.max_width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
                 if not self._library_rail_collapsed:
@@ -1626,7 +1626,7 @@ class PersonasScreen(BaseAppScreen):
                             id="personas-character-editor-slot"
                         )
                         character_editor_slot.display = False
-                        character_editor_slot.styles.width = "100%"
+                        character_editor_slot.add_class("w-full")
                         yield character_editor_slot
                         with Vertical(id="personas-character-attachments"):
                             yield PersonasCharacterDictionariesWidget()
@@ -1636,7 +1636,7 @@ class PersonasScreen(BaseAppScreen):
                             id="personas-persona-editor-slot"
                         )
                         persona_editor_slot.display = False
-                        persona_editor_slot.styles.width = "100%"
+                        persona_editor_slot.add_class("w-full")
                         yield persona_editor_slot
                         with Vertical(id="personas-conversation-actions"):
                             yield Button(
@@ -1669,11 +1669,11 @@ class PersonasScreen(BaseAppScreen):
                             id="personas-dictionary-detail-slot"
                         )
                         dictionary_detail_slot.display = False
-                        dictionary_detail_slot.styles.width = "100%"
+                        dictionary_detail_slot.add_class("w-full")
                         yield dictionary_detail_slot
                         lore_detail_slot = Vertical(id="personas-lore-detail-slot")
                         lore_detail_slot.display = False
-                        lore_detail_slot.styles.width = "100%"
+                        lore_detail_slot.add_class("w-full")
                         yield lore_detail_slot
                         yield PersonasConversationTranscriptWidget()
                         yield Static(
@@ -1719,7 +1719,7 @@ class PersonasScreen(BaseAppScreen):
                     open_tooltip="Open Inspector rail",
                     id="personas-inspector-rail-handle",
                 )
-                inspector_handle.styles.width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
+                inspector_handle.add_class("w-11")
                 inspector_handle.styles.min_width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
                 inspector_handle.styles.max_width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
                 if not self._inspector_rail_collapsed:
@@ -2305,7 +2305,12 @@ class PersonasScreen(BaseAppScreen):
             actions = self.query_one("#personas-conversation-actions")
             navigation = self.query_one("#personas-conversation-navigation-actions")
             navigation_rows = sum(button.display for button in navigation.query(Button))
-            actions.styles.height = 2 + navigation_rows if narrow else 9
+            actions.set_class(not narrow, "h-9")
+            if narrow:
+                # ds-runtime: fit the rows of currently visible navigation buttons.
+                actions.set_styles(height=2 + navigation_rows)
+            else:
+                actions.set_styles(height=None)
             actions.styles.min_height = 2 + navigation_rows if narrow else 9
             for selector in (
                 "#personas-conversation-resume",
@@ -2313,12 +2318,20 @@ class PersonasScreen(BaseAppScreen):
                 "#personas-conversation-navigation-actions",
             ):
                 row = self.query_one(selector)
-                row.styles.height = 1 if narrow else 3
+                row.remove_class("h-1", "h-3")
+                row.add_class("h-1" if narrow else "h-3")
                 row.styles.min_height = 1 if narrow else 3
-            navigation.styles.height = navigation_rows if narrow else 3
+            navigation.remove_class("h-1")
+            navigation.set_class(not narrow, "h-3")
+            if narrow:
+                # ds-runtime: fit the currently visible navigation buttons.
+                navigation.set_styles(height=navigation_rows)
+            else:
+                navigation.set_styles(height=None)
             navigation.styles.min_height = navigation_rows if narrow else 3
             for button in actions.query(Button):
-                button.styles.height = 1 if narrow else 3
+                button.remove_class("h-1", "h-3")
+                button.add_class("h-1" if narrow else "h-3")
                 button.styles.min_height = 1 if narrow else 3
             self.query_one(PersonasConversationTranscriptWidget).set_compact(narrow)
         except QueryError:
@@ -2350,14 +2363,15 @@ class PersonasScreen(BaseAppScreen):
             "#personas-inspector-pane",
         ):
             pane = self.query_one(pane_id)
-            pane.styles.width = "1fr" if narrow else None
+            pane.set_class(narrow, "w-fill")
             pane.styles.min_width = 0 if narrow else None
         for handle_id in (
             "#personas-library-rail-handle",
             "#personas-inspector-rail-handle",
         ):
             handle = self.query_one(handle_id)
-            handle.styles.width = 3 if narrow else None
+            handle.remove_class("w-11", "w-13")
+            handle.set_class(narrow, "w-3")
             handle.styles.min_width = 3 if narrow else None
             handle.styles.max_width = 3 if narrow else None
         self._sync_personas_rails()
@@ -10818,8 +10832,10 @@ class PersonasScreen(BaseAppScreen):
                 if pil is not None:
                     renderable = _GraphicsImage(pil)
                     w_cells, h_cells = self._fit_avatar_cell_size(pil.width, pil.height)
-                    renderable.styles.width = w_cells
-                    renderable.styles.height = h_cells
+                    # ds-runtime: size the avatar to its fitted image cell dimensions.
+                    renderable.set_styles(width=w_cells)
+                    # ds-runtime: size the avatar to its fitted image cell dimensions.
+                    renderable.set_styles(height=h_cells)
             except Exception:
                 renderable = self._build_avatar_pixels(cache, cache_key)
         else:
@@ -10899,8 +10915,10 @@ class PersonasScreen(BaseAppScreen):
                         w_cells, h_cells = self._fit_avatar_cell_size(
                             pil.width, pil.height
                         )
-                        renderable.styles.width = w_cells
-                        renderable.styles.height = h_cells
+                        # ds-runtime: size the avatar to its fitted image cell dimensions.
+                        renderable.set_styles(width=w_cells)
+                        # ds-runtime: size the avatar to its fitted image cell dimensions.
+                        renderable.set_styles(height=h_cells)
                 except Exception:
                     renderable = self._build_avatar_pixels(cache, cache_key)
             else:
@@ -11371,8 +11389,10 @@ class PersonasScreen(BaseAppScreen):
                         width, height = self._fit_avatar_cell_size(
                             pil.width, pil.height
                         )
-                        renderable.styles.width = width
-                        renderable.styles.height = height
+                        # ds-runtime: size the avatar to its fitted image cell dimensions.
+                        renderable.set_styles(width=width)
+                        # ds-runtime: size the avatar to its fitted image cell dimensions.
+                        renderable.set_styles(height=height)
                 except Exception:
                     renderable = self._build_avatar_pixels(cache, cache_key)
             else:
@@ -12430,8 +12450,10 @@ class PersonasScreen(BaseAppScreen):
                         w_cells, h_cells = self._fit_avatar_cell_size(
                             pil.width, pil.height
                         )
-                        renderable.styles.width = w_cells
-                        renderable.styles.height = h_cells
+                        # ds-runtime: size the avatar to its fitted image cell dimensions.
+                        renderable.set_styles(width=w_cells)
+                        # ds-runtime: size the avatar to its fitted image cell dimensions.
+                        renderable.set_styles(height=h_cells)
                 except Exception:
                     renderable = self._build_avatar_pixels(cache, cache_key)
             else:

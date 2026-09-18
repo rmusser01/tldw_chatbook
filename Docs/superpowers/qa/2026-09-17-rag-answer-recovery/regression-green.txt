@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+2.00s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[exception-textual-light-size0]
+1.97s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[exception-textual-dark-size0]
+1.71s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[empty-textual-light-size0]
+1.65s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[empty-textual-dark-size0]
+1.65s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[exception-textual-dark-size1]
+1.61s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[empty-textual-light-size1]
+1.59s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[empty-textual-dark-size1]
+1.59s call     Tests/UI/test_library_rag_answer_retry.py::test_answer_failure_is_visible_beside_query_and_can_retry[exception-textual-light-size1]
+
+(16 durations < 1s hidden.)
+8 passed in 16.31s

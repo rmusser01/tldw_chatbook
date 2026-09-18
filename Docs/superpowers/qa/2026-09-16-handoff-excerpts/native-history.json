@@ -1,0 +1,72 @@
+[
+  {
+    "attempt": 1,
+    "profile": "/private/tmp/tldw-2376-run-001",
+    "pid": null,
+    "process_absent": null,
+    "app_run_returned": null,
+    "passed": false,
+    "shell_exit": null,
+    "note": "Profile preparation used the system Python without tomllib; profile guard failed before app imports."
+  },
+  {
+    "attempt": 2,
+    "profile": "/private/tmp/tldw-2376-run-002",
+    "pid": 56539,
+    "process_absent": true,
+    "app_run_returned": true,
+    "passed": false,
+    "shell_exit": 1,
+    "note": "Initial minimal profile omitted setup_completed; setup dialog blocked Console entry."
+  },
+  {
+    "attempt": 3,
+    "profile": "/private/tmp/tldw-2376-run-003",
+    "pid": 58131,
+    "process_absent": true,
+    "app_run_returned": true,
+    "passed": false,
+    "shell_exit": 1,
+    "note": "Catalog consent was not recorded and provider setup was absent; dialogs interrupted entry. Dismissed dialogs and quit normally."
+  },
+  {
+    "attempt": 4,
+    "profile": "/private/tmp/tldw-2376-run-004",
+    "pid": 59211,
+    "process_absent": true,
+    "app_run_returned": true,
+    "passed": false,
+    "shell_exit": 1,
+    "note": "Runner incorrectly expected canonical media handoff ID; production uses the existing bare database ID."
+  },
+  {
+    "attempt": 5,
+    "profile": "/private/tmp/tldw-2376-run-005",
+    "pid": 60696,
+    "process_absent": true,
+    "app_run_returned": true,
+    "passed": false,
+    "shell_exit": 1,
+    "note": "Runner tried to focus Conversations while compact Media Nav was collapsed."
+  },
+  {
+    "attempt": 6,
+    "profile": "/private/tmp/tldw-2376-run-006",
+    "pid": 62542,
+    "process_absent": true,
+    "app_run_returned": true,
+    "passed": false,
+    "shell_exit": 1,
+    "note": "Runner tried to focus Media while compact Conversations Nav was collapsed."
+  },
+  {
+    "attempt": 7,
+    "profile": "/private/tmp/tldw-2376-run-007",
+    "pid": 63562,
+    "process_absent": true,
+    "app_run_returned": true,
+    "passed": true,
+    "shell_exit": 0,
+    "note": "All four matrix cells and normal shutdown passed."
+  }
+]

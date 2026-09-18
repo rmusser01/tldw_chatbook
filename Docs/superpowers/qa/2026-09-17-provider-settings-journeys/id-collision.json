@@ -1,0 +1,10 @@
+{
+  "id": "TASK-32721",
+  "refs_checked": 308,
+  "worktrees_checked": 27,
+  "reachable_paths": [],
+  "physical_owners": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/backlog/tasks/task-32721 - Implement-verified-llama.cpp-launch-and-Console-adoption.md",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32721 - Review-provider-settings-edit-save-and-revert-journeys.md"
+  ]
+}

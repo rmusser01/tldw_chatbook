@@ -1,0 +1,53 @@
+{
+  "pid": 70114,
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "kind": "open",
+      "paste_filter_resize_select": true,
+      "state_and_focus_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "kind": "folder",
+      "paste_filter_resize_select": true,
+      "state_and_focus_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "kind": "save",
+      "paste_filter_resize_select": true,
+      "state_and_focus_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "cancel": true
+    },
+    {
+      "theme": "textual-light",
+      "kind": "open",
+      "paste_filter_resize_select": true,
+      "state_and_focus_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "kind": "folder",
+      "paste_filter_resize_select": true,
+      "state_and_focus_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "kind": "save",
+      "paste_filter_resize_select": true,
+      "state_and_focus_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "cancel": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "app_run_returned": true
+}

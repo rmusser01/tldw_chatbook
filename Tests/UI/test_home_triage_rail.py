@@ -218,7 +218,7 @@ async def test_home_canvas_actions_render_in_horizontal_toolbar():
 
 def test_generated_stylesheet_includes_home_triage_rules():
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
-    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    component_css = (root / "features" / "_home.tcss").read_text()
     generated_css = (root / "tldw_cli_modular.tcss").read_text()
     for selector in (
         "#home-triage-grid",

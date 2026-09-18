@@ -4,29 +4,33 @@
  * Single-page responsive design with collapsibles
  * Based on original UX design specifications
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 
 .dashboard-title {
     text-style: bold;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .quick-actions {
     layout: horizontal;
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 /* Drop zone styling */
 .drop-zone {
     layout: horizontal;
-    height: 3;
+    height: $ds-size-3;
     background: $panel;
     border: dashed $primary;
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
     align: center middle;
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
 }
 
 .drop-zone:hover {
@@ -37,7 +41,7 @@
 
 /* --- Main Content Area --- */
 .main-content {
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Ensure VerticalScroll works properly inside the evals dashboard.
@@ -48,22 +52,22 @@
 
 /* Make sure the entire window uses available height */
 EvalsWindow {
-    height: 100%;
+    height: $ds-height-full;
 }
 
 /* --- Collapsible Sections --- */
 Collapsible {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     border: tall $surface;
     background: $panel;
 }
 
 Collapsible > Container {
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 Collapsible.-collapsed {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Note: Textual doesn't support @media queries
@@ -74,12 +78,12 @@ Collapsible.-collapsed {
     layout: grid;
     grid-columns: 1fr 1fr;
     grid-gutter: 1;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .template-card {
-    height: 5;
-    padding: 1;
+    height: $ds-size-5;
+    padding: $ds-space-1;
     background: $surface;
     border: tall $primary;
     text-align: center;
@@ -94,60 +98,38 @@ Collapsible.-collapsed {
 .action-bar {
     layout: horizontal;
     background: $surface;
-    padding: 1;
-    margin: 2 0;
+    padding: $ds-space-1;
+    margin: $ds-space-2 $ds-space-0;
     border: tall $primary;
     align: center middle;
 }
 
-.action-button {
-    margin-right: 1;
-    min-width: 12;
-}
-
-.action-button.primary {
-    background: $primary;
-    color: $text;
-}
-
-.action-button.primary.large {
-    min-width: 20;
-    height: 3;
-    text-style: bold;
-}
-
 /* Results Dashboard */
-.section-title {
-    text-style: bold;
-    color: $primary;
-    margin-bottom: 1;
-}
-
 .results-header {
     layout: horizontal;
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
     align: left middle;
 }
 
 .results-header Static {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .results-header Select {
-    width: 20;
+    width: $ds-size-20;
 }
 
 .results-list {
-    height: 15;
+    height: $ds-size-15;
     background: $surface;
     border: tall $secondary;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 .stat-card {
     background: $surface;
-    padding: 1;
+    padding: $ds-space-1;
     border: tall $secondary;
     text-align: center;
 }
@@ -159,25 +141,25 @@ Collapsible.-collapsed {
 
 .button-row {
     layout: horizontal;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .button-row Button {
-    margin-right: 1;
+    margin-right: $ds-space-1;
 }
 
 /* Status Bar */
 .status-bar {
-    height: 3;
+    height: $ds-size-3;
     background: $surface;
     border-top: solid $primary;
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
     layout: horizontal;
     align: left middle;
 }
 
 .status-text {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 /* Responsive Adjustments - handled in Python code via resize events */
@@ -186,12 +168,6 @@ Collapsible.-collapsed {
 /* Utility Classes */
 .hidden {
     display: none;
-}
-
-.subsection-title {
-    text-style: bold;
-    color: $secondary;
-    margin: 1 0;
 }
 
 .help-text {

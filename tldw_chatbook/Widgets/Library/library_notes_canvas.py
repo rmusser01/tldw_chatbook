@@ -327,13 +327,12 @@ def browse_row_width(labels: tuple[str, ...]) -> int:
     return sum(len(label) + _TOOLBAR_ACTION_CHROME for label in labels)
 
 
-#: Cells a ``ds-toolbar`` row costs before its first action: the row's own
-#: left padding. MEASURED at the 64-column pane a 235-column terminal gives
-#: the Notes list beside an open note, where every action's region starts at
-#: x=1 rather than x=0 -- which is why the four folder actions, 64 cells of
-#: buttons by ``_TOOLBAR_ACTION_CHROME``, still ran one cell off a 64-column
-#: pane (task-32544).
-_TOOLBAR_ROW_INDENT = 1
+# TASK-32752: a tree action's painted width includes two Button edge cells
+# and two padding cells; the right margin consumes a fifth cell. The row
+# itself has padding on both sides. Measured with production CSS, including
+# disabled labels, rather than borrowed from the older browse-row budget.
+_TREE_ACTION_CHROME = 5
+_TREE_TOOLBAR_PADDING = 2
 
 
 def toolbar_action_rows(
@@ -365,12 +364,12 @@ def toolbar_action_rows(
     """
     if pane_width <= 0 or not labels:
         return (tuple(range(len(labels))),)
-    budget = pane_width - _TOOLBAR_ROW_INDENT
+    budget = pane_width - _TREE_TOOLBAR_PADDING
     rows: list[tuple[int, ...]] = []
     current: list[int] = []
     used = 0
     for index, label in enumerate(labels):
-        cost = cell_len(label) + _TOOLBAR_ACTION_CHROME
+        cost = cell_len(label) + _TREE_ACTION_CHROME
         if current and used + cost > budget:
             rows.append(tuple(current))
             current, used = [], 0
@@ -1025,6 +1024,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._browse_row_needed = 0
         self._browse_overflow = False
         self._measured_width = 0
+        self._tree_action_labels: tuple[str, ...] = ()
+        self._rendered_tree_action_rows: tuple[tuple[int, ...], ...] = ()
         #: task-32356: create mode's template disclosure. Canvas-local on
         #: purpose -- nothing outside this widget reads or writes it, so it
         #: needs no ``LibraryNotesState`` field and no kwargs plumbing. It
@@ -1046,7 +1047,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: another binding read.
         self._note_location: tuple[str, str] = ("", "")
         self._tree_focus_intent_generation: Callable[[], int] | None = None
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
 
@@ -1371,6 +1372,34 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         return merged, stacked, overflow
 
+    def _tree_toolbar_width(self, pane_width: int) -> int:
+        """Remove the stable Items host chrome from its outer-width contract."""
+        if pane_width <= 0:
+            return pane_width
+        host = self.parent
+        gutter = self.styles.gutter.width
+        # The fallback measurement already excludes the Items host chrome.
+        if self.pane_width and host is not None and host.id == "library-canvas":
+            gutter += host.styles.gutter.width
+        return max(1, pane_width - gutter)
+
+    def _tree_actions_need_repack(self) -> bool:
+        """Whether a composed row no longer fits the settled width contract.
+
+        Compare the actual composition, including the initial unmeasured row.
+        Extra rows after growth are harmless and must not force recomposition.
+        """
+        width = self._tree_toolbar_width(self._effective_pane_width())
+        return any(
+            len(
+                toolbar_action_rows(
+                    tuple(self._tree_action_labels[index] for index in row), width
+                )
+            )
+            > 1
+            for row in self._rendered_tree_action_rows
+        )
+
     def on_resize(self, event: Resize) -> None:
         """Re-decide the toolbar's shape once this pane has a real width.
 
@@ -1391,7 +1420,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         before = self._toolbar_decisions(self._effective_pane_width())
         self._measured_width = width
-        if before != self._toolbar_decisions(self._effective_pane_width()):
+        if (
+            before != self._toolbar_decisions(self._effective_pane_width())
+            or self._tree_actions_need_repack()
+        ):
             self.refresh(recompose=True)
 
     def apply_pane_width(self, pane_width: int) -> None:
@@ -1432,8 +1464,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         before = self._toolbar_decisions(self._effective_pane_width())
         self.pane_width = pane_width
-        if self.mode == "list" and before != self._toolbar_decisions(
-            self._effective_pane_width()
+        if self.mode == "list" and (
+            before != self._toolbar_decisions(self._effective_pane_width())
+            or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
 
@@ -1695,6 +1728,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
 
     def _compose_list(self) -> ComposeResult:
+        self._tree_action_labels = ()
+        self._rendered_tree_action_rows = ()
         list_state = self.list_state
         if list_state is None:
             return
@@ -1752,7 +1787,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             action_row = Horizontal(
                 id="library-notes-selection-actions", classes="ds-toolbar"
             )
-            action_row.styles.height = "auto"
+            action_row.add_class("h-auto")
             with action_row:
                 # task-2853 review round 2: the SAME unbounded-width defect
                 # proved live in the Media canvas's identical counter (see
@@ -1884,14 +1919,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             action_rows: Horizontal | None = None
             if merged:
                 action_rows = Horizontal(id="library-notes-action-rows")
-                action_rows.styles.height = "auto"
+                action_rows.add_class("h-auto")
             with action_rows or nullcontext():
                 browse_actions = Horizontal(
                     id="library-notes-browse-actions", classes="ds-toolbar"
                 )
-                browse_actions.styles.height = "auto"
+                browse_actions.add_class("h-auto")
                 if action_rows is not None:
-                    browse_actions.styles.width = "auto"
+                    browse_actions.add_class("w-auto")
                 browse_actions.display = not sort_choices_visible
                 new_label = library_disabled_action_label("New", running)
                 sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
@@ -1962,7 +1997,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         id="library-notes-browse-actions-overflow",
                         classes="ds-toolbar",
                     )
-                    browse_overflow_row.styles.height = "auto"
+                    browse_overflow_row.add_class("h-auto")
                     browse_overflow_row.display = not sort_choices_visible
                     with browse_overflow_row:
                         yield select_button
@@ -1988,7 +2023,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 transfer_actions = (Vertical if stacked else Horizontal)(
                     id="library-notes-transfer-actions", classes="ds-toolbar"
                 )
-                transfer_actions.styles.height = "auto"
+                transfer_actions.add_class("h-auto")
                 with transfer_actions:
                     for label, button_id in (
                         ("Add from files…", "library-notes-add-from-files"),
@@ -2056,7 +2091,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
         status_row = Horizontal(id="library-notes-status-row")
-        status_row.styles.height = "auto"
+        status_row.add_class("h-auto")
         status_row.display = not select_mode
         with status_row:
             status = Static(
@@ -2086,7 +2121,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             receipt_row = Vertical(
                 id="library-notes-delete-receipt", classes="ds-toolbar"
             )
-            receipt_row.styles.height = "auto"
+            receipt_row.add_class("h-auto")
             with receipt_row:
                 yield Static(
                     f"✓ deleted · {title}",
@@ -2097,7 +2132,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 receipt_actions = Horizontal(
                     id="library-notes-delete-receipt-actions"
                 )
-                receipt_actions.styles.height = "auto"
+                receipt_actions.add_class("h-auto")
                 with receipt_actions:
                     yield Button(
                         "Undo",
@@ -2220,7 +2255,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with Vertical(id="library-notes-trash-list"):
             for index, row in enumerate(trash.rows):
                 trash_row = Horizontal(classes="library-notes-trash-row")
-                trash_row.styles.height = "auto"
+                trash_row.add_class("h-auto")
                 with trash_row:
                     yield Static(
                         compose_note_row_label(row.title, age_label=row.age_label),
@@ -2419,10 +2454,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="destination-section",
                 markup=False,
             )
+        self._tree_action_labels = tuple(str(button.label) for button in buttons)
         rows = toolbar_action_rows(
-            tuple(str(button.label) for button in buttons),
-            self._effective_pane_width(),
+            self._tree_action_labels,
+            self._tree_toolbar_width(self._effective_pane_width()),
         )
+        self._rendered_tree_action_rows = rows
         for row_index, row in enumerate(rows):
             container = Horizontal(
                 id=(
@@ -2434,9 +2471,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # has no attribute selectors, so a selector aimed at
                 # `#library-notes-tree-actions` alone stopped seeing the
                 # overflow row this packer introduced (review M4).
-                classes="ds-toolbar library-notes-tree-action-row",
+                classes="ds-toolbar library-notes-tree-action-row h-auto",
             )
-            container.styles.height = "auto"
             with container:
                 for index in row:
                     yield buttons[index]
@@ -2779,7 +2815,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             primary_actions = Horizontal(
                 id="library-note-primary-actions", classes="ds-toolbar"
             )
-            primary_actions.styles.height = "auto"
+            primary_actions.add_class("h-auto")
             with primary_actions:
                 with Horizontal(id="library-note-mode-controls", classes="ds-toolbar"):
                     yield Button(
@@ -2902,7 +2938,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             backlink_rows = Vertical(id="library-note-context-backlinks")
             # Auto height or the empty container claims the whole Info
             # scroll region and pushes Reuse & Export off the pane.
-            backlink_rows.styles.height = "auto"
+            backlink_rows.add_class("h-auto")
             with backlink_rows:
                 yield from self._backlink_buttons(self._rendered_backlinks)
             yield Static("Reuse & Export", classes="destination-section", markup=False)
@@ -2997,7 +3033,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # strip under the body. Removed rather than left as a second,
             # invisible home for the same sentence.
             wide_actions = Horizontal(classes="ds-toolbar")
-            wide_actions.styles.height = "auto"
+            wide_actions.add_class("h-auto")
             with wide_actions:
                 yield Button(
                     "Export Markdown",
@@ -3035,7 +3071,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             conflict_actions = Horizontal(
                 id="library-note-conflict-actions", classes="ds-toolbar"
             )
-            conflict_actions.styles.height = "auto"
+            conflict_actions.add_class("h-auto")
             with conflict_actions:
                 yield Button(
                     "Overwrite",
@@ -3061,7 +3097,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             delete_actions = Horizontal(
                 id="library-note-delete-actions", classes="ds-toolbar"
             )
-            delete_actions.styles.height = "auto"
+            delete_actions.add_class("h-auto")
             with delete_actions:
                 yield Button(
                     "Cancel",
@@ -3162,38 +3198,48 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             mode_controls = self.query_one("#library-note-mode-controls", Horizontal)
             task_actions = self.query_one("#library-note-task-actions", Horizontal)
             heading.styles.layout = "horizontal"
-            heading.styles.height = 1 if compact else 3
+            heading.set_class(compact, "h-1")
+            heading.set_class(not compact, "h-3")
             heading.styles.min_height = 1 if compact else 3
             heading.styles.max_height = 1 if compact else 3
             second_row.styles.layout = "vertical" if compact else "horizontal"
-            second_row.styles.height = "auto" if compact else 3
+            second_row.set_class(compact, "h-auto")
+            second_row.set_class(not compact, "h-3")
             second_row.styles.min_height = 3
             second_row.styles.max_height = 5 if compact else 3
-            status.styles.width = "1fr"
-            status.styles.height = "auto" if compact else 3
+            status.add_class("w-fill")
+            status.set_class(compact, "h-auto")
+            status.set_class(not compact, "h-3")
             status.styles.min_height = 1 if compact else 3
             status.styles.max_height = 3
             status.styles.text_wrap = "wrap"
             status.styles.text_overflow = "clip"
             primary.styles.layout = "vertical" if compact else "horizontal"
-            primary.styles.width = "100%" if compact else "auto"
-            primary.styles.height = 2 if compact else 3
+            primary.set_class(compact, "w-full")
+            primary.set_class(not compact, "w-auto")
+            primary.set_class(compact, "h-2")
+            primary.set_class(not compact, "h-3")
             primary.styles.min_height = 2 if compact else 3
             primary.styles.max_height = 2 if compact else 3
             for actions in (mode_controls, task_actions):
-                actions.styles.width = "100%" if compact else "auto"
-                actions.styles.height = 1 if compact else 3
+                actions.set_class(compact, "w-full")
+                actions.set_class(not compact, "w-auto")
+                actions.set_class(compact, "h-1")
+                actions.set_class(not compact, "h-3")
                 actions.styles.min_height = 1 if compact else 3
                 actions.styles.max_height = 1 if compact else 3
-            authority.styles.width = 18 if compact else "auto"
+            authority.set_class(compact, "w-18")
+            authority.set_class(not compact, "w-auto")
             authority.styles.min_width = 12 if compact else 0
             authority.styles.max_width = 18 if compact else None
-            authority.styles.height = 1 if compact else 3
+            authority.set_class(compact, "h-1")
+            authority.set_class(not compact, "h-3")
             authority.styles.text_wrap = "nowrap" if compact else "wrap"
             authority.styles.text_overflow = "ellipsis" if compact else "clip"
             for button in primary.query(Button):
-                button.styles.width = "auto"
-                button.styles.height = 1 if compact else 3
+                button.add_class("w-auto")
+                button.set_class(compact, "h-1")
+                button.set_class(not compact, "h-3")
                 button.styles.min_height = 1 if compact else 3
                 button.styles.max_height = 1 if compact else 3
         discard_new = self.query("#library-note-discard-new")

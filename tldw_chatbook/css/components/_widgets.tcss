@@ -3,12 +3,17 @@
  * ======================================== 
  * Miscellaneous reusable widgets
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales + named
+   \$ds-widgets-skeleton-title-share), transcribed value-identically from
+   the raw literals; comments stay load-bearing. */
+
 
 /* Collapsible widget styling with enhanced UX */
 Collapsible {
     height: auto;
-    min-height: 3;
-    margin: 0 0 1 0;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     border: round $surface-lighten-1;
     background: $surface;
 }
@@ -48,9 +53,9 @@ Collapsible.-collapsed > CollapsibleTitle:focus {
  * were captured and reviewed against this height/background/padding/hover/
  * border treatment -- see the QA captures referenced above. */
 #settings-library-rag-card Collapsible > CollapsibleTitle {
-    height: 2;
-    min-height: 2;
-    padding: 0 1;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-lighten-1;
     color: $text;
     border-bottom: solid $border;
@@ -88,48 +93,48 @@ Collapsible.-collapsed > CollapsibleTitle:focus {
 
 Collapsible > Contents {
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
     background: $surface;
 }
 
 /* Half height for RAG Settings collapsible header */
 #chat-rag-panel > .collapsible--header,
 #character-rag-panel > .collapsible--header {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 /* Fix for settings collapsibles in sidebars */
 .settings-collapsible {
     height: auto !important;
-    min-height: 3 !important;
+    min-height: $ds-size-3 !important;
 }
 
 .settings-collapsible > Contents {
     height: auto !important;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Ensure controls inside collapsibles are visible */
 .settings-collapsible Checkbox {
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-collapsible Toggle {
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .chat-system-prompt-styling {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 3;
-    max-height: 10; /* Limit height */
+    min-height: $ds-size-3;
+    max-height: $ds-size-10; /* Limit height */
     border: round $surface;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* --- Window Footer Widget --- */
@@ -142,17 +147,17 @@ Collapsible > Contents {
    silently diverges from production. */
 AppFooterStatus {
     dock: bottom;
-    height: 1;  /* Single row height */
+    height: $ds-size-1;  /* Single row height */
     background: $primary-background-darken-1;
-    width: 100%;
+    width: $ds-width-full;
     layout: horizontal;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     /* Removed align: right middle; from parent, will control children individually */
 }
 
 #footer-key-palette {
     width: auto;
-    padding: 0 1; /* Padding around each key binding */
+    padding: $ds-space-0 $ds-space-1; /* Padding around each key binding */
     color: $text-muted;
     dock: left; /* Dock key bindings to the left */
     visibility: visible;
@@ -161,65 +166,65 @@ AppFooterStatus {
 
 #footer-key-quit {
     width: auto;
-    height: 1;
-    padding: 0 1; /* Padding around each key binding */
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1; /* Padding around each key binding */
     color: $text-muted;
     dock: left; /* Dock key bindings to the left */
 }
 
 #footer-spacer {
-    width: 1fr; /* Takes up remaining space in the middle */
-    height: 1;
+    width: $ds-width-fill; /* Takes up remaining space in the middle */
+    height: $ds-size-1;
 }
 
 #footer-word-count {
     width: auto;
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $text-muted;
     display: block;
 }
 
 #footer-token-count {
     width: auto;
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $text-muted;
     display: block;
 }
 
 #internal-db-size-indicator { /* This is for the DB sizes */
     width: auto;
-    height: 1;
+    height: $ds-size-1;
     /* content-align: right; Textual doesn't have content-align for Static directly */
     /* dock: right; Docking within Horizontal might be tricky, align on parent is better */
     color: $text-muted;
     dock: right; /* Dock DB sizes to the right */
-    padding: 0 1; /* Add padding to the right of DB sizes as well */
-    margin-left: 2; /* Add buffer before DB status */
+    padding: $ds-space-0 $ds-space-1; /* Add padding to the right of DB sizes as well */
+    margin-left: $ds-space-2; /* Add buffer before DB status */
 }
 /* --- End of Window Footer Widget --- */
 
 /* --- Loading States --- */
 .loading-state-container {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 10;
+    min-height: $ds-size-10;
 }
 
 .loading-view {
     align: center middle;
-    padding: 2;
+    padding: $ds-space-2;
 }
 
 .loading-text {
-    margin-top: 1;
+    margin-top: $ds-space-1;
     color: $text-muted;
 }
 
 .error-view {
     align: center middle;
-    padding: 2;
+    padding: $ds-space-2;
     background: $error 10%;
     border: round $error;
 }
@@ -230,66 +235,66 @@ AppFooterStatus {
 }
 
 .error-message {
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
     color: $error;
     text-align: center;
 }
 
 .error-actions {
-    margin-top: 1;
+    margin-top: $ds-space-1;
     align: center middle;
 }
 
 .error-actions Button {
-    margin: 0 1;
+    margin: $ds-space-0 $ds-space-1;
 }
 
 /* Skeleton loader styles */
 .skeleton-container {
-    width: 100%;
-    padding: 1;
+    width: $ds-width-full;
+    padding: $ds-space-1;
 }
 
 .skeleton-avatar {
-    width: 8;
-    height: 4;
+    width: $ds-size-8;
+    height: $ds-size-4;
     background: $surface-lighten-2;
     border: round $surface-lighten-2;
 }
 
 .skeleton-title {
-    width: 60%;
-    height: 1;
+    width: $ds-widgets-skeleton-title-share;
+    height: $ds-size-1;
     background: $surface-lighten-2;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .skeleton-subtitle {
-    width: 40%;
-    height: 1;
+    width: $ds-percent-40;
+    height: $ds-size-1;
     background: $surface-lighten-1;
 }
 
 .skeleton-line {
-    height: 1;
+    height: $ds-size-1;
     background: $surface-lighten-1;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .skeleton-line-full {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .skeleton-line-90 {
-    width: 90%;
+    width: $ds-percent-90;
 }
 
 .skeleton-line-80 {
-    width: 80%;
+    width: $ds-percent-80;
 }
 
 .skeleton-line-70 {
-    width: 70%;
+    width: $ds-percent-70;
 }
 
 /* Skeleton loader visual indication */

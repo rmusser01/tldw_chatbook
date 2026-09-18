@@ -1,0 +1,32 @@
+[
+  {
+    "path": "Tests/UI/test_library_prompt_collections.py",
+    "baseline_diagnostics": 5,
+    "current_diagnostics": 5,
+    "new_diagnostics": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "baseline_diagnostics": 16,
+    "current_diagnostics": 16,
+    "new_diagnostics": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py",
+    "baseline_diagnostics": 5,
+    "current_diagnostics": 5,
+    "new_diagnostics": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "baseline_diagnostics": 205,
+    "current_diagnostics": 205,
+    "new_diagnostics": []
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "new_diagnostics": []
+  }
+]

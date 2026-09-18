@@ -1,0 +1,59 @@
+{
+  "pid": 92783,
+  "runner_sha256": "1e006b30f9adbee7dc7430021b67e4323fca6bc7b2a236e5d1b29215ba10edeb",
+  "state_seam": "controlled LibraryRagPanelState; real native widgets and refreshes",
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "during_yield_paint": " To openai: question + evidence                                                                                              ",
+      "settled_notice_paint": " To openai: question + evidence                                                                                              ",
+      "coherent_gate_during_and_after_yield": true,
+      "missing_scope_disables_run": true,
+      "query_focus_and_value_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "during_yield_paint": " To openai: question + evidence                   ",
+      "settled_notice_paint": " To openai: question + evidence                   ",
+      "coherent_gate_during_and_after_yield": true,
+      "missing_scope_disables_run": true,
+      "query_focus_and_value_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "during_yield_paint": " To openai: question + evidence                                                                                              ",
+      "settled_notice_paint": " To openai: question + evidence                                                                                              ",
+      "coherent_gate_during_and_after_yield": true,
+      "missing_scope_disables_run": true,
+      "query_focus_and_value_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "during_yield_paint": " To openai: question + evidence                   ",
+      "settled_notice_paint": " To openai: question + evidence                   ",
+      "coherent_gate_during_and_after_yield": true,
+      "missing_scope_disables_run": true,
+      "query_focus_and_value_retained": true
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "matrix size",
+  "passed": true,
+  "app_run_returned": true
+}

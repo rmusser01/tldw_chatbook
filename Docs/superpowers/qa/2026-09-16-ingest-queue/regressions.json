@@ -1,0 +1,38 @@
+{
+  "queue_rebuild": "Focused Details moved into Keywords on a job state transition. Capture at recompose also covers focus arriving after the registry listener scheduled the rebuild.",
+  "review_edges": [
+    "Older Details callback must not replace newer Retry focus.",
+    "A replacement Analyze action can become disabled; fallback must skip non-focusable controls."
+  ],
+  "native_hidden_focus": {
+    "run": "run-009",
+    "retry_region": [
+      3,
+      18,
+      20,
+      1
+    ],
+    "canvas_scroll_y": 59,
+    "max_scroll_y": 61,
+    "result": "Focused Retry compositor crop blank under docks."
+  },
+  "animation": {
+    "before": "animation-red.txt: 1 failed; same blank focused Retry at y18.",
+    "after": "layout-settle-green.txt: animation regression passed."
+  },
+  "late_layout": {
+    "trace": "Screen._refresh_layout -> Widget._size_updated -> _scroll_update -> validate_scroll_y",
+    "virtual_height": [
+      83,
+      81
+    ],
+    "scroll_y": [
+      64,
+      62
+    ],
+    "focus": "library-ingest-retry-last throughout",
+    "after": "layout-settle-green.txt: fast-focus/late-layout regression passed."
+  },
+  "focused_final": "4 passed, 2 inherited cleanup warnings in 15.79s",
+  "structural_assertion": "Compare virtual_region to preserve layout/size contract while allowing dock-aware focus scrolling."
+}

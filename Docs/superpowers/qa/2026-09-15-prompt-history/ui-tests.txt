@@ -1,0 +1,41 @@
+........................................................................ [ 94%]
+....                                                                     [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1ac7854a-86f8-4420-a908-d5fbe0649c75/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1ac7854a-86f8-4420-a908-d5fbe0649c75/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1ac7854a-86f8-4420-a908-d5fbe0649c75
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1ac7854a-86f8-4420-a908-d5fbe0649c75'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+6.87s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_menu_selection_and_older_page_preserve_keyboard_position[textual-light-size0]
+6.47s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_restore_cancel_no_change_and_new_version_are_readable[textual-light-size0]
+6.27s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_menu_selection_and_older_page_preserve_keyboard_position[textual-dark-size0]
+6.22s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_restore_cancel_no_change_and_new_version_are_readable[textual-dark-size0]
+5.76s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_restore_cancel_no_change_and_new_version_are_readable[textual-light-size1]
+5.52s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_restore_cancel_no_change_and_new_version_are_readable[textual-dark-size1]
+5.51s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_keyboard_retry_and_dirty_gate_preserve_saved_content[size0]
+5.32s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_menu_selection_and_older_page_preserve_keyboard_position[textual-dark-size1]
+5.25s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_menu_selection_and_older_page_preserve_keyboard_position[textual-light-size1]
+5.17s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_load_is_noop_after_duplicate_detaches[page]
+5.14s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_load_is_noop_after_duplicate_detaches[count]
+4.73s call     Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[close]
+4.70s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_keyboard_retry_and_dirty_gate_preserve_saved_content[size1]
+3.97s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_stale_conflict_reload_refreshes_and_can_retry
+3.30s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_restore_refresh_rejects_same_id_aba_scope
+3.24s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_conflict_save_as_new_replaces_source_history_identity
+3.16s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_confirms_and_restores_as_new_current_version[same-type]
+3.14s call     Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[reload]
+3.12s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_conflict_overwrite_adopts_persisted_detail_and_history
+3.04s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_count_is_index_only_and_first_page_is_lazy
+3.04s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_results_after_prompt_switch_are_noops[restore]
+3.01s call     Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[page]
+2.94s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_confirms_and_restores_as_new_current_version[prompt-to-recipe]
+2.93s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_collapse_resets_page_without_refetching_count
+2.80s call     Tests/UI/test_library_prompt_history_journeys.py::test_history_page_completion_respects_newer_keyboard_focus
+76 passed, 277 deselected, 2 warnings in 190.12s (0:03:10)

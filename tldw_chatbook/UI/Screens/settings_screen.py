@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -196,6 +197,7 @@ from ...config import (
     coerce_int_setting,
     get_cli_config_path,
     get_cli_setting,
+    get_runtime_config_generation,
     get_runtime_config_snapshot,
     load_settings,
     provider_settings_for_key,
@@ -664,6 +666,34 @@ class _AudioCppResultTransactionError(RuntimeError):
     """Bounded internal failure for one Settings result transaction."""
 
 
+@dataclass(slots=True)
+class _ConsoleToggleWrite:
+    """One app-lifetime preference write, shared by recreated Settings screens."""
+
+    confirmed: bool | str
+    desired: bool | str
+    screen: "SettingsScreen"
+    running: bool = False
+    revision: int = 0
+    result: str = ""
+    lock: Any = field(default_factory=threading.Lock, repr=False)
+
+
+@dataclass(slots=True)
+class _PermissionSummaryWrite:
+    """Keep immediate form edits and their writer across Settings recreation."""
+
+    screen: "SettingsScreen"
+    form: dict[str, str] | None = None
+    pending: tuple[int, dict[str, str]] | None = None
+    running: bool = False
+    revision: int = 0
+    failed: bool = False
+    cache_warning_generation: int | None = None
+    result: str = ""
+    lock: Any = field(default_factory=threading.Lock, repr=False)
+
+
 @dataclass(frozen=True, slots=True)
 class _VllmDefaultPresentationSnapshot:
     """Complete provider presentation restored after a late handoff failure."""
@@ -1066,6 +1096,7 @@ PERMISSION_SUMMARY_FIELD_IDS = frozenset(
         "settings-permission-summary-mode",
         "settings-permission-summary-provider",
         "settings-permission-summary-model",
+        "settings-permission-summary-retry",
     }
 )
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
@@ -2091,7 +2122,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "launch visual defaults stay in Appearance; theme edits never touch config.toml",
+            "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
         ),
     ),
     SettingsCategoryId.SPLASH_SCREEN: (
@@ -2907,6 +2938,16 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
+        self._model_discovery_revision = 0
+        self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
+        self._model_catalog_save_status = ""
+        self._model_catalog_save_failed = False
+        self._model_catalog_save_revision = 0
+        self._model_catalog_save_lock = threading.Lock()
+        self._model_catalog_save_running = False
+        self._model_catalog_pending_save: (
+            tuple[int, dict[str, dict[str, object]]] | None
+        ) = None
         # ADR-146 task-7 custom endpoints panel: the entry slug (if any)
         # whose inline Rename/Edit form is open, the slug whose delete is
         # blocked awaiting the Detach-references confirmation, and the
@@ -2927,6 +2968,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
+        self._generation_defaults_collapsed = True
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
@@ -2937,11 +2979,21 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_sidechat = False
         self._syncing_console_paste_toggle = False
         self._syncing_console_thinking_visibility = False
-        self._thinking_visibility_write_revision = 0
-        initial_thinking_visibility = self._loaded_show_model_thinking()
-        self._thinking_visibility_desired_value = initial_thinking_visibility
-        self._thinking_visibility_confirmed_value = initial_thinking_visibility
-        self._thinking_visibility_in_flight: tuple[bool, int] | None = None
+        toggle_writes = getattr(app_instance, "_settings_console_toggle_writes", None)
+        if toggle_writes is None:
+            toggle_writes = {}
+            app_instance._settings_console_toggle_writes = toggle_writes
+        self._console_toggle_writes: dict[str, _ConsoleToggleWrite] = toggle_writes
+        for pending in toggle_writes.values():
+            with pending.lock:
+                pending.screen = self
+        summary_write = getattr(app_instance, "_settings_permission_summary_write", None)
+        if summary_write is None:
+            summary_write = _PermissionSummaryWrite(self)
+            app_instance._settings_permission_summary_write = summary_write
+        self._permission_summary_write = summary_write
+        with summary_write.lock:
+            summary_write.screen = self
         self._syncing_console_rail_layout_scope = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
@@ -4023,6 +4075,7 @@ class SettingsScreen(BaseAppScreen):
             return
         if not mount_already_refreshed:
             self._queue_sync_rows_refresh()
+            self._refresh_provider_defaults_on_resume()
         self._maybe_refresh_rag_index_status_on_show()
         self._maybe_refresh_workspaces_pane_on_show()
         if (
@@ -4030,6 +4083,35 @@ class SettingsScreen(BaseAppScreen):
             and self._active_category_id() is SettingsCategoryId.TOOL_PROFILES
         ):
             self._request_tool_profiles_listing()
+
+    def _refresh_provider_defaults_on_resume(self) -> None:
+        """Refresh a clean retained provider form when its saved selection moved."""
+        if (
+            self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS
+            or self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+            or self._navigation_provider
+        ):
+            return
+        try:
+            displayed = (
+                provider_config_key(self._provider_widget_value()),
+                self.query_one("#settings-model-value", Input).value,
+                self.query_one("#settings-provider-endpoint-value", Input).value,
+            )
+        except QueryError:
+            return
+        saved = self._provider_loaded_setting_values()
+        saved_selection = (
+            provider_config_key(str(saved["provider"])),
+            saved["model"],
+            saved["endpoint"],
+        )
+        if displayed == saved_selection:
+            return
+        self._provider_evidence_store().invalidate()
+        self._mark_provider_test_result_stale()
+        self._reset_provider_model_discovery_state()
+        self.mutate_reactive(SettingsScreen.active_category)
 
     def _maybe_refresh_rag_index_status_on_show(self) -> None:
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
@@ -5104,7 +5186,7 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.THEME,
-                owns_config_sections=("custom theme files",),
+                owns_config_sections=("custom theme files", "general.default_theme"),
                 reads_runtime_state_from=("app theme", "custom theme files"),
                 writes_allowed=True,
                 runtime_owner="Theme editor",
@@ -5795,18 +5877,16 @@ class SettingsScreen(BaseAppScreen):
     def _saved_permission_summary_payload(self) -> dict[str, str]:
         """The normalized saved ``[permission_summary]`` trio (ADR-090).
 
-        Reads the cached ``load_settings()`` config -- the model-catalog
-        group's source (cheap cache hit, and every config write refreshes
-        it) -- and normalizes through the settings payload helper, so
-        compose-time widget values and the instant-apply no-op guard can
-        never disagree about what "saved" means.
+        Read the cached runtime configuration shared with the approval
+        summary consumer. Normalize through the payload helper so composition
+        and the no-op guard agree about what "saved" means.
         """
         from ...Chat.permission_summary_service import (
             permission_summary_settings_payload,
         )
 
         section = load_settings().get("permission_summary")
-        section = section if isinstance(section, dict) else {}
+        section = section if isinstance(section, Mapping) else {}
         return permission_summary_settings_payload(
             str(section.get("mode") or ""),
             str(section.get("provider") or ""),
@@ -6407,53 +6487,16 @@ class SettingsScreen(BaseAppScreen):
         return "Enabled" if self._remote_images_enabled() else "Disabled"
 
     def _toggle_remote_images(self) -> bool:
-        """Flip render_remote_images: persist it AND poke the live config.
-
-        ADR-020-style immediate write (no category draft): the toggle is a
-        single security-relevant boolean. The App captures ``app_config``
-        once at startup, so persisting alone would not take effect until
-        restart -- the raw in-memory tree the transcript gate reads is
-        updated in place too.
-
-        Returns:
-            The new (post-toggle) enabled value.
-        """
+        """Apply the choice immediately and reconcile it with the saved result."""
         next_value = not self._remote_images_enabled()
         self._persist_remote_images_toggle(next_value)
-        app_config = getattr(self.app_instance, "app_config", None)
-        if isinstance(app_config, dict):
-            raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
-            if isinstance(raw, dict):
-                raw.setdefault("chat", {}).setdefault("images", {})[
-                    "render_remote_images"
-                ] = next_value
-            chat_section = app_config.get("chat")
-            if isinstance(chat_section, dict) and isinstance(
-                chat_section.get("images"), dict
-            ):
-                chat_section["images"]["render_remote_images"] = next_value
+        self._apply_console_toggle_runtime("remote-images", next_value)
         return next_value
 
-    @work(thread=True)
     def _persist_remote_images_toggle(self, next_value: bool) -> None:
-        """Write the render_remote_images preference off the event loop.
-
-        task-15470: this was a synchronous ``save_settings_to_cli_config``
-        call straight in a Button.Pressed handler -- a full config.toml
-        read+atomic-rewrite+cache-reload per click. The in-memory
-        ``app_config`` update in ``_toggle_remote_images`` (which the
-        transcript gate reads live) stays synchronous; only the disk write
-        moves to a worker. Guarded broadly: an uncaught exception in a
-        ``@work(thread=True)`` worker is fatal to the app by default
-        (``exit_on_error=True``), so a config-write hiccup must not crash
-        the whole session.
-        """
-        try:
-            save_settings_to_cli_config(
-                {"chat.images": {"render_remote_images": next_value}}
-            )
-        except Exception:
-            logger.warning("Failed to persist render_remote_images.")
+        self._queue_console_toggle(
+            "remote-images", next_value, self._remote_images_enabled()
+        )
 
     def _status_row_position_value(self) -> str:
         """Return the live [console].status_chips_position value."""
@@ -6471,61 +6514,213 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _toggle_status_row_position(self) -> str:
-        """Flip status_chips_position: persist it AND poke the live config.
-
-        ADR-020-style immediate write (no category draft), the same shape
-        as the remote-images toggle (task-17652). The cached Console screen
-        re-applies the position on resume, so the change lands on return
-        without a restart.
-
-        Returns:
-            The new (post-toggle) position value.
-        """
-        from ..Console_Modules.status_row import (
-            STATUS_CHIPS_POSITION_ABOVE,
-            STATUS_CHIPS_POSITION_BELOW,
-            poke_console_setting,
-        )
-
+        """Apply placement immediately; serialize writes to preserve the last choice."""
         next_value = (
-            STATUS_CHIPS_POSITION_BELOW
-            if self._status_row_position_value() == STATUS_CHIPS_POSITION_ABOVE
-            else STATUS_CHIPS_POSITION_ABOVE
+            "below" if self._status_row_position_value() == "above" else "above"
         )
         self._persist_status_row_position(next_value)
-        poke_console_setting(
-            getattr(self.app_instance, "app_config", None),
-            "status_chips_position",
-            next_value,
-        )
+        self._apply_console_toggle_runtime("status-row-position", next_value)
         return next_value
 
-    @work(thread=True)
     def _persist_status_row_position(self, next_value: str) -> None:
-        """Write the status-row placement off the event loop (task-15470 shape)."""
+        self._queue_console_toggle(
+            "status-row-position", next_value, self._status_row_position_value()
+        )
+
+    def _apply_console_toggle_runtime(self, key: str, value: bool | str) -> None:
+        """Keep the immediate preference and any mounted control in sync."""
+        if key == "model-thinking":
+            changed = self._loaded_show_model_thinking() != value
+            self._console_settings()["show_model_thinking"] = value
+            try:
+                checkbox = self.query_one(
+                    "#settings-console-show-model-thinking", Checkbox
+                )
+                with checkbox.prevent(Checkbox.Changed):
+                    checkbox.value = bool(value)
+                checkbox.label = self._show_model_thinking_label()
+            except QueryError:
+                pass
+            if changed:
+                self._signal_console_appearance_refresh()
+            return
+        app_config = getattr(self.app_instance, "app_config", None)
+        if key == "remote-images":
+            if isinstance(app_config, dict):
+                raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+                if isinstance(raw, dict):
+                    raw.setdefault("chat", {}).setdefault("images", {})[
+                        "render_remote_images"
+                    ] = value
+                chat = app_config.get("chat")
+                if isinstance(chat, dict) and isinstance(chat.get("images"), dict):
+                    chat["images"]["render_remote_images"] = value
+            label = self._remote_images_button_label()
+        else:
+            from ..Console_Modules.status_row import poke_console_setting
+
+            poke_console_setting(app_config, "status_chips_position", value)
+            label = self._status_row_position_button_label()
         try:
-            save_settings_to_cli_config(
-                {"console": {"status_chips_position": next_value}}
+            self.query_one(f"#settings-console-{key}-toggle", Button).label = label
+        except QueryError:
+            pass
+
+    def _queue_console_toggle(
+        self, key: str, value: bool | str, current: bool | str
+    ) -> None:
+        """Share a single writer across Settings departures and new instances."""
+        state = self._console_toggle_writes.setdefault(
+            key, _ConsoleToggleWrite(current, current, self)
+        )
+        with state.lock:
+            start = not state.running
+            if start:
+                # Diagnostics/Advanced Config can replace app_config while idle.
+                state.confirmed = current
+            state.desired = value
+            state.revision += 1
+            state.screen = self
+            state.running = True
+            state.result = (
+                "Saving model thinking visibility…" if key == "model-thinking" else ""
             )
-        except Exception:
-            logger.warning("Failed to persist status_chips_position.")
+        if key == "model-thinking":
+            self._set_static_text(
+                "#settings-console-model-thinking-result", state.result
+            )
+        if start:
+            host = self.app
+            host.run_worker(
+                lambda: self._persist_console_toggle(key, state, host),
+                thread=True,
+                group="settings-console-instant-toggles",
+            )
 
-    #: Qodo review #11: generation guard for the instant-apply
-    #: permission-summary writes. Each dispatch stamps a token; a worker
-    #: whose token is no longer the latest skips its write, so an older
-    #: full-section snapshot can never overwrite a newer edit when two
-    #: threaded saves race (per-keystroke Input.Changed).
-    _permission_summary_persist_generation: int = 0
+    def _persist_console_toggle(
+        self, key: str, state: _ConsoleToggleWrite, host
+    ) -> None:
+        """Drain admitted writes even if the originating screen is removed."""
+        reported_revision = -1
+        mutation = ConfigMutationResult(False, True, None)
+        while True:
+            with state.lock:
+                settled = state.desired == state.confirmed
+                value, revision = state.desired, state.revision
+                if settled:
+                    state.running = False
+            if settled:
+                if revision == reported_revision:
+                    return
+                # A coalesced return to the saved value still needs a receipt.
+                # Preserve a real post-replace refresh warning if one occurred.
+                if not mutation.file_replaced:
+                    mutation = ConfigMutationResult(False, True, None)
+                saved = True
+            else:
+                payload = (
+                    {"chat.images": {"render_remote_images": value}}
+                    if key == "remote-images"
+                    else {
+                        "console": {
+                            "show_model_thinking"
+                            if key == "model-thinking"
+                            else "status_chips_position": value
+                        }
+                    }
+                )
+                try:
+                    mutation = apply_settings_mutation_to_cli_config(payload)
+                except Exception:
+                    mutation = ConfigMutationResult(False, False, "before_replace")
+                saved = mutation.file_replaced or (
+                    not mutation.conflict and mutation.failure_phase is None
+                )
+                with state.lock:
+                    if saved:
+                        state.confirmed = value
+                        if state.desired == value:
+                            revision = state.revision
+                    elif revision == state.revision:
+                        state.desired = state.confirmed
+            try:
+                host.call_from_thread(
+                    self._finish_console_toggle, key, state, revision, mutation, saved
+                )
+            except RuntimeError:
+                # App shutdown cannot undo an admitted config write; drain the
+                # last choice without accessing a stopped UI.
+                pass
+            if settled:
+                return
+            reported_revision = revision
 
-    def _persist_permission_summary_settings(self) -> None:
-        """Persist the permission-summary trio to ``[permission_summary]`` (ADR-090).
+    def _finish_console_toggle(
+        self,
+        key: str,
+        state: _ConsoleToggleWrite,
+        revision: int,
+        mutation: ConfigMutationResult,
+        saved: bool,
+    ) -> None:
+        """Reconcile the latest screen only when this result still owns its choice."""
+        with state.lock:
+            if revision != state.revision:
+                return
+            screen, value = state.screen, state.desired
+        label = {
+            "remote-images": "Linked images",
+            "status-row-position": "Status row placement",
+            "model-thinking": "Model thinking visibility",
+        }[key]
+        screen._apply_console_toggle_runtime(key, value)
+        if not saved:
+            message = f"Could not save {label.lower()}; the prior setting was restored. Try again."
+            thinking_result = "Save failed; setting restored.\nToggle again to retry."
+        elif mutation.file_replaced and not mutation.caches_reloaded:
+            message = f"{label} saved, but live settings could not be refreshed."
+            thinking_result = "Saved. Reload settings to refresh."
+        else:
+            message = f"{label} saved."
+            thinking_result = message
+        with state.lock:
+            state.result = thinking_result if key == "model-thinking" else message
+        if key == "model-thinking":
+            screen._set_static_text(
+                "#settings-console-model-thinking-result", state.result
+            )
+        screen._console_behavior_result = message
+        if screen.is_attached:
+            screen._set_static_text("#settings-console-behavior-result", message)
+            screen.app.notify(
+                message,
+                severity="information"
+                if saved and mutation.failure_phase is None
+                else "error",
+            )
 
-        Instant-apply group (model-catalog pattern, ADR-020/task-1341): the
-        disclosure copy is the consent surface, so changes save immediately
-        instead of staging into the category draft. States matching the
-        saved config are skipped (no-op guard) so merely viewing the
-        category never rewrites config.toml.
-        """
+    def _permission_summary_form_payload(self) -> dict[str, str]:
+        """Prefer pending/failed edits; otherwise read the current saved config."""
+        state = self._permission_summary_write
+        generation = get_runtime_config_generation()
+        with state.lock:
+            if (
+                state.cache_warning_generation is not None
+                and state.cache_warning_generation != generation
+                and not state.running
+            ):
+                state.form = None
+                state.cache_warning_generation = None
+                state.result = "Saved settings reloaded."
+            form = state.form
+        return (
+            dict(form)
+            if form is not None
+            else self._saved_permission_summary_payload()
+        )
+
+    def _persist_permission_summary_settings(self, *, retry: bool = False) -> None:
+        """Admit the latest form snapshot without racing an earlier write."""
         from ...Chat.permission_summary_service import (
             permission_summary_settings_payload,
         )
@@ -6540,45 +6735,112 @@ class SettingsScreen(BaseAppScreen):
             model = self.query_one("#settings-permission-summary-model", Input).value
         except QueryError:
             return
-        section_values = {
-            "permission_summary": permission_summary_settings_payload(
-                mode, provider, model
+        payload = permission_summary_settings_payload(mode, provider, model)
+        saved = self._saved_permission_summary_payload()
+        state = self._permission_summary_write
+        with state.lock:
+            displayed = state.form if state.form is not None else saved
+            if not retry and payload == displayed:
+                return
+            state.revision += 1
+            state.form = payload
+            state.pending = (state.revision, payload)
+            state.failed = False
+            state.cache_warning_generation = None
+            state.result = "Saving permission summaries..."
+            start = not state.running
+            state.running = True
+        self._refresh_permission_summary_save_widgets()
+        if start:
+            host = self.app
+            host.run_worker(
+                lambda: self._persist_permission_summary_section_values(state, host),
+                thread=True,
+                group="settings-permission-summary",
             )
-        }
-        if (
-            section_values["permission_summary"]
-            == self._saved_permission_summary_payload()
-        ):
-            return
-        self._permission_summary_persist_generation += 1
-        self._persist_permission_summary_section_values(
-            section_values, self._permission_summary_persist_generation
-        )
 
-    @work(thread=True)
-    def _persist_permission_summary_section_values(
-        self,
-        section_values: dict[str, dict[str, object]],
-        generation: int = 0,
-    ) -> None:
-        """Write ``[permission_summary]`` off the event loop (task-15470 shape).
-
-        The Inputs are bound to ``Input.Changed``; the actual write is
-        deferred off the event loop while the cheap no-op guard above stays
-        synchronous. Guarded broadly: an uncaught exception in a
-        ``@work(thread=True)`` worker is fatal to the app by default.
-        ``save_settings_to_cli_config`` merges keys, so advanced
-        ``[permission_summary]`` keys (api_key, system_prompt, budgets) are
-        preserved. ``generation`` is the dispatch-time token (Qodo review
-        #11): a worker whose token has been superseded by a newer dispatch
-        skips the write, so out-of-order completion cannot lose updates.
-        """
-        if generation != self._permission_summary_persist_generation:
-            return
+    def _refresh_permission_summary_save_widgets(self) -> None:
+        state = self._permission_summary_write
+        with state.lock:
+            result, failed = state.result, state.failed
+        self._set_static_text("#settings-permission-summary-result", result)
         try:
-            save_settings_to_cli_config(section_values)
-        except Exception:
-            logger.warning("Failed to persist permission_summary settings.")
+            retry = self.query_one("#settings-permission-summary-retry", Button)
+            if retry.has_focus and not failed:
+                self.query_one("#settings-permission-summary-mode", Select).focus()
+            retry.display = failed
+        except QueryError:
+            pass
+
+    def _persist_permission_summary_section_values(
+        self, state: _PermissionSummaryWrite, host
+    ) -> None:
+        """One app-owned writer drains edits even after the source screen leaves."""
+        while True:
+            with state.lock:
+                pending = state.pending
+                state.pending = None
+                if pending is None:
+                    state.running = False
+                    return
+            revision, payload = pending
+            generation = get_runtime_config_generation()
+
+            def capture_generation() -> None:
+                nonlocal generation
+                # Called under the config write lock, before replacement.
+                generation = get_runtime_config_generation()
+
+            try:
+                mutation = apply_settings_mutation_to_cli_config(
+                    {"permission_summary": payload}, before_replace=capture_generation
+                )
+            except Exception:
+                logger.warning("Failed to persist permission_summary settings.")
+                mutation = ConfigMutationResult(False, False, "before_replace")
+            try:
+                host.call_from_thread(
+                    self._permission_summary_save_finished,
+                    state,
+                    revision,
+                    mutation,
+                    generation,
+                )
+            except RuntimeError:
+                # A stopped UI cannot cancel an admitted config write.
+                pass
+
+    def _permission_summary_save_finished(
+        self,
+        state: _PermissionSummaryWrite,
+        revision: int,
+        mutation: ConfigMutationResult,
+        generation: int,
+    ) -> None:
+        with state.lock:
+            if revision != state.revision:
+                return
+            saved = mutation.file_replaced or (
+                not mutation.conflict and mutation.failure_phase is None
+            )
+            state.failed = not saved
+            if not saved:
+                state.result = (
+                    "Changes not saved. Check that the config file is writable, "
+                    "then choose Retry."
+                )
+            elif mutation.file_replaced and not mutation.caches_reloaded:
+                state.cache_warning_generation = generation
+                state.result = (
+                    "Saved, but live settings could not be refreshed. "
+                    "Restart Chatbook to apply."
+                )
+            else:
+                state.form = None
+                state.result = "Saved. Applies immediately."
+            screen = state.screen
+        if screen.is_attached:
+            screen._refresh_permission_summary_save_widgets()
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -8082,6 +8344,12 @@ class SettingsScreen(BaseAppScreen):
             self._update_guided_action_widgets()
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             self._update_provider_return_widgets()
+            if self.focused is not None and str(self.focused.id or "").startswith(
+                "settings-model-profile-"
+            ):
+                # Dirty/readiness copy above the disclosure can grow while
+                # typing and push the active field past the compact fold.
+                self._reveal_settings_focus_after_refresh()
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Image Gen's Save/Revert live INSIDE the panel (not the generic
             # top guided-action bar, excluded above like THEME/INTERNAL_
@@ -11011,6 +11279,16 @@ class SettingsScreen(BaseAppScreen):
         )
 
     @staticmethod
+    def _pin_provider_draft_selection(
+        draft: SettingsDraft, values: Mapping[str, object]
+    ) -> None:
+        """Keep dependent edits with their provider/model without dirtying identity."""
+        for key in ("provider", "model"):
+            if key not in draft.values:
+                selected = values.get(key)
+                draft.set_value(key, selected, selected)
+
+    @staticmethod
     def _provider_api_mode_draft_key(provider: object) -> str:
         """Return the provider-scoped draft key for an API mode control."""
         return f"provider_api_mode:{provider_config_key(str(provider or ''))}"
@@ -11046,6 +11324,9 @@ class SettingsScreen(BaseAppScreen):
         category = SettingsCategoryId.PROVIDERS_MODELS
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
+        )
+        self._pin_provider_draft_selection(
+            draft, self._provider_setting_values_mapping()
         )
         draft_key = self._provider_api_mode_draft_key(provider_key)
         original = draft.originals.get(
@@ -11145,8 +11426,15 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self._chat_defaults())
-        provider = str(resolved.provider or "").strip()
-        model = str(resolved.model or "").strip()
+        return self._provider_values_for_selection(
+            str(resolved.provider or "").strip(),
+            str(resolved.model or "").strip(),
+        )
+
+    def _provider_values_for_selection(
+        self, provider: str, model: str
+    ) -> dict[str, object]:
+        """Read dependent fields from the provider/model that owns the form."""
         profile = self._provider_model_profile(provider, model)
         return {
             "provider": provider,
@@ -11176,7 +11464,11 @@ class SettingsScreen(BaseAppScreen):
         }
 
     def _provider_setting_values(self) -> dict[str, object]:
-        loaded = self._provider_loaded_setting_values()
+        resolved = self._resolve_provider_model_for_settings()
+        loaded = self._provider_values_for_selection(
+            str(resolved.provider or "").strip(),
+            str(resolved.model or "").strip(),
+        )
         draft = self._provider_draft()
         values = {
             key: draft.values[key]
@@ -11551,7 +11843,9 @@ class SettingsScreen(BaseAppScreen):
         text = "" if value is None else str(value).strip()
         if not text:
             return ""
-        if not validate_number_range(text, min_val=min_value, max_val=max_value):
+        if not validate_number_range(
+            text, min_val=min_value, max_val=max_value
+        ) or not math.isfinite(float(text)):
             raise ValueError(
                 f"{label} must be between {min_value:.1f} and {max_value:.1f}."
             )
@@ -11928,16 +12222,19 @@ class SettingsScreen(BaseAppScreen):
     def _stage_provider_value(self, key: str, value: object) -> None:
         self._discard_openai_reconnect_review()
         category = SettingsCategoryId.PROVIDERS_MODELS
+        current = self._provider_setting_values_mapping()
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
+        if key != "provider":
+            self._pin_provider_draft_selection(draft, current)
         if key == "api_key":
             provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
             original = self._provider_api_key_value(provider)
         else:
-            original = self._provider_loaded_setting_values().get(key)
+            original = draft.originals.get(key, current.get(key))
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
@@ -13707,10 +14004,13 @@ class SettingsScreen(BaseAppScreen):
         self,
         status: str = MODEL_DISCOVERY_IDLE_COPY,
     ) -> None:
+        # A monotonic revision rejects late work even after an A -> B -> A edit.
+        self._model_discovery_revision += 1
         self._model_discovery_status = status
         self._model_discovery_models = ()
         self._model_discovery_selected_model_ids = set()
         self._refresh_model_discovery_widgets()
+        self._refresh_model_field_suggester()
 
     def _discovery_status_from_error(self, result: object) -> str:
         error = getattr(result, "error", None)
@@ -13769,8 +14069,9 @@ class SettingsScreen(BaseAppScreen):
             discovered_list = self.query_one(
                 "#settings-discovered-models-list", SelectionList
             )
-            discovered_list.clear_options()
-            discovered_list.add_options(self._model_discovery_selection_options())
+            with discovered_list.prevent(SelectionList.SelectedChanged):
+                discovered_list.clear_options()
+                discovered_list.add_options(self._model_discovery_selection_options())
             discovered_list.disabled = not self._model_discovery_models
         except QueryError:
             pass
@@ -13807,19 +14108,14 @@ class SettingsScreen(BaseAppScreen):
             self.app_instance, "llm_provider_catalog_scope_service", None
         )
         if not provider_key or scope_service is None:
-            self._model_discovery_status = (
+            self._reset_provider_model_discovery_state(
                 "Provider is required before discovering models."
             )
-            self._model_discovery_models = ()
-            self._model_discovery_selected_model_ids = set()
-            self._refresh_model_discovery_widgets()
             return
 
         staged_settings = self._provider_discovery_staged_settings(provider)
-        self._model_discovery_status = "Model discovery: running"
-        self._model_discovery_models = ()
-        self._model_discovery_selected_model_ids = set()
-        self._refresh_model_discovery_widgets()
+        self._reset_provider_model_discovery_state("Model discovery: running")
+        revision = self._model_discovery_revision
         try:
             result = await scope_service.discover_models(
                 mode="local",
@@ -13827,6 +14123,8 @@ class SettingsScreen(BaseAppScreen):
                 staged_settings=staged_settings,
             )
         except Exception as exc:
+            if revision != self._model_discovery_revision:
+                return
             # Type name ONLY -- no traceback (the log file sink runs with
             # diagnose=True, which would dump frame locals: api_key, headers)
             # and no message text either: an httpx error's str() can embed
@@ -13835,15 +14133,12 @@ class SettingsScreen(BaseAppScreen):
             # message would write raw credentials into the on-disk log
             # (TASK-23108 review round; sink-level redaction is the tracked
             # follow-up).
-            logger.warning(
-                f"Provider model discovery failed: {type(exc).__name__}"
-            )
+            logger.warning(f"Provider model discovery failed: {type(exc).__name__}")
             self._model_discovery_status = failure_status_text(
                 "Model discovery failed",
                 exc,
                 next_step=(
-                    "Check the provider endpoint and API key, then run "
-                    "Discover again."
+                    "Check the provider endpoint and API key, then run Discover again."
                 ),
             )
             self._model_discovery_models = ()
@@ -13851,6 +14146,8 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_model_discovery_widgets()
             return
 
+        if revision != self._model_discovery_revision:
+            return
         if str(getattr(result, "status", "")) == "success":
             models = tuple(getattr(result, "models", ()) or ())
             provider_list_key = str(
@@ -13968,6 +14265,8 @@ class SettingsScreen(BaseAppScreen):
             return
 
         self._model_discovery_selected_model_ids = set(selected_model_ids)
+        self._model_discovery_revision += 1
+        revision = self._model_discovery_revision
         self._model_discovery_status = "Saving selected discovered models..."
         self._refresh_model_discovery_widgets()
         try:
@@ -13977,12 +14276,13 @@ class SettingsScreen(BaseAppScreen):
                 model_ids=selected_model_ids,
             )
         except Exception as exc:
+            if revision != self._model_discovery_revision:
+                return
             # Type name only -- logger.exception's traceback tail would print
             # the raw exception message (and diagnose=True would dump frame
             # locals); see the discovery-run branch above (TASK-23108 review).
             logger.warning(
-                "Provider model discovery persistence failed: "
-                f"{type(exc).__name__}"
+                f"Provider model discovery persistence failed: {type(exc).__name__}"
             )
             self._model_discovery_status = failure_status_text(
                 "Could not save the discovered models",
@@ -14005,6 +14305,9 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            # The save belongs to its original provider even if the form moved.
+            if revision != self._model_discovery_revision:
+                return
             # TASK-369: recognition over recall — offer the saved model for
             # activation instead of leaving an empty Model field the user must
             # retype from memory of a name the cleared discovery list no longer
@@ -14018,6 +14321,8 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify("Discovered models saved.", severity="information")
             return
 
+        if revision != self._model_discovery_revision:
+            return
         if status == "ambiguous_provider_key":
             self._model_discovery_status = MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
         else:
@@ -14037,17 +14342,33 @@ class SettingsScreen(BaseAppScreen):
         scope_service = getattr(
             self.app_instance, "llm_provider_catalog_scope_service", None
         )
+        self._model_discovery_revision += 1
+        revision = self._model_discovery_revision
         if provider_key and scope_service is not None:
             try:
                 await scope_service.clear_discovered_models(
                     mode="local",
                     provider=provider_key,
                 )
-            except Exception:
-                logger.exception("Provider discovered model cache clear failed")
+            except Exception as exc:  # noqa: BLE001 - recover without logging secrets
+                if revision != self._model_discovery_revision:
+                    return
+                logger.warning(
+                    "Provider discovered model cache clear failed: "
+                    f"{type(exc).__name__}"
+                )
+                self._model_discovery_status = failure_status_text(
+                    "Could not clear discovered models",
+                    exc,
+                    next_step="Try Clear again; your discovered models are still shown.",
+                )
+                self._refresh_model_discovery_widgets()
+                return
+        if revision != self._model_discovery_revision:
+            return
         self._reset_provider_model_discovery_state("Discovered model cache cleared.")
 
-    def _persist_model_catalog_settings(self) -> None:
+    def _persist_model_catalog_settings(self, *, retry: bool = False) -> None:
         """Persist the model catalog toggles to ``[model_catalog]`` (ADR-020).
 
         The toggles gate a background behavior, so changes save immediately
@@ -14078,23 +14399,10 @@ class SettingsScreen(BaseAppScreen):
             }
         except QueryError:
             return
-        stale_hours_text = stale_hours_raw.strip()
-        if not stale_hours_text:
-            # Empty intermediate input; keep the last persisted value.
-            return
-        try:
-            stale_after_hours: float | int = float(stale_hours_text)
-        except (TypeError, ValueError):
-            # Invalid intermediate input; keep the last persisted value.
-            return
-        if stale_after_hours < 0:
-            return
-        if stale_after_hours.is_integer():
-            stale_after_hours = int(stale_after_hours)
-        section_values = {
+        form_values = {
             "model_catalog": {
                 "auto_refresh_enabled": auto_refresh_enabled,
-                "stale_after_hours": stale_after_hours,
+                "stale_after_hours": stale_hours_raw,
                 "auto_refresh_disabled": [
                     provider
                     for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
@@ -14107,13 +14415,39 @@ class SettingsScreen(BaseAppScreen):
                 ],
             }
         }
+        # Rebuilt controls post their constructor values. Keep pending/failed
+        # edits and their receipt without treating those echoes as another save.
+        if not retry and form_values == self._model_catalog_form_values:
+            return
+        try:
+            stale_after_hours = float(stale_hours_raw.strip())
+            valid_hours = math.isfinite(stale_after_hours) and stale_after_hours >= 0
+        except ValueError:
+            valid_hours = False
+        self._model_catalog_save_revision += 1
+        self._model_catalog_form_values = form_values
+        self._model_catalog_save_failed = False
+        if not valid_hours:
+            with self._model_catalog_save_lock:
+                self._model_catalog_pending_save = None
+            self._model_catalog_save_status = (
+                "Enter 0 or a positive number of hours. Changes are not saved."
+            )
+            self._refresh_model_catalog_save_widgets()
+            return
+        section_values = copy.deepcopy(form_values)
+        section_values["model_catalog"]["stale_after_hours"] = (
+            int(stale_after_hours)
+            if stale_after_hours.is_integer()
+            else stale_after_hours
+        )
         # Compare every field EXCEPT consent: only the one-time startup
         # dialog records consent, and the write below never touches it.
         # Including it here would make a consented config never compare
         # equal, rewriting config.toml on every toggle/keystroke.
         candidate = load_model_catalog_settings(section_values)
         current = load_model_catalog_settings(load_settings())
-        if (
+        unchanged = (
             candidate.auto_refresh_enabled,
             candidate.stale_after_hours,
             candidate.auto_refresh_disabled,
@@ -14123,30 +14457,83 @@ class SettingsScreen(BaseAppScreen):
             current.stale_after_hours,
             current.auto_refresh_disabled,
             current.write_to_config,
-        ):
+        )
+        with self._model_catalog_save_lock:
+            if unchanged and not self._model_catalog_save_running:
+                self._model_catalog_form_values = None
+                self._model_catalog_save_status = "Saved. Applies at next startup."
+                start_worker = False
+            else:
+                # A return to the saved value still queues behind an older
+                # in-flight write, which could otherwise undo the latest edit.
+                self._model_catalog_pending_save = (
+                    self._model_catalog_save_revision,
+                    section_values,
+                )
+                start_worker = not self._model_catalog_save_running
+                self._model_catalog_save_running = True
+                self._model_catalog_save_status = "Saving automatic refresh settings..."
+        self._refresh_model_catalog_save_widgets()
+        if start_worker:
+            self._persist_model_catalog_section_values()
+
+    def _refresh_model_catalog_save_widgets(self) -> None:
+        self._set_static_text(
+            "#settings-model-catalog-save-status", self._model_catalog_save_status
+        )
+        try:
+            retry = self.query_one("#settings-model-catalog-retry", Button)
+            if retry.has_focus and not self._model_catalog_save_failed:
+                self.query_one("#settings-model-catalog-auto-refresh", Checkbox).focus()
+            retry.display = self._model_catalog_save_failed
+        except QueryError:
+            pass
+
+    def _model_catalog_save_finished(self, revision: int, saved: bool) -> None:
+        if revision != self._model_catalog_save_revision:
             return
-        self._persist_model_catalog_section_values(section_values)
+        self._model_catalog_save_failed = not saved
+        if saved:
+            self._model_catalog_form_values = None
+            self._model_catalog_save_status = "Saved. Applies at next startup."
+        else:
+            self._model_catalog_save_status = (
+                "Automatic refresh changes were not saved. Check that the config "
+                "file is writable, then choose Retry."
+            )
+            self.app.notify(
+                "Automatic refresh settings were not saved. Retry in Automatic refresh.",
+                severity="error",
+            )
+        self._refresh_model_catalog_save_widgets()
 
     @work(thread=True)
-    def _persist_model_catalog_section_values(
-        self, section_values: dict[str, dict[str, object]]
-    ) -> None:
-        """Write ``[model_catalog]`` off the event loop.
+    def _persist_model_catalog_section_values(self) -> None:
+        """Drain the latest pending snapshot with only one writer at a time.
 
-        task-15470: ``#settings-model-catalog-stale-hours`` is bound to
-        ``Input.Changed`` -- this used to call ``save_settings_to_cli_
-        config`` (a full config.toml read+atomic-rewrite+cache-reload)
-        synchronously on the event loop once per keystroke that parses as a
-        valid, changed value (every digit of a multi-digit number). The
-        no-op guard above (cheap: reads the cached settings, no I/O) stays
-        synchronous; only the actual write is deferred. Guarded broadly: an
-        uncaught exception in a ``@work(thread=True)`` worker is fatal to
-        the app by default (``exit_on_error=True``).
+        A thread cancellation cannot undo a config write. Keep the queue under a
+        lock rather than cancelling/replacing workers, and never let an older
+        completion overwrite a newer form's receipt.
         """
-        try:
-            save_settings_to_cli_config(section_values)
-        except Exception:
-            logger.warning("Failed to persist model_catalog settings.")
+        app = self.app
+        while True:
+            with self._model_catalog_save_lock:
+                pending = self._model_catalog_pending_save
+                self._model_catalog_pending_save = None
+                if pending is None:
+                    self._model_catalog_save_running = False
+                    return
+            revision, section_values = pending
+            try:
+                saved = bool(save_settings_to_cli_config(section_values))
+            except Exception:  # noqa: BLE001 - recover without exposing config details
+                logger.warning("Failed to persist model_catalog settings.")
+                saved = False
+            try:
+                app.call_from_thread(self._model_catalog_save_finished, revision, saved)
+            except RuntimeError:
+                # The app stopped; admitted writes still drain without UI access.
+                pass
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
@@ -15271,7 +15658,7 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 (
                     "Boundary",
-                    "launch visual defaults stay in Appearance; theme edits never touch config.toml",
+                    "Apply changes this session; Save stores a theme file; Set as launch default updates general.default_theme",
                 ),
             )
         if category is SettingsCategoryId.IMAGE_GENERATION:
@@ -16166,7 +16553,9 @@ class SettingsScreen(BaseAppScreen):
             # task-1341: instant-apply is the labeled exception to the staged
             # default; the bordered group and hint line separate these
             # operational flags visually from the staged Connect fields.
-            model_catalog_settings = load_model_catalog_settings(load_settings())
+            model_catalog_settings = load_model_catalog_settings(
+                self._model_catalog_form_values or load_settings()
+            )
             # TASK-387: keep the internal decision-record id (ADR-020) out of the
             # user-facing heading; it survives in the code comment above.
             with Vertical(
@@ -16180,26 +16569,43 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-instant-apply-hint",
                 )
                 yield Checkbox(
-                    "Auto-refresh model lists on startup",
+                    "Refresh on startup",
                     value=model_catalog_settings.auto_refresh_enabled,
                     id="settings-model-catalog-auto-refresh",
                 )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
-                        "Refresh after (hours):", classes="settings-status-row"
+                        "Refresh after (hours)", classes="settings-input-label"
                     )
                     yield Input(
-                        f"{model_catalog_settings.stale_after_hours:g}",
+                        (
+                            str(
+                                self._model_catalog_form_values["model_catalog"][
+                                    "stale_after_hours"
+                                ]
+                            )
+                            if self._model_catalog_form_values is not None
+                            else f"{model_catalog_settings.stale_after_hours:g}"
+                        ),
                         id="settings-model-catalog-stale-hours",
-                        type="integer",
+                        type="number",
                         tooltip="0 = refetch every launch.",
                     )
+                yield Static(
+                    self._model_catalog_save_status,
+                    id="settings-model-catalog-save-status",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+                retry = Button("Retry", id="settings-model-catalog-retry")
+                retry.display = self._model_catalog_save_failed
+                yield retry
                 for _provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
                     _provider_key = provider_config_key(_provider)
                     _pid = _provider.lower()
                     with Horizontal(classes="settings-input-row"):
                         yield Checkbox(
-                            f"{_provider}: auto-refresh",
+                            f"{_provider}: refresh",
                             value=(
                                 _provider_key
                                 not in model_catalog_settings.auto_refresh_disabled
@@ -16226,7 +16632,7 @@ class SettingsScreen(BaseAppScreen):
             # Connect block in a collapsed-by-default disclosure.
             with Collapsible(
                 title="Generation defaults",
-                collapsed=True,
+                collapsed=self._generation_defaults_collapsed,
                 id="settings-generation-defaults",
             ):
                 yield Static(
@@ -17011,6 +17417,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _render_console_behavior_card(self, *, compact: bool = False) -> ComposeResult:
+        # Keep the displayed choices and the apply baseline on the same policy.
+        self._console_capture_policy = runtime_capture_policy()
         with Vertical(
             id="settings-console-behavior-card", classes="settings-secondary-card"
         ):
@@ -17030,6 +17438,12 @@ class SettingsScreen(BaseAppScreen):
                 "Applies immediately. Thinking remains part of the conversation even when hidden.",
                 id="settings-console-show-model-thinking-help",
                 classes="settings-detail-row",
+            )
+            thinking_write = self._console_toggle_writes.get("model-thinking")
+            yield Static(
+                thinking_write.result if thinking_write is not None else "",
+                id="settings-console-model-thinking-result",
+                classes="settings-status-row",
             )
             yield Static("Local reasoning history", classes="destination-section")
             yield Select(
@@ -17065,7 +17479,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-console-reasoning-override",
                 )
                 yield Checkbox(
-                    "This server is configured for native tool calls",
+                    "Native tool support",
                     value=self._reasoning_native_override_value(),
                     disabled=target is None,
                     id="settings-console-reasoning-native-tools",
@@ -17097,7 +17511,7 @@ class SettingsScreen(BaseAppScreen):
             )
             yield Static("Exchange capture", classes="destination-section")
             yield Checkbox(
-                "Capture future provider exchanges",
+                "Capture future exchanges",
                 value=self._console_capture_policy.enabled,
                 id="settings-console-exchange-capture-enabled",
             )
@@ -17112,7 +17526,7 @@ class SettingsScreen(BaseAppScreen):
             legacy_detail.display = False
             yield legacy_detail
             yield Checkbox(
-                "Mask detected PII in traces (future calls)",
+                "Mask PII in future traces",
                 value=getattr(
                     self._console_capture_policy,
                     "pii_redaction_enabled",
@@ -17314,6 +17728,7 @@ class SettingsScreen(BaseAppScreen):
             # and changes persist immediately via the handlers below -- the
             # disclosure copy is the consent surface, so there is no staged
             # Save step between opting in and the egress it enables.
+            summary_values = self._permission_summary_form_payload()
             with Vertical(
                 id="settings-permission-summary-group",
                 classes="settings-instant-apply-group",
@@ -17339,7 +17754,7 @@ class SettingsScreen(BaseAppScreen):
                             ("Fallback (no rationale)", "fallback"),
                             ("Every approval", "always"),
                         ],
-                        value=self._saved_permission_summary_payload()["mode"],
+                        value=summary_values["mode"],
                         id="settings-permission-summary-mode",
                         classes="settings-compact-select",
                         allow_blank=False,
@@ -17348,7 +17763,7 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Provider", classes="settings-input-label")
                     yield Input(
-                        value=self._saved_permission_summary_payload()["provider"],
+                        value=summary_values["provider"],
                         id="settings-permission-summary-provider",
                         classes="settings-compact-input",
                         placeholder="e.g. OpenAI",
@@ -17356,11 +17771,20 @@ class SettingsScreen(BaseAppScreen):
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Model", classes="settings-input-label")
                     yield Input(
-                        value=self._saved_permission_summary_payload()["model"],
+                        value=summary_values["model"],
                         id="settings-permission-summary-model",
                         classes="settings-compact-input",
                         placeholder="empty = the provider's default model",
                     )
+                yield Static(
+                    self._permission_summary_write.result,
+                    id="settings-permission-summary-result",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+                retry = Button("Retry", id="settings-permission-summary-retry")
+                retry.display = self._permission_summary_write.failed
+                yield retry
             yield Static("Selection side chat", classes="destination-section")
             yield Static(
                 "Ephemeral chat about selected transcript text (More Details / "
@@ -20967,7 +21391,11 @@ class SettingsScreen(BaseAppScreen):
             "Saves apply to your local config file. Nothing is sent to a "
             "server unless you run Manual sync yourself."
             if summary.category is SettingsCategoryId.OVERVIEW
-            else "Local-only: saves write your config file.",
+            else (
+                "Local-only: Save stores a theme file; Set as launch default updates your config."
+                if summary.category is SettingsCategoryId.THEME
+                else "Local-only: saves write your config file."
+            ),
             id="settings-local-scope-note",
         )
 
@@ -21267,7 +21695,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
-                detail_pane.styles.height = "100%"
+                detail_pane.add_class("h-full")
                 yield detail_pane
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = SettingsRegion(
@@ -21280,7 +21708,7 @@ class SettingsScreen(BaseAppScreen):
                 # sizes a scroll container, not a plain Vertical -- without
                 # this the 1fr body below collapses to zero (StyledSettings
                 # harness caught it; the plain harness cannot).
-                impact_pane.styles.height = "100%"
+                impact_pane.add_class("h-full")
                 yield impact_pane
             # task-2835: keyboard-reachable mirror of the focused control's
             # hover-only tooltip; updated by handle_descendant_focus.
@@ -21310,7 +21738,7 @@ class SettingsScreen(BaseAppScreen):
         # (RAG showed no State line at all in evidence).
         yield self._render_category_state_banner(active_summary.category)
         detail_body = detail_pane_container(id="settings-detail-pane-body")
-        detail_body.styles.height = "1fr"
+        detail_body.add_class("h-fill")
         detail_body.styles.scrollbar_size_vertical = 1
         with detail_body:
             yield from self._render_detail_pane()
@@ -21322,7 +21750,7 @@ class SettingsScreen(BaseAppScreen):
         # Inline styles, not CSS: the app-tier bundle outranks screen CSS and
         # a 100%-height default would collapse inside the auto-flow wrapper
         # (same guard as the image viewer modal).
-        impact_body.styles.height = "1fr"
+        impact_body.add_class("h-fill")
         impact_body.styles.scrollbar_size_vertical = 1
         with impact_body:
             yield from self._render_impact_pane_body()
@@ -21333,8 +21761,8 @@ class SettingsScreen(BaseAppScreen):
             "▼ more — scroll the inspector",
             id="settings-impact-overflow-hint",
         )
-        overflow_hint.styles.height = 1
-        overflow_hint.styles.color = "gray"
+        overflow_hint.add_class("h-1")
+        overflow_hint.add_class("ds-text-muted")
         overflow_hint.display = False
         yield overflow_hint
 
@@ -23103,11 +23531,33 @@ class SettingsScreen(BaseAppScreen):
             self._active_rag_scope_group = group
         self._refresh_rag_field_guidance()
 
+    @on(Collapsible.Toggled, "#settings-generation-defaults")
+    def handle_generation_defaults_toggled(self, event: Collapsible.Toggled) -> None:
+        self._generation_defaults_collapsed = event.collapsible.collapsed
+
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
         self.post_message(
             NavigateToScreen("settings", {"category": SettingsCategoryId.THEME})
         )
+
+    @on(SettingsThemeEditor.LaunchDefaultChanged)
+    def handle_theme_launch_default_changed(
+        self, event: SettingsThemeEditor.LaunchDefaultChanged
+    ) -> None:
+        """Rebase Appearance on an instant launch-theme save without losing edits."""
+        event.stop()
+        app_config = self._app_config_update_target()
+        general = dict(app_config.get("general", {}))
+        general["default_theme"] = event.theme_name
+        app_config["general"] = general
+        draft = self._appearance_draft()
+        if draft is not None and "default_theme" in draft.values:
+            was_dirty = "default_theme" in draft.dirty_keys
+            draft.originals["default_theme"] = event.theme_name
+            if not was_dirty:
+                draft.values["default_theme"] = event.theme_name
+        self._refresh_category_button_label(SettingsCategoryId.APPEARANCE)
 
     @on(SettingsThemeEditor.ThemeModifiedStatus)
     def handle_theme_modified_status(
@@ -23165,6 +23615,19 @@ class SettingsScreen(BaseAppScreen):
         """
         self._sync_responsive_workbench()
         self.call_after_refresh(self._update_inspector_overflow_hint)
+        self._reveal_settings_focus_after_refresh()
+
+    def _reveal_settings_focus_after_refresh(self) -> None:
+        """Keep the same attached control visible after a layout change."""
+        focused = self.focused
+        if focused is None:
+            return
+
+        def reveal_retained_focus() -> None:
+            if self.is_current and focused is self.focused and focused.is_attached:
+                focused.scroll_visible(animate=False)
+
+        self.call_after_refresh(reveal_retained_focus)
 
     def _refresh_theme_modified_widgets(self) -> None:
         """In-place refresh of the Theme dirty displays (rail marker, inspector row).
@@ -24848,72 +25311,83 @@ class SettingsScreen(BaseAppScreen):
         self._submit_category_search(event.value)
 
     @on(Button.Pressed, "#settings-console-exchange-capture-apply")
-    async def handle_console_exchange_capture_apply(
-        self, event: Button.Pressed
-    ) -> None:
-        """Apply the canonical global capture policy with shared warnings."""
+    def handle_console_exchange_capture_apply(self, event: Button.Pressed) -> None:
+        """Admit one explicit capture-settings apply, including its disclosure."""
         event.stop()
         if self._console_capture_applying:
             return
-        enabled = self.query_one(
-            "#settings-console-exchange-capture-enabled", Checkbox
-        ).value
-        raw_detail = self.query_one(
-            "#settings-console-exchange-capture-detail", Select
-        ).value
-        pii_redaction_enabled = self.query_one(
-            "#settings-console-trace-pii-redaction", Checkbox
-        ).value
-        viewer_profile = str(
-            self.query_one("#settings-console-trace-viewer-profile", Select).value
-        )
-        try:
-            detail = CaptureDetail(str(raw_detail))
-        except ValueError:
-            self._set_console_capture_status("Failed — choose Safe or Full")
-            return
-        current = self._console_capture_policy
-        console_runtime = getattr(self.app_instance, "console_runtime", None)
-        controller = getattr(console_runtime, "chat_controller", None)
-        session_id = (
-            getattr(getattr(controller, "store", None), "active_session_id", None)
-            if controller is not None
-            else None
-        )
-        live_snapshot = (
-            controller.capture_policy_snapshot(session_id)
-            if controller is not None and session_id is not None
-            else None
-        )
-        needs_viewer_ack = viewer_profile == "full" and getattr(
-            current,
-            "viewer_profile",
-            "safe",
-        ) != "full"
-        if needs_viewer_ack:
-            confirmed = await self.app.push_screen_wait(
-                ConfirmationDialog(
-                    title="Switch the Trace viewer to Full?",
-                    message=(
-                        "Full may reveal persisted prompts, tool arguments/results, "
-                        "automatic instructions, local paths, and sensitive prose "
-                        "that PII detectors missed. Credentials and frozen masks "
-                        "remain blocked."
-                    ),
-                    confirm_label="View Full",
-                    cancel_label="Keep Safe",
-                )
-            )
-            if not confirmed:
-                self._set_console_capture_status("Full viewer change cancelled")
-                return
         self._console_capture_applying = True
-        event.button.disabled = True
-        self._set_console_capture_status("Applying")
+        # Keep Apply focusable for the modal's return; the guard rejects duplicates.
+        self.run_worker(
+            self._apply_console_exchange_capture(),
+            group="settings-console-capture",
+            exclusive=True,
+        )
+
+    async def _apply_console_exchange_capture(self) -> None:
+        """Confirm and save from a worker so the modal can receive user input."""
         try:
+            enabled = self.query_one(
+                "#settings-console-exchange-capture-enabled", Checkbox
+            ).value
+            raw_detail = self.query_one(
+                "#settings-console-exchange-capture-detail", Select
+            ).value
+            pii_redaction_enabled = self.query_one(
+                "#settings-console-trace-pii-redaction", Checkbox
+            ).value
+            viewer_profile = str(
+                self.query_one("#settings-console-trace-viewer-profile", Select).value
+            )
+            try:
+                detail = CaptureDetail(str(raw_detail))
+            except ValueError:
+                self._set_console_capture_status("Failed — choose Safe or Full")
+                return
+            current = self._console_capture_policy
+            console_runtime = getattr(self.app_instance, "console_runtime", None)
+            controller = getattr(console_runtime, "chat_controller", None)
+            session_id = (
+                getattr(getattr(controller, "store", None), "active_session_id", None)
+                if controller is not None
+                else None
+            )
+            live_snapshot = (
+                controller.capture_policy_snapshot(session_id)
+                if controller is not None and session_id is not None
+                else None
+            )
+            needs_viewer_ack = (
+                viewer_profile == "full"
+                and getattr(
+                    current,
+                    "viewer_profile",
+                    "safe",
+                )
+                != "full"
+            )
+            if needs_viewer_ack:
+                confirmed = await self.app.push_screen_wait(
+                    ConfirmationDialog(
+                        title="Switch the Trace viewer to Full?",
+                        message=(
+                            "Full may reveal persisted prompts, tool arguments/results, "
+                            "automatic instructions, local paths, and sensitive prose "
+                            "that PII detectors missed. Credentials and frozen masks "
+                            "remain blocked."
+                        ),
+                        confirm_label="View Full",
+                        cancel_label="Keep Safe",
+                    )
+                )
+                if get_current_worker().is_cancelled or not self.is_attached:
+                    return
+                if confirmed is not True:
+                    self._set_console_capture_status("Full viewer change cancelled")
+                    return
+            self._set_console_capture_status("Applying")
             if live_snapshot is not None:
-                mutation = await asyncio.to_thread(
-                    controller.apply_global_capture_settings,
+                mutation = await controller.apply_global_capture_settings_async(
                     enabled=bool(enabled),
                     detail=detail,
                     expected_config_generation=live_snapshot.config_generation,
@@ -24928,7 +25402,7 @@ class SettingsScreen(BaseAppScreen):
                     return
                 if mutation.status is CapturePolicyMutationStatus.FAILED:
                     self._set_console_capture_status(
-                        "Failed — Full capture was not activated"
+                        "Failed — settings not saved. Apply again to retry."
                     )
                     return
                 if mutation.status is CapturePolicyMutationStatus.SAFE_SESSION_ONLY:
@@ -24975,14 +25449,12 @@ class SettingsScreen(BaseAppScreen):
                 )
             else:
                 self._set_console_capture_status(
-                    "Failed — Full capture was not activated"
+                    "Failed — settings not saved. Apply again to retry."
                 )
         except Exception:
             self._set_console_capture_status("Failed — capture settings were not saved")
         finally:
             self._console_capture_applying = False
-            if event.button.is_mounted:
-                event.button.disabled = False
 
     def _set_console_capture_status(self, message: str) -> None:
         self._console_capture_status = message
@@ -25012,12 +25484,8 @@ class SettingsScreen(BaseAppScreen):
         next_value = bool(event.value)
         if next_value == previous:
             return
-        self._console_settings()["show_model_thinking"] = next_value
-        event.checkbox.label = self._show_model_thinking_label()
-        self._signal_console_appearance_refresh()
-        self._thinking_visibility_write_revision += 1
-        self._thinking_visibility_desired_value = next_value
-        self._start_thinking_visibility_persist_if_idle()
+        self._queue_console_toggle("model-thinking", next_value, previous)
+        self._apply_console_toggle_runtime("model-thinking", next_value)
 
     @on(Checkbox.Changed, "#settings-console-reasoning-native-tools")
     def handle_console_reasoning_native_tools_changed(
@@ -25141,25 +25609,13 @@ class SettingsScreen(BaseAppScreen):
     def handle_console_remote_images_toggle(self, event: Button.Pressed) -> None:
         """Flip the remote-images toggle: immediate write, no category draft."""
         event.stop()
-        enabled = self._toggle_remote_images()
-        event.button.label = self._remote_images_button_label()
-        self.app.notify(
-            "Linked images in replies will now render."
-            if enabled
-            else "Linked images in replies will stay ignored.",
-            severity="information",
-        )
+        self._toggle_remote_images()
 
     @on(Button.Pressed, "#settings-console-status-row-position-toggle")
     def handle_console_status_row_position_toggle(self, event: Button.Pressed) -> None:
         """Flip the status-row placement: immediate write, no category draft."""
         event.stop()
-        next_value = self._toggle_status_row_position()
-        event.button.label = self._status_row_position_button_label()
-        self.app.notify(
-            f"Console status row will sit {next_value} the composer.",
-            severity="information",
-        )
+        self._toggle_status_row_position()
 
     @on(Input.Changed, "#settings-console-paste-collapse-threshold")
     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:
@@ -27053,6 +27509,13 @@ class SettingsScreen(BaseAppScreen):
             == self._provider_endpoint_value(self._navigation_provider)
         ):
             return
+        if (
+            event.value.strip()
+            == str(
+                self._provider_setting_values_mapping().get("endpoint") or ""
+            ).strip()
+        ):
+            return
         self._stage_provider_value("endpoint", event.value.strip())
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
@@ -27136,6 +27599,13 @@ class SettingsScreen(BaseAppScreen):
             == self._provider_credential_env_var(self._navigation_provider)
         ):
             return
+        if (
+            event.value.strip()
+            == str(
+                self._provider_setting_values_mapping().get("credential_env_var") or ""
+            ).strip()
+        ):
+            return
         self._stage_provider_value("credential_env_var", event.value.strip())
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
@@ -27155,6 +27625,11 @@ class SettingsScreen(BaseAppScreen):
         if queue and event.value == queue[0]:
             queue.pop(0)
             self._update_provider_dynamic_widgets()
+            return
+        if (
+            event.value.strip()
+            == str(self._provider_setting_values_mapping().get("api_key") or "").strip()
+        ):
             return
         self._stage_provider_value("api_key", event.value.strip())
         self._reset_provider_model_discovery_state()
@@ -27567,12 +28042,34 @@ class SettingsScreen(BaseAppScreen):
             return
         self._save_selected_discovered_provider_models_worker()
 
+    @on(SelectionList.SelectedChanged, "#settings-discovered-models-list")
+    def handle_discovered_model_selection_changed(
+        self, event: SelectionList.SelectedChanged
+    ) -> None:
+        event.stop()
+        try:
+            current_list = self.query_one(
+                "#settings-discovered-models-list", SelectionList
+            )
+        except QueryError:
+            return
+        # A replaced pane may still have queued selection messages.
+        if event.selection_list is current_list:
+            self._model_discovery_selected_model_ids = {
+                str(model_id) for model_id in current_list.selected
+            }
+
     @on(Button.Pressed, "#settings-clear-discovered-provider-models")
     def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
         event.stop()
         if self._vllm_default_actions_fenced():
             return
         self._clear_discovered_provider_models_worker()
+
+    @on(Button.Pressed, "#settings-model-catalog-retry")
+    def handle_model_catalog_retry(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._persist_model_catalog_settings(retry=True)
 
     @on(Checkbox.Changed)
     def handle_model_catalog_toggle_changed(self, event: Checkbox.Changed) -> None:
@@ -27591,6 +28088,11 @@ class SettingsScreen(BaseAppScreen):
     def handle_permission_summary_mode_changed(self, event: Select.Changed) -> None:
         event.stop()
         self._persist_permission_summary_settings()
+
+    @on(Button.Pressed, "#settings-permission-summary-retry")
+    def handle_permission_summary_retry(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._persist_permission_summary_settings(retry=True)
 
     @on(Input.Changed, "#settings-permission-summary-provider")
     def handle_permission_summary_provider_changed(self, event: Input.Changed) -> None:
@@ -29652,100 +30154,6 @@ class SettingsScreen(BaseAppScreen):
                             generation,
                             type(exc).__name__,
                         )
-
-    def _apply_thinking_visibility_persist_result(
-        self,
-        mutation: ConfigMutationResult,
-        next_value: bool,
-        revision: int,
-    ) -> None:
-        """Advance one serialized write and reconcile the latest desired value."""
-
-        if self._thinking_visibility_in_flight != (next_value, revision):
-            return
-        self._thinking_visibility_in_flight = None
-        successful_noop = (
-            not mutation.file_replaced
-            and not mutation.conflict
-            and mutation.failure_phase is None
-        )
-        if mutation.file_replaced or successful_noop:
-            self._thinking_visibility_confirmed_value = next_value
-            if mutation.file_replaced and not mutation.caches_reloaded:
-                self._console_behavior_result = (
-                    "Model thinking visibility was saved, but live settings "
-                    "could not be refreshed."
-                )
-                self._set_static_text(
-                    "#settings-console-behavior-result",
-                    self._console_behavior_result,
-                )
-                self.app.notify(self._console_behavior_result, severity="error")
-            else:
-                self._console_behavior_result = "Model thinking visibility saved."
-                self._set_static_text(
-                    "#settings-console-behavior-result", self._console_behavior_result
-                )
-            if self._thinking_visibility_desired_value != next_value:
-                self._start_thinking_visibility_persist_if_idle()
-            return
-        if revision != self._thinking_visibility_write_revision:
-            if (
-                self._thinking_visibility_desired_value
-                != self._thinking_visibility_confirmed_value
-            ):
-                self._start_thinking_visibility_persist_if_idle()
-            return
-        restored = self._thinking_visibility_confirmed_value
-        self._thinking_visibility_desired_value = restored
-        self._console_settings()["show_model_thinking"] = restored
-        try:
-            checkbox = self.query_one("#settings-console-show-model-thinking", Checkbox)
-            self._syncing_console_thinking_visibility = True
-            try:
-                with checkbox.prevent(Checkbox.Changed):
-                    checkbox.value = restored
-                checkbox.label = self._show_model_thinking_label()
-            finally:
-                self._syncing_console_thinking_visibility = False
-        except QueryError:
-            pass
-        self._signal_console_appearance_refresh()
-        self._console_behavior_result = (
-            "Could not save model thinking visibility; the prior setting was restored."
-        )
-        self._set_static_text(
-            "#settings-console-behavior-result", self._console_behavior_result
-        )
-        self.app.notify(self._console_behavior_result, severity="error")
-
-    def _start_thinking_visibility_persist_if_idle(self) -> None:
-        """Dispatch only the newest desired visibility when no write is active."""
-
-        if self._thinking_visibility_in_flight is not None:
-            return
-        next_value = self._thinking_visibility_desired_value
-        if next_value == self._thinking_visibility_confirmed_value:
-            return
-        revision = self._thinking_visibility_write_revision
-        self._thinking_visibility_in_flight = (next_value, revision)
-        self._settings_persist_thinking_visibility(next_value, revision)
-
-    @work(group="settings-console-thinking-visibility", thread=True)
-    def _settings_persist_thinking_visibility(
-        self,
-        next_value: bool,
-        revision: int,
-    ) -> None:
-        mutation = apply_settings_mutation_to_cli_config(
-            {"console": {"show_model_thinking": next_value}}
-        )
-        self.app.call_from_thread(
-            self._apply_thinking_visibility_persist_result,
-            mutation,
-            next_value,
-            revision,
-        )
 
     def _signal_library_reader_layout_refresh(self) -> None:
         """Publish saved reader layout defaults to live Library screens."""

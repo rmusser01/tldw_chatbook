@@ -1,0 +1,83 @@
+{
+  "database_integrity": {
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ]
+  },
+  "conversations": [
+    {
+      "id": "76b3787e-1ab5-56cc-b96e-0682191f5012",
+      "title": "Archive audit Alpha",
+      "archived": 0,
+      "version": 27,
+      "deleted": 0
+    },
+    {
+      "id": "55bf029c-3626-538d-919e-1b7d35558719",
+      "title": "Archive audit Beta",
+      "archived": 0,
+      "version": 1,
+      "deleted": 0
+    }
+  ],
+  "messages": [
+    {
+      "id": "07ea3623-7ac7-4acf-aaae-615cf9f20a29",
+      "conversation_id": "76b3787e-1ab5-56cc-b96e-0682191f5012",
+      "content_sha256": "e0b4cd2d3a6b3fbf913fcb1de8c3152f5949032c918d4fe522eb3afffbfa52a8"
+    },
+    {
+      "id": "e8b3d8c6-b4fc-40a7-b4ad-66d19a625321",
+      "conversation_id": "76b3787e-1ab5-56cc-b96e-0682191f5012",
+      "content_sha256": "aac9f3bcff4a42761b0a47ca73063919c9122e1c26652b2b745533de1d84dad3"
+    },
+    {
+      "id": "d7f2ccad-db77-45dd-9566-d3857028abb9",
+      "conversation_id": "55bf029c-3626-538d-919e-1b7d35558719",
+      "content_sha256": "22b9964c4709b2dc66b380bebf908823df0d2b5cb352fdf66e2a06e255091657"
+    },
+    {
+      "id": "6ebe1fc9-7373-4761-8c6a-64d630d277c2",
+      "conversation_id": "55bf029c-3626-538d-919e-1b7d35558719",
+      "content_sha256": "16b3a97ea1cf7d076d86f69146c9fb6c9405fc66fa677dfa40a24454c61453bd"
+    }
+  ],
+  "all_message_ids_bodies_and_owners_match_fixtures": true,
+  "default_profile_hashes_unchanged": true,
+  "default_profile_files_checked": [
+    "/Users/macbook-dev/.config/tldw_cli/config.toml",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json"
+  ],
+  "error_lines": [],
+  "traceback_headers": 0,
+  "faulthandler_bytes": 0,
+  "app_stopping_mentions": 2
+}

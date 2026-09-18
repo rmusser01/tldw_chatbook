@@ -1,0 +1,20 @@
+{
+  "reviewer": "/root/rag_heading_review",
+  "scope": [
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py",
+    "Tests/UI/test_library_rag_history_keyboard.py",
+    "Docs/superpowers/qa/2026-09-17-rag-history-replay/native_check.py"
+  ],
+  "method": "Read-only independent review of the replay repair, followed by the answer-arrival reveal extension; no competing app tests.",
+  "findings": [
+    {
+      "priority": 2,
+      "issue": "README wording could imply two total searches per cell instead of two setup searches plus one replay.",
+      "resolution": "States three searches per cell explicitly: two seed searches and one replay.",
+      "reviewer_confirmed_resolved": true
+    }
+  ],
+  "outstanding_findings": [],
+  "assessment": "Existing sibling-input helper suppresses redundant events. Answer reveal reads current focus with attachment/ancestry guards; delayed-callback tests cover newer inside/outside focus. Native runner clearly separates real local keyword retrieval from controlled answers.",
+  "closeout_evidence_review": "Reviewed native result/lifecycle, 148-test output, guide, audit and links; one wording clarification applied."
+}

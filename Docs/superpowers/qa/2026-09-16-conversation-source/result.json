@@ -1,0 +1,134 @@
+{
+  "pid": 36432,
+  "runner_sha256": "83c1038571cc89f9681bcf2af20a114d7837db25a1368e003d0c2d9ad0b6a715",
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "conversation_id": "a43ca09a-4ff1-5147-946f-264383af0881",
+      "linked_membership": {
+        "workspace_id": "workspace-default",
+        "item_type": "conversation",
+        "item_id": "a43ca09a-4ff1-5147-946f-264383af0881",
+        "role": "source",
+        "transfer_policy": "reference",
+        "title": "Source audit DarkWide",
+        "created_at": "2026-09-17T01:17:13.829385+00:00",
+        "membership_id": "workspace-link-653ece8603774206bb7ff34f0b5adf68"
+      },
+      "unlinked_then_existing_source_staged": true,
+      "no_duplicate_membership_or_session": true,
+      "populated_draft_preserved": true,
+      "unstage_and_undo_link_passed": true,
+      "foreign_membership_unchanged": true,
+      "warm_live_work_revisions": [
+        1,
+        2
+      ],
+      "warm_first_and_replacement_launch_painted": true,
+      "evidence_snippet": "Conversation staged: Source audit DarkWide",
+      "content_excerpt_absent_known_task": "TASK-2376"
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "conversation_id": "1f3f0e81-0f8b-59b1-8f83-682eb1f0aa3a",
+      "linked_membership": {
+        "workspace_id": "workspace-default",
+        "item_type": "conversation",
+        "item_id": "1f3f0e81-0f8b-59b1-8f83-682eb1f0aa3a",
+        "role": "source",
+        "transfer_policy": "reference",
+        "title": "Source audit DarkCompact",
+        "created_at": "2026-09-17T01:17:29.279678+00:00",
+        "membership_id": "workspace-link-9651bc274c6640b1bc730bc12bbcb10b"
+      },
+      "unlinked_then_existing_source_staged": true,
+      "no_duplicate_membership_or_session": true,
+      "populated_draft_preserved": true,
+      "unstage_and_undo_link_passed": true,
+      "foreign_membership_unchanged": true,
+      "warm_live_work_revisions": [
+        3,
+        4
+      ],
+      "warm_first_and_replacement_launch_painted": true,
+      "evidence_snippet": "Conversation staged: Source audit DarkCompact",
+      "content_excerpt_absent_known_task": "TASK-2376"
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "conversation_id": "895dc585-76f7-5781-8e74-86be8770604f",
+      "linked_membership": {
+        "workspace_id": "workspace-default",
+        "item_type": "conversation",
+        "item_id": "895dc585-76f7-5781-8e74-86be8770604f",
+        "role": "source",
+        "transfer_policy": "reference",
+        "title": "Source audit LightWide",
+        "created_at": "2026-09-17T01:17:42.861838+00:00",
+        "membership_id": "workspace-link-e1b7324fde9c47e8b996c66825779df4"
+      },
+      "unlinked_then_existing_source_staged": true,
+      "no_duplicate_membership_or_session": true,
+      "populated_draft_preserved": true,
+      "unstage_and_undo_link_passed": true,
+      "foreign_membership_unchanged": true,
+      "warm_live_work_revisions": [
+        5,
+        6
+      ],
+      "warm_first_and_replacement_launch_painted": true,
+      "evidence_snippet": "Conversation staged: Source audit LightWide",
+      "content_excerpt_absent_known_task": "TASK-2376"
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "conversation_id": "27c60fc2-9491-55bc-979a-46910cbb9f16",
+      "linked_membership": {
+        "workspace_id": "workspace-default",
+        "item_type": "conversation",
+        "item_id": "27c60fc2-9491-55bc-979a-46910cbb9f16",
+        "role": "source",
+        "transfer_policy": "reference",
+        "title": "Source audit LightCompact",
+        "created_at": "2026-09-17T01:17:56.646594+00:00",
+        "membership_id": "workspace-link-2bd94e212a1a49969fac444281dfea3a"
+      },
+      "unlinked_then_existing_source_staged": true,
+      "no_duplicate_membership_or_session": true,
+      "populated_draft_preserved": true,
+      "unstage_and_undo_link_passed": true,
+      "foreign_membership_unchanged": true,
+      "warm_live_work_revisions": [
+        7,
+        8
+      ],
+      "warm_first_and_replacement_launch_painted": true,
+      "evidence_snippet": "Conversation staged: Source audit LightCompact",
+      "content_excerpt_absent_known_task": "TASK-2376"
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "warm launch unstaged",
+  "keeper_session_id": "43fc6fe4-f724-4514-9b01-cee5eea27e07",
+  "workspace_id": "workspace-default",
+  "source_records_unchanged": true,
+  "no_send_or_new_messages": true,
+  "passed": true,
+  "app_run_returned": true
+}

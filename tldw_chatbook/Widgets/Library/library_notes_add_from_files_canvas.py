@@ -679,22 +679,15 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         self, index: int, row: LastingSyncReviewRow
     ) -> ComposeResult:
         # task-32625 AC#2: the row's `margin: 0 0 1 0` separates its LINE
-        # from the body under it. A safe row has no body, so the margin was
-        # the third of its three rows -- 162 rows for the 54 files it takes
-        # one each to state. Inline rather than a `-plain` CSS rule because
-        # the base rule splits out to `screen_agentic_library.tcss` (its
-        # tokens are all `library-`) while a `-plain` modifier keeps the
-        # block in the boot bundle, so the two would be arguing across
-        # sheets; an inline style is the one tier above both, which is why
-        # `run_disclosure` already sets its own margin this way.
+        # from the body under it. A safe row has no body. The scoped plain
+        # class stays in the Library split beside the base row, so its more
+        # specific token rule wins without an inline visual assignment.
         plain = not (row.conflict_eligible or row.choices)
         review_row = Vertical(
             id=f"notes-sync-review-row-{index}",
             classes="library-notes-sync-review-row"
-            + (" -plain" if plain else ""),
+            + (" -plain library-notes-sync-review-plain" if plain else ""),
         )
-        if plain:
-            review_row.styles.margin = 0
         with review_row:
             yield Static(
                 self._review_row_line(row),

@@ -1,0 +1,73 @@
+.F.F.F.F.F.F.F
+=================================== FAILURES ===================================
+_ test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-dark-size1] _
+Tests/UI/test_library_rag_answer_navigation.py:123: in test_keyboard_can_read_answer_and_citation_feedback
+    assert all(
+E   AssertionError: ('pagedown', ['', 'Answer line 001: an expired credential caused the incident. Answer line 002: an expired credential caused', 'the incident.', ''])
+E   assert False
+E    +  where False = all(<generator object test_keyboard_can_read_answer_and_citation_feedback.<locals>.<genexpr> at 0x1172b8ac0>)
+_ test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-light-size1] _
+Tests/UI/test_library_rag_answer_navigation.py:123: in test_keyboard_can_read_answer_and_citation_feedback
+    assert all(
+E   AssertionError: ('pagedown', ['', 'Answer line 001: an expired credential caused the incident. Answer line 002: an expired credential caused', 'the incident.', ''])
+E   assert False
+E    +  where False = all(<generator object test_keyboard_can_read_answer_and_citation_feedback.<locals>.<genexpr> at 0x1171543c0>)
+_ test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-dark-size1] _
+Tests/UI/test_library_rag_answer_navigation.py:123: in test_keyboard_can_read_answer_and_citation_feedback
+    assert all(
+E   AssertionError: ('pageup', ['', 'Answer line 072: an expired credential caused the incident. Answer line 073: an expired credential ca...dent. Answer line 042: an expired credential caused the incident. Answer line 043: an expired credential caused', ...])
+E   assert False
+E    +  where False = all(<generator object test_keyboard_can_read_answer_and_citation_feedback.<locals>.<genexpr> at 0x118b227a0>)
+_ test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-light-size1] _
+Tests/UI/test_library_rag_answer_navigation.py:123: in test_keyboard_can_read_answer_and_citation_feedback
+    assert all(
+E   AssertionError: ('pageup', ['', 'Answer line 072: an expired credential caused the incident. Answer line 073: an expired credential ca...dent. Answer line 042: an expired credential caused the incident. Answer line 043: an expired credential caused', ...])
+E   assert False
+E    +  where False = all(<generator object test_keyboard_can_read_answer_and_citation_feedback.<locals>.<genexpr> at 0x117157ca0>)
+_ test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-dark-size1] _
+Tests/UI/test_library_rag_answer_navigation.py:123: in test_keyboard_can_read_answer_and_citation_feedback
+    assert all(
+E   AssertionError: ('pagedown', ['', 'Answer line 001: an expired credential caused the incident. Answer line 002: an expired credential caused', 'the incident. [S99]', ''])
+E   assert False
+E    +  where False = all(<generator object test_keyboard_can_read_answer_and_citation_feedback.<locals>.<genexpr> at 0x1198f8200>)
+_ test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-light-size1] _
+Tests/UI/test_library_rag_answer_navigation.py:123: in test_keyboard_can_read_answer_and_citation_feedback
+    assert all(
+E   AssertionError: ('pagedown', ['', 'Answer line 001: an expired credential caused the incident. Answer line 002: an expired credential caused', 'the incident. [S99]', ''])
+E   assert False
+E    +  where False = all(<generator object test_keyboard_can_read_answer_and_citation_feedback.<locals>.<genexpr> at 0x1198e1000>)
+_ test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-80-textual-dark-size1] _
+Tests/UI/test_library_rag_answer_navigation.py:123: in test_keyboard_can_read_answer_and_citation_feedback
+    assert all(
+E   AssertionError: ('pageup', ['', 'Answer line 072: an expired credential caused the incident. Answer line 073: an expired credential ca...dent. Answer line 042: an expired credential caused the incident. Answer line 043: an expired credential caused', ...])
+E   assert False
+E    +  where False = all(<generator object test_keyboard_can_read_answer_and_citation_feedback.<locals>.<genexpr> at 0x11755cba0>)
+============================= slowest 25 durations =============================
+7.11s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-light-size1]
+7.04s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-80-textual-dark-size1]
+7.02s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-dark-size1]
+7.01s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-light-size0]
+6.84s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-dark-size0]
+6.66s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-80-textual-dark-size0]
+4.46s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-light-size1]
+4.24s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-dark-size1]
+4.15s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-light-size1]
+4.13s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-dark-size1]
+3.51s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-dark-size0]
+3.41s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-light-size0]
+3.15s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-dark-size0]
+3.10s call     Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-light-size0]
+
+(11 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-dark-size1]
+FAILED Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-2-textual-light-size1]
+FAILED Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-dark-size1]
+FAILED Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[uncited--The answer does not cite available staged evidence.-80-textual-light-size1]
+FAILED Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-dark-size1]
+FAILED Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-2-textual-light-size1]
+FAILED Tests/UI/test_library_rag_answer_navigation.py::test_keyboard_can_read_answer_and_citation_feedback[unverified- [S99]-Some citation markers do not match available staged evidence.-80-textual-dark-size1]
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:123: KeyboardInterrupt
+(to show a full traceback on KeyboardInterrupt use --full-trace)
+7 failed, 7 passed in 78.86s (0:01:18)

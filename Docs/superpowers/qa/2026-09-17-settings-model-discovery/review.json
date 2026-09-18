@@ -1,0 +1,15 @@
+{
+  "reviewer": "rag_heading_review",
+  "scope": "TASK-32739 final working diff against adbd2fe62a",
+  "result": "No actionable findings",
+  "resolved": [
+    "Missing selection event ownership and unchanged endpoint mount echoes",
+    "Late discovery/save/clear results and exceptions after connection edits",
+    "Preserve durable original-provider save while suppressing stale form receipt/activation",
+    "Truthful Clear failure and retry"
+  ],
+  "retracted": [
+    "API mode is not consumed by generic model discovery, so no staged API-mode behavior was added."
+  ],
+  "unqualified_follow_up": "vLLM handoff/discovery interleaving has no reproduced defect in this review; revisit with that component."
+}

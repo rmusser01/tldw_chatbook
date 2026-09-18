@@ -1,0 +1,36 @@
+{
+  "base": "254e9f527f",
+  "files": [
+    {
+      "path": "Tests/UI/test_library_ingest_directory_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Third_Party/textual_fspicker/base_dialog.py",
+      "base_diagnostics": 38,
+      "current_diagnostics": 38,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Third_Party/textual_fspicker/select_directory.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_fspicker_compact_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-16-compact-picker/native_check.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "new_diagnostics": 0
+}

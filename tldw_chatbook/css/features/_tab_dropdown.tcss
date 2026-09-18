@@ -4,29 +4,33 @@
  * Dropdown-based tab navigation system
  * Replaces horizontal tab bar with compact dropdown
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* Container for the dropdown - positioned at top of window */
 #tab-dropdown-container {
     dock: top;
-    width: 100%;      /* Full width of window */
-    height: 3;        /* Match the original tab bar height */
-    padding: 0 1;
+    width: $ds-width-full;      /* Full width of window */
+    height: $ds-size-3;        /* Match the original tab bar height */
+    padding: $ds-space-0 $ds-space-1;
     background: $panel;
     border-bottom: solid $border;
-    margin: 0;
+    margin: $ds-space-0;
     align: center middle;  /* Center the dropdown in the container */
 }
 
 /* The Select widget itself */
 #tab-dropdown-select {
-    width: 30;        /* Fixed width for the dropdown selector */
-    height: 100%;
+    width: $ds-size-30;        /* Fixed width for the dropdown selector */
+    height: $ds-height-full;
     background: $panel;
     color: $text;
     border: solid $border;
     border-bottom: solid $border;
-    padding: 0 1;
-    margin: 0;        /* No margin needed - centering handled by container */
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;        /* No margin needed - centering handled by container */
 }
 
 /* Select widget hover state */
@@ -47,19 +51,19 @@
 #tab-dropdown-select SelectOverlay {
     background: $background;
     border: solid $border;
-    max-height: 20;      /* Limit dropdown height to prevent full-screen coverage */
-    margin-top: 0;       /* No gap - directly below the select */
+    max-height: $ds-size-20;      /* Limit dropdown height to prevent full-screen coverage */
+    margin-top: $ds-space-0;       /* No gap - directly below the select */
     width: auto;         /* Auto width to fit content */
-    min-width: 30;       /* Match the select widget width */
+    min-width: $ds-size-30;       /* Match the select widget width */
     /* layer: above; */  /* Ensure dropdown appears above other content if supported */
 }
 
 /* Individual options in the dropdown */
 #tab-dropdown-select SelectOverlay Option {
-    padding: 0 2;
+    padding: $ds-space-0 $ds-space-2;
     background: $panel;
     color: $text-muted;
-    min-height: 3;       /* Comfortable click target */
+    min-height: $ds-size-3;       /* Comfortable click target */
 }
 
 /* Option hover state */
@@ -91,5 +95,5 @@
 
 /* Ensure dropdown doesn't interfere with main content */
 #content {
-    margin-top: 0;   /* No top margin needed - content flows after dropdown */
+    margin-top: $ds-space-0;   /* No top margin needed - content flows after dropdown */
 }

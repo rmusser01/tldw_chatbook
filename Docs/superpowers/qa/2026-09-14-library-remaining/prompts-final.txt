@@ -1,0 +1,41 @@
+Command: .venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py -x -q --tb=short
+
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-06fff278-44f8-4f5a-9c6d-47f91040034e/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-06fff278-44f8-4f5a-9c6d-47f91040034e/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-06fff278-44f8-4f5a-9c6d-47f91040034e
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-06fff278-44f8-4f5a-9c6d-47f91040034e'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+6.30s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_stale_version_shows_conflict_bar
+5.01s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_load_is_noop_after_duplicate_detaches[page]
+4.91s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_load_is_noop_after_duplicate_detaches[count]
+3.83s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_import_blocks_undo_until_import_settles
+3.73s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_bulk_delete_mixed_batch_is_atomic_and_opaque
+3.69s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_write_time_conflict_shows_conflict_bar
+3.61s call     Tests/UI/test_library_prompts_canvas.py::test_cancelled_prompt_save_retains_writer_ownership_until_commit
+3.57s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_stale_conflict_reload_refreshes_and_can_retry
+3.49s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_conflict_overwrite_blocks_delete_admission
+3.47s call     Tests/UI/test_library_prompts_canvas.py::test_cancelled_prompt_import_retains_writer_ownership_until_commit
+3.36s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_delete_refresh_failure_keeps_reconciled_page_read_only
+3.22s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_conflict_overwrite_adopts_persisted_detail_and_history
+3.20s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_restore_refresh_rejects_same_id_aba_scope
+3.18s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_editor_delete_failure_restores_native_controls_and_live_fields[missing]
+3.16s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_mutation_route_vetoes_before_every_flush_or_transition
+3.13s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_conflict_save_as_new_replaces_source_history_identity
+3.12s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_delete_receipt_undo_restores_row_and_count
+3.09s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_confirms_and_restores_as_new_current_version[prompt-to-recipe]
+3.05s call     Tests/UI/test_library_prompts_canvas.py::test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed
+3.03s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_restore_failures_are_truthful_and_guarded[expected-version-conflict]
+3.02s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_count_is_index_only_and_first_page_is_lazy
+3.02s call     Tests/UI/test_library_prompts_canvas.py::test_library_recipe_duplicate_outer_save_is_honest_and_preserves_starter
+2.96s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_mutation_vetoes_every_import_seam
+2.93s call     Tests/UI/test_library_prompts_canvas.py::test_prompt_selection_persists_across_search_page_sort_and_collection
+2.93s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_results_after_prompt_switch_are_noops[restore]
+342 passed, 2 warnings in 524.98s (0:08:44)

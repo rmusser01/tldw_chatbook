@@ -1,0 +1,29 @@
+{
+  "pid": 29378,
+  "phase": "interrupt",
+  "steps": [
+    {
+      "permission_lineage_survived_restart": true,
+      "duplicate_identity_survived_restart": true
+    },
+    {
+      "quit_while": "parsing",
+      "worker_progress": {
+        "phase": "chunking",
+        "message": "Chunking extracted text"
+      },
+      "job_id": "ingest-job-6",
+      "pool_worker_pids": [
+        29439
+      ],
+      "cancel_not_offered": true
+    }
+  ],
+  "app_module": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/app.py",
+  "runner_sha256": "89d682209e0e5a4849722777192059d7f507bea6032324ae240aebf2dc41c8ea",
+  "exclusive_profile": true,
+  "waiting_for": "real worker progress",
+  "driver": "LinuxDriver",
+  "passed": true,
+  "app_run_returned": true
+}

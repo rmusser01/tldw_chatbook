@@ -1,0 +1,27 @@
+{
+  "profile": "/private/tmp/tldw-4111-run-004",
+  "pid": 5190,
+  "exit_code": 0,
+  "app_run_returned": true,
+  "default_config_ui_runtime_hashes_unchanged": true,
+  "database_checks": {
+    "tldw_chatbook_library_ingest_jobs.db": "ok",
+    "tldw_chatbook_scheduled_tasks.db": "ok",
+    "library_collections.db": "ok",
+    "chachanotes.db": "ok",
+    "workspaces.db": "ok",
+    "agent_runs.db": "ok",
+    "media.db": "ok",
+    "evals.db": "ok",
+    "prompts.db": "ok",
+    "subscriptions.db": "ok"
+  },
+  "database_method": "read-only SQLite PRAGMA quick_check with real canvas payload validator",
+  "provider_messages": 0,
+  "runner_matches_evidence": true,
+  "error_or_critical_log_lines": [],
+  "faulthandler_empty": true,
+  "process_absent_after_exit": true,
+  "owned_tmux_session_closed": true,
+  "all_16_captures_rendered_and_inspected": true
+}

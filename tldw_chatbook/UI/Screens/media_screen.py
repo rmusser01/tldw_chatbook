@@ -60,7 +60,7 @@ class MediaScreen(BaseAppScreen):
         )
         self.media_window = MediaWindow(self.app_instance, classes="window")
         # Leave room for the destination header above the window.
-        self.media_window.styles.height = "1fr"
+        self.media_window.add_class("h-fill")
         # Yield the window widget directly
         yield self.media_window
 

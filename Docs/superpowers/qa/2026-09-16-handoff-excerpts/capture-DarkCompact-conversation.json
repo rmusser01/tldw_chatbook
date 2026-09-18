@@ -1,0 +1,42 @@
+{
+  "payload": {
+    "target_id": "465fdc15-48ec-5953-a4ed-8c932c18e105",
+    "item_type": "conversation",
+    "source_id": "465fdc15-48ec-5953-a4ed-8c932c18e105",
+    "snippet": "Conversation excerpt:\nuser: DarkCompact user source body: exact [text], caf\u00e9.\n\nassistant: DarkCompact assistant source body: exact [text], caf\u00e9.\n\nConversation: Source audit DarkCompact\nConversation ID: 465fdc15-48ec-5953-a4ed-8c932c18e105\nMessages: 2\nWorkspace: Default\nUpdated: 2026-09-17 02:03:00.204000+00:00\nSource authority: local",
+    "suggested_prompt": "Use this conversation as source context for my next question.",
+    "runtime_backend": "local",
+    "source_selector_state": "local",
+    "metadata": {
+      "conversation_id": "465fdc15-48ec-5953-a4ed-8c932c18e105",
+      "conversation_title": "Source audit DarkCompact",
+      "message_count_label": "Messages: 2",
+      "workspace_label": "Workspace: Default",
+      "updated_label": "Updated: 2026-09-17 02:03:00.204000+00:00",
+      "source_authority": "local"
+    },
+    "evidence_bundle": {
+      "bundle_id": "465fdc15-48ec-5953-a4ed-8c932c18e105",
+      "query": "Use this conversation as source context for my next question.",
+      "source": "library",
+      "status": "available",
+      "metadata": {},
+      "references": [
+        {
+          "evidence_id": "S1",
+          "source_id": "465fdc15-48ec-5953-a4ed-8c932c18e105",
+          "source_type": "conversation",
+          "title": "Source audit DarkCompact",
+          "snippet": "Conversation excerpt:\nuser: DarkCompact user source body: exact [text], caf\u00e9.\n\nassistant: DarkCompact assistant source body: exact [text], caf\u00e9.\n\nConversation: Source audit DarkCompact\nConversation ID: 465fdc15-48ec-5953-a4ed-8c932c18e105\nMessages: 2\nWorkspace: Default\nUpdated: 2026-09-17 02:03:00.204000+00:00\nSource authority: local",
+          "authority_label": "local",
+          "source_owner": "local",
+          "status": "available",
+          "metadata": {},
+          "snippet_truncated": false,
+          "original_snippet_char_count": 335
+        }
+      ]
+    }
+  },
+  "context": "[S1] CHAT HISTORY \u2014 Source audit DarkCompact\nConversation excerpt:\nuser: DarkCompact user source body: exact [text], caf\u00e9.\n\nassistant: DarkCompact assistant source body: exact [text], caf\u00e9.\n\nConversation: Source audit DarkCompact\nConversation ID: 465fdc15-48ec-5953-a4ed-8c932c18e105\nMessages: 2\nWorkspace: Default\nUpdated: 2026-09-17 02:03:00.204000+00:00\nSource authority: local"
+}

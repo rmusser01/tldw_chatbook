@@ -1,0 +1,11 @@
+{
+  "reviewer": "rag_heading_review",
+  "final_findings": [],
+  "final_review": "No actionable findings. The notice's dynamic recovery text is sanitized and escaped upstream; its mounted update path correctly avoids stale conditional rebuilds.",
+  "reviewed_edges": [
+    "Failure copy is constant; blocked next_action is sanitized and Rich-escaped upstream.",
+    "The persistent notice is excluded from conditional rebuilds and updated synchronously with the Run gate.",
+    "A suspended old refresh cannot restore failure feedback after retry starts.",
+    "Provider disclosure remains separate and visible; query, scope and focus retention are covered."
+  ]
+}

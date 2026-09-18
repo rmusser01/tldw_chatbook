@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+3.01s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[hidden-native]
+2.31s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[hidden-wrapped]
+1.68s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[unmount-native]
+1.64s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[unmount-wrapped]
+1.38s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[covered-native]
+1.36s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[transparent-native]
+1.29s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[covered-wrapped]
+1.15s call     Tests/Backup_Recovery/test_console_bounded_layout.py::test_bounded_section_waits_for_owner_layout[transparent-wrapped]
+
+(16 durations < 1s hidden.)
+8 passed in 14.49s

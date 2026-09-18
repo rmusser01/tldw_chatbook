@@ -1,0 +1,29 @@
+........................................................................ [ 91%]
+.......                                                                  [100%]
+============================= slowest 25 durations =============================
+19.07s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-dark]
+18.83s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-light]
+18.38s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-light]
+18.22s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-dark]
+5.43s call     Tests/UI/test_settings_provider_switch_atomic.py::test_exact_probe_evidence_survives_returned_model_selection_and_save
+5.31s call     Tests/UI/test_settings_provider_switch_atomic.py::test_exact_draft_key_probe_evidence_survives_successful_commit
+4.28s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_qwencloud_api_mode_search_respects_category_and_field_priority[api_settings.<provider>.api_mode-settings-provider-api-mode]
+3.91s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_qwencloud_atomic_save_consumes_deferred_api_key_clear_once
+2.61s call     Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[revert]
+2.30s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_qwencloud_api_mode_search_respects_category_and_field_priority[API mode-settings-provider-api-mode]
+2.16s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-dark]
+2.16s call     Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[save]
+2.14s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_malformed_qwencloud_table_selection_test_and_save_stay_blocked
+2.13s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[model-profile-temperature-0.4-restored]
+2.12s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[model-value-unsaved-model-restored]
+2.08s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_qwencloud_api_mode_save_and_revert_exact_values[chat_completions-responses]
+2.05s call     Tests/UI/test_settings_saved_provider_return.py::test_api_mode_only_draft_keeps_its_provider_on_return[restored]
+2.04s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-credential-env-var-REVIEW_PROVIDER_KEY-restored]
+2.01s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_qwencloud_api_mode_save_and_revert_exact_values[responses-chat_completions]
+1.97s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_invalid_qwencloud_mode_keyboard_selection_repairs_to_responses
+1.96s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-endpoint-value-https://draft.invalid/v1-restored]
+1.88s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_provider_switch_clear_is_suppressed_but_user_key_clear_is_staged
+1.84s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-credential-env-var-REVIEW_PROVIDER_KEY-retained]
+1.84s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-light]
+1.83s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size1-textual-light]
+79 passed in 221.42s (0:03:41)

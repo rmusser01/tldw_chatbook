@@ -1,0 +1,66 @@
+{
+  "textual-dark-170-linked.svg": {
+    "raw": "aa849ffa1ea96fbdc210997732e4fbb890da00eed4156f51db2d4cc98b82d198",
+    "stored": "01bf3f55c56d398728fd228e8d937cd79d9e024eaa2e9e5bda8de010e8c60da1"
+  },
+  "textual-dark-170-media-staged.svg": {
+    "raw": "5a853e7ed065add8b0b6ab5d5dd4cfd12d7c4c8d55ae6894206a8f1db8fc9b1c",
+    "stored": "27152d713accd84e62a907a64259a07abc8ef39cc09d295c3cd9d4c428de7bae"
+  },
+  "textual-dark-170-reader.svg": {
+    "raw": "bcaf75c84e47eb1c33533f49fb33f42c13457c00a932e2a60d3c90a4c22f1d49",
+    "stored": "9b885c9d1d5802816803b046ecbcfd461a4716eec4b908a19fdfcd027090494d"
+  },
+  "textual-dark-170-staged.svg": {
+    "raw": "ce068f553c260ac368d3808ad2126138a962107fb22d8fc72527379490c0713e",
+    "stored": "811f262692dca21a0cbae16de8bc05522edbe4a968fa03b1e719b654fdf40feb"
+  },
+  "textual-dark-80-linked.svg": {
+    "raw": "42f939ce701853bb08ca707018f9404a49ec9bbe319d9e764f743011b4504492",
+    "stored": "d403ed6115840e9474c47ac176a5976355f8379029116a47a2cb8f263298e032"
+  },
+  "textual-dark-80-media-staged.svg": {
+    "raw": "049f332819b9f1f5445f20de4a7aff4613e13f68f3b4b5838e3c9d105e4a5f57",
+    "stored": "bf06553e50eec9a39b4561a6697a86c8936abc46ab8459e1cc5220d93f91a29f"
+  },
+  "textual-dark-80-reader.svg": {
+    "raw": "1395a35a44a9c9b053fdbffd22fd01e8039b308ae188a4e61c5c99523ae0581c",
+    "stored": "a42d324e937ffbfcd863eaa2f1b805f0d92ba5798152df269f7f8cdab5484366"
+  },
+  "textual-dark-80-staged.svg": {
+    "raw": "8f7e5900fd754cc474e63388b02939726e49299d13a4589ff76a37843d8538cd",
+    "stored": "ef4de9f9510406e1d6e6f527d47eb5c055691d04b41b07b83bc62e147df55b66"
+  },
+  "textual-light-170-linked.svg": {
+    "raw": "7dd92aae5f839297a0d6c856fadec8650da92d194b61b9cfc0d34fc96ea05c72",
+    "stored": "d83453e5a6838d3fd671741b2bf012fab75fe2dda0133f625d7e923580463557"
+  },
+  "textual-light-170-media-staged.svg": {
+    "raw": "a63ed0e693c7816867b33ee250672c371d572c79a241271c8f87576d4d19d00b",
+    "stored": "cd9272a9ccaed60e9a0769ce2e825ca11d0788988c7e2a3c917f7f213ddfaea4"
+  },
+  "textual-light-170-reader.svg": {
+    "raw": "f6570b1510796702c4864252295ea2da5fba3eea32ccd79f603df11d14ae2b2a",
+    "stored": "8b1ec03af4bde1a02cb6e2b12fe26ba58e3aa2e2e2484132894602279807928b"
+  },
+  "textual-light-170-staged.svg": {
+    "raw": "414002ac0f757e63348a63fbed0e9859f3470a3c4276513e66554c5b4d6501d9",
+    "stored": "101d2a9b46b05b5b76eabccf0615ca7c4f1aa02c3b7a728776b94b6bc0aea4a6"
+  },
+  "textual-light-80-linked.svg": {
+    "raw": "95f1204e8ebc3786941a9f99f1ca0b429e44f2d877b8b0f8a147c666d6ebb506",
+    "stored": "0eae1412bc8fb7596b3a8db28474ae9633a21aa7746853088cf20c6a528b0d67"
+  },
+  "textual-light-80-media-staged.svg": {
+    "raw": "b12a2d05ba27672fa3b6fe652cf438f602f310c764c90fe84a8d8509de3e4c7e",
+    "stored": "7230eadc89e91f25cb891da76b87373c22bc72aeeac8bc8a30195fc6415f1d13"
+  },
+  "textual-light-80-reader.svg": {
+    "raw": "cdbc6a856e4280a76c5661c8dda65250850975be256b5ebca8398c1ddb21456a",
+    "stored": "ad36df7ef1714474e8c832a41fb7483b0e8f4d294c0f67504579b362c51880c0"
+  },
+  "textual-light-80-staged.svg": {
+    "raw": "615738c59ec5daccdad603d054ce3422538f6489ef98eadaa3bcf884e8568c18",
+    "stored": "a909ea55d3584b8688935e1eff360fabf8263cfdd1516b3722c951e2af166e86"
+  }
+}

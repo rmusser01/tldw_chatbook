@@ -684,7 +684,7 @@ class PromptBlockEditor(Vertical):
                     id="prompt-editor-save-menu",
                     compact=True,
                 )
-                save_menu.styles.width = 18
+                save_menu.add_class("w-18")
                 save_menu.styles.min_width = 18
                 save_menu.styles.max_width = 18
                 yield save_menu

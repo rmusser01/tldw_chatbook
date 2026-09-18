@@ -1,5 +1,48 @@
 /* ========================================
  * COMPONENTS: Status
- * ======================================== 
- * Status indicators and displays
+ * ========================================
+ * Status indicators and displays. ADR-161 task 8a filled this owning
+ * sheet: `.status-label`/`.status-area` moved from components/_forms.tcss
+ * (byte-identical winners) and the per-line `.status-item` core promoted
+ * bare from the two declaration-identical scoped sets in
+ * features/_wizards.tcss (ProgressStep/ImportProgressStep); all of it
+ * tokenized on arrival.
  * ======================================== */
+
+.status-label {
+    margin-top: $ds-space-section;
+    margin-bottom: $ds-space-0;
+    color: $ds-text-muted;
+}
+
+.status-area {
+    width: $ds-width-full;
+    background: $ds-surface-raised;
+    border: round $border;
+    padding: $ds-space-inset;
+    margin-top: $ds-space-stack;
+}
+
+/* State compounds keep their original specificity relationships: the
+ * app-wide bare `.error` (features sheets) continues to supply the error
+ * tint/border underneath, exactly as under the old scoped rules. */
+.status-item {
+    /* top/right/bottom stack gap + a $ds-space-2 left indent under the
+     * progress marker -- the wizards' original `margin: 0 0 1 2`. */
+    margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-2;
+    color: $text-muted;
+}
+
+.status-item.completed {
+    color: $success;
+}
+
+.status-item.active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.status-item.error {
+    color: $error;
+}

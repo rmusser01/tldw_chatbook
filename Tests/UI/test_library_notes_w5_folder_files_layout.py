@@ -21,6 +21,7 @@ from textual.widgets import Button, Static
 # Stubs first in the local group: it registers the optional MLX modules the
 # application imports below would otherwise probe.
 import Tests.UI._optional_module_stubs  # noqa: F401
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_library_file_notes_workspace import (
     _production_workspace_context,
     _wait_until,
@@ -100,8 +101,9 @@ async def test_the_folder_files_title_row_claims_one_row_not_a_share_of_the_pane
 
 
 @pytest.mark.parametrize("size", CRITIQUE_SIZES)
+@private_profile_test
 async def test_neither_folder_files_path_line_is_ever_folded_mid_token(
-    tmp_path: Path, size: tuple[int, int]
+    request, tmp_path: Path, size: tuple[int, int]
 ) -> None:
     """task-32614 AC#2/AC#3/AC#4: one row each, elided, basename intact.
 

@@ -1,0 +1,48 @@
+{
+  "baseline": "d45f55cde0",
+  "targeted_passes": 98,
+  "runs": [
+    {
+      "files": [
+        "Tests/UI/test_library_ingest_resize_focus.py",
+        "Tests/UI/test_library_ingest_queue_journeys.py",
+        "Tests/UI/test_library_ingest_recent_journeys.py",
+        "Tests/UI/test_library_prompt_resize_focus.py",
+        "Tests/UI/test_library_resize_focus_gates_t23025.py",
+        "Tests/UI/test_component_pattern_governance.py",
+        "Tests/UI/test_design_token_governance.py"
+      ],
+      "pytest_flags": [
+        "-q",
+        "--tb=short"
+      ],
+      "passed": 92,
+      "warnings": 5,
+      "seconds": 293.57
+    },
+    {
+      "files": [
+        "Tests/UI/test_library_shell.py"
+      ],
+      "pytest_flags": [
+        "-k",
+        "breakpoint_round_trip or user_focus_vetoes_stale_deferred_restore or unsafe_session_outranks_rail_focus or delete_confirmation_outranks_rail_focus or load_failure_outranks_rail_focus",
+        "-q",
+        "--tb=short"
+      ],
+      "passed": 6,
+      "deselected": 837,
+      "warnings": 2,
+      "seconds": 31.49
+    }
+  ],
+  "architecture": {
+    "command": ".venv/bin/python -m pytest Tests/Architecture/test_screen_size_ratchet.py -q -k library_screen --tb=short",
+    "passed": 1,
+    "failed": 1,
+    "deselected": 3,
+    "failure": "LibraryScreen has 35215 lines (baseline 35214); budget 33204. Budget unchanged."
+  },
+  "native_steps_passed": 32,
+  "full_repository_suite_run": false
+}

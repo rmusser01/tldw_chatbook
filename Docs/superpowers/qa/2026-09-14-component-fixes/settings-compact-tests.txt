@@ -1,0 +1,23 @@
+......                                                                   [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-501d745b-2b04-4724-abd0-df6d5991dd8e/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-501d745b-2b04-4724-abd0-df6d5991dd8e/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-501d745b-2b04-4724-abd0-df6d5991dd8e
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-501d745b-2b04-4724-abd0-df6d5991dd8e'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+8.62s call     Tests/UI/test_settings_compact_fields.py::test_compact_fields_keep_labels_focus_and_values_across_resize[providers-models-textual-dark]
+8.56s call     Tests/UI/test_settings_compact_fields.py::test_compact_fields_keep_labels_focus_and_values_across_resize[providers-models-textual-light]
+4.09s call     Tests/UI/test_settings_compact_fields.py::test_compact_fields_keep_labels_focus_and_values_across_resize[network-textual-light]
+3.98s call     Tests/UI/test_settings_compact_fields.py::test_compact_fields_keep_labels_focus_and_values_across_resize[network-textual-dark]
+1.19s call     Tests/UI/test_settings_compact_fields.py::test_compact_network_closed_select_paints_every_full_policy[textual-light]
+1.11s call     Tests/UI/test_settings_compact_fields.py::test_compact_network_closed_select_paints_every_full_policy[textual-dark]
+
+(12 durations < 1s hidden.)
+6 passed, 2 warnings in 29.75s

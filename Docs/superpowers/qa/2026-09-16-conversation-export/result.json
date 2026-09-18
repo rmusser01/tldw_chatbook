@@ -1,0 +1,154 @@
+{
+  "pid": 71650,
+  "runner_sha256": "e274a57b7461d0a87777a12624063621556e4a57e3fc0831d863c9524a92c74b",
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "whole_active_scope": 2,
+      "selected_scope": 1,
+      "cancel_normalize_overwrite_return_passed": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "whole_active_scope": 2,
+      "selected_scope": 1,
+      "cancel_normalize_overwrite_return_passed": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "whole_active_scope": 2,
+      "selected_scope": 1,
+      "cancel_normalize_overwrite_return_passed": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "whole_active_scope": 2,
+      "selected_scope": 1,
+      "cancel_normalize_overwrite_return_passed": true
+    }
+  ],
+  "artifacts": [
+    {
+      "label": "bundle-textual-dark-170-whole",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-dark-170.zip",
+      "size_bytes": 2315,
+      "sha256": "5bfc9efef408110bf77e643243b7f4ee0f492ea8b0aaf862ad1534714b3ff0d4",
+      "item_count": 2,
+      "conversation_ids": [
+        "1b854051-47b5-5467-a6e8-e21a52e10e13",
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    },
+    {
+      "label": "bundle-textual-dark-170-selected",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-dark-170.zip",
+      "size_bytes": 1578,
+      "sha256": "89938cf0d71ed3b2d0b553e255d466e131da1e82c3d9ac872c18ac03a28cb564",
+      "item_count": 1,
+      "conversation_ids": [
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    },
+    {
+      "label": "bundle-textual-dark-80-whole",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-dark-80.zip",
+      "size_bytes": 2317,
+      "sha256": "c7eae34f3d3ef6ef09c785d8f87d86c6ba0b2bd5dffc233873c7846b5ffc0e04",
+      "item_count": 2,
+      "conversation_ids": [
+        "1b854051-47b5-5467-a6e8-e21a52e10e13",
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    },
+    {
+      "label": "bundle-textual-dark-80-selected",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-dark-80.zip",
+      "size_bytes": 1577,
+      "sha256": "1e93051c8c54f1e95cd7a9b8638afed6fc9333f409081aabb68a38e45391c48b",
+      "item_count": 1,
+      "conversation_ids": [
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    },
+    {
+      "label": "bundle-textual-light-170-whole",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-light-170.zip",
+      "size_bytes": 2315,
+      "sha256": "48dd5a8e6d62b317f0edc716886cf07ce429e2ca9d62d7190623fd080cea62e8",
+      "item_count": 2,
+      "conversation_ids": [
+        "1b854051-47b5-5467-a6e8-e21a52e10e13",
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    },
+    {
+      "label": "bundle-textual-light-170-selected",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-light-170.zip",
+      "size_bytes": 1576,
+      "sha256": "7bb84dec632001c4a0def6245d1b6d8633070b24e736ae17a1239dff00d75db6",
+      "item_count": 1,
+      "conversation_ids": [
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    },
+    {
+      "label": "bundle-textual-light-80-whole",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-light-80.zip",
+      "size_bytes": 2316,
+      "sha256": "23d92afa18763e97cf6f9c2eda06647364f084aa2835c0f1b5a8b386e2b1bd2f",
+      "item_count": 2,
+      "conversation_ids": [
+        "1b854051-47b5-5467-a6e8-e21a52e10e13",
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    },
+    {
+      "label": "bundle-textual-light-80-selected",
+      "path": "/private/tmp/tldw-32704-run-002/exports/bundle-textual-light-80.zip",
+      "size_bytes": 1576,
+      "sha256": "78bc70cc278286464b1f6daa46c9521d18692ae20f17ea551fc53da99ff3ed35",
+      "item_count": 1,
+      "conversation_ids": [
+        "583cef86-437f-5614-a611-62b3ac863707"
+      ],
+      "exact_messages": true,
+      "unrelated_notes_absent": true
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "Conversations returned",
+  "source_records_unchanged": true,
+  "console_context_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

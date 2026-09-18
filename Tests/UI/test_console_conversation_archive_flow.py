@@ -320,8 +320,18 @@ async def test_restore_resume_then_send_retains_original_history_and_unrelated_d
             # The synchronous admission gate must allow the durable send check.
             app._conversation_archive_states[cid] = True
             assert console._console_send_blocked_reason() == ""
-            await console._submit_console_native_draft(
-                "Continue this original conversation", resumed.id
+            console._console_composer_or_none().load_draft(
+                "Continue this original conversation"
+            )
+            console.query_one("#console-send-message", Button).press()
+            await wait_until(
+                pilot,
+                lambda: any(
+                    message["text"] == "Continued original conversation."
+                    for message in local.get_library_conversation_messages(
+                        cid, message_limit=10
+                    )["messages"]
+                ),
             )
             assert app._conversation_archive_states[cid] is False
             assert gateway.sent_messages, (

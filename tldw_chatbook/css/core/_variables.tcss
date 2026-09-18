@@ -121,6 +121,17 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+/* ADR-161 task 9: the ds-primitives family's geometry, tokenized as the
+   rules moved out of the agentic-terminal monolith into
+   components/_ds_primitives.tcss. Rest-state panel/header minimums and the
+   density-variant header minimums travel together so a density re-tune
+   has one home. */
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -129,6 +140,8 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -164,6 +177,199 @@ $ds-control-height: 3;
 $ds-control-height-compact: 1;
 /* Default/minimum height for multi-line text inputs. */
 $ds-textarea-min-height: 5;
+/* Fill the parent's inline axis (ADR-161 task 8a): the tokenized expression
+ * of the recurring `width: 100%` on promoted full-width components (status
+ * areas, message bodies). Raw percentage widths in moved rules map here. */
+$ds-width-full: 100%;
+/* Claim one share of the parent's inline axis (ADR-161 task 9): the
+ * tokenized expression of `width: 1fr` on promoted fill fields (the
+ * Settings compact field pair). */
+$ds-width-fill: 1fr;
+/* Auto-sizing keywords (ADR-161 task 12): the tokenized expression of the
+ * `auto` sizing keyword for the one-dimensional utility classes. The keyword
+ * itself is theme-independent, but the utility sheets express every
+ * consistent visual value through tokens, so the keyword anchors here like
+ * every other sizing value. */
+$ds-width-auto: auto;
+$ds-height-auto: auto;
+
+/* ========================================
+ * SIZING SCALES (ADR-161 task 10, spec 3.5)
+ * ========================================
+ * "Moved rules arrive fully on-system": when the console/library/settings/
+ * home/destination vocabularies were carved out of
+ * components/_agentic_terminal.tcss, every raw numeric dimension they
+ * carried mapped onto tokens. $ds-space-* stays the padding/margin
+ * rhythm; $ds-size-N is the integer cell-geometry scale for the
+ * width/height (and min-/max-prefixed) family, $ds-percent-N the
+ * percentage fills,
+ * $ds-fr-N the grid fractions, and $ds-height-full the block-axis twin
+ * of $ds-width-full. Names deliberately avoid the dimension-ratchet
+ * property suffixes so the definitions themselves do not count as sheet
+ * literals. Per spec 3.10, a value that gains a second consumer with
+ * real semantic weight graduates to a named $ds-<feature>-<name> token
+ * (the existing pattern below); these scales are the raw material until
+ * then. */
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+/* task 11 (ADR-161 §3.10): 22/26/42 join the size scale -- cross-sheet
+   recurring geometry at migration time (agentic/profile/watchlists,
+   research/watchlists). */
+$ds-size-22: 22;
+$ds-size-23: 23;
+$ds-size-24: 24;
+/* task 11 (ADR-161 §3.10): 25/35 join the size scale -- cross-sheet
+   recurring geometry (chat/llm/tools sidebars, embeddings/new-ingest). */
+$ds-size-25: 25;
+$ds-size-26: 26;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-35: 35;
+$ds-size-36: 36;
+/* task 11 (ADR-161 §3.10): 38/50 join the size scale -- cross-sheet
+   recurring geometry at migration time (lab/research caps, embeddings/
+   media/lab/research/watchlists widths). */
+$ds-size-38: 38;
+$ds-size-40: 40;
+$ds-size-42: 42;
+$ds-size-44: 44;
+$ds-size-45: 45;
+/* task 11 (ADR-161 §3.10): 46 joins the size scale -- cross-sheet recurring
+   (change-review tree pane, base chat gutter). */
+$ds-size-46: 46;
+$ds-size-48: 48;
+$ds-size-50: 50;
+/* task 11 (ADR-161 §3.10): 52 joins the size scale -- cross-sheet recurring
+   detail-pane floor (agentic workflows/acp, scheduling). */
+$ds-size-52: 52;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+/* task 11 (ADR-161 §3.10): 80 joins the size scale -- cross-sheet
+   recurring geometry (change-review/chatbooks-improved/embeddings). */
+$ds-size-80: 80;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+/* task 11 (ADR-161 §3.10): splash progress-bar cap (single consumer). */
+$ds-splash-progress-cap: 100;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+/* task 11 (ADR-161 §3.10): 25%/30%/40%/50% join the scale -- cross-sheet
+   recurring fills/caps (coding/embeddings/ingest, conversations/sidebars/
+   research run-list, widgets/conversations/lab/media, chat/code-repo/
+   embeddings/ingest per the spread census). */
+$ds-percent-25: 25%;
+$ds-percent-30: 30%;
+$ds-percent-40: 40%;
+$ds-percent-42: 42%;
+/* task 11 (ADR-161 §3.10): 45% joins the scale -- cross-sheet recurring
+   fill (sidebars/settings-splash/conversations/new-ingest). */
+$ds-percent-45: 45%;
+$ds-percent-50: 50%;
+/* task 11 (ADR-161 §3.10): 70%/80% join the scale -- cross-sheet recurring
+   fills (agentic table caps, widgets/splash/watchlists/wizards, sidebars). */
+$ds-percent-70: 70%;
+$ds-percent-75: 75%;
+/* task 11 (ADR-161 §3.10): 80% joins the scale -- cross-sheet recurring fill
+   (wizards progress/summary, widgets, splash, watchlists per the spread
+   census at migration time). */
+$ds-percent-80: 80%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+/* task 11 (ADR-161 §3.10): 92% joins the scale -- cross-sheet recurring
+   modal cap (profile-interview cancel modal, settings personal-context). */
+$ds-percent-92: 92%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+/* task 11 (ADR-161 §3.10): 3fr joins the fr scale -- cross-sheet recurring
+   hub share (agentic mcp-hub rail/inspector, scheduling). */
+$ds-fr-3: 3fr;
+$ds-fr-13: 13fr;
+/* task 11 (ADR-161 §3.10): the Watchlists destination's region-grid
+   shares (single-consumer feature geometry, spec 3.10 -- named, not on the
+   mechanical scale, because each share belongs to one named region). */
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
+/* task 11 (ADR-161 §3.10): agentic-terminal single-consumer geometry
+   (components/_agentic_terminal.tcss), named per spec 3.10: the MCP
+   overview tables' auto-hug height cap (5 tables, lockstep'd with their
+   DEFAULT_CSS baselines), the prompt-variables pane's fixed columns, and
+   the compact MCP hub canvas share. */
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
+/* task 11 (ADR-161 §3.10): the Research Workspace chat pane's minimum
+   columns in its two fr-sharing layout modes (single consumer). */
+$ds-research-chat-pane-floor: 58;
+/* task 11 (ADR-161 §3.10): New Ingest wizard single-consumer geometry: the
+   two/three-pane layout shares and the card-description leading. */
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+/* Dead web-CSS residue in the same sheet (::-webkit-scrollbar) -- tokenized
+   for the zero-literal ratchet, not an endorsement. */
+$ds-new-ingest-scrollbar-gutter: 6px;
+/* task 11 (ADR-161 §3.10): the Conversations character-editor AI-generate
+   button's narrow fill (single consumer). */
+$ds-conversations-ai-generate-share: 12%;
+/* task 11 (ADR-161 §3.10): Profile-interview link modal geometry
+   (single consumer). */
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
+/* task 11 (ADR-161 §3.10): the skeleton-loading title bar's fill
+   (components/_widgets.tcss, single consumer). */
+$ds-widgets-skeleton-title-share: 60%;
+/* task 11 (ADR-161 §3.10): message-body viewport scroll caps
+   (components/_messages.tcss, single consumer). */
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
+/* Console's rendered frame color (see Console_Modules.frame.
+ * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
+ * single grandfathered hex, tokenized on arrival (spec 3.5: it does not
+ * travel). */
+$ds-console-frame: #6f7782;
 
 /* ========================================
  * MOTION (ADR-150)
@@ -217,3 +423,51 @@ $ds-surface-sunken: $surface-darken-1;
 $ds-sidebar-width: 25%;
 $ds-sidebar-min-width: 35;
 $ds-sidebar-max-width: 80;
+
+/* Theme editor selectable swatches and contrast previews (ADR-161). */
+$ds-theme-preset-blues-0: #0099FF;
+$ds-theme-preset-blues-1: #006FB3;
+$ds-theme-preset-blues-2: #004D80;
+$ds-theme-preset-blues-3: #003366;
+$ds-theme-preset-blues-4: #002244;
+$ds-theme-preset-greens-0: #00CC66;
+$ds-theme-preset-greens-1: #009944;
+$ds-theme-preset-greens-2: #006633;
+$ds-theme-preset-greens-3: #004422;
+$ds-theme-preset-greens-4: #002211;
+$ds-theme-preset-reds-0: #FF3333;
+$ds-theme-preset-reds-1: #CC0000;
+$ds-theme-preset-reds-2: #990000;
+$ds-theme-preset-reds-3: #660000;
+$ds-theme-preset-reds-4: #330000;
+$ds-theme-preset-purples-0: #9966FF;
+$ds-theme-preset-purples-1: #7744DD;
+$ds-theme-preset-purples-2: #5522BB;
+$ds-theme-preset-purples-3: #330099;
+$ds-theme-preset-purples-4: #220066;
+$ds-theme-preset-grays-0: #FFFFFF;
+$ds-theme-preset-grays-1: #CCCCCC;
+$ds-theme-preset-grays-2: #999999;
+$ds-theme-preset-grays-3: #666666;
+$ds-theme-preset-grays-4: #333333;
+$ds-theme-preset-material-0: #2196F3;
+$ds-theme-preset-material-1: #4CAF50;
+$ds-theme-preset-material-2: #FF9800;
+$ds-theme-preset-material-3: #F44336;
+$ds-theme-preset-material-4: #9C27B0;
+$ds-theme-preset-pastels-0: #FFB3BA;
+$ds-theme-preset-pastels-1: #BAFFC9;
+$ds-theme-preset-pastels-2: #BAE1FF;
+$ds-theme-preset-pastels-3: #FFFFBA;
+$ds-theme-preset-pastels-4: #FFDFBA;
+$ds-theme-preset-dark-0: #1A1A1A;
+$ds-theme-preset-dark-1: #2D2D2D;
+$ds-theme-preset-dark-2: #404040;
+$ds-theme-preset-dark-3: #525252;
+$ds-theme-preset-dark-4: #656565;
+$ds-theme-preview-dark-ink: #000000;
+$ds-theme-preview-light-ink: #FFFFFF;
+$ds-theme-preview-invalid: #808080;
+
+/* Wide Conversation settings dialog preserved from upstream. */
+$ds-console-settings-wide-max-width: 196;

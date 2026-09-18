@@ -1,0 +1,67 @@
+{
+  "profile": "/private/tmp/tldw-32714-run-003",
+  "pid": 48946,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "database_quick_check": {
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ]
+  },
+  "default_fingerprints_unchanged": {
+    "001": true,
+    "002": true,
+    "003": true
+  },
+  "conversation_messages": 0,
+  "source_unchanged": true,
+  "error_lines": [],
+  "normal_stop_logged": true,
+  "faulthandler_bytes": {
+    "faulthandler.log": 0,
+    "data/default_user/faulthandler.log": 0
+  },
+  "pid_absent_verified": true,
+  "owned_terminal_closed": true,
+  "earlier_attempts": {
+    "001": {
+      "exit_code": 1,
+      "pid": 47194,
+      "pid_absent_verified": true,
+      "owned_terminal_closed": true
+    },
+    "002": {
+      "exit_code": 1,
+      "pid": 47829,
+      "pid_absent_verified": true,
+      "owned_terminal_closed": true
+    }
+  }
+}

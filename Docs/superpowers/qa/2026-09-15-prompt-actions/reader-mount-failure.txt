@@ -1,0 +1,32 @@
+.............................F......                                     [100%]
+=================================== FAILURES ===================================
+___ test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection ____
+Tests/UI/test_library_prompts_reader.py:754: in test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:604: in _pre_process
+    await self._dispatch_message(events.Mount())
+.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:628: in _on_mount
+    self._setup_options_renderables()
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:549: in _setup_options_renderables
+    option_list = self.query_one(SelectOverlay)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1533: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match 'SelectOverlay' on Select(id='prompt-editor-save-menu', classes='w-18 -textual-compact')

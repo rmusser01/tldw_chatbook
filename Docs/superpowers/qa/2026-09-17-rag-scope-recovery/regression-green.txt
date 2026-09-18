@@ -1,0 +1,9 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+1.84s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-0]
+1.46s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-1]
+1.12s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-1]
+1.12s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-0]
+
+(20 durations < 1s hidden.)
+8 passed in 11.45s

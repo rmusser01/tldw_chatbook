@@ -43,7 +43,7 @@ class HomeRail(RecomposeCaptureGuard, Vertical):
         super().__init__(**kwargs)
         self.triage = triage
         self.preferences = preferences
-        self.styles.width = "3fr"
+        self.add_class("w-3fr")
         self.styles.min_width = 24
 
     def sync_state(
@@ -153,7 +153,7 @@ class HomeRail(RecomposeCaptureGuard, Vertical):
                 id=f"home-rail-section-body-{section.section_id}",
                 classes="home-rail-section-body",
             )
-            body.styles.height = "auto"
+            body.add_class("h-auto")
             if not open_state:
                 body.styles.display = "none"
             with body:
@@ -176,7 +176,7 @@ class HomeRail(RecomposeCaptureGuard, Vertical):
                         button.row_id = row.row_id
                         button.tooltip = row.title
                         button.set_class(selected, "home-rail-row-selected")
-                        button.styles.height = 2
+                        button.add_class("h-2")
                         button.styles.min_height = 2
                         yield button
                         row_index += 1
@@ -198,7 +198,7 @@ class HomeRail(RecomposeCaptureGuard, Vertical):
             id="home-rail-section-body-details",
             classes="home-rail-section-body",
         )
-        details_body.styles.height = "auto"
+        details_body.add_class("h-auto")
         if not details_open:
             details_body.styles.display = "none"
         with details_body:

@@ -1,0 +1,12 @@
+=========================== short test summary info ============================
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-dark-size0]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-dark-size1]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-light-size0]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-light-size1]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_compact_error_and_resize_keep_path_actions_and_listing[textual-dark]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_compact_error_and_resize_keep_path_actions_and_listing[textual-light]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[empty-textual-dark]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[empty-textual-light]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[scrolling-textual-dark]
+FAILED Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[scrolling-textual-light]
+10 failed, 7 passed in 7.79s

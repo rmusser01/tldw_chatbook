@@ -62,6 +62,12 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -70,6 +76,8 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -87,6 +95,115 @@ $ds-space-inset: $ds-space-1;
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
+$ds-width-full: 100%;
+$ds-width-fill: 1fr;
+$ds-width-auto: auto;
+$ds-height-auto: auto;
+
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-22: 22;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-25: 25;
+$ds-size-26: 26;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-35: 35;
+$ds-size-36: 36;
+$ds-size-38: 38;
+$ds-size-40: 40;
+$ds-size-42: 42;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-46: 46;
+$ds-size-48: 48;
+$ds-size-50: 50;
+$ds-size-52: 52;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-80: 80;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-splash-progress-cap: 100;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+$ds-percent-25: 25%;
+$ds-percent-30: 30%;
+$ds-percent-40: 40%;
+$ds-percent-42: 42%;
+$ds-percent-45: 45%;
+$ds-percent-50: 50%;
+$ds-percent-70: 70%;
+$ds-percent-75: 75%;
+$ds-percent-80: 80%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-92: 92%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-3: 3fr;
+$ds-fr-13: 13fr;
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-research-chat-pane-floor: 58;
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+$ds-new-ingest-scrollbar-gutter: 6px;
+$ds-conversations-ai-generate-share: 12%;
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
+$ds-widgets-skeleton-title-share: 60%;
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
+$ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -106,6 +223,52 @@ $ds-sidebar-width: 25%;
 $ds-sidebar-min-width: 35;
 $ds-sidebar-max-width: 80;
 
+$ds-theme-preset-blues-0: #0099FF;
+$ds-theme-preset-blues-1: #006FB3;
+$ds-theme-preset-blues-2: #004D80;
+$ds-theme-preset-blues-3: #003366;
+$ds-theme-preset-blues-4: #002244;
+$ds-theme-preset-greens-0: #00CC66;
+$ds-theme-preset-greens-1: #009944;
+$ds-theme-preset-greens-2: #006633;
+$ds-theme-preset-greens-3: #004422;
+$ds-theme-preset-greens-4: #002211;
+$ds-theme-preset-reds-0: #FF3333;
+$ds-theme-preset-reds-1: #CC0000;
+$ds-theme-preset-reds-2: #990000;
+$ds-theme-preset-reds-3: #660000;
+$ds-theme-preset-reds-4: #330000;
+$ds-theme-preset-purples-0: #9966FF;
+$ds-theme-preset-purples-1: #7744DD;
+$ds-theme-preset-purples-2: #5522BB;
+$ds-theme-preset-purples-3: #330099;
+$ds-theme-preset-purples-4: #220066;
+$ds-theme-preset-grays-0: #FFFFFF;
+$ds-theme-preset-grays-1: #CCCCCC;
+$ds-theme-preset-grays-2: #999999;
+$ds-theme-preset-grays-3: #666666;
+$ds-theme-preset-grays-4: #333333;
+$ds-theme-preset-material-0: #2196F3;
+$ds-theme-preset-material-1: #4CAF50;
+$ds-theme-preset-material-2: #FF9800;
+$ds-theme-preset-material-3: #F44336;
+$ds-theme-preset-material-4: #9C27B0;
+$ds-theme-preset-pastels-0: #FFB3BA;
+$ds-theme-preset-pastels-1: #BAFFC9;
+$ds-theme-preset-pastels-2: #BAE1FF;
+$ds-theme-preset-pastels-3: #FFFFBA;
+$ds-theme-preset-pastels-4: #FFDFBA;
+$ds-theme-preset-dark-0: #1A1A1A;
+$ds-theme-preset-dark-1: #2D2D2D;
+$ds-theme-preset-dark-2: #404040;
+$ds-theme-preset-dark-3: #525252;
+$ds-theme-preset-dark-4: #656565;
+$ds-theme-preview-dark-ink: #000000;
+$ds-theme-preview-light-ink: #FFFFFF;
+$ds-theme-preview-invalid: #808080;
+
+$ds-console-settings-wide-max-width: 196;
+
 
 .tldw-agentic-split-preamble-end { }
 
@@ -114,6 +277,10 @@ $ds-sidebar-max-width: 80;
  * ========================================
  * Scheduling workbench specific styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent/fr scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* The liveness Static + bottom status strip are auto-height siblings of
  * #scheduling-workbench (redesign PR-4 task 5 retired the TabbedContent
@@ -121,8 +288,8 @@ $ds-sidebar-max-width: 80;
  * workbench row measures its fr children against the whole content area
  * and overflows past the footer. */
 #schedules-shell {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 /* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- it sits
@@ -140,15 +307,15 @@ $ds-sidebar-max-width: 80;
 }
 
 #scheduling-status-strip > SyncStatusWidget {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #scheduling-workbench {
     layout: horizontal;
-    height: 1fr;
-    min-height: 10;
-    padding: 1;
-    margin: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-10;
+    padding: $ds-space-1;
+    margin: $ds-space-0;
     overflow: hidden;
     border: solid $ds-grid-line;
 }
@@ -157,9 +324,9 @@ $ds-sidebar-max-width: 80;
  * expressed with fr units so the three panes share leftover space with the
  * fixed-width vertical dividers. This avoids percentage-based overflow/wrapping
  * and differs from workflows/acp which use a 25/50/25 fr ratio. */
-#scheduling-list-pane { width: 3fr; min-width: 30; border: solid $ds-grid-line; padding: 1; }
-#scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
-#scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
+#scheduling-list-pane { width: $ds-fr-3; min-width: $ds-size-30; border: solid $ds-grid-line; padding: $ds-space-1; }
+#scheduling-detail-pane { width: $ds-fr-4; min-width: $ds-size-52; border: solid $ds-grid-line; padding: $ds-space-1; }
+#scheduling-inspector-pane { width: $ds-fr-2; min-width: $ds-size-34; border: solid $ds-grid-line; padding: $ds-space-1; }
 
 #scheduling-task-detail-groups,
 #scheduling-automation-detail-body {
@@ -169,7 +336,7 @@ $ds-sidebar-max-width: 80;
 /* The queue table must fill its pane, or empty queues collapse to a single
  * clipped row at short heights (80x24). */
 #scheduling-task-table {
-    height: 1fr;
+    height: $ds-height-fill;
 }
 
 /* redesign PR-4, task 5: the Automations tab's own three-pane split
@@ -180,7 +347,7 @@ $ds-sidebar-max-width: 80;
 #scheduling-automation-detail-empty-state {
     color: $text-muted;
     text-align: center;
-    padding: 3 1;
+    padding: $ds-space-3 $ds-space-1;
 }
 
 /* The two detail panes' body cards: the definitions pane's question and
@@ -188,18 +355,18 @@ $ds-sidebar-max-width: 80;
 #scheduling-automation-detail-question,
 #scheduling-task-detail-body-card {
     height: auto;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $text;
 }
 
 #scheduling-queue-filter {
-    height: 1;
+    height: $ds-size-1;
     border: none;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     background: $surface-darken-1;
 }
 
@@ -207,15 +374,15 @@ $ds-sidebar-max-width: 80;
  * buttons, same height:1/border:none idiom the filter Input above uses,
  * so the row costs one line rather than a full 3-row Button box. */
 #scheduling-queue-chips {
-    height: 1;
-    margin: 0 0 1 0;
+    height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #scheduling-queue-chips .scheduling-queue-chip {
-    height: 1;
+    height: $ds-size-1;
     border: none;
-    min-width: 8;
-    margin-right: 1;
+    min-width: $ds-size-8;
+    margin-right: $ds-space-1;
     background: $surface-darken-1;
 }
 
@@ -227,15 +394,15 @@ $ds-sidebar-max-width: 80;
  * at the widths where the four chips are gone. */
 #scheduling-chip-cycle {
     display: none;
-    height: 1;
+    height: $ds-size-1;
     border: none;
     width: auto;
-    min-width: 8;
+    min-width: $ds-size-8;
     background: $surface-darken-1;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 /* redesign PR-4, task 6: this used to pin the rail to 24 columns, which
@@ -245,18 +412,18 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
  * the width with the detail pane (which keeps its own min-width) fits the
  * header on one row again and gives the table back its space. */
 SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
-    width: 1fr;
-    min-width: 28;
+    width: $ds-width-fill;
+    min-width: $ds-size-28;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
-    width: 1fr;
-    min-width: 32;
+    width: $ds-width-fill;
+    min-width: $ds-size-32;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
-    width: 20;
-    min-width: 16;
+    width: $ds-size-20;
+    min-width: $ds-size-16;
 }
 
 /* Pane headers */
@@ -266,9 +433,9 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-automation-detail-header {
     text-style: bold;
     color: $text;
-    padding: 0 0 0 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-0;
     border-bottom: solid $ds-grid-line;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #scheduling-list-header {
@@ -276,12 +443,12 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 }
 
 #scheduling-list-header #scheduling-list-title {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #scheduling-new-task {
     width: auto;
-    min-width: 9;
+    min-width: $ds-size-9;
 }
 
 /* redesign PR-2, Task 3: the rail's Mark-all-read button -- hidden by
@@ -289,8 +456,8 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * visibility), same height:auto row as Create above it. */
 #scheduling-mark-all-read {
     width: auto;
-    min-width: 9;
-    margin-left: 1;
+    min-width: $ds-size-9;
+    margin-left: $ds-space-1;
 }
 
 /* redesign PR-4, task 2: the rail's Results relocation affordance,
@@ -298,26 +465,26 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * (never hidden, unlike Mark-all-read). */
 #scheduling-results-badge {
     width: auto;
-    min-width: 9;
-    margin-left: 1;
+    min-width: $ds-size-9;
+    margin-left: $ds-space-1;
 }
 
 /* Empty state */
 #scheduling-task-detail-empty-state {
     color: $text-muted;
     text-align: center;
-    padding: 3 1;
+    padding: $ds-space-3 $ds-space-1;
 }
 
 /* Lifecycle action row */
 #scheduling-task-detail-lifecycle {
     height: auto;
-    padding: 1 0;
-    margin-top: 1;
+    padding: $ds-space-1 $ds-space-0;
+    margin-top: $ds-space-1;
 }
 
 #scheduling-task-detail-lifecycle Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* redesign PR-4, task 4: the legacy transfer action row (schedules-
@@ -329,13 +496,13 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * list, same auto-height shape as the lifecycle row above. */
 #scheduling-task-detail-secondary-actions {
     height: auto;
-    padding: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
-    margin-top: 1;
-    width: 100%;
+    margin-top: $ds-space-1;
+    width: $ds-width-full;
     text-style: bold;
 }
 
@@ -346,21 +513,21 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * selectors share this declaration rather than one id-scoped rule. */
 #scheduling-automation-detail-lifecycle {
     height: auto;
-    padding: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* task-31823: the definitions pane's own second compact action row --
  * `.detail-secondary-action-button` above already covers the buttons. */
 #scheduling-automation-detail-secondary-actions {
     height: auto;
-    padding: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Status badge base (detail pane) */
 #scheduling-task-status-badge {
     width: auto;
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     text-style: bold;
     color: $text;
     border: none;
@@ -373,42 +540,42 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-task-inspector-empty-state {
     color: $text-muted;
     text-align: center;
-    padding: 3 1;
+    padding: $ds-space-3 $ds-space-1;
 }
 
 /* Inspector metadata */
 #scheduling-inspector-metadata {
     height: auto;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-1;
 }
 
 #scheduling-inspector-metadata Horizontal {
     height: auto;
-    width: 100%;
-    padding: 0;
-    margin: 0;
+    width: $ds-width-full;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
 }
 
 .scheduling-inspector-label {
     color: $text-muted;
-    padding: 0 1 0 0;
-    width: 10;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    width: $ds-size-10;
 }
 
 .scheduling-inspector-value {
     color: $text;
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
 }
 
 #scheduling-conflict-card {
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #scheduling-pane-notice {
     color: $text-muted;
     text-style: italic;
     height: auto;
-    padding: 0;
+    padding: $ds-space-0;
 }

@@ -1,0 +1,31 @@
+{
+  "pid": 47540,
+  "runner_sha256": "18ab9a864328439eeb6bf3aec0cc68bf1c656b315267b5b5a5ae927b0fa51c5a",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "media_id": 2,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_notes_roundtrip": true,
+      "completion_in_console_visible_after_return": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    }
+  ],
+  "waiting_for": "#library-row-browse-search",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-rechunk-navigation/native_check.py\", line 302, in journey\n    await press(\"#library-row-browse-search\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-rechunk-navigation/native_check.py\", line 112, in press\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-rechunk-navigation/native_check.py\", line 105, in wait_for\n    raise AssertionError(f\"{label}: focus={app.screen.focused!r}\")\nAssertionError: #library-row-browse-search: focus=LibraryAdaptiveReaderPaneGrip(id='library-browse-library-grip', name='Expand Library pane', classes='h-full border-none -style-flat library-adaptive-reader-pane-grip -textual-compact p-0')\n",
+  "app_run_returned": true,
+  "exit_code": 1,
+  "pid_absent_verified": true,
+  "owned_terminal_closed": true,
+  "default_fingerprints_unchanged": true,
+  "diagnosis": "Harness tried focusing a Search/RAG row inside the compact Notes collapsed navigation pane. The 30-second wait also expired the artificial worker gate. Runner now uses the visible Nav grip first."
+}

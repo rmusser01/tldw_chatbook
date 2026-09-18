@@ -44,3 +44,15 @@ class LibraryPromptWorkPane(LibraryPromptsListCanvas):
         if all(getattr(self, key, object()) == value for key, value in kwargs.items()):
             return
         super().sync_state(**kwargs)
+
+    def on_resize(self) -> None:
+        """Reveal the live editor focus after its viewport changes size."""
+        self.call_after_refresh(self._reveal_editor_focus)
+
+    def _reveal_editor_focus(self) -> None:
+        """Scroll current focus only; a later focus move owns the viewport."""
+        if not self.is_mounted or not self.is_attached:
+            return
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)

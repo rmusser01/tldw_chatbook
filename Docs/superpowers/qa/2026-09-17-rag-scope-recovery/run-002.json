@@ -1,0 +1,103 @@
+{
+  "pid": 20506,
+  "runner_sha256": "486121b14d60021b6471acdf064f3ddb1922794fe23fe51ef5c67454bcb88bf5",
+  "scope": "injected snapshots; actual navigation, local retrieval and DB",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "scope settled at 0",
+  "real_keyword_searches": 4,
+  "source_record_unchanged": true,
+  "passed": true,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "pid_absent_verified": true
+}

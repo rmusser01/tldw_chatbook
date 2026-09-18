@@ -782,7 +782,8 @@ async def test_view_all_tail_posts_view_all_requested_for_this_section():
 # content 27 -- so `SINGLE_LINE_ROW_BUDGET` (27) is the real thing, not a
 # guess. The harness below therefore pins the section to 30 columns AND
 # loads the app sheets, because the body indent and row padding that make
-# up the difference live in `screen_agentic_console.tcss`, which the
+# up the difference live in the console vocabulary's bundle sheets
+# (features/_console{,_panels}.tcss since ADR-161 task 10), which the
 # widget-defaults pair alone does not carry.
 
 
@@ -1039,40 +1040,40 @@ async def test_summary_is_suppressed_while_open_and_returns_when_collapsed():
 
 def test_inspector_section_css_is_styled_in_source_and_bundle():
     """Regression guard against a hand-edit-only-the-bundle desync
-    (TASK-395's failure mode) -- both the source module and the generated
+    (TASK-395's failure mode) -- both the source sheets and the generated
     bundle must carry the new grammar's rules.
 
     Round-1 review M7 (TASK-31661): the CSS build's screen-owned split
     (`build_css.py`'s `split_agentic_terminal`/`split_owned_module`) moved
     every `.console-inspector-section*` rule OUT of the monolithic
     `tldw_cli_modular.tcss` and into the Console screen's own generated
-    sheet, `screen_agentic_console.tcss` (loaded directly by `app.py` and
-    `chat_screen.py`) -- these selectors are owned by that screen, not
-    shared, so the split moves them wholesale rather than duplicating
-    them. Checking the old monolithic bundle here was baselined as a
-    pre-existing red for that reason: it was asserting against a file
-    that no longer carries these rules at all, not detecting a real
-    desync. Pointing this guard at the bundle that actually ships them
-    restores its purpose.
+    sheet (loaded directly by `app.py` and `chat_screen.py`) -- these
+    selectors are owned by that screen, not shared, so the split moved
+    them wholesale rather than duplicating them. ADR-161 task 10 then
+    dissolved that generated sheet: the console vocabulary now rides the
+    boot bundle via features/_console{,_panels}.tcss, which are the
+    source-of-truth sheets this guard reads.
     """
-    for path in (
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
-        Path("tldw_chatbook/css/screen_agentic_console.tcss"),
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
+    )
+    for class_name in (
+        ".console-inspector-section",
+        ".console-inspector-section-header",
+        ".console-inspector-section-title",
+        ".console-inspector-section-summary",
+        ".console-inspector-section-toggle",
+        ".console-inspector-section-body",
+        ".console-inspector-section-row",
+        ".console-inspector-section-row-primary",
+        ".console-inspector-section-row-secondary",
+        ".console-inspector-section-view-all",
     ):
-        text = path.read_text(encoding="utf-8")
-        for class_name in (
-            ".console-inspector-section",
-            ".console-inspector-section-header",
-            ".console-inspector-section-title",
-            ".console-inspector-section-summary",
-            ".console-inspector-section-toggle",
-            ".console-inspector-section-body",
-            ".console-inspector-section-row",
-            ".console-inspector-section-row-primary",
-            ".console-inspector-section-row-secondary",
-            ".console-inspector-section-view-all",
-        ):
-            assert class_name in text, f"{class_name} missing from {path}"
+        assert class_name in text, f"{class_name} missing from console sheets"
 
 
 # --- TASK-31665 AC#14: one-line fitting must measure CELLS, not codepoints ---

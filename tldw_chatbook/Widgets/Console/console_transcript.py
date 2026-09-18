@@ -7647,8 +7647,12 @@ class ConsoleTranscript(VerticalScroll):
                 w_cells, h_cells = fit_image_cell_size(
                     spec.pil.width, spec.pil.height, PIXELS_MAX_COLS, PIXELS_MAX_LINES
                 )
-                widget.styles.width = w_cells
-                widget.styles.height = h_cells
+                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                # ds-runtime: Decoded image aspect ratio determines the fitted terminal-cell size.
+                widget.set_styles(width=w_cells)
+                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                # ds-runtime: Decoded image aspect ratio determines the fitted terminal-cell size.
+                widget.set_styles(height=h_cells)
             except Exception:
                 logger.opt(exception=True).warning(
                     "textual-image unavailable; falling back to pixels row."

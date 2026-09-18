@@ -75,7 +75,12 @@ In server mode the **Export** rail row is disabled, with the tooltip
   Word/Office
   documents (.doc/.docx/.odt/.rtf) get their own fold; the Plain text &
   HTML fold's Analyze/Chunk/Encoding options still apply to them as the
-  always-present base. Each fold ends with "Reset to defaults".
+  always-present base. Each fold ends with "Reset to defaults", which resets
+  only that type's options. Changing a choice, toggling an option or resetting
+  one fold preserves the text and selection in your other editors, including
+  metadata and the custom analysis prompt. Dependent fields and their reasons
+  update in place; long checkbox explanations wrap in compact terminals.
+  Option edits also clear any pending Start or "replace form" confirmation.
 - **Metadata** — three persistently labeled fields: "Title (optional)",
   "Author (optional)", and "Keywords (optional)". Example/default guidance
   remains in the placeholders while the labels survive entered values.
@@ -83,6 +88,8 @@ In server mode the **Export** rail row is disabled, with the tooltip
 - **Start** — a forecast line, a quiet gate line ("Enter a file path or
   URL to start.") and the "Start import" button, kept together in a pinned
   review bar so a long pre-check cannot push the decision below the fold.
+  Recovery and confirmation text wraps at narrow widths so the full reason
+  stays readable above Start. The empty explanation keeps one reserved row.
   After submission the blank review bar hides so Queue activity gets the
   viewport. The forecast is one
   sentence of counts for the staged selection — "2 will import · 1 will
@@ -130,10 +137,15 @@ In server mode the **Export** rail row is disabled, with the tooltip
   the counts rather than just flagging them: "Last import: 4 files
   failed, 2 skipped." with a **Review** button back to the queue.
   Pressing "Start import" scrolls the Queue heading into view, so the
-  freshly queued rows are the first thing you see after a submit.
+  freshly queued rows are the first thing you see after a submit. Queue
+  updates keep keyboard focus on the current action. If that action disappears
+  or becomes unavailable, focus returns to the source field; a newer focus
+  choice takes precedence.
 - **Fold indicator** — while the form is taller than the pane, a pinned
   "▼ more — scroll for the rest" row holds the bottom edge; it disappears
-  once everything fits.
+  once everything fits. Tab and Shift+Tab reveal focused controls above both
+  this hint and the pinned Start area. **Retry this batch** shows the complete
+  "Press again to replace form" confirmation before replacing an edited draft.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
 header, a scope line ("Everything: 128 media · 542 conversations · 87 notes · 34
@@ -249,8 +261,19 @@ checkpoint before any tool is allowed to run, as required by
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error — offered on **every** failed row that has one, including failures with no structured reason; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. A skipped row is never offered Retry: the file would be skipped again. |
 | "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure whose text actually named a remedy says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); when nothing on screen named one, the advice states the determinism without inventing a remedy ("Retrying now will fail the same way — this file's content, or the tooling for it, has to change first."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); and a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. When a failure carries no structured reason at all, the expansion shows the underlying text verbatim — that is where an errno, a spawn error, or a tool's own output lives, out of the row line but one press away. Pressing it keeps the keyboard on the button you pressed — it toggles to "Hide details" under your finger and Tab from there walks on into the queue, never back up to the "Keywords (optional)" field of the next import. The same holds for a grouped row's "Show the N files". |
 | Grouped failures | When several files in a row settle the same way for the same reason — a whole folder stopped by one cause — they collapse into a single line: "✗ failed · 4 files · The import worker couldn't start on this machine (system resource limit) · Restart the app, then Retry". Three actions sit under it: **"Show the 4 files"** reveals the members' own rows (with their own Show details / Retry / Dismiss) and turns into "Hide the 4 files"; **"Retry all"** re-queues every member, and is offered only when a plain retry is right for every one of them — a group of transcription failures shows no "Retry all", because those rows offer "Choose another GGUF…" / "Retry with faster-whisper" instead and a bare retry would fail the same way; open the group to reach them; **"Dismiss all"** clears the whole group in one press. Only settled outcomes group — failed, skipped and cancelled. Rows still working (queued, parsing, writing) never do, because their per-file progress is the point, and a reason that names its own file (a missing path) is per-file too, so those keep their own rows. A group of one is exactly the row it always was, filename and all, and grouping never reorders the queue: only a run of neighbours from the same batch collapses (files imported one at a time count as one batch), so a batch's own header always sits above rows counting that batch alone. |
+| "Recent imports" | Starts collapsed and lists recent results, including cleared and dismissed rows. Opening or closing it survives background queue updates; keyboard focus stays on its title while you read the history. |
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
 | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
+
+Resizing the terminal keeps the current Import control focused and visible,
+including metadata fields, options, queue Details and Recent imports. Your draft,
+text selection and open Recent imports history stay in place.
+
+Choosing a replacement GGUF keeps your next import draft in place. From a failed
+row, an accepted model selection retries that job; cancelling the picker or
+choosing an unusable model leaves it failed. If the retry removes the focused
+row action, focus returns to the source field. A newer focus move or navigation
+away from Import is respected when model validation finishes.
 
 **Parakeet setup:** Installing the Python package adds the transcription runtime;
 it does not download the model files. In the Audio & video options, select
@@ -1041,6 +1064,18 @@ button, "Can't save there: The folder /nonexistent/dir does not exist.", and
 accepts nothing; the ingest **Browse…** opens at the folder `[notes]
 sync_directory` names when nothing is remembered. Nothing on this page needed
 correcting.)*
+
+*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32663):
+Import media recovery and consent text stays complete at compact widths.
+Targeted checks cover both themes; native checks exercise local preflight,
+keyboard Clear/re-entry and metadata retention without submitting imports.*
+
+*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32664):
+The local Parakeet folder Browse action returns to a visible button after Select
+or Cancel. Selecting updates the staged folder without replacing other draft
+fields or resetting their cursor positions. Missing Parakeet tooling keeps the
+folder controls disabled and names the missing package. This qualifies the folder
+picker UI; it does not qualify model installation or transcription.*
 
 *Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
 wave-4 guide sweep; corrected in fix round 2 after this stamp's first version

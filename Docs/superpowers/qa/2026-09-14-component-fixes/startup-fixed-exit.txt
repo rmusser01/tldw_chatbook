@@ -1,0 +1,10 @@
+➜  component-pattern-library git:(feat/component-pattern-library) ✗ TLDW_CONFIG_PATH=/Users/macbook-dev/Documents/GitHub
+/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-14-component-integration/live/config.toml P
+YTHON_KEYRING_BACKEND=keyring.backends.null.Keyring .venv/bin/python -m tldw_chatbook.app
+2026-09-14 18:10:40.464 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:24 - tokenizers library not availabl
+e. Install with: pip install tokenizers
+2026-09-14 18:10:40.616 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter no
+t installed. Markdown import will not be available.
+➜  component-pattern-library git:(feat/component-pattern-library) ✗ echo COMPONENT_STARTUP_EXIT_CODE=$?
+COMPONENT_STARTUP_EXIT_CODE=0
+➜  component-pattern-library git:(feat/component-pattern-library) ✗

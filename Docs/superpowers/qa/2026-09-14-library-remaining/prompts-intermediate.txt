@@ -1,0 +1,3 @@
+FAILED Tests/UI/test_library_prompts_canvas.py::test_library_prompts_stale_search_cannot_restore_an_old_filter_caret
+FAILED Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_write_time_conflict_shows_conflict_bar
+2 failed, 340 passed, 2 warnings in 522.36s (0:08:42)

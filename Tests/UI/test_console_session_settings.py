@@ -49,6 +49,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
 )
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -227,12 +228,8 @@ def _assert_schema_key_absent(
 def _bare_console_state_screen(store: ConsoleChatStore) -> ChatScreen:
     """Build the minimal real Console serializer fixture used by privacy tests."""
     screen = ChatScreen.__new__(ChatScreen)
-    screen._console_runtime_ref = SimpleNamespace(
-        chat_store=store,
-        set_chat_store=lambda value: setattr(
-            screen._console_runtime_ref, "chat_store", value
-        ),
-    )
+    screen._console_runtime_ref = ConsoleRuntime(app=None)
+    screen._console_runtime_ref.set_chat_store(store)
     screen._ensure_console_chat_store = lambda: store
     screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
     image_state = SimpleNamespace(

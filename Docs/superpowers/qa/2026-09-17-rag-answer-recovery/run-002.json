@@ -1,0 +1,66 @@
+{
+  "pid": 37388,
+  "runner_sha256": "5018281d6ca750931984c367320ce3f78eec72a8bfc503edb53cdd0f61e6858f",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "exception",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "empty",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "exception",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "empty",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    }
+  ],
+  "waiting_for": "query ready",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-answer-recovery/native_check.py\", line 195, in journey\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-answer-recovery/native_check.py\", line 89, in wait_for\n    raise AssertionError(label)\nAssertionError: query ready\n",
+  "app_run_returned": true,
+  "exit_code": 1,
+  "pid_absent_verified": true,
+  "owned_terminal_closed": true,
+  "classification": "Four dark-theme journeys passed. Runner inspection scroll left the already-focused query outside the viewport before the next theme. Restore the inspection scroll before advancing; production unchanged."
+}

@@ -166,9 +166,9 @@ class ConsoleSelectedTurnActivity(Vertical):
         self._flush_result = flush_result
         self._on_reconcile = on_reconcile
         self.display = view.selected_turn_id is not None
-        self.styles.height = "auto"
+        self.add_class("h-auto")
         self.styles.min_height = 0
-        self.styles.width = "100%"
+        self.add_class("w-full")
         self.styles.min_width = 0
 
     def sync_state(
@@ -1554,7 +1554,7 @@ class ConsoleInspectorRail(Vertical):
         right_rail_header = Horizontal(
             id="console-inspector-rail-header", classes="console-rail-header"
         )
-        right_rail_header.styles.height = 1
+        right_rail_header.add_class("h-1")
         right_rail_header.styles.min_height = 1
         right_rail_header.styles.max_height = 1
         with right_rail_header:
@@ -1574,7 +1574,7 @@ class ConsoleInspectorRail(Vertical):
                 compact=True,
             )
             collapse_button.tooltip = "Collapse Inspector rail"
-            collapse_button.styles.width = "100%"
+            collapse_button.add_class("w-full")
             collapse_button.styles.min_width = 0
             collapse_button.styles.max_width = "100%"
             collapse_button.styles.text_align = "left"
@@ -1584,8 +1584,8 @@ class ConsoleInspectorRail(Vertical):
         project_instruction_row = ConsoleProjectInstructionStatusRow(
             self._project_instruction_state
         )
-        project_instruction_row.styles.width = "100%"
-        project_instruction_row.styles.height = 1
+        project_instruction_row.add_class("w-full")
+        project_instruction_row.add_class("h-1")
         yield project_instruction_row
 
         yield ConsoleSendAuthoritySummary(self._inspector_state)
@@ -1685,9 +1685,9 @@ class ConsoleInspectorRail(Vertical):
                 id="console-staged-context-tray",
                 classes="console-inspector-context-section",
             )
-            staged_context_tray.styles.width = "100%"
+            staged_context_tray.add_class("w-full")
             staged_context_tray.styles.min_width = 0
-            staged_context_tray.styles.height = "auto"
+            staged_context_tray.add_class("h-auto")
             # `ChatScreen._staged_context_frame_variant` is a `@staticmethod`
             # returning "quiet" unconditionally (mirrors task 3's inlining
             # of `_workspace_context_frame_variant`) -- inlined as a literal
@@ -1716,9 +1716,9 @@ class ConsoleInspectorRail(Vertical):
                 id=CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
                 classes="console-inspector-context-section",
             )
-            retrieval_scope_row.styles.width = "100%"
+            retrieval_scope_row.add_class("w-full")
             retrieval_scope_row.styles.min_width = 0
-            retrieval_scope_row.styles.height = "auto"
+            retrieval_scope_row.add_class("h-auto")
             yield frame_console_region(retrieval_scope_row, variant="quiet")
 
             with Vertical(id="console-run-inspector"):
@@ -1745,7 +1745,7 @@ class ConsoleInspectorRail(Vertical):
                         "console-inspector-session-settings console-settings-summary"
                     ),
                 )
-                settings_summary.styles.width = "100%"
+                settings_summary.add_class("w-full")
                 settings_summary.styles.min_width = 0
                 yield settings_summary
 
@@ -1781,7 +1781,7 @@ class ConsoleInspectorRail(Vertical):
         )
         outer_hint.can_focus = False
         outer_hint.display = False
-        outer_hint.styles.height = 1
+        outer_hint.add_class("h-1")
         outer_hint.styles.min_height = 1
         outer_hint.styles.max_height = 1
         yield outer_hint

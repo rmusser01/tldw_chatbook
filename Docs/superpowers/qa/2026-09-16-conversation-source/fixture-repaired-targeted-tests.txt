@@ -1,0 +1,63 @@
+........................................................................ [ 57%]
+.............................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+F...--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.............                    [100%]
+=================================== FAILURES ===================================
+_ test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch _
+Tests/UI/test_console_live_work_handoffs.py:2415: in test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+    assert staged.title == "Launch B (the click that must not die)"
+E   AssertionError: assert 'Launch A (stale survivor)' == 'Launch B (th...must not die)'
+E
+E     - Launch B (the click that must not die)
+E     + Launch A (stale survivor)
+============================= slowest 25 durations =============================
+4.04s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+3.95s call     Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+3.88s call     Tests/UI/test_library_crit10_layout.py::test_undo_unlinks_the_workspace_the_receipt_names[recompose]
+3.77s call     Tests/UI/test_console_live_work_handoffs.py::test_console_wc_live_work_action_button_routes_run_details
+3.56s call     Tests/UI/test_console_live_work_handoffs.py::test_console_renders_pending_launch_context
+3.52s call     Tests/UI/test_console_live_work_handoffs.py::test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+3.43s call     Tests/UI/test_console_live_work_handoffs.py::test_locked_console_shows_staged_evidence_receipt_task_2852
+3.39s call     Tests/UI/test_console_live_work_handoffs.py::test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+3.05s call     Tests/UI/test_library_crit10_layout.py::test_undo_unlinks_the_workspace_the_receipt_names[sync]
+2.97s call     Tests/UI/test_library_crit10_layout.py::test_the_narrow_stage_return_is_painted_in_both_focus_states[False]
+2.77s call     Tests/UI/test_library_crit10_layout.py::test_undo_rechecks_workspace_before_the_reader_refreshes[unavailable]
+2.73s call     Tests/UI/test_library_crit10_layout.py::test_undo_rechecks_workspace_before_the_reader_refreshes[missing]
+2.59s call     Tests/UI/test_library_crit10_layout.py::test_the_narrow_stage_return_is_painted_in_both_focus_states[True]
+2.14s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_preserves_rail_scroll
+2.03s call     Tests/UI/test_library_crit10_layout.py::test_the_receipt_does_not_survive_a_different_conversation
+2.01s call     Tests/UI/test_console_live_work_handoffs.py::test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+1.87s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_local_workspace_mouse_clicks
+1.72s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_workspace_receipts_and_actions_follow_mounted_source_transitions[textual-light]
+1.54s call     Tests/UI/test_console_live_work_handoffs.py::test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
+1.53s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_restage_replaces_single_card
+1.51s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_skips_archived_local_workspace_identity
+1.48s call     Tests/UI/test_console_live_work_handoffs.py::test_console_renders_source_readiness_summary_without_pending_launch
+1.46s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_still_auto_opens_inspector
+1.45s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[conversation]
+1.43s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[notes]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+1 failed, 124 passed in 162.68s (0:02:42)

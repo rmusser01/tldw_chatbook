@@ -2127,6 +2127,45 @@ class SetupWizardProvider(Provider):
             self.app.notify(f"Failed to open setup wizard: {e}", severity="error")
 
 
+class PatternGalleryProvider(Provider):
+    """Command-palette entry that opens the pattern gallery."""
+
+    COMMANDS = (
+        (
+            "Design System: Pattern Gallery",
+            "open_pattern_gallery",
+            "Browse every canonical component pattern live",
+        ),
+    )
+
+    async def discover(self) -> Hits:
+        for text, _id, help_text in self.COMMANDS:
+            yield Hit(
+                1.0,
+                text,
+                self.open_gallery,
+                help=help_text,
+            )
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+        for text, _id, help_text in self.COMMANDS:
+            if (score := matcher.match(text)) > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(text),
+                    self.open_gallery,
+                    help=help_text,
+                )
+
+
+    def open_gallery(self) -> None:
+        """Load the gallery only when its palette command is invoked."""
+        from .Widgets.pattern_gallery import PatternGalleryScreen
+
+        self.app.push_screen(PatternGalleryScreen())
+
+
 class DeveloperProvider(Provider):
     """Provider for developer and debug commands."""
 
@@ -7589,19 +7628,12 @@ class TldwCli(
     CSS_PATH = [
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[0]),
         str(Path(__file__).parent / "css/tldw_cli_modular.tcss"),
-        # TASK-25812: the CONSOLE sheet split from the agentic-terminal
-        # module rides the boot parse deliberately, unlike its library and
-        # settings siblings (those load lazily via their screens'
-        # `CSS_PATH`). The Console is the initial tab: loading its sheet at
-        # first ChatScreen mount instead put a one-time parse + full-app
-        # `stylesheet.update` (~100 ms) on the mount leg for every user, and
-        # on splashless boots that leg precedes `_ui_ready`, where it
-        # dragged deferred-family imports across the module-census line
-        # (972 -> 979 locally, 981 on the slower CI runner). Boot-parsing it
-        # costs ~30 ms against the ~85 ms the split saves and keeps the
-        # first Console mount free of restyle work -- `_load_screen_css`
-        # sees `has_source` and does nothing.
-        str(Path(__file__).parent / "css/screen_agentic_console.tcss"),
+        # ADR-161 task 10: the console vocabulary (previously the
+        # TASK-25812 console sheet, which always rode this boot parse
+        # because the Console is the initial tab) now rides the bundle
+        # itself via features/_console{,_panels}.tcss -- one fewer boot
+        # source, no duplicated variable preamble, and the first Console
+        # mount stays free of restyle work exactly as before.
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
     ]
 
@@ -7724,6 +7756,7 @@ class TldwCli(
         DeveloperProvider,
         ConsoleCommandProvider,
         ImageGenCommandProvider,
+        PatternGalleryProvider,
     }
 
     # T169: "notes-window" removed -- no widget composes that id anymore (the
@@ -20395,13 +20428,13 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
         # from the screen-owned modules are generated outputs too -- a
         # missing or stale one must trigger the same rebuild, or visiting
         # that screen loads nothing (the bundle no longer carries its
-        # rules). Required only when the SOURCE module is part of this
+        # rules). Required only when ALL source modules are part of this
         # tree, mirroring the builders' own skip for partial/scratch
         # checkouts.
         *(
             css_dir / name
             for split in build_css.SCREEN_OWNED_SPLITS
-            if (css_dir / split.module).is_file()
+            if all((css_dir / module).is_file() for module in split.modules)
             for name in split.sheets.values()
         ),
     ]

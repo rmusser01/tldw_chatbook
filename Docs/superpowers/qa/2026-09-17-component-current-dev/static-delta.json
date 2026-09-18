@@ -1,0 +1,208 @@
+{
+  "comparison": "candidate against union of HEAD and MERGE_HEAD; Ruff message line references normalized",
+  "syntax_files": 20,
+  "lint": [
+    {
+      "file": "Tests/UI/conftest.py",
+      "existing_diagnostics": 15,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_chat_screen_sidebar_state_debounce.py",
+      "existing_diagnostics": 3,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_component_pattern_governance.py",
+      "existing_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_console_live_work_handoffs.py",
+      "existing_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_css_build_integrity.py",
+      "existing_diagnostics": 3,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_css_bundle_sync_guard.py",
+      "existing_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_design_token_governance.py",
+      "existing_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_fspicker_compact_journeys.py",
+      "existing_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_files_sync_journey.py",
+      "existing_diagnostics": 6,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_w5_folder_files_layout.py",
+      "existing_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_w5_kbd_focus.py",
+      "existing_diagnostics": 2,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_python_style_inventory.py",
+      "existing_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Tests/UI/test_settings_generation_default_journeys.py",
+      "existing_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "file": "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py",
+      "existing_diagnostics": 2,
+      "new_diagnostics": []
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "existing_diagnostics": 208,
+      "new_diagnostics": []
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Console/console_bounded_section.py",
+      "existing_diagnostics": 3,
+      "new_diagnostics": []
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
+      "existing_diagnostics": 30,
+      "new_diagnostics": []
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_notes_add_from_files_canvas.py",
+      "existing_diagnostics": 2,
+      "new_diagnostics": []
+    },
+    {
+      "file": "tldw_chatbook/css/build_css.py",
+      "existing_diagnostics": 2,
+      "new_diagnostics": []
+    },
+    {
+      "file": "Docs/superpowers/qa/2026-09-17-component-current-dev/native_check.py",
+      "existing_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "format": [
+    {
+      "file": "Tests/UI/conftest.py",
+      "remaining_hunks": 5,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_chat_screen_sidebar_state_debounce.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_component_pattern_governance.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_console_live_work_handoffs.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_css_build_integrity.py",
+      "remaining_hunks": 13,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_css_bundle_sync_guard.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_design_token_governance.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_fspicker_compact_journeys.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_files_sync_journey.py",
+      "remaining_hunks": 3,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_w5_folder_files_layout.py",
+      "remaining_hunks": 3,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_w5_kbd_focus.py",
+      "remaining_hunks": 5,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_python_style_inventory.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "Tests/UI/test_settings_generation_default_journeys.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    },
+    {
+      "file": "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py",
+      "remaining_hunks": 4,
+      "new_hunks": []
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "remaining_hunks": 68,
+      "new_hunks": []
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Console/console_bounded_section.py",
+      "remaining_hunks": 3,
+      "new_hunks": []
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
+      "remaining_hunks": 10,
+      "new_hunks": []
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_notes_add_from_files_canvas.py",
+      "remaining_hunks": 3,
+      "new_hunks": []
+    },
+    {
+      "file": "tldw_chatbook/css/build_css.py",
+      "remaining_hunks": 5,
+      "new_hunks": []
+    },
+    {
+      "file": "Docs/superpowers/qa/2026-09-17-component-current-dev/native_check.py",
+      "remaining_hunks": 0,
+      "new_hunks": []
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+........................................................................ [ 26%]
+........................................................................ [ 52%]
+........................................................................ [ 78%]
+...........................................................              [100%]
+============================= slowest 25 durations =============================
+1.92s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer
+1.85s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_new_search_mid_answer_leaves_no_dangling_status
+1.69s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_disabled_answer_seam_generates_nothing
+1.64s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_tab_reaches_and_focuses_evidence_card
+1.59s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyword_mode_never_calls_the_answer_seam
+1.48s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyboard_enter_runs_query_and_handoff_button
+1.46s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_u_on_focused_card_selects_then_stages
+1.46s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence
+1.36s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.36s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_server_result_launches_server_console_live_work
+1.36s call     Tests/UI/test_library_rag_query_gate_race.py::test_snapshot_gate_survives_a_suspended_status_refresh[sources-arrive]
+1.33s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_starting_a_new_search_drops_the_previous_answer
+1.26s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_enter_on_focused_card_selects_evidence
+1.24s call     Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[rag-openai-textual-light-size0]
+1.24s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_selected_result_evidence_metadata
+1.20s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_use_in_console_configured_console_no_locked_notice_task_2852
+1.20s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_rag_mode_generates_answer_after_results_land
+1.19s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_selected_result_launches_console_live_work
+1.19s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_use_in_console_warns_before_navigating_when_locked_task_2852
+1.18s call     Tests/UI/test_library_rag_query_gate_race.py::test_ready_disclosure_is_fully_painted_without_moving_run[rag-openai-textual-dark-size0]
+1.17s call     Tests/UI/test_library_rag_keystroke.py::test_rag_mode_query_edit_never_remounts_the_landed_answer
+1.15s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_run_query_renders_service_results_and_calls_scope
+1.12s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_uncited_answer_renders_recovery_callout_end_to_end
+1.11s call     Tests/UI/test_library_rag_keystroke.py::test_input_submitted_still_runs_the_full_refresh
+1.10s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_all_weak_matches_reach_the_generation_prompt
+275 passed, 2 deselected in 147.45s (0:02:27)

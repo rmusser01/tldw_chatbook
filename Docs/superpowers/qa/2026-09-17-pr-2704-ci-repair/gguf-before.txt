@@ -1,0 +1,283 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile] _
+
+self = <Coroutine test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10d815610>, 'tmp_path': PosixPath('/private/var/folders/s...t-of-macbook-dev/pytest-1546/test_supported_width_keyboard_0'), 'provider': 'llamafile', 'view_name': 'llamafile', ...}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1546/test_supported_width_keyboard_0/private-profile-process/pytest.log
+E           --- _setup_logging START (from Logging_Config.py) ---
+E           Loguru: All pre-existing sinks removed.
+E           Loguru: Configured to forward its messages to standard Python logging system.
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile] _
+E           
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11140d1c0>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1546/test_supported_width_keyboard_0/private-profile-process/pytest/test_supported_width_keyboard_0')
+E           provider = 'llamafile', view_name = 'llamafile'
+E           request = <FixtureRequest for <Coroutine test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]>>
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize(
+E                   ("provider", "view_name"),
+E                   (("llamacpp", "llama-cpp"), ("llamafile", "llamafile")),
+E               )
+E               @private_profile_test
+E               async def test_supported_width_keyboard_reaches_each_provider_source_and_actions(
+E                   monkeypatch: pytest.MonkeyPatch,
+E                   tmp_path: Path,
+E                   provider: str,
+E                   view_name: str,
+E                   request: pytest.FixtureRequest,
+E               ) -> None:
+E                   choices = (
+E                       ManagedGGUFChoice(
+E                           REF_A,
+E                           "LongInventoryMarker-model-name-that-must-not-push-actions-outside "
+E                           "· Q4_K_M · 16384.0 MiB · Managed · local integrity recorded",
+E                       ),
+E                   )
+E                   app, pilot, context, _screen, window, _service = await _mount_models(
+E                       monkeypatch,
+E                       size=(80, 24),
+E                       choices=choices,
+E                   )
+E                   try:
+E                       if window.active_view != view_name:
+E                           window.active_view = view_name
+E                           await pilot.pause()
+E                       assert window.active_view == view_name
+E                       view = window.query_one(f"#llm-view-{view_name}")
+E                       mode = window.query_one(f"#{provider}-gguf-source-mode", Select)
+E                       managed = window.query_one(f"#{provider}-gguf-managed-select", Select)
+E                       refresh = window.query_one(f"#{provider}-gguf-refresh-button", Button)
+E                       start = window.query_one(f"#{provider}-start-server-button", Button)
+E                       stop = window.query_one(f"#{provider}-stop-server-button", Button)
+E                       executable = tmp_path / f"{provider}-server"
+E                       executable.touch()
+E                       window.query_one(f"#{provider}-exec-path", Input).value = str(executable)
+E                       await _settle_pilot_until(
+E                           pilot,
+E                           lambda: _select_values(managed) == (REF_A,) and not managed.disabled,
+E                           message=f"{provider} managed inventory did not settle",
+E                       )
+E               
+E                       mode.scroll_visible(animate=False)
+E                       mode.focus()
+E                       await _settle_pilot_until(
+E                           pilot,
+E                           lambda: (
+E                               mode in app.screen._compositor.visible_widgets
+E                               and mode.region.y >= view.content_region.y
+E                               and mode.region.bottom <= view.content_region.bottom
+E                           ),
+E                           message=f"{provider} source mode did not settle inside its view",
+E                       )
+E                       _assert_painted_inside(app, mode, view)
+E                       await pilot.press("enter")
+E                       await pilot.pause()
+E                       overlay = mode.query_one(SelectOverlay)
+E                       assert mode.expanded and overlay.has_focus
+E                       _assert_overlay_painted_on_screen(app, overlay)
+E                       overlay_svg = app.export_screenshot(simplify=True)
+E                       assert "Managed" in overlay_svg and "GGUF" in overlay_svg
+E                       assert "External" in overlay_svg
+E                       await pilot.press("home")
+E                       if provider == "llamafile":
+E                           await pilot.press("down")
+E                       target_index = 0 if provider == "llamacpp" else 1
+E                       await _settle_pilot_until(
+E                           pilot,
+E                           lambda: overlay.highlighted == target_index,
+E                           message=f"{provider} managed option did not receive keyboard highlight",
+E                       )
+E                       await pilot.press("enter")
+E           >           await _settle_pilot_until(
+E                           pilot,
+E                           lambda: (
+E                               mode.value == "managed"
+E                               and managed in app.screen._compositor.visible_widgets
+E                               and not managed.disabled
+E                           ),
+E                           message=f"{provider} managed source controls did not settle",
+E                       )
+E           
+E           Tests/UI/test_llm_gguf_source_modes.py:1422: 
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E           
+E           pilot = <Pilot app=TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'})>
+E           predicate = <function test_supported_width_keyboard_reaches_each_provider_source_and_actions.<locals>.<lambda> at 0x115f75a80>
+E           message = 'llamafile managed source controls did not settle'
+E           
+E               async def _settle_pilot_until(
+E                   pilot: Any,
+E                   predicate: Any,
+E                   *,
+E                   message: str,
+E               ) -> None:
+E                   """Pump bounded Pilot cycles until deferred Textual work reaches a condition."""
+E               
+E                   try:
+E                       async with asyncio.timeout(10):
+E                           while True:
+E                               await pilot.pause()
+E                               if predicate():
+E                                   return
+E                   except TimeoutError:
+E           >           raise AssertionError(message) from None
+E           E           AssertionError: llamafile managed source controls did not settle
+E           
+E           Tests/UI/test_llm_gguf_source_modes.py:276: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 18:55:57.122 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 18:55:57.122 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 18:55:57.122 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 18:55:57.226 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 18:55:57.251 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 18:55:57.251 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 18:55:57.251 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 18:55:57.252 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 18:55:57.326 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1546/test_supported_width_keyboard_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 18:55:57.393 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nm87nt11/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 18:55:57.558 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nm87nt11/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 18:55:57.572 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 18:55:57.573 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nm87nt11/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 18:55:57.573 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nm87nt11/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 18:55:57.701 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 18:55:57.743 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 18:55:57.787 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 18:55:57.827 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 18:55:57.867 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 18:55:57.902 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 18:55:57.903 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nm87nt11/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 18:55:57.956 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 18:55:57.956 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 18:55:57.965 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 18:55:58.042 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 18:55:58.042 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1546/test_supported_width_keyboard_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 18:55:58.043 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 18:55:58.174 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 18:55:58.175 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E           2026-09-17 18:55:58.175 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 18:55:58.176 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 1.030 seconds
+E           2026-09-17 18:55:58.176 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.102s (9.9%)
+E           2026-09-17 18:55:58.176 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 18:55:58.177 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 18:55:58.177 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 18:55:58.177 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 18:55:58.177 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-17 18:55:58.178 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 18:55:58.178 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12204 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E           ============================= slowest 25 durations =============================
+E           18.35s call     Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]
+E           1 failed in 19.62s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 18:55:55.823 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 18:55:55.823 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 18:55:55.824 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+20.52s call     Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]
+1 failed in 22.46s

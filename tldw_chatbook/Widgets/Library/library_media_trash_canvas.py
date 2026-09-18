@@ -85,9 +85,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         # in for the list inside the same canvas host. 1fr (never 13fr):
         # see that canvas's constructor comment -- an independent 13fr
         # resolves ~13x wider than the host and clips children.
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 0
-        self.styles.height = "100%"
+        self.add_class("h-full")
         self.styles.min_height = 0
         self.styles.overflow = ("hidden", "hidden")
         # Measured row-list cap (task-28015); see ``_cap_trash_list``. Kept on
@@ -253,7 +253,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         """
         bounded = self.pager is not None
         heading = Horizontal(classes="ds-toolbar", id="library-media-trash-heading")
-        heading.styles.height = 1
+        heading.add_class("h-1")
         heading.styles.min_height = 1
         heading.styles.overflow = ("hidden", "hidden")
         with heading:
@@ -290,7 +290,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
 
         if bounded:
             filters = Horizontal(id="library-media-trash-filters")
-            filters.styles.height = 1
+            filters.add_class("h-1")
             filters.styles.min_height = 1
             filters.styles.overflow = ("hidden", "hidden")
             with filters:
@@ -314,8 +314,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         markup=False,
                     )
                     choices.highlighted = highlighted
-                    choices.styles.width = "100%"
-                    choices.styles.height = 1
+                    choices.add_class("w-full")
+                    choices.add_class("h-1")
                     choices.styles.min_height = 1
                     choices.disabled = bool(self.controls_disabled_reason)
                     choices.tooltip = self.controls_disabled_reason or None
@@ -329,12 +329,12 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         compact=True,
                         disabled=bool(self.controls_disabled_reason),
                     )
-                    search.styles.width = "1fr"
+                    search.add_class("w-fill")
                     search.styles.min_width = 5
-                    search.styles.height = 1
+                    search.add_class("h-1")
                     search.styles.min_height = 1
-                    search.styles.padding = 0
-                    search.styles.border = ("none", "transparent")
+                    search.add_class("p-0")
+                    search.add_class("border-none")
                     search.tooltip = self.controls_disabled_reason or None
                     yield search
                     type_disabled = bool(self.controls_disabled_reason)
@@ -357,9 +357,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         classes="destination-purpose",
                         markup=False,
                     )
-                    scope.styles.width = "auto"
+                    scope.add_class("w-auto")
                     scope.styles.max_width = 28
-                    scope.styles.height = 1
+                    scope.add_class("h-1")
                     yield scope
         else:
             # Compatibility for the pre-paging standalone canvas contract.
@@ -392,7 +392,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             id="library-media-trash-status",
             markup=False,
         )
-        status.styles.height = "auto"
+        status.add_class("h-auto")
         status.styles.min_height = 1 if bounded else 0
         status.styles.max_height = 2 if bounded else 3
         status.styles.overflow = ("hidden", "hidden")
@@ -406,7 +406,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 classes="destination-purpose",
                 markup=False,
             )
-            fold.styles.height = 1
+            fold.add_class("h-1")
             fold.styles.min_height = 1
             fold.styles.overflow = ("hidden", "hidden")
             fold.tooltip = status_text or None
@@ -424,7 +424,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         # with the ceiling measured by `_cap_trash_list` (Textual cannot
         # express "auto up to the remaining space" in CSS). Inline like the
         # rest of this widget's geometry; min_height 0 so it can shrink.
-        trash_list.styles.height = "auto"
+        trash_list.add_class("h-auto")
         trash_list.styles.min_height = 0
         if self._list_cap is not None:
             trash_list.styles.max_height = self._list_cap
@@ -448,7 +448,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 # Reuses the media list's selected-row styling class -- one
                 # CSS contract, not a fork.
                 button.set_class(row.selected, "library-media-row-selected")
-                button.styles.height = 2
+                button.add_class("h-2")
                 button.styles.min_height = 2
                 yield button
 
@@ -462,12 +462,12 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             )
             pager_rows = 1 if layout.controls_hidden else 2
             pager = Vertical(id="library-media-trash-pager")
-            pager.styles.height = pager_rows
+            pager.add_class("h-1" if layout.controls_hidden else "h-2")
             pager.styles.min_height = pager_rows
             pager.styles.overflow = ("hidden", "hidden")
             with pager:
                 copy = Horizontal(id="library-media-trash-pager-copy")
-                copy.styles.height = 1
+                copy.add_class("h-1")
                 copy.styles.min_height = 1
                 copy.styles.overflow = ("hidden", "hidden")
                 with copy:
@@ -490,7 +490,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     controls = Horizontal(
                         classes="ds-toolbar", id="library-media-trash-pager-controls"
                     )
-                    controls.styles.height = 1
+                    controls.add_class("h-1")
                     controls.styles.min_height = 1
                     controls.styles.overflow = ("hidden", "hidden")
                     with controls:
@@ -511,7 +511,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                             ),
                         )
                         previous.styles.min_width = 0
-                        previous.styles.padding = 0
+                        previous.add_class("p-0")
                         yield previous
                         if self.retry_visible:
                             retry = Button(
@@ -526,7 +526,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                                 ),
                             )
                             retry.styles.min_width = 0
-                            retry.styles.padding = 0
+                            retry.add_class("p-0")
                             yield retry
                         next_disabled = self.pager.next_disabled or controls_disabled
                         next_button = Button(
@@ -542,12 +542,12 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                             ),
                         )
                         next_button.styles.min_width = 0
-                        next_button.styles.padding = 0
+                        next_button.add_class("p-0")
                         yield next_button
 
         if self.confirmation_target is not None:
             confirmation = Vertical(id="library-media-trash-delete-confirmation")
-            confirmation.styles.height = 5
+            confirmation.add_class("h-5")
             confirmation.styles.min_height = 5
             confirmation.styles.overflow = ("hidden", "hidden")
             with confirmation:
@@ -556,7 +556,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     id="library-media-trash-delete-confirm-consequence",
                     markup=False,
                 )
-                consequence.styles.height = 1
+                consequence.add_class("h-1")
                 consequence.styles.min_height = 1
                 consequence.styles.overflow = ("hidden", "hidden")
                 yield consequence
@@ -564,7 +564,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 details = VerticalScroll(
                     id="library-media-trash-delete-confirm-details"
                 )
-                details.styles.height = 1
+                details.add_class("h-1")
                 details.styles.min_height = 1
                 details.styles.overflow_y = "auto"
                 details.styles.overflow_x = "hidden"
@@ -576,7 +576,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     )
 
                 identity = Vertical(id="library-media-trash-delete-confirm-identity")
-                identity.styles.height = 2
+                identity.add_class("h-2")
                 identity.styles.min_height = 2
                 identity.styles.overflow = ("hidden", "hidden")
                 with identity:
@@ -601,7 +601,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         id="library-media-trash-delete-confirm-type",
                         markup=False,
                     )
-                    type_identity.styles.height = 1
+                    type_identity.add_class("h-1")
                     type_identity.styles.min_height = 1
                     type_identity.styles.overflow = ("hidden", "hidden")
                     yield type_identity
@@ -610,7 +610,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         id="library-media-trash-delete-confirm-time",
                         markup=False,
                     )
-                    time_identity.styles.height = 1
+                    time_identity.add_class("h-1")
                     time_identity.styles.min_height = 1
                     time_identity.styles.overflow = ("hidden", "hidden")
                     # The exact instant stays one hover away.
@@ -621,7 +621,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                     classes="ds-toolbar",
                     id="library-media-trash-delete-confirm-actions",
                 )
-                buttons.styles.height = 1
+                buttons.add_class("h-1")
                 buttons.styles.min_height = 1
                 buttons.styles.overflow = ("hidden", "hidden")
                 with buttons:
@@ -632,10 +632,10 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         compact=True,
                     )
                     cancel.styles.min_width = 0
-                    cancel.styles.padding = 0
+                    cancel.add_class("p-0")
                     # task-31980 (critique #6 P2): no negative pull toward the
                     # destructive commit -- the safe button stands clear of it.
-                    cancel.styles.margin = 0
+                    cancel.add_class("m-0")
                     yield cancel
                     confirm = Button(
                         "Delete permanently",
@@ -644,18 +644,18 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         compact=True,
                     )
                     confirm.styles.min_width = 0
-                    confirm.styles.padding = 0
+                    confirm.add_class("p-0")
                     # task-31980: hold the destructive commit >=3 cells off the
                     # focused Cancel; its $error ink is set app-tier by the
                     # `#library-media-trash-delete-confirm` rule.
-                    confirm.styles.margin = (0, 0, 0, 3)
+                    confirm.add_class("m-left-3")
                     yield confirm
             return
 
         toolbar = Horizontal(classes="ds-toolbar", id="library-media-trash-actions")
-        toolbar.styles.height = 1
+        toolbar.add_class("h-1")
         toolbar.styles.min_height = 1
-        toolbar.styles.padding = 0
+        toolbar.add_class("p-0")
         toolbar.styles.overflow = ("hidden", "hidden")
         with toolbar:
             if bounded:
@@ -690,8 +690,8 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             restore.disabled = action_disabled
             restore.tooltip = restore_tooltip
             restore.styles.min_width = 0
-            restore.styles.padding = 0
-            restore.styles.margin = 0
+            restore.add_class("p-0")
+            restore.add_class("m-0")
             yield restore
             if bounded:
                 delete = Button(
@@ -723,9 +723,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                 )
                 delete._library_disabled_marker_base = "Delete forever"
                 delete.styles.min_width = 0
-                delete.styles.padding = 0
+                delete.add_class("p-0")
                 # The class's own 4-cell danger margin overflows this pane's
                 # 32-cell floor; two cells is the widest gap that keeps both
                 # labels whole there.
-                delete.styles.margin = (0, 0, 0, 2)
+                delete.add_class("m-left-2")
                 yield delete

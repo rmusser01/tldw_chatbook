@@ -115,7 +115,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         self.state = state
         self._deferred_sync_guard: Callable[[], bool] | None = None
         self._deferred_sync_serial = 0
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 0
 
     def set_deferred_sync_guard(self, guard: Callable[[], bool] | None) -> None:
@@ -335,7 +335,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                 markup=False,
             )
             recents = Vertical(id="library-hub-recents")
-            recents.styles.height = "auto"
+            recents.add_class("h-auto")
             with recents:
                 for item in self.state.recent_items:
                     yield self._recent_button(item)
@@ -401,7 +401,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
     def _compose_get_started_steps(self) -> ComposeResult:
         """Compose the three sequenced Get started controls and one reason."""
         strip = Horizontal(id="library-hub-steps", classes="ds-toolbar")
-        strip.styles.height = "auto"
+        strip.add_class("h-auto")
         blocks: list[str] = []
         with strip:
             for step, label, tooltip in self._GET_STARTED_STEPS:
@@ -529,7 +529,7 @@ class LibraryStudyHandoffCanvas(_RetainedSyncCallback, Vertical):
     def __init__(self, state: LibraryStudyHandoffCanvasState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
@@ -548,7 +548,7 @@ class LibraryStudyHandoffCanvas(_RetainedSyncCallback, Vertical):
         recovery.set_class(self.state.blocked, "is-blocked")
         yield recovery
         toolbar = Horizontal(id="library-study-handoff-actions", classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.add_class("h-auto")
         with toolbar:
             yield Button(
                 self.state.button_label,

@@ -1,0 +1,18 @@
+........................................................................ [ 86%]
+...........                                                              [100%]
+============================= slowest 25 durations =============================
+12.19s call     Tests/UI/test_library_ingest_recent_journeys.py::test_group_recovery_and_clear_preserve_draft_and_recent_ledger[size1-textual-light]
+11.91s call     Tests/UI/test_library_ingest_recent_journeys.py::test_group_recovery_and_clear_preserve_draft_and_recent_ledger[size0-textual-dark]
+5.69s call     Tests/UI/test_library_ingest_recent_journeys.py::test_recent_disclosure_survives_queue_transition[True-True-size1-textual-light]
+5.40s call     Tests/UI/test_library_ingest_recent_journeys.py::test_recent_disclosure_survives_queue_transition[True-False-size1-textual-light]
+5.25s call     Tests/UI/test_library_ingest_recent_journeys.py::test_recent_disclosure_survives_queue_transition[False-False-size1-textual-light]
+4.18s call     Tests/UI/test_library_ingest_recent_journeys.py::test_recent_disclosure_survives_queue_transition[True-True-size0-textual-dark]
+3.98s call     Tests/UI/test_library_ingest_recent_journeys.py::test_recent_disclosure_survives_queue_transition[False-False-size0-textual-dark]
+3.95s call     Tests/UI/test_library_ingest_recent_journeys.py::test_recent_disclosure_survives_queue_transition[True-False-size0-textual-dark]
+3.91s call     Tests/UI/test_library_ingest_entry_journeys.py::test_keyboard_clear_recovers_missing_source_and_keeps_metadata[textual-light-size1]
+3.74s call     Tests/UI/test_library_ingest_entry_journeys.py::test_keyboard_clear_recovers_missing_source_and_keeps_metadata[textual-dark-size0]
+3.69s call     Tests/UI/test_library_ingest_entry_journeys.py::test_keyboard_clear_recovers_missing_source_and_keeps_metadata[textual-light-size0]
+3.61s call     Tests/UI/test_library_ingest_entry_journeys.py::test_keyboard_clear_recovers_missing_source_and_keeps_metadata[textual-dark-size1]
+
+(13 durations < 1s hidden.)
+83 passed in 80.95s (0:01:20)

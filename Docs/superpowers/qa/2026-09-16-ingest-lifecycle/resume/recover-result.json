@@ -1,0 +1,23 @@
+{
+  "pid": 29604,
+  "phase": "recover",
+  "steps": [
+    {
+      "permission_lineage_survived_restart": true,
+      "duplicate_identity_survived_restart": true
+    },
+    {
+      "interrupted_reconciled": true,
+      "successful_retry": "ingest-job-7",
+      "lineage_retained": true,
+      "media_count": 4
+    }
+  ],
+  "app_module": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/app.py",
+  "runner_sha256": "89d682209e0e5a4849722777192059d7f507bea6032324ae240aebf2dc41c8ea",
+  "exclusive_profile": true,
+  "waiting_for": "job settled",
+  "driver": "LinuxDriver",
+  "passed": true,
+  "app_run_returned": true
+}

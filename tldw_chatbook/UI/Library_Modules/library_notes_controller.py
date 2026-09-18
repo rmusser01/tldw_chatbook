@@ -619,6 +619,7 @@ from .screen_support_types import (
 )
 
 if TYPE_CHECKING:
+    from ...Notes.note_import_executor import NoteImportExecutor
     from ...Notes.note_import_receipts import NoteImportReceiptRepository
     from ..Screens.library_screen import LibraryScreen
 

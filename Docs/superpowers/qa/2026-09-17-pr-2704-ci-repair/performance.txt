@@ -1,0 +1,15 @@
+.........                                                                [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/Performance/test_ui_ready_module_census.py:428: UserWarning: ui-ready-census: 1022/1022 modules (headroom 0)
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+21.66s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+20.54s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+11.65s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+4.88s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+
+(21 durations < 1s hidden.)
+9 passed, 1 warning in 59.70s

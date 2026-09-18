@@ -1,0 +1,382 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark] _
+
+self = <Coroutine test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]>>, 'theme': 'textual-dark'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1222/test_compact_browse_keyboard_h0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark] _
+E
+E           request = <FixtureRequest for <Coroutine test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]>>
+E           theme = 'textual-dark'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_compact_browse_keyboard_handoff_keeps_the_default_provider(request, theme):
+E                   host = _StyledDestinationHarness(_build_test_app(), "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=(190, 55)) as pilot:
+E                       screen = await _open_speech_tts(host, pilot)
+E                       provider = screen.query_one("#settings-speech-default-provider", Select).value
+E           >           await _button(host, pilot, "#settings-speech-browse-voices")
+E
+E           Tests/UI/test_settings_speech_keyboard_journeys.py:99:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           Tests/UI/test_settings_speech_keyboard_journeys.py:18: in _button
+E               button = await _tab_to(host, pilot, selector)
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Tests/UI/test_settings_provider_keyboard_journeys.py:40: in _tab_to
+E               _assert_painted(host.screen, target)
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           screen = SettingsScreen(classes='shell-header-normal')
+E           widget = Button(id='settings-speech-browse-voices', classes='-style-default -textual-compact')
+E
+E               def _assert_painted(screen, widget):
+E                   """Require the whole control inside its compositor clip, not just the DOM."""
+E                   geometry = screen._compositor.visible_widgets.get(widget)
+E           >       assert geometry is not None, (widget.id, widget.region)
+E           E       AssertionError: ('settings-speech-browse-voices', Region(x=144, y=27, width=22, height=1))
+E           E       assert None is not None
+E
+E           Tests/UI/test_library_rag_result_focus.py:25: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 13:51:59.792 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 13:51:59.799 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 13:51:59.800 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 13:51:59.800 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 13:51:59.892 | INFO     | tldw_chatbook.app:__init__:7995 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 13:51:59.920 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 13:51:59.920 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 13:51:59.921 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 13:51:59.921 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 13:52:00.008 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1222/test_compact_browse_keyboard_h0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:00.082 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-u2qidioh/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:00.261 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-u2qidioh/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:00.278 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:00.279 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-u2qidioh/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:00.279 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-u2qidioh/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:00.401 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 13:52:00.445 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 13:52:00.491 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 13:52:00.536 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 13:52:00.574 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 13:52:00.616 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 13:52:00.617 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-u2qidioh/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 13:52:00.665 | DEBUG    | tldw_chatbook.app:__init__:8175 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 13:52:00.665 | DEBUG    | tldw_chatbook.app:__init__:8178 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 13:52:00.674 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 13:52:00.753 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 13:52:00.754 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1222/test_compact_browse_keyboard_h0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 13:52:00.754 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 13:52:00.828 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 13:52:00.828 | INFO     | tldw_chatbook.app:_init_worker_handlers:11998 - Worker handler registry initialized with all handlers
+E           2026-09-17 13:52:00.829 | INFO     | tldw_chatbook.app:__init__:8356 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 13:52:00.829 | INFO     | tldw_chatbook.app:__init__:8357 - Total initialization time: 1.018 seconds
+E           2026-09-17 13:52:00.829 | INFO     | tldw_chatbook.app:__init__:8363 -   basic_init: 0.107s (10.5%)
+E           2026-09-17 13:52:00.830 | INFO     | tldw_chatbook.app:__init__:8363 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 13:52:00.830 | INFO     | tldw_chatbook.app:__init__:8363 -   parallel_init: 0.001s (0.1%)
+E           2026-09-17 13:52:00.830 | INFO     | tldw_chatbook.app:__init__:8376 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:52:00.830 | INFO     | tldw_chatbook.app:__init__:8376 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:52:00.831 | INFO     | tldw_chatbook.app:__init__:8376 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-17 13:52:00.831 | INFO     | tldw_chatbook.app:__init__:8376 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 13:52:00.831 | INFO     | tldw_chatbook.app:__init__:8380 - ==============================
+E           2026-09-17 13:52:01.049 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 13:52:01.143 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 13:52:07.611 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8129 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8233 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           7.81s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]
+E           1 failed in 9.79s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 13:51:57.832 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 13:51:57.839 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 13:51:57.839 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 13:51:57.840 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light] _
+
+self = <Coroutine test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]>>, 'theme': 'textual-light'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1222/test_compact_browse_keyboard_h1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light] _
+E
+E           request = <FixtureRequest for <Coroutine test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]>>
+E           theme = 'textual-light'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_compact_browse_keyboard_handoff_keeps_the_default_provider(request, theme):
+E                   host = _StyledDestinationHarness(_build_test_app(), "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=(190, 55)) as pilot:
+E                       screen = await _open_speech_tts(host, pilot)
+E                       provider = screen.query_one("#settings-speech-default-provider", Select).value
+E           >           await _button(host, pilot, "#settings-speech-browse-voices")
+E
+E           Tests/UI/test_settings_speech_keyboard_journeys.py:99:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           Tests/UI/test_settings_speech_keyboard_journeys.py:18: in _button
+E               button = await _tab_to(host, pilot, selector)
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Tests/UI/test_settings_provider_keyboard_journeys.py:40: in _tab_to
+E               _assert_painted(host.screen, target)
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           screen = SettingsScreen(classes='shell-header-normal')
+E           widget = Button(id='settings-speech-browse-voices', classes='-style-default -textual-compact')
+E
+E               def _assert_painted(screen, widget):
+E                   """Require the whole control inside its compositor clip, not just the DOM."""
+E                   geometry = screen._compositor.visible_widgets.get(widget)
+E           >       assert geometry is not None, (widget.id, widget.region)
+E           E       AssertionError: ('settings-speech-browse-voices', Region(x=144, y=27, width=22, height=1))
+E           E       assert None is not None
+E
+E           Tests/UI/test_library_rag_result_focus.py:25: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 13:52:10.985 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 13:52:10.992 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 13:52:10.992 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 13:52:10.993 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 13:52:11.088 | INFO     | tldw_chatbook.app:__init__:7995 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 13:52:11.118 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 13:52:11.118 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 13:52:11.119 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 13:52:11.119 | INFO     | tldw_chatbook.app:__init__:8103 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 13:52:11.203 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1222/test_compact_browse_keyboard_h1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:11.277 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykfkrhiw/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:11.447 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykfkrhiw/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:11.462 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:11.463 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykfkrhiw/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:11.463 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykfkrhiw/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 13:52:11.599 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 13:52:11.643 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 13:52:11.688 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 13:52:11.732 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 13:52:11.777 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 13:52:11.820 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 13:52:11.821 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykfkrhiw/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 13:52:11.869 | DEBUG    | tldw_chatbook.app:__init__:8175 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 13:52:11.870 | DEBUG    | tldw_chatbook.app:__init__:8178 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 13:52:11.878 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 13:52:11.961 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 13:52:11.962 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1222/test_compact_browse_keyboard_h1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 13:52:11.962 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 13:52:12.034 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 13:52:12.035 | INFO     | tldw_chatbook.app:_init_worker_handlers:11998 - Worker handler registry initialized with all handlers
+E           2026-09-17 13:52:12.035 | INFO     | tldw_chatbook.app:__init__:8356 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 13:52:12.035 | INFO     | tldw_chatbook.app:__init__:8357 - Total initialization time: 1.030 seconds
+E           2026-09-17 13:52:12.036 | INFO     | tldw_chatbook.app:__init__:8363 -   basic_init: 0.110s (10.7%)
+E           2026-09-17 13:52:12.036 | INFO     | tldw_chatbook.app:__init__:8363 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 13:52:12.036 | INFO     | tldw_chatbook.app:__init__:8363 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 13:52:12.037 | INFO     | tldw_chatbook.app:__init__:8376 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:52:12.037 | INFO     | tldw_chatbook.app:__init__:8376 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:52:12.037 | INFO     | tldw_chatbook.app:__init__:8376 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-17 13:52:12.037 | INFO     | tldw_chatbook.app:__init__:8376 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 13:52:12.038 | INFO     | tldw_chatbook.app:__init__:8380 - ==============================
+E           2026-09-17 13:52:12.258 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 13:52:12.353 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 13:52:18.860 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8129 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8233 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8254 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           7.87s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]
+E           1 failed in 9.91s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+11.08s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]
+10.98s call     Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-dark]
+FAILED Tests/UI/test_settings_speech_keyboard_journeys.py::test_compact_browse_keyboard_handoff_keeps_the_default_provider[textual-light]
+2 failed, 4 deselected in 24.06s

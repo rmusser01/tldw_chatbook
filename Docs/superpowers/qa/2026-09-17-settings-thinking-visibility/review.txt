@@ -1,0 +1,4 @@
+Read-only review by /root/thinking_visibility_review.
+Initial finding: persistence outcomes were lost after Settings removal/recreation; addressed with app-owned outcome state and a dedicated inline row.
+Final review: no actionable findings in persistence ownership, revision guards, rollback/retry, cache warnings, shared-toggle behavior or presentation-only scope.
+Review correctly distinguished Static.render() content assertions from paint. Native inspection exposed compact clipping; final tests assert full compositor containment and painted recovery text.

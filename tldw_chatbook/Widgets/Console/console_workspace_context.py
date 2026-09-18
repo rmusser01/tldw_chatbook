@@ -490,7 +490,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         self.label_id = label_id
         self.value_id = value_id
         self.label_width_floor = max(1, int(label_width_floor))
-        self.styles.height = "auto"
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 1
 
     def compose(self) -> ComposeResult:
@@ -512,7 +514,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             self.label_width_floor,
             min(17, cell_len(self.label) + 1),
         )
-        label_widget.styles.width = label_width
+        label_widget.remove_class(*(name for name in label_widget.classes if name.startswith("w-")))
+        # ds-runtime: The field label text is measured in terminal cells within its width budget.
+        label_widget.set_styles(width=label_width)
         label_widget.styles.min_width = label_width
         yield label_widget
 
@@ -522,7 +526,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-value",
             markup=False,
         )
-        value_widget.styles.width = "1fr"
+        value_widget.remove_class(*(name for name in value_widget.classes if name.startswith("w-")))
+        value_widget.set_styles(width=None)
+        value_widget.add_class("w-fill")
         # Preserve the established 23-cell combined floor. Longer labels may
         # shrink the value to 6 cells and use the existing ellipsis + tooltip
         # behavior instead of widening the whole rail.
@@ -656,7 +662,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self._row_width_measured = False
         self._height_fit_layout_signal: Any | None = None
         self._workspace_tree_context_data: Any | None = None
-        self.styles.height = "auto"
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 0
 
     def on_mount(self) -> None:
@@ -1133,7 +1141,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 target_height = max(target_height, int(parent_region.height))
 
         if int(region.height) != target_height:
-            self.styles.height = target_height
+            self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+            # ds-runtime: The rail region is measured to retain its viewport height during reflow.
+            self.set_styles(height=target_height)
 
     def _fit_height_after_layout(self, screen: Any) -> None:
         """Retry once after the owning screen supplies fresh child geometry."""
@@ -1223,7 +1233,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         if state_class:
             button.add_class(state_class)
         row_height = _conversation_row_render_height(name_line_count, subagent_count, progress_count)
-        button.styles.height = row_height
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        # ds-runtime: Wrapped conversation names and live progress determine each browser row height.
+        button.set_styles(height=row_height)
         button.styles.min_height = row_height
         return button
 
@@ -1263,17 +1275,18 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             compact=True,
             disabled=not conversation_id,
         )
-        button.styles.height = row_height
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        # ds-runtime: Wrapped conversation names and live progress determine each browser row height.
+        button.set_styles(height=row_height)
         button.styles.min_height = row_height
-        # Sizing lives here, not in the boot CSS bundle: the boot-parsed
-        # byte budget is at its ratchet ceiling (ADR-097), and this tray
-        # already sets its row controls' geometry inline (see the star).
         # Compact Button supplies one cell of internal line padding per
         # side, leaving two cells for a wide icon in the four-cell box.
-        button.styles.width = 4
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_styles(width=None)
+        button.add_class("w-4")
         button.styles.min_width = 4
         button.styles.max_width = 4
-        button.styles.margin = (0, 1, 1, 0)
+        button.add_class("console-conversation-appearance-spacing")
         button.styles.text_align = "center"
         button.tooltip = (
             f"Change icon and color for {_escape_markup(row.title or 'this conversation')}."
@@ -1505,7 +1518,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.change_workspace_enabled,
             )
             switch_button.styles.min_width = 5
-            switch_button.styles.width = "auto"
+            switch_button.remove_class(*(name for name in switch_button.classes if name.startswith("w-")))
+            switch_button.set_styles(width=None)
+            switch_button.add_class("w-auto")
             # TASK-2154.3 (LY-06): the block reason used to render as an
             # always-on Static under the buttons, so "Add another workspace
             # before switching." read as an error before the user had
@@ -1528,7 +1543,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.new_workspace_enabled,
             )
             new_button.styles.min_width = 5
-            new_button.styles.width = "auto"
+            new_button.remove_class(*(name for name in new_button.classes if name.startswith("w-")))
+            new_button.set_styles(width=None)
+            new_button.add_class("w-auto")
             yield self._record_composed_node(new_button)
             scope_button = Button(
                 "RAG",
@@ -1538,7 +1555,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.rag_scope_enabled,
             )
             scope_button.styles.min_width = 5
-            scope_button.styles.width = "auto"
+            scope_button.remove_class(*(name for name in scope_button.classes if name.startswith("w-")))
+            scope_button.set_styles(width=None)
+            scope_button.add_class("w-auto")
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
         # TASK-25712: the contextual Star/Unstar button and its
@@ -1723,7 +1742,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     id="console-workspace-conversations-title",
                     classes="console-rail-section-title",
                 )
-                title.styles.width = "1fr"
+                title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+                title.set_styles(width=None)
+                title.add_class("w-fill")
                 yield title
         for label, button_id in (
             ("Archive this chat", "console-archive-chat"),
@@ -1733,7 +1754,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             action = Button(
                 label, id=button_id, compact=True, classes="console-workspace-action"
             )
-            action.styles.width = "100%"
+            action.remove_class(*(name for name in action.classes if name.startswith("w-")))
+            action.set_styles(width=None)
+            action.add_class("w-full")
             yield action
         if show_selected_summary:
             yield self._static(
@@ -1752,7 +1775,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 id="console-workspace-conversation-search",
                 classes="console-workspace-conversation-search",
             )
-            search_input.styles.width = "1fr"
+            search_input.remove_class(*(name for name in search_input.classes if name.startswith("w-")))
+            search_input.set_styles(width=None)
+            search_input.add_class("w-fill")
             yield search_input
             clear_button = Button(
                 "Clear",
@@ -1781,10 +1806,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
-        conversation_list.styles.height = self._conversation_browser_list_height(
-            browser,
-            self._browser_title_budget(),
-            self._row_content_width,
+        conversation_list.remove_class(*(name for name in conversation_list.classes if name.startswith("h-")))
+        # ds-runtime: Visible conversation rows and measured title width determine the list height.
+        conversation_list.set_styles(
+            height=self._conversation_browser_list_height(
+                browser,
+                self._browser_title_budget(),
+                self._row_content_width,
+            )
         )
         conversation_list.styles.min_height = 0
         with conversation_list:
@@ -1957,7 +1986,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
-            toggle.styles.width = 3
+            toggle.remove_class(*(name for name in toggle.classes if name.startswith("w-")))
+            toggle.set_styles(width=None)
+            toggle.add_class("w-3")
             toggle.styles.min_width = 3
             toggle.styles.max_width = 3
             # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
@@ -2065,7 +2096,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             row_button.native_session_id = row.native_session_id
             row_button.scope_type = row.scope_type
             row_button.workspace_id = row.workspace_id
-            row_button.styles.width = "1fr"
+            row_button.remove_class(*(name for name in row_button.classes if name.startswith("w-")))
+            row_button.set_styles(width=None)
+            row_button.add_class("w-fill")
             row_button.styles.min_width = 0
             if not row.openable:
                 # TASK-717: a prior open proved this record is missing; the
@@ -2098,7 +2131,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-workspace-action console-conversation-actions",
                 compact=True,
             )
-            menu_button.styles.height = 1
+            menu_button.remove_class(*(name for name in menu_button.classes if name.startswith("h-")))
+            menu_button.set_styles(height=None)
+            menu_button.add_class("h-1")
             menu_button.styles.min_height = 1
             menu_button.tooltip = f"Actions for {title}"
             menu_button.row_key = row.row_key

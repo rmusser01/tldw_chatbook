@@ -1,0 +1,26 @@
+Condensed pytest failure summary; captured setup logs omitted.
+
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_starts_with_actual_speaker_labeled_transcript
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes0]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes1]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes2]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes3]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes4]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes5]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes6]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes7]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_builder_refuses_unsettled_or_other_reader_text[changes8]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_excerpt_is_bounded_and_reports_truncation[2994-False]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_excerpt_is_bounded_and_reports_truncation[2995-True]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_excerpt_is_bounded_and_reports_truncation[50000-True]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_conversation_reports_omitted_later_messages_at_exact_boundary
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_empty_conversation_does_not_invent_transcript_content
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_media_content_precedes_metadata_and_retains_existing_bound[0-False]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_media_content_precedes_metadata_and_retains_existing_bound[500-False]
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_media_content_precedes_metadata_and_retains_existing_bound[501-True]
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_media_handoff_evidence_bundle_reaches_capture_as_real_context
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_source_body_is_capped_and_sanitized_before_evidence_staging[media]
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_source_body_is_capped_and_sanitized_before_evidence_staging[conversation]
+22 failed, 3 passed, 65 deselected in 29.14s

@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ │ selection side chat, and       │ │  │
+│     Web Search               │  │  │ │ │ generation defaults.           │ │  │
+│     Speech & TTS             │  │  │ │ │                                │ │  │
+│  Interface                   │  │  │ │ │ Exchange capture               │ │  │
+│     Appearance               │  │  │ │ │▐X▌ Capture future exchanges    │ │  │
+│     Theme                  ▁ │  │  │ │ │▐X▌ Mask PII in future traces   │ │  │
+│     Splash Screen            │  │  │ │ │Trace viewer                    │ │  │
+│   > Console Behavior         │  │  │ │ │┌──────────────────────────────┐│ │  │
+│  Data & Privacy              │  │  │ │ ││ Safe                       ▼ ││ │  │
+│     Storage                  │  │  │ │ │└──────────────────────────────┘│ │  │
+│     Workspaces               │  │  │ │ │                                │ │  │
+│     Tool Profiles            │  │  │ │ │Capture, PII masking, and       │ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

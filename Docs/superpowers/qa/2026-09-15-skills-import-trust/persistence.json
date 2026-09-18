@@ -1,0 +1,71 @@
+{
+  "native_exit_code": 0,
+  "fresh_service_reopen": true,
+  "full_app_restart": false,
+  "skills": [
+    {
+      "name": "zeta-170",
+      "sha256": "7d5f912b8b25e13e21ddf80f7d3fe6df562c7a771db5d59894883113b09b2457",
+      "status_before_unlock": "trust_locked",
+      "status_after_unlock": "trusted",
+      "generation": 3,
+      "exact_content_verified": true,
+      "unselected_candidate_absent": true
+    },
+    {
+      "name": "zeta-80",
+      "sha256": "b3a3ac24e27d7533b26a83f1ce23c3aaca92ca8e54984f6f00757c6472fef7b3",
+      "status_before_unlock": "trust_locked",
+      "status_after_unlock": "trusted",
+      "generation": 3,
+      "exact_content_verified": true,
+      "unselected_candidate_absent": true
+    }
+  ],
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok",
+      "messages": 0
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok"
+    }
+  ],
+  "log_unhandled_exception": false,
+  "log_errors": false,
+  "normal_quit": "Ctrl+Q requested by the driver; a subsequent terminal Ctrl+Q preceded observing the normal exit."
+}

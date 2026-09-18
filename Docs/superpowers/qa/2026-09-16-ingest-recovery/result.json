@@ -1,0 +1,124 @@
+{
+  "pid": 60938,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "outcome": "cancel",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "outcome": "reject",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "outcome": "success",
+      "entry": "form",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "outcome": "success",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "outcome": "faster",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "outcome": "cancel",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "outcome": "reject",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "outcome": "success",
+      "entry": "form",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "outcome": "success",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "outcome": "faster",
+      "entry": "row",
+      "draft_selection_and_identity_preserved": true,
+      "correct_focus_and_provider_routing": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "synthetic_registry_without_store": true,
+  "external_boundaries_replaced": [
+    "model admission/persistence",
+    "parse-pool dispatch"
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

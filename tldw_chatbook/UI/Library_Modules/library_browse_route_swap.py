@@ -29,6 +29,8 @@ Two mechanisms in one file:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -55,6 +57,7 @@ from .screen_constants import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
     from tldw_chatbook.Library.library_shell_state import LibraryShellState
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
@@ -227,6 +230,9 @@ async def _adopt_library_browse_canvas(
     screen: "LibraryScreen",
     canvas_host: Vertical,
     route: str,
+    *,
+    after_sync: Callable[[], bool] | None = None,
+    notes_focus_identity: LibraryNotesFocusIdentity | None = None,
 ) -> bool:
     """Show the destination canvas, keeping the other route's resident.
 
@@ -269,6 +275,8 @@ async def _adopt_library_browse_canvas(
     if resident is None:
         # A first-time mount shows freshly built state; nothing to repaint,
         # so adoption is unconditionally current.
+        if after_sync is not None:
+            after_sync()
         return True
     # The resident canvas has been off-route (and, by the route-ownership
     # guard, deliberately un-synced) since the last visit, so switching
@@ -278,6 +286,8 @@ async def _adopt_library_browse_canvas(
         screen,
         LIBRARY_BROWSE_ROUTE_SYNC_KIND[route],
         allow_screen_fallback=False,
+        then=after_sync,
+        notes_focus_identity=notes_focus_identity,
     )
 
 
@@ -320,8 +330,19 @@ async def swap_library_browse_route(
     same_route = shell_widget.route == route
     generation = screen._library_snapshot_state_generation
     route_key = screen._library_entry_route_key()
-    focus_identity = (
-        screen._capture_library_entry_focus() if same_route else None
+    focus_identity = screen._capture_library_entry_focus() if same_route else None
+    capture = (
+        screen._library_entry_focus_capture if focus_identity is not None else None
+    )
+    restore_focus = (
+        partial(
+            screen._restore_library_entry_focus,
+            focus_identity,
+            generation=generation,
+            route_key=route_key,
+        )
+        if focus_identity is not None
+        else None
     )
     if screen.is_running:
         try:
@@ -339,16 +360,23 @@ async def swap_library_browse_route(
     )
     await _apply_library_notes_source_strip(screen, shell.canvas_kind)
     if not same_route:
-        await shell_widget.swap_work(
-            _build_library_browse_work_pane(screen, route)
-        )
+        await shell_widget.swap_work(_build_library_browse_work_pane(screen, route))
         shell_widget.apply_route(route)
         shell_widget.adopt_route_layout(
             screen._media_state.reader_layout
             if route == LIBRARY_BROWSE_ROUTE_MEDIA
             else screen._notes_state.reader_layout
         )
-    adopted = await _adopt_library_browse_canvas(screen, canvas_host, route)
+    # The resident canvas rebuilds asynchronously. Restore through its existing
+    # post-sync boundary, preserving the pre-detach Notes identity and the
+    # generic guard against a newer user focus move.
+    adopted = await _adopt_library_browse_canvas(
+        screen,
+        canvas_host,
+        route,
+        after_sync=restore_focus,
+        notes_focus_identity=capture.notes_identity if capture is not None else None,
+    )
     if not adopted:
         # The resident canvas refused its in-place repaint, and we suppressed
         # its own whole-screen fallback (allow_screen_fallback=False). Report
@@ -364,10 +392,4 @@ async def swap_library_browse_route(
         if route == LIBRARY_BROWSE_ROUTE_MEDIA
         else screen._sync_library_notes_reader_layout_from_shell
     )
-    if focus_identity is not None:
-        screen._restore_library_entry_focus(
-            focus_identity,
-            generation=generation,
-            route_key=route_key,
-        )
     return True

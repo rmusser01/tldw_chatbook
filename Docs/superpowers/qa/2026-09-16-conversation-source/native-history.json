@@ -1,0 +1,15 @@
+{
+  "initial_run": "/private/tmp/tldw-32706-run-001",
+  "source_staging_passed": true,
+  "steps": 4,
+  "lifecycle": {
+    "pid": 24833,
+    "pid_absent": true,
+    "app_run_returned": true,
+    "shell_exit_code": 0,
+    "owned_socket": "codex32706",
+    "owned_session": "source",
+    "only_owned_terminal_closed_after_app_exit": true
+  },
+  "scope": "Original CHAT source actions passed before TASK-2502 repair. Final run extends this with CONSOLE_LIVE_WORK."
+}

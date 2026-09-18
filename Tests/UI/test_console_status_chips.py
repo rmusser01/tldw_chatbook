@@ -1,6 +1,7 @@
 """Unit tests for the extracted Console status-chips strip."""
 
 import pytest
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from textual.app import App, ComposeResult
 from textual.widgets import Static, Tooltip
 
@@ -31,6 +32,7 @@ def _state(**overrides) -> ConsoleControlState:
 
 
 class _ChipsApp(App):
+    CSS_PATH = str(BUNDLED_STYLESHEET)
     CSS = ".console-control-chip { width: auto; }"
 
     def __init__(self, state: ConsoleControlState) -> None:

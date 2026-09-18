@@ -1,0 +1,108 @@
+{
+  "native_result": {
+    "pid": 25102,
+    "steps": [
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "group_show_hide_and_retry_dismiss_keyboard": true,
+        "retry_ui_seam_calls": 4,
+        "recent_open_and_focused_after_transition": true,
+        "clear_full_confirmation_painted": true,
+        "clear_preserves_open_recent_ledger": true,
+        "draft_preserved": true,
+        "registry_empty_after_clear": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "group_show_hide_and_retry_dismiss_keyboard": true,
+        "retry_ui_seam_calls": 4,
+        "recent_open_and_focused_after_transition": true,
+        "clear_full_confirmation_painted": true,
+        "clear_preserves_open_recent_ledger": true,
+        "draft_preserved": true,
+        "registry_empty_after_clear": true
+      }
+    ],
+    "exclusive_profile": true,
+    "driver": "LinuxDriver",
+    "synthetic_registry_without_store": true,
+    "passed": true,
+    "app_run_returned": true
+  },
+  "exit_code": 0,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok",
+      "counts": {
+        "messages": 0
+      }
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok",
+      "counts": {
+        "Media": 0
+      }
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok",
+      "counts": {
+        "ingest_jobs": 0
+      }
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok",
+      "counts": {}
+    }
+  ],
+  "source_files": [
+    {
+      "name": "notes.txt",
+      "unchanged": true,
+      "sha256": "00fc26d20f9790d27d740eeb94d1946a8cf9abb1ffe1d4f19f268267af626e3e"
+    }
+  ],
+  "log_errors": [],
+  "default_profile_unchanged": true
+}

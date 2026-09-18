@@ -56,11 +56,14 @@ def update_status(
 
         # Apply color based on level for TextArea
         if level == "error":
-            widget.styles.color = "red"
+            widget.remove_class("ds-text-error", "ds-text-warning", "ds-text-ready")
+            widget.add_class("ds-text-error")
         elif level == "warning":
-            widget.styles.color = "yellow"
+            widget.remove_class("ds-text-error", "ds-text-warning", "ds-text-ready")
+            widget.add_class("ds-text-warning")
         elif level == "success":
-            widget.styles.color = "green"
+            widget.remove_class("ds-text-error", "ds-text-warning", "ds-text-ready")
+            widget.add_class("ds-text-ready")
 
         return True
 

@@ -1,9 +1,10 @@
 ---
 id: TASK-24451
 title: Split the agentic terminal CSS grab-bag and ratchet rule count
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-29'
+updated_date: '2026-09-14'
 labels:
   - performance
   - ui
@@ -32,15 +33,29 @@ still scanned. Only deleting rules, or swapping stylesheet sources per screen, r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `_agentic_terminal.tcss` no longer contains rules owned by Library, Settings, MCP, Lab, Workflows, Personas or Watchlists
-- [ ] #2 Total app rule count measured at boot is reduced relative to the pre-change baseline, and the reduction is recorded
-- [ ] #3 A rule-count ratchet guard exists alongside the existing byte budget, because bytes are not rules
-- [ ] #4 Every destination in the existing latency-guardrail tour renders with no visual regression
-- [ ] #5 The CSS bundle regenerates from its sources with no drift (`./scripts/preflight.sh` green)
+- [x] #1 `_agentic_terminal.tcss` no longer contains rules owned by Library, Settings, MCP, Lab, Workflows, Personas or Watchlists
+- [x] #2 Total app rule count measured at boot is reduced relative to the pre-change baseline, and the reduction is recorded
+- [x] #3 A rule-count ratchet guard exists alongside the existing byte budget, because bytes are not rules
+- [x] #4 Every destination in the existing latency-guardrail tour renders with no visual regression
+- [x] #5 The CSS bundle regenerates from its sources with no drift (`./scripts/preflight.sh` green)
 <!-- AC:END -->
 
 ## Implementation Notes
+
 <!-- SECTION:NOTES:BEGIN -->
+CLOSED 2026-09-14 by task-32596 plan Task 10 (ADR-161): the monolith carve-up completed and the spec 3.5 size-ceiling test shipped (`test_sheet_size_ceiling`, 2,000 comment-stripped active lines per CSS_MODULES sheet).
+
+AC disposition at close (per the supersession recorded above):
+- #1 MET for the owners the audit named with material mass: Library (-> features/_library{,_panels}.tcss), Settings (-> features/_settings.tcss), and additionally Console (-> features/_console{,_panels}.tcss, bundle-resident), Home (-> features/_home.tcss), destination (-> layout/_destination.tcss), and the ds-* primitives (-> components/_ds_primitives.tcss). The small scoped residue the 2026-08-29 analysis also named (mcp-mode-strip, lab-mode-strip, workflows/personas/watchlists pane strips) stays in the monolith as SHARED agentic-shell chrome: those rules style shell regions composed across screens (verified: their selectors are multi-shell comma lists or non-vocabulary scoped overrides), so per the ADR-161 spec 3.5 carve rule ("what remains of the monolith is true Console/shared chrome") they are chrome, not an owned vocabulary; the parent task's 3.10 in-place passes own any further split. The grab-bag condition itself is closed: every class VOCABULARY now lives in a single-purpose sheet.
+- #2 SUPERSEDED, recorded: task-24450 removed the O(all-rules) apply() cost this AC measured against, and TASK-25812's split already moved the single-owner rules off the boot parse (measured -100 KB boot CSS at the time). The task-10 carve is cascade- and rendering-neutral by design (byte-identical computed-style probes on Home/Console/Settings/Library + byte-identical SVG A/B), so rule COUNT is unchanged by the reorganization; the ceiling test now guards regrowth in the dimension that matters (sheet size).
+- #3 MET in superseded form: spec 3.5 replaced the rule-count ratchet with the size ceiling (2,000 active lines per sheet, no grandfather allowance), shipped in the same commit that completed the split.
+- #4 MET: surface-wide computed-style probes on the four heaviest consumers (Home/ChatScreen-Console/Settings-default/Library) are BYTE-IDENTICAL before/after, and normalized SVG A/B captures of all four are byte-identical.
+- #5 MET: `check_bundle_sync.py` green -- the bundle and every generated sheet reproduce from the new sources.
+
+Superseded by task-32596 (component-pattern library; ADR-161). The monolith split lands as plan Tasks 9-10. Close when the size-ceiling test ships.
+
+Prior analysis (2026-08-29 review pass), preserved for the Task 9-10 implementers:
+
 NOT IMPLEMENTED in the 2026-08-29 review pass. Recorded here so the next person does not
 re-derive the analysis.
 

@@ -347,7 +347,7 @@ from rich.markup import escape as escape_markup
 from textual import on
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 from textual.worker import Worker
 
 from ...DB.Prompts_DB import ConflictError as PromptConflictError
@@ -1353,7 +1353,9 @@ class LibraryPromptsController:
             "prompts",
             then=restore_focus,
             allow_screen_fallback=False,
-            sync_prompt_work=False,
+            # Browsing must retain a live editor, but Back/Discard owns the
+            # transition to the list's empty work pane after clearing it.
+            sync_prompt_work=self._library_prompts_view == "list",
         ):
             return LibraryEntryReconcileResult.APPLIED
         return LibraryEntryReconcileResult.FAILED
@@ -1523,10 +1525,34 @@ class LibraryPromptsController:
         event.stop()
         if self._library_prompts_mutation_in_flight:
             return
-        self.run_worker(
-            self._await_library_prompt_durable_call(
+        opener = event.button
+        restore_focus = opener.has_focus
+
+        def restore_membership_focus() -> None:
+            if (
+                not restore_focus
+                or not opener.is_attached
+                or self.app.screen is not opener.screen
+                or opener.screen.focused is not None
+            ):
+                return
+            target = (
+                opener
+                if not opener.disabled
+                else self.query_one("#library-prompt-memberships-manage", Button)
+            )
+            target.focus()
+
+        async def apply_and_restore_focus() -> None:
+            await self._await_library_prompt_durable_call(
                 self._library_prompt_collections_controller.apply_memberships()
-            ),
+            )
+            # Applying temporarily disables the keyboard opener. Return to
+            # retry (or Manage after success) only if no newer focus owns it.
+            self.call_after_refresh(restore_membership_focus)
+
+        self.run_worker(
+            apply_and_restore_focus(),
             exclusive=True,
             group="library_prompt_memberships_apply",
         )
@@ -2006,10 +2032,38 @@ class LibraryPromptsController:
         self._library_prompt_detail_loading = False
         self._library_prompt_detail_error = ""
         self._library_prompt_detail_retryable = False
+        restore_history_focus = False
+        if expected_history_scope is not None:
+            region = self.query_one(
+                "#library-prompt-history-region", LibraryPromptHistoryRegion
+            )
+            focused = self.focused
+            restore_history_focus = (
+                focused is not None and region in focused.ancestors
+            ) or (focused is None and region.has_pending_focus_restore)
+            if restore_history_focus:
+                region.screen.set_focus(None)
         self._adopt_library_prompt_persisted_detail(
             detail,
             open_history=open_history,
         )
+        adopted_history = self._library_prompt_history_state
+
+        def arm_editor() -> None:
+            self._arm_library_prompt_editor()
+            if (
+                restore_history_focus
+                and self.focused is None
+                and adopted_history is not None
+                and self._library_prompt_history_controller.matches_scope(
+                    prompt_uuid=adopted_history.prompt_uuid,
+                    scope_token=adopted_history.scope_token,
+                )
+            ):
+                self.query_one(
+                    "#library-prompt-history-region", LibraryPromptHistoryRegion
+                ).focus_disclosure()
+
         self._load_library_prompt_memberships()
         if self.is_mounted:
             # See the skills twin: arming must not be lost to the
@@ -2017,7 +2071,7 @@ class LibraryPromptsController:
             synced = _sync_library_canvas(
                 self,
                 "prompts",
-                then=self._arm_library_prompt_editor,
+                then=arm_editor,
                 allow_screen_fallback=not entry_origin,
             )
             if entry_origin:
@@ -2268,7 +2322,9 @@ class LibraryPromptsController:
         )
         self.app.push_screen(
             modal,
-            lambda confirmed: self._confirm_library_prompt_history_restore(
+            # Let modal return finish before disabling/replacing its opener.
+            lambda confirmed: self.call_after_refresh(
+                self._confirm_library_prompt_history_restore,
                 bool(confirmed),
                 prompt_uuid=target.prompt_uuid,
                 change_id=target.change_id,
@@ -2458,6 +2514,8 @@ class LibraryPromptsController:
     @on(Button.Pressed, "#library-prompt-mode-basic")
     @on(Button.Pressed, "#library-prompt-mode-advanced")
     @on(Button.Pressed, "#library-prompt-mode-info")
+    @on(Button.Pressed, "#library-prompt-more-history")
+    @on(Button.Pressed, "#library-prompt-more-collections")
     async def handle_library_prompt_editor_mode(self, event: Button.Pressed) -> None:
         """Switch the three mounted Prompt projections without replacing the draft."""
         event.stop()
@@ -2466,6 +2524,14 @@ class LibraryPromptsController:
             "library-prompt-mode-advanced": "advanced",
             "library-prompt-mode-info": "info",
         }.get(event.button.id, "basic")
+        open_history = event.button.id == "library-prompt-more-history"
+        open_collections = event.button.id == "library-prompt-more-collections"
+        if open_history or open_collections:
+            requested = (
+                self._library_prompt_editor_mode
+                if self._library_prompt_editor_mode in {"advanced", "info"}
+                else "info"
+            )
         state = self._current_library_prompt_editor_state()
         if requested == "basic" and self._library_prompt_basic_unavailable_reason(
             state,
@@ -2492,6 +2558,17 @@ class LibraryPromptsController:
         except NoMatches:
             return
         await canvas.set_editor_mode(requested)
+        if open_history or open_collections:
+            canvas.more_actions_open = False
+            canvas.query_one("#library-prompt-more-actions-region").display = False
+        if open_history:
+            history = canvas.query_one("#library-prompt-history-collapsible", Collapsible)
+            history.collapsed = False
+            history.screen.set_focus(history.query_one("CollapsibleTitle"))
+        elif open_collections:
+            manage = canvas.query_one("#library-prompt-memberships-manage", Button)
+            manage.screen.set_focus(manage)
+            self.call_after_refresh(manage.press)
         self._library_prompt_editor_mode = requested
         library_config = self.app_instance.app_config.setdefault("library", {})
         if isinstance(library_config, dict):
@@ -2741,11 +2818,14 @@ class LibraryPromptsController:
             state.keywords_csv,
         )
 
-    def _update_library_prompt_status_static(self, text: str) -> None:
+    def _update_library_prompt_status_static(
+        self, text: str, *, reveal: bool = False
+    ) -> None:
         """Targeted update of ``#library-prompt-save-status``, no recompose.
 
         Args:
             text: The status copy to show (``""`` clears it).
+            reveal: Scroll the status into view without moving focus.
         """
         self._library_prompt_status = text
         try:
@@ -2753,6 +2833,33 @@ class LibraryPromptsController:
         except (NoMatches, QueryError):
             return
         status_static.update(text)
+        if reveal:
+            status_static.scroll_visible(animate=False)
+
+    def _report_library_prompt_action_result(
+        self,
+        message: str,
+        *,
+        severity: str = "information",
+        prompt_id: int | None = None,
+    ) -> None:
+        """Reveal action feedback without covering the next focused control.
+
+        Args:
+            message: The result to display.
+            severity: Notification severity if the editor is no longer active.
+            prompt_id: Original export identity; omit for immediate Copy results.
+        """
+        if (
+            self.app.screen is self._screen
+            and self._library_prompt_editor_active()
+            and (prompt_id is None or self._selected_prompt_id == prompt_id)
+        ):
+            self._update_library_prompt_status_static(message, reveal=True)
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity)
 
     async def _sync_library_prompt_open_existing_button(self, *, show: bool) -> None:
         """Targeted mount/removal of ``#library-prompt-open-existing`` (Task
@@ -2854,9 +2961,7 @@ class LibraryPromptsController:
         """Patch save/update action truth after identity or version changes."""
         can_update = self._library_prompt_can_update_original()
         try:
-            block_editor = self.query_one(
-                "#library-prompt-block-editor", PromptBlockEditor
-            )
+            block_editor = self.query_one("#library-prompt-block-editor", PromptBlockEditor)
         except (NoMatches, QueryError):
             block_editor = None
         if block_editor is not None:
@@ -2879,6 +2984,9 @@ class LibraryPromptsController:
             outer_save.disabled = not can_update
         try:
             canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
+            # First save adopts an identity without rebuilding the fields.
+            # Lifecycle actions must read that saved identity, too.
+            canvas.editor_state = self._current_library_prompt_editor_state()
             canvas.can_update_original = can_update
             canvas.sync_lifecycle_actions(
                 dirty=self._library_prompt_dirty,
@@ -2987,9 +3095,7 @@ class LibraryPromptsController:
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
-        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = (
-            fields
-        )
+        raw_name, raw_author, raw_details, raw_system, raw_user, raw_keywords_text = fields
 
         name = self._sanitize_media_field(raw_name, max_length=300)
         author = self._sanitize_media_field(raw_author, max_length=200)
@@ -3274,8 +3380,12 @@ class LibraryPromptsController:
             # broader snapshot refresh to when the editor is actually left
             # -- see the comment below), a brand-new prompt changes the
             # list's membership/count, so the Prompts rail badge and list
-            # must pick up the new row now. Fire-and-forget, mirrors
-            # ``_create_library_note``'s equivalent post-create refresh.
+            # must pick up the new row now. The broad snapshot owns counts;
+            # only the browse controller can refresh the retained Items page.
+            self._request_library_prompts_browse(
+                self._library_prompt_browse_controller.mutation_refresh_scope,
+                focus_identity=self._library_prompts_focus_identity(),
+            )
             self._refresh_local_source_snapshot()
         else:
             self._library_prompt_detail = patched_detail
@@ -3299,6 +3409,18 @@ class LibraryPromptsController:
         # "Saved." status, same combined helper the failure branches above
         # use.
         await self._apply_library_prompt_save_outcome("ok")
+        # Retained block cards and provenance must adopt the persisted state,
+        # just as the outer Saved line does. Their draft markers are independent.
+        saved_editor = build_prompt_editor_state(
+            patched_detail, capabilities=self._library_prompt_capabilities
+        )
+        self._library_prompt_block_state = saved_editor.block_editor_state
+        try:
+            canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            await canvas.sync_saved_editor_state(saved_editor)
         if not is_create:
             self._initialize_library_prompt_history(
                 patched_detail, open_history=history_was_open
@@ -3626,22 +3748,22 @@ class LibraryPromptsController:
             return
         detail.update(artifact_fields)
 
-        notify = getattr(self.app_instance, "notify", None)
         copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
         if not callable(copy_to_clipboard):
-            if callable(notify):
-                notify(
-                    "Clipboard copy is unavailable in this runtime.", severity="warning"
-                )
+            self._report_library_prompt_action_result(
+                "Clipboard copy is unavailable in this runtime.", severity="warning"
+            )
             return
         try:
             copy_to_clipboard(render_prompt_markdown(detail))
         except Exception as exc:
-            if callable(notify):
-                notify(f"Error copying prompt: {type(exc).__name__}", severity="error")
+            self._report_library_prompt_action_result(
+                f"Error copying prompt: {type(exc).__name__}", severity="error"
+            )
             return
-        if callable(notify):
-            notify("Prompt copied to clipboard as markdown!", severity="information")
+        self._report_library_prompt_action_result(
+            "Prompt copied to clipboard as markdown!"
+        )
 
     def _library_prompt_artifact_fields(self) -> dict[str, Any]:
         """Return export/copy metadata for the live Prompt working copy.
@@ -4055,7 +4177,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "Could not delete this prompt. Nothing was deleted."
+                        "Could not delete this prompt. Nothing was deleted.",
+                        reveal=True,
                     )
                 return
             try:
@@ -4075,7 +4198,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "This prompt changed elsewhere — refresh and try again."
+                        "This prompt changed elsewhere — refresh and try again.",
+                        reveal=True,
                     )
                 return
             except Exception:
@@ -4085,7 +4209,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "Could not delete this prompt. Nothing was deleted."
+                        "Could not delete this prompt. Nothing was deleted.",
+                        reveal=True,
                     )
                 return
 
@@ -4102,7 +4227,8 @@ class LibraryPromptsController:
                     )
                 else:
                     self._update_library_prompt_status_static(
-                        "Could not delete this prompt. Nothing was deleted."
+                        "Could not delete this prompt. Nothing was deleted.",
+                        reveal=True,
                     )
                 return
 
@@ -4306,16 +4432,15 @@ class LibraryPromptsController:
             return False
         if not self._library_prompts_mutation_in_flight:
             return False
-        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
-            return False
         if selection_generation is not None:
             return (
-                self._library_prompts_view == "list"
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+                and self._library_prompts_view == "list"
                 and self._library_prompt_select_mode
                 and self._library_prompt_selection.generation == selection_generation
             )
         return (
-            self._library_prompts_view == "editor"
+            self._library_prompt_editor_active()
             and self._selected_prompt_id == editor_prompt_id
         )
 

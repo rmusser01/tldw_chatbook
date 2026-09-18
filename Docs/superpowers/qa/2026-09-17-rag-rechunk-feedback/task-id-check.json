@@ -1,0 +1,10 @@
+{
+  "task_id": 32718,
+  "refs_scanned": 306,
+  "worktrees_scanned": 27,
+  "reachable_owners": [],
+  "working_tree_owners": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32718 - Review-Re-chunk-progress-and-completion-feedback.md"
+  ],
+  "no_other_owner": true
+}

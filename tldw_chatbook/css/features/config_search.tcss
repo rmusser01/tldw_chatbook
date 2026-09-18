@@ -1,45 +1,49 @@
 /* config_search.tcss */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 /* Styling for configuration file search functionality */
 
 /* Search container */
 .config-search-container {
-    width: 100%;
-    margin-bottom: 1;
-    padding: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-1;
     background: $panel;
     border: solid $primary;
 }
 
 /* Search input */
 .config-search-input {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 /* Search results collapsible */
 .config-search-results {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 .config-search-results Collapsible > Contents {
-    max-height: 20;
+    max-height: $ds-size-20;
     overflow-y: auto;
 }
 
 /* Results list */
 .config-results-list {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 20;
+    max-height: $ds-size-20;
     background: $surface;
 }
 
 /* Individual search result item */
 .config-search-result-item {
-    width: 100%;
-    padding: 1;
-    margin-bottom: 0;
+    width: $ds-width-full;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-0;
 }
 
 .config-search-result-item:hover {
@@ -48,8 +52,8 @@
 
 /* Result info section */
 .result-info {
-    width: 1fr;
-    padding-right: 1;
+    width: $ds-width-fill;
+    padding-right: $ds-space-1;
 }
 
 .result-path {
@@ -59,30 +63,30 @@
 
 .result-value {
     color: $text;
-    margin-top: 0;
+    margin-top: $ds-space-0;
 }
 
 .result-context {
     color: $text-muted;
     text-style: italic;
-    margin-top: 0;
+    margin-top: $ds-space-0;
 }
 
 /* Result action buttons */
 .result-actions {
     dock: right;
     width: auto;
-    height: 3;
+    height: $ds-size-3;
     align: center middle;
 }
 
 .result-goto-btn {
-    margin-right: 1;
-    min-width: 8;
+    margin-right: $ds-space-1;
+    min-width: $ds-size-8;
 }
 
 .result-edit-btn {
-    min-width: 8;
+    min-width: $ds-size-8;
 }
 
 /* Highlight matches in search results */
@@ -94,8 +98,8 @@ ConfigSearchResult.-highlight {
 
 /* Ensure the config editor has proper spacing when search is shown */
 #config-text-area {
-    height: 1fr;
-    min-height: 20;
+    height: $ds-height-fill;
+    min-height: $ds-size-20;
 }
 
 /* Highlight effect for found UI elements */

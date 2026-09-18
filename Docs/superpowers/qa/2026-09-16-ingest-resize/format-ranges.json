@@ -1,0 +1,12 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "formatted_changed_ranges": 2,
+    "lines": 35215
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+    "formatted_changed_ranges": 2,
+    "lines": 2349
+  }
+]

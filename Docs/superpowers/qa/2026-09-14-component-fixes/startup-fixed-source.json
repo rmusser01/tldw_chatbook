@@ -1,0 +1,11 @@
+{
+  "base_head": "bb15283147e992c6f7b332bc1dc3197472412d42",
+  "state": "uncommitted component audit fixes",
+  "terminal_shell_pid": 52196,
+  "app_exit_code": 0,
+  "source_sha256": {
+    "tldw_chatbook/app.py": "1328af20634300bd6e430c54954b04627ef4b8c833c4c33effd2dc89fb658ca0",
+    "tldw_chatbook/css/build_css.py": "032d1ffb34b4604967fd046286b3a093e1ed5c4f393f5d92812ea16b3fdc2de6",
+    "Tests/UI/test_css_staleness_manifest.py": "88b5d18ae05454266a1ffb0286e29ed42baec923d5338f53f5c1bd653f7c3fba"
+  }
+}

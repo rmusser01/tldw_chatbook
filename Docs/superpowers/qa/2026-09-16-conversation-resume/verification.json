@@ -1,0 +1,68 @@
+{
+  "base_commit": "cd4972a651",
+  "targeted_command": ".venv/bin/python -m pytest Tests/UI/test_console_conversation_archive_flow.py Tests/UI/test_console_archive_recovery_boundaries.py Tests/UI/test_console_resume_active_path.py Tests/UI/test_console_archive_resume_errors.py Tests/UI/test_chat_screen_resume_handoff_registration.py Tests/UI/test_library_conversation_recovery_flow.py -q --tb=short --show-capture=no",
+  "baseline": {
+    "passed": 80,
+    "failed": 3,
+    "exit": 1,
+    "seconds": 77.87
+  },
+  "focused_repairs": {
+    "passed": 4,
+    "exit": 0,
+    "seconds": 10.95
+  },
+  "final": {
+    "passed": 83,
+    "failed": 0,
+    "exit": 0,
+    "seconds": 76.07
+  },
+  "static_checks": [
+    {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "check",
+        "Tests/UI/test_console_conversation_archive_flow.py",
+        "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-resume/native_check.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-resume/verify_profile.py"
+      ],
+      "exit": 0,
+      "output": "All checks passed!\n"
+    },
+    {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "format",
+        "--check",
+        "Tests/UI/test_console_conversation_archive_flow.py",
+        "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-resume/native_check.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-resume/verify_profile.py"
+      ],
+      "exit": 0,
+      "output": "4 files already formatted\n"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "output": ""
+    }
+  ],
+  "python_files_parsed": [
+    "Tests/UI/test_console_conversation_archive_flow.py",
+    "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+    "Docs/superpowers/qa/2026-09-16-conversation-resume/native_check.py",
+    "Docs/superpowers/qa/2026-09-16-conversation-resume/verify_profile.py"
+  ],
+  "json_svg_capture_hashes_and_readme_links_valid": true,
+  "native_runner_matches_executed_hash": true,
+  "source_snapshots_equal": true,
+  "full_suite_run": false,
+  "production_code_or_css_changes": false
+}

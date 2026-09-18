@@ -1,0 +1,125 @@
+{
+  "checks": [
+    {
+      "command": [
+        "check",
+        "Tests/UI/test_library_rag_rechunk_feedback.py",
+        "Docs/superpowers/qa/2026-09-17-rag-rechunk-feedback/native_check.py",
+        "Docs/superpowers/qa/2026-09-17-rag-rechunk-feedback/baseline_source_plugin.py"
+      ],
+      "exit_code": 0,
+      "output": "All checks passed!\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "Tests/UI/test_library_rag_rechunk_feedback.py",
+        "Docs/superpowers/qa/2026-09-17-rag-rechunk-feedback/native_check.py",
+        "Docs/superpowers/qa/2026-09-17-rag-rechunk-feedback/baseline_source_plugin.py"
+      ],
+      "exit_code": 0,
+      "output": "3 files already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "78-87",
+        "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "280-298",
+        "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "361-396",
+        "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "25-26",
+        "Tests/UI/test_library_rag_rechunk_action.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "411-415",
+        "Tests/UI/test_library_rag_rechunk_action.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "453-455",
+        "Tests/UI/test_library_rag_rechunk_action.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "218-225",
+        "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "command": [
+        "format",
+        "--check",
+        "--range",
+        "230-252",
+        "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+      ],
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    }
+  ],
+  "unchanged_context_formatting": {
+    "command": [
+      "format",
+      "--check",
+      "--range",
+      "218-252",
+      "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+    ],
+    "exit_code": 1,
+    "output": "unformatted: File would be reformatted\n   --> tldw_chatbook/Widgets/Library/library_search_rag_panel.py:226:76\n    |\n225 |         \"\"\"\n    -         shown = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(\n    -             RECHUNK_SLOT\n    -         )\n226 +         shown = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(RECHUNK_SLOT)\n227 |         button = Button(\n    |\n\n1 file would be reformatted\n",
+    "note": "Broader range includes unchanged shown= wrapping. Exact changed ranges checked below; production formatting left undisturbed."
+  }
+}

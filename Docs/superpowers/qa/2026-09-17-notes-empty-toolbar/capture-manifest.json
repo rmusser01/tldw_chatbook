@@ -1,0 +1,50 @@
+[
+  {
+    "file": "textual-dark-170x48-notes.svg",
+    "raw_sha256": "d9ba3c6af03002074070b21b5bc37b50a625d2f4fda2a7eece46972e8dc40fdd",
+    "stored_sha256": "407aab6e4e6cf001c48f797a325fdec74305ceb8415c8e99a92cf010ec1c7f02",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-170x48-notes.txt",
+    "raw_sha256": "a5532ad5d456988c522dbdd6805c52047c952988188e3f276cef9c77e4e50d30",
+    "stored_sha256": "a5532ad5d456988c522dbdd6805c52047c952988188e3f276cef9c77e4e50d30",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-80x24-notes.svg",
+    "raw_sha256": "ac0d777fb62cb7b92b337f8141f4b77154c379581f9afc401a806843ef7906fa",
+    "stored_sha256": "24dcc9c55652e1564c9f7ddc8ec0cdffbe20b53d6b55888235f9cef23e97b5ce",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-dark-80x24-notes.txt",
+    "raw_sha256": "f7169fbbbd8bf5455a2c966d3062c8d6387f6f00c9fc90b23c77f40cf8ac16fc",
+    "stored_sha256": "f7169fbbbd8bf5455a2c966d3062c8d6387f6f00c9fc90b23c77f40cf8ac16fc",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-170x48-notes.svg",
+    "raw_sha256": "074866135efe147e77f23c60c6e46b54d997cbb7ad8adb1819fe289c1813c418",
+    "stored_sha256": "5e5559ea0a5c1236771a4a9e9a134118c04b6172cf429c82a7929511d70d57c1",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-170x48-notes.txt",
+    "raw_sha256": "0f2e59127e53f3cf3e3de302b9bb914847fc77c7a59f8fedbd70a5a5132440cb",
+    "stored_sha256": "0f2e59127e53f3cf3e3de302b9bb914847fc77c7a59f8fedbd70a5a5132440cb",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-80x24-notes.svg",
+    "raw_sha256": "9fa791574f3d0d0aeaf0f0b75055268ee77e03136c540c0705dc3e17c278f061",
+    "stored_sha256": "251291422edf5948861332c58efec4cb680d8b2fa986827c89fbcc7a1e8ebb55",
+    "normalization": "trailing whitespace only"
+  },
+  {
+    "file": "textual-light-80x24-notes.txt",
+    "raw_sha256": "f7169fbbbd8bf5455a2c966d3062c8d6387f6f00c9fc90b23c77f40cf8ac16fc",
+    "stored_sha256": "f7169fbbbd8bf5455a2c966d3062c8d6387f6f00c9fc90b23c77f40cf8ac16fc",
+    "normalization": "trailing whitespace only"
+  }
+]

@@ -1,0 +1,66 @@
+{
+  "base": "631cd05954",
+  "targeted": {
+    "command": ".venv/bin/python -m pytest Tests/UI/test_library_ingest_queue_journeys.py Tests/UI/test_library_ingest_retry_last.py Tests/UI/test_library_ingest_inline_consent.py Tests/UI/test_library_ingest_structural.py Tests/UI/test_library_ingest_keyboard.py Tests/UI/test_library_ingest_option_journeys.py Tests/UI/test_library_ingest_option_event_order.py Tests/UI/test_library_ingest_clear_focus.py Tests/UI/test_library_ingest_analyze_skipped.py Tests/UI/test_library_shell.py::test_library_ingest_job_tick_recompose_preserves_typing_focus Tests/UI/test_component_pattern_governance.py -q",
+    "passed": 203,
+    "failed": 0,
+    "warnings": 5,
+    "duration_seconds": 343.89,
+    "new_queue_cases": 16,
+    "full_suite": false
+  },
+  "warnings": [
+    "Three inherited invalid-escape SyntaxWarnings from the component pattern AST checks.",
+    "Two inherited pytest cleanup warnings for old Kokoro temporary directories."
+  ],
+  "architecture": [
+    {
+      "command": ".venv/bin/python -m pytest Tests/Architecture/test_screen_size_ratchet.py -q -k \"library_screen or library_ingest_controller\"",
+      "passed": 1,
+      "failed": 1,
+      "deselected": 3,
+      "failure": "LibraryScreen size ceiling; base35212/current35214 >33204 lines, methods unchanged1321 >1276."
+    },
+    {
+      "command": ".venv/bin/python -m pytest Tests/Architecture/test_library_modules_size_ratchet.py -q -k library_ingest_controller",
+      "passed": 1,
+      "failed": 1,
+      "deselected": 43,
+      "failure": "Ingest controller size ceiling; base3078/current3080 >2721 lines."
+    }
+  ],
+  "static": {
+    "new_ruff_diagnostics": 0,
+    "existing_diagnostics_retained": true,
+    "new_files_fully_formatted": true,
+    "modified_existing_ranges_formatted": true,
+    "diff_whitespace": "pass",
+    "budget_raised": false
+  },
+  "native": {
+    "run": "run-011",
+    "passed": true,
+    "sizes": [
+      [
+        170,
+        48
+      ],
+      [
+        80,
+        24
+      ]
+    ],
+    "themes": [
+      "textual-dark",
+      "textual-light"
+    ],
+    "exit_code": 0,
+    "synthetic_registry_only": true,
+    "databases_checked": 10,
+    "visual_captures_inspected": 6
+  },
+  "limitations": [
+    "No full suite, real import, installation, provider/server request, restart, push or dev integration.",
+    "Live resize while focused in Import can transfer focus to the rail; broader shell ownership remains for review."
+  ]
+}

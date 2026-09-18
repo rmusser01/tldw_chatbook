@@ -1,0 +1,44 @@
+{
+  "pid": 73805,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "appearance_validation_preview_revert_save": true,
+      "theme_browse_edit_apply_save_launch": true,
+      "launch_default_visible_in_appearance": true,
+      "splash_exact_saved_values_and_preview": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "appearance_validation_preview_revert_save": true,
+      "theme_browse_edit_apply_save_launch": true,
+      "launch_default_visible_in_appearance": true,
+      "splash_exact_saved_values_and_preview": true
+    }
+  ],
+  "runner_sha256": "fa96716903899b0dad4bb254930d3ad328c4761b74f7bc6972ead48d45000fa4",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "b9a54a031ba443262afc5d54efa3b1cb0bcab1b7e0fc7897457dc90889cf5c11",
+    "tldw_chatbook/Widgets/settings_theme_editor.py": "b0bc97fd25efcb516190865b1ed5e9bfbbb30f4b33afc7aec8e521be4c11e1ce",
+    "tldw_chatbook/Widgets/settings_splash_screen_viewer.py": "e220cffaaab4872468b3a8577b6887cea52281461864004cb428510ec4fde60f",
+    "tldw_chatbook/css/components/_settings_splash_theme.tcss": "b0fc4c018af27fa28d481b19421d5a6d03d8ca10ad4ead210e7e22cfad13afee",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "fa558c0e13dbee6e1a769d83a00feddb55e3b1dc266f40c1245ebf1ef5937265",
+    "tldw_chatbook/css/features/_settings.tcss": "9e50259895e8bcb6ecc607efdee8869bfb3fdec6ca80324769263b85e2c29bca",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "07f609f24fc46a9408096a2ac97165c974271fdecd0ff029f86d94868781522f"
+  },
+  "waiting_for": "Category settled",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-interface/native_check.py\", line 279, in journey\n    await edit(\"#settings-theme-color-primary\", \"#2277AA\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-interface/native_check.py\", line 167, in edit\n    field = await tab_to(selector)\n            ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-interface/native_check.py\", line 143, in tab_to\n    raise AssertionError(\"Tab did not reach \" + selector)\nAssertionError: Tab did not reach #settings-theme-color-primary\n",
+  "app_run_returned": true,
+  "observed_exit_code": 1,
+  "pid_absence_confirmed_before_next_launch": true,
+  "interrupted_for_confirmed_compact_default_selection_clipping": true
+}

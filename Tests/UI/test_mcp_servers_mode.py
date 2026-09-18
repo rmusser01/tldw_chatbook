@@ -1741,8 +1741,11 @@ def test_servers_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert "height: auto;" in block, (
             f"{label}'s {selector!r} block is missing 'height: auto;'"
         )
-        assert "max-height: 70%;" in block, (
-            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        # ADR-161 task 11: the 70% cap is now the $ds-agentic-mcp-table-cap
+        # token (same value, probe-verified) -- pin the tokenized form.
+        assert "max-height: $ds-agentic-mcp-table-cap;" in block, (
+            f"{label}'s {selector!r} block is missing "
+            "'max-height: $ds-agentic-mcp-table-cap;'"
         )
 
 

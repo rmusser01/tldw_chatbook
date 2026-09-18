@@ -2,6 +2,9 @@ import pytest
 
 import types
 
+from Tests.private_profile import is_private_profile_child, private_profile_test
+from tldw_chatbook.config import ConfigMutationResult
+
 from textual.app import App, ComposeResult
 from textual.widgets import Checkbox, Input, Tree
 
@@ -13,19 +16,20 @@ from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 
 @pytest.fixture
-def tmp_path(tmp_path_factory, monkeypatch):
-    """Select the isolated theme root before constructing its bound editor."""
+def tmp_path(tmp_path_factory, request):
+    """Use the profile selected before imports for this exact test process."""
+    if not is_private_profile_child(request):
+        return tmp_path_factory.mktemp("theme-profile-launcher")
     from tldw_chatbook import config
 
-    profile = tmp_path_factory.mktemp("theme-profile")
-    themes = profile / "themes"
-    themes.mkdir()
-    monkeypatch.setattr(config, "_get_effective_config_path", lambda: profile / "config.toml")
+    themes = config._get_effective_config_path().parent / "themes"
+    themes.mkdir(exist_ok=True)
     return themes
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_can_compose():
+@private_profile_test
+async def test_settings_theme_editor_can_compose(request):
     app = _build_test_app()
     editor = SettingsThemeEditor()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -35,7 +39,8 @@ async def test_settings_theme_editor_can_compose():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_has_color_inputs_for_all_base_colors():
+@private_profile_test
+async def test_settings_theme_editor_has_color_inputs_for_all_base_colors(request):
     app = _build_test_app()
     editor = SettingsThemeEditor()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -43,13 +48,16 @@ async def test_settings_theme_editor_has_color_inputs_for_all_base_colors():
         await pilot.pause()
         inputs = editor.query(Input)
         color_inputs = [
-            inp for inp in inputs if inp.id and inp.id.startswith("settings-theme-color-")
+            inp
+            for inp in inputs
+            if inp.id and inp.id.startswith("settings-theme-color-")
         ]
         assert len(color_inputs) == len(editor.BASE_COLORS)
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_tracks_modified_state():
+@private_profile_test
+async def test_settings_theme_editor_tracks_modified_state(request):
     app = _build_test_app()
     editor = SettingsThemeEditor()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -61,7 +69,8 @@ async def test_settings_theme_editor_tracks_modified_state():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_mounts_without_error():
+@private_profile_test
+async def test_settings_theme_editor_mounts_without_error(request):
     app = _build_test_app()
     editor = SettingsThemeEditor()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -71,7 +80,8 @@ async def test_settings_theme_editor_mounts_without_error():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_mount_does_not_mark_modified():
+@private_profile_test
+async def test_settings_theme_editor_mount_does_not_mark_modified(request):
     """Mounting and initializing the editor must leave is_modified False.
 
     load_theme writes Input values programmatically; the resulting
@@ -90,7 +100,8 @@ async def test_settings_theme_editor_mount_does_not_mark_modified():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_mount_posts_no_modified_status():
+@private_profile_test
+async def test_settings_theme_editor_mount_posts_no_modified_status(request):
     """A clean mount must not emit ThemeModifiedStatus at all.
 
     Textual calls watch methods with the initial value during mount when the
@@ -116,7 +127,8 @@ async def test_settings_theme_editor_mount_posts_no_modified_status():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_user_edit_still_marks_modified():
+@private_profile_test
+async def test_settings_theme_editor_user_edit_still_marks_modified(request):
     """A real user edit (a color value differing from the loaded theme)
     still flips is_modified True -- the no-op guard must not eat real edits."""
     app = _build_test_app()
@@ -132,7 +144,8 @@ async def test_settings_theme_editor_user_edit_still_marks_modified():
 
 
 @pytest.mark.asyncio
-async def test_theme_tree_has_empty_state_guidance():
+@private_profile_test
+async def test_theme_tree_has_empty_state_guidance(request):
     """The collapsed Themes tree left a large blank region (rescore P3);
     a hint under it explains what the tree is for and how to start."""
     app = _build_test_app()
@@ -150,7 +163,10 @@ async def test_theme_tree_has_empty_state_guidance():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_dark_mode_checkbox_tracks_real_changes_only():
+@private_profile_test
+async def test_settings_theme_editor_dark_mode_checkbox_tracks_real_changes_only(
+    request,
+):
     app = _build_test_app()
     editor = SettingsThemeEditor()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -211,7 +227,8 @@ def _isolated_editor_app_with_real_screens(
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_delete_blocks_builtin_themes(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_delete_blocks_builtin_themes(request, tmp_path):
     """Built-in themes (Textual defaults) are not deletable."""
     editor = SettingsThemeEditor()
     app = _isolated_editor_app(editor)
@@ -231,7 +248,8 @@ async def test_settings_theme_editor_delete_blocks_builtin_themes(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_delete_blocks_shipped_themes(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_delete_blocks_shipped_themes(request, tmp_path):
     """Shipped catalog themes are not deletable and say "shipped", matching
     the tree's own grouping (Your themes / Built-in / Shipped themes)."""
     editor = SettingsThemeEditor()
@@ -269,7 +287,8 @@ def _user_theme_labels(editor: SettingsThemeEditor) -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_delete_removes_custom_theme(request, tmp_path):
     """A saved custom (user-created) theme file is deletable, but only after
     confirming the dialog (task-1367: irreversible unlink needs a guard)."""
     theme_file = _write_user_theme(tmp_path, "my_custom_theme")
@@ -313,7 +332,10 @@ async def test_settings_theme_editor_delete_removes_custom_theme(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(
+    request, tmp_path
+):
     """A user theme file whose name shadows a shipped catalog theme is still
     deletable: the save guard allows the shadowing save, so the delete guard
     must not strand the file."""
@@ -345,7 +367,10 @@ async def test_settings_theme_editor_delete_user_file_shadowing_shipped_name(tmp
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_delete_missing_custom_theme_warns(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_delete_missing_custom_theme_warns(
+    request, tmp_path
+):
     """Deleting a name with no saved custom theme file says so honestly."""
     editor = SettingsThemeEditor()
     app = _isolated_editor_app(editor)
@@ -361,7 +386,8 @@ async def test_settings_theme_editor_delete_missing_custom_theme_warns(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_apply_hint_announces_instant_apply():
+@private_profile_test
+async def test_settings_theme_editor_apply_hint_announces_instant_apply(request):
     """task-1369/1371: Apply re-themes the whole app instantly; the hint uses
     the Settings screen's instant-apply phrasing
     (INSTANT_APPLY_BEHAVIOR_COPY)."""
@@ -378,7 +404,8 @@ async def test_settings_theme_editor_apply_hint_announces_instant_apply():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_preset_swatches_are_keyboard_activatable():
+@private_profile_test
+async def test_settings_theme_editor_preset_swatches_are_keyboard_activatable(request):
     """task-1369: preset swatches must be focusable and apply on Enter/Space,
     not just on mouse click."""
     app = _build_test_app()
@@ -415,7 +442,10 @@ async def test_settings_theme_editor_preset_swatches_are_keyboard_activatable():
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_reset_without_edits_skips_confirmation(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_reset_without_edits_skips_confirmation(
+    request, tmp_path
+):
     """task-1371: Reset with no unsaved edits is lossless, so it runs without
     a confirmation dialog."""
     editor = SettingsThemeEditor()
@@ -433,7 +463,10 @@ async def test_settings_theme_editor_reset_without_edits_skips_confirmation(tmp_
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_reset_confirms_before_discarding_edits(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_reset_confirms_before_discarding_edits(
+    request, tmp_path
+):
     """task-1371: Reset discards unapplied edits, so it follows the Settings
     screen's revert rule (ADR-031): confirm first, cancel keeps the edits."""
     editor = SettingsThemeEditor()
@@ -474,7 +507,10 @@ async def test_settings_theme_editor_reset_confirms_before_discarding_edits(tmp_
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_new_confirms_before_discarding_edits(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_new_confirms_before_discarding_edits(
+    request, tmp_path
+):
     """task-1371: New replaces the working palette, so it follows the same
     discard confirmation rule as Reset; unmodified editors skip the dialog."""
     editor = SettingsThemeEditor()
@@ -516,7 +552,10 @@ async def test_settings_theme_editor_new_confirms_before_discarding_edits(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(
+    request, tmp_path
+):
     """TASK-31251: New -> rename -> Apply/Save/Reset/Delete all use the typed name."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -550,7 +589,10 @@ async def test_settings_theme_editor_name_box_drives_apply_save_reset_delete(tmp
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_selecting_builtin_leaf_does_not_retheme_app(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_selecting_builtin_leaf_does_not_retheme_app(
+    request, tmp_path
+):
     """TASK-31255: browsing the tree is read-only for the running app, and the
     palette comes from the real registered Theme, not a hardcoded table."""
     from textual.color import Color
@@ -567,13 +609,15 @@ async def test_settings_theme_editor_selecting_builtin_leaf_does_not_retheme_app
         assert app.theme == "textual-light"
         resolved = app.available_themes["textual-dark"].to_color_system().generate()
         for key in ("background", "secondary", "panel"):
-            assert editor.color_inputs[key].value.upper() == Color.parse(
-                resolved[key]
-            ).hex.upper(), key
+            assert (
+                editor.color_inputs[key].value.upper()
+                == Color.parse(resolved[key]).hex.upper()
+            ), key
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_delete_keeps_app_theme(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_delete_keeps_app_theme(request, tmp_path):
     """TASK-31255: deleting a saved theme resets the editor, not the app theme."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -593,7 +637,8 @@ async def test_settings_theme_editor_delete_keeps_app_theme(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_save_registers_theme_with_app(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_save_registers_theme_with_app(request, tmp_path):
     """TASK-31250: Save registers the theme so Appearance/palette can offer it."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -610,8 +655,9 @@ async def test_settings_theme_editor_save_registers_theme_with_app(tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_theme_editor_set_launch_default_requires_saved_theme(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """TASK-31250: unsaved -> warning; saved -> general.default_theme written."""
     import tldw_chatbook.config as config_module
@@ -619,8 +665,13 @@ async def test_settings_theme_editor_set_launch_default_requires_saved_theme(
     written: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
         config_module,
-        "save_setting_to_cli_config",
-        lambda section, key, value: written.append((section, key, value)) or True,
+        "apply_settings_mutation_to_cli_config",
+        lambda sections: (
+            written.append(
+                ("general", "default_theme", sections["general"]["default_theme"])
+            )
+            or ConfigMutationResult(True, True, None)
+        ),
     )
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -644,7 +695,10 @@ async def test_settings_theme_editor_set_launch_default_requires_saved_theme(
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_remount_after_apply_restores_palette(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_remount_after_apply_restores_palette(
+    request, tmp_path
+):
     """TASK-31252: app.theme == 'custom_<name>' must load, not blank the editor."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -679,7 +733,9 @@ def _hue_distance(a: float, b: float) -> float:
 
 
 @pytest.mark.parametrize("primary", ["#9966FF", "#00CC66", "#FF9900"])
-def test_generate_from_primary_keeps_the_primary_hue(primary):
+@pytest.mark.asyncio
+@private_profile_test
+def test_generate_from_primary_keeps_the_primary_hue(request, primary):
     """TASK-31253: Color.hsl hue is 0-1; the generator treated it as degrees,
     so every primary produced a red secondary and a cyan accent."""
     from textual.color import Color
@@ -695,31 +751,59 @@ def test_generate_from_primary_keeps_the_primary_hue(primary):
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_actions_precede_presets_in_focus_order(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_actions_precede_presets_in_focus_order(
+    request, tmp_path
+):
     """TASK-31256: Apply/Save/Reset must not sit behind 40 preset swatches."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        ids = [w.id for w in editor.query("*") if getattr(w, "can_focus", False) and w.id]
-        assert ids.index("settings-theme-apply") < ids.index("settings-theme-preset-Blues-0")
-        assert ids.index("settings-theme-apply") < ids.index("settings-theme-color-primary")
+        ids = [
+            w.id for w in editor.query("*") if getattr(w, "can_focus", False) and w.id
+        ]
+        assert ids.index("settings-theme-apply") < ids.index(
+            "settings-theme-preset-Blues-0"
+        )
+        assert ids.index("settings-theme-apply") < ids.index(
+            "settings-theme-color-primary"
+        )
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_tabbing_does_not_move_preset_target(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_tabbing_does_not_move_preset_target(
+    request, tmp_path
+):
     """TASK-31256: focusing colour inputs on the way to a swatch must not change
     which colour the swatch fills (it used to land on Error)."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
-    app = _isolated_editor_app(editor)
-    async with app.run_test(size=(120, 40)) as pilot:
+    from typing import ClassVar
+
+    from Tests.UI.test_settings_theme_editor_render import (
+        _BUNDLED_CSS_PATH,
+        _SETTINGS_SHEET_PATH,
+    )
+
+    class StyledEditorApp(IsolatedWidgetTestApp):
+        CSS_PATH: ClassVar[list[str]] = [
+            str(_BUNDLED_CSS_PATH),
+            str(_SETTINGS_SHEET_PATH),
+        ]
+
+    app = StyledEditorApp(lambda: iter((editor,)))
+    async with app.run_test(size=(120, 70)) as pilot:
         await pilot.pause()
+        swatch = editor.query_one("#settings-theme-preset-Blues-0")
+        assert swatch.styles.background.hex.upper() == editor.COLOR_PRESETS["Blues"][0]
         editor.color_inputs["error"].focus()
         await pilot.pause()
         before_error = editor.color_inputs["error"].value
         editor.query_one("#settings-theme-preset-Blues-0").focus()
+        await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
         assert editor.current_theme_data["primary"] == editor.COLOR_PRESETS["Blues"][0]
@@ -727,7 +811,10 @@ async def test_settings_theme_editor_tabbing_does_not_move_preset_target(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_tree_lists_your_themes_first_and_expanded(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_tree_lists_your_themes_first_and_expanded(
+    request, tmp_path
+):
     """TASK-31256: own themes first and open; the 58 shipped themes collapsed."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -746,7 +833,8 @@ async def test_settings_theme_editor_tree_lists_your_themes_first_and_expanded(t
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_new_copies_current_palette(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_new_copies_current_palette(request, tmp_path):
     """TASK-31257: the hint promises 'from the current palette'; New used to load
     a hardcoded blue set and force dark=True."""
     editor = SettingsThemeEditor()
@@ -766,7 +854,10 @@ async def test_settings_theme_editor_new_copies_current_palette(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_save_confirms_before_overwriting_another_theme(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_save_confirms_before_overwriting_another_theme(
+    request, tmp_path
+):
     """TASK-31258: saving under a name that already exists on disk (and is not
     the theme currently loaded from that file) asks first; cancel keeps the file."""
     editor = SettingsThemeEditor()
@@ -789,7 +880,10 @@ async def test_settings_theme_editor_save_confirms_before_overwriting_another_th
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(
+    request, tmp_path
+):
     """TASK-31258: re-saving the theme you loaded from disk is an update, not an overwrite."""
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
@@ -808,7 +902,10 @@ async def test_settings_theme_editor_saving_the_loaded_theme_does_not_confirm(tm
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_export_confirms_before_overwriting(tmp_path, monkeypatch):
+@private_profile_test
+async def test_settings_theme_editor_export_confirms_before_overwriting(
+    request, tmp_path, monkeypatch
+):
     """TASK-31258: Export onto an existing file asks first."""
     from pathlib import Path
 
@@ -832,7 +929,10 @@ async def test_settings_theme_editor_export_confirms_before_overwriting(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_preview_repaints_from_edits_without_apply(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_preview_repaints_from_edits_without_apply(
+    request, tmp_path
+):
     """TASK-31259: the preview must follow the palette being edited, not the
     app theme (which only changes on Apply)."""
     editor = SettingsThemeEditor()
@@ -852,7 +952,10 @@ async def test_settings_theme_editor_preview_repaints_from_edits_without_apply(t
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_one_primary_button_per_action_row(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_one_primary_button_per_action_row(
+    request, tmp_path
+):
     """TASK-31280: Apply is the one primary action; New and Generate were also
     variant=primary, so three buttons competed for the eye."""
     from textual.widgets import Button
@@ -867,7 +970,10 @@ async def test_settings_theme_editor_one_primary_button_per_action_row(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(
+    request, tmp_path
+):
     """Live at 2026-09-04: a saved accent '#FFD700' displayed as '#FED700' because
     the editor read every colour back through the resolved colour system, which
     round-trips set colours through float maths. Colours a Theme sets explicitly
@@ -882,7 +988,12 @@ async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(tmp_path
         app.register_theme(
             create_theme_from_dict(
                 "exact_check",
-                {"primary": "#9966FF", "accent": "#FFD700", "warning": "#FFD700", "dark": True},
+                {
+                    "primary": "#9966FF",
+                    "accent": "#FFD700",
+                    "warning": "#FFD700",
+                    "dark": True,
+                },
             )
         )
         editor.load_theme("exact_check")
@@ -900,7 +1011,10 @@ async def test_settings_theme_editor_load_theme_keeps_set_colours_exact(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_using_stale_name(tmp_path):
+@private_profile_test
+async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_using_stale_name(
+    request, tmp_path
+):
     """Qodo #6: an emptied Name box must not let Apply/Export/Delete/Set default
     act on the previously loaded name."""
     editor = SettingsThemeEditor()
@@ -924,15 +1038,18 @@ async def test_settings_theme_editor_cleared_name_blocks_actions_instead_of_usin
             app.notify.reset_mock()
             handler()
             await pilot.pause()
-            assert app.notify.call_args.args[0] == "Please enter a theme name", handler.__name__
+            assert app.notify.call_args.args[0] == "Please enter a theme name", (
+                handler.__name__
+            )
             assert not isinstance(app.screen, ConfirmationDialog), handler.__name__
         assert (tmp_path / "ocean.toml").exists()
         assert "custom_" not in " ".join(app.available_themes)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_theme_editor_set_launch_default_validates_name_and_reports_write_failure(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Qodo #2 + #7: a traversal-shaped name is rejected before any path check, and
     a failed config write is reported as an error, not success."""
@@ -953,7 +1070,11 @@ async def test_settings_theme_editor_set_launch_default_validates_name_and_repor
         assert "Invalid theme name" in app.notify.call_args.args[0]
 
         editor.current_theme_name = "ocean"
-        monkeypatch.setattr(config_module, "save_setting_to_cli_config", lambda *a, **k: False)
+        monkeypatch.setattr(
+            config_module,
+            "apply_settings_mutation_to_cli_config",
+            lambda *a, **k: ConfigMutationResult(False, False, "before_replace"),
+        )
         editor.on_set_launch_default()
         await pilot.pause()
         message, kwargs = app.notify.call_args.args[0], app.notify.call_args.kwargs
@@ -962,8 +1083,9 @@ async def test_settings_theme_editor_set_launch_default_validates_name_and_repor
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_shipped_theme(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Qodo #9: deleting a saved theme drops its runtime registration (so Appearance
     and the palette stop offering it), restores a shadowed shipped theme, and clears
@@ -977,9 +1099,18 @@ async def test_settings_theme_editor_delete_unregisters_and_restores_shadowed_sh
     _write_user_theme(tmp_path, "ocean")
     _write_user_theme(tmp_path, shipped.name)
     written: list[tuple] = []
-    monkeypatch.setattr(config_module, "get_cli_setting", lambda section, key, default=None: "ocean")
     monkeypatch.setattr(
-        config_module, "save_setting_to_cli_config", lambda *a: written.append(a) or True
+        config_module, "get_cli_setting", lambda section, key, default=None: "ocean"
+    )
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda sections: (
+            written.append(
+                ("general", "default_theme", sections["general"]["default_theme"])
+            )
+            or ConfigMutationResult(True, True, None)
+        ),
     )
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:

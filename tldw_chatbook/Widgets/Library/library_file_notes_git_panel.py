@@ -2187,7 +2187,8 @@ class LibraryFileNotesGitPanel(Vertical):
             TextArea,
         )
         note_surface.load_text(notes)
-        note_surface.styles.height = max(2, min(8, len(candidate.included_notes)))
+        # ds-runtime: included note count in the current push review
+        note_surface.set_styles(height=max(2, min(8, len(candidate.included_notes))))
         self.query_one(
             "#file-notes-git-push-review-technical",
             Collapsible,

@@ -1,0 +1,33 @@
+{
+  "base": "2e79851916",
+  "targeted": [
+    {
+      "command": ".venv/bin/python -m pytest Tests/UI/test_library_ingest_recent_journeys.py Tests/UI/test_library_ingest_queue_journeys.py Tests/UI/test_library_crit9_import.py Tests/UI/test_library_shell.py::test_clear_finished_keeps_recent_ledger_and_scrolls_confirm Tests/UI/test_library_shell.py::test_dismiss_preserves_failure_in_recent_ledger Tests/UI/test_library_shell.py::test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds Tests/UI/test_library_shell.py::test_library_ingest_clear_finished_requires_second_press Tests/UI/test_library_ingest_canvas.py::test_recent_ingests_section_renders_terminal_jobs Tests/UI/test_library_ingest_canvas.py::test_recent_ingests_section_renders_when_queue_empty Tests/UI/test_library_ingest_canvas.py::test_recent_import_bracket_filename_renders_clean Tests/UI/test_design_token_governance.py Tests/UI/test_component_pattern_governance.py -q --tb=short",
+      "passed": 68,
+      "failed": 0,
+      "warnings": 5,
+      "duration_seconds": 180.07
+    },
+    {
+      "command": ".venv/bin/python -m pytest Tests/Library/test_library_ingest_state.py -k 'group or recent or clear_finished' -q --tb=short",
+      "passed": 26,
+      "failed": 0,
+      "deselected": 236,
+      "warnings": 2,
+      "duration_seconds": 2.42
+    }
+  ],
+  "passed_total": 94,
+  "new_cases": 8,
+  "full_suite": false,
+  "warnings": [
+    "Inherited pytest cleanup warnings for old Kokoro temporary directories.",
+    "Inherited invalid-escape SyntaxWarnings from component pattern AST checks."
+  ],
+  "static": "Zero new Ruff diagnostics; six pre-existing canvas diagnostics retained. New files and changed ranges formatted.",
+  "architecture": "LibraryScreen and ingest controller unchanged; their previously recorded size ratchet failures are not retested or claimed fixed. No budgets raised.",
+  "limitations": [
+    "Synthetic job registry, no store or import runner. Retry uses an explicit registry-only app seam.",
+    "No real ingestion, remote/provider calls, dependency install, restart, or live resize while focus remains in Import."
+  ]
+}

@@ -10,51 +10,55 @@
  * zero-importer orphans were removed. What remains below is the LIVE, feature-
  * scoped styling for the in-Settings theme editor and splash-screen viewer
  * (`settings_theme_editor.py`, `settings_splash_screen_viewer.py`). */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* ===== Settings theme editor ===== */
 #settings-theme-tree {
-    width: 100%;
-    height: 12;
-    min-height: 8;
+    width: $ds-width-full;
+    height: $ds-size-12;
+    min-height: $ds-size-8;
     border: solid $ds-grid-line;
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* TASK-31259: the preview is a Console-shaped stub whose rows are painted from
    the palette being edited (see SettingsThemeEditor._refresh_preview), so it
    follows every keystroke instead of the applied app theme. */
 .settings-theme-preview {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
     border: solid $ds-grid-line;
 }
 
 .settings-theme-preview-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 /* TASK-31254: a 1-row Static with `border: solid` paints only its top border
    glyphs -- the hex text (and the "invalid" label) never had a content row.
    No border; the colour IS the swatch and the text sits on it. */
 .color-swatch {
-    width: 9;
-    min-width: 9;
-    height: 1;
-    min-height: 1;
+    width: $ds-size-9;
+    min-width: $ds-size-9;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
     content-align: center middle;
     text-style: bold;
 }
 
 .color-preset-swatch {
-    width: 3;
-    min-width: 3;
-    height: 1;
-    min-height: 1;
-    margin: 0 1 0 0;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     border: none;
 }
 
@@ -72,11 +76,11 @@
    `.settings-imagegen-backend-row Checkbox`). One row: glyph + On/Off label. */
 #settings-theme-dark-mode {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-bottom: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-0;
     border: none;
-    padding: 0;
+    padding: $ds-space-0;
 }
 #settings-theme-dark-mode > .toggle--button {
     color: $ds-surface-panel;
@@ -94,35 +98,81 @@
     height: auto;
 }
 #settings-workbench.settings-workbench-compact #settings-theme-card .theme-editor-action {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* ===== Settings splash screen viewer ===== */
 .settings-splash-gallery {
-    height: 24;
-    min-height: 16;
-    width: 100%;
+    height: $ds-size-24;
+    min-height: $ds-size-16;
+    width: $ds-width-full;
 }
 
 #settings-splash-card-list {
-    width: 45%;
-    height: 100%;
+    width: $ds-percent-45;
+    height: $ds-height-full;
     border: solid $primary-lighten-2;
 }
 
 #settings-splash-preview-scroll {
-    width: 1fr;
-    height: 100%;
+    width: $ds-width-fill;
+    height: $ds-height-full;
     border: solid $primary-lighten-2;
     background: $surface;
 }
 
 .settings-splash-preview {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
 }
 
 .settings-splash-preview #splash-display {
-    width: 100%;
-    height: 100%;
+    width: $ds-width-full;
+    height: $ds-height-full;
 }
+
+/* Theme editor selectable swatches and preview contrast (ADR-161). */
+
+    SettingsThemeEditor .theme-preset-blues-0 { background: $ds-theme-preset-blues-0; }
+    SettingsThemeEditor .theme-preset-blues-1 { background: $ds-theme-preset-blues-1; }
+    SettingsThemeEditor .theme-preset-blues-2 { background: $ds-theme-preset-blues-2; }
+    SettingsThemeEditor .theme-preset-blues-3 { background: $ds-theme-preset-blues-3; }
+    SettingsThemeEditor .theme-preset-blues-4 { background: $ds-theme-preset-blues-4; }
+    SettingsThemeEditor .theme-preset-greens-0 { background: $ds-theme-preset-greens-0; }
+    SettingsThemeEditor .theme-preset-greens-1 { background: $ds-theme-preset-greens-1; }
+    SettingsThemeEditor .theme-preset-greens-2 { background: $ds-theme-preset-greens-2; }
+    SettingsThemeEditor .theme-preset-greens-3 { background: $ds-theme-preset-greens-3; }
+    SettingsThemeEditor .theme-preset-greens-4 { background: $ds-theme-preset-greens-4; }
+    SettingsThemeEditor .theme-preset-reds-0 { background: $ds-theme-preset-reds-0; }
+    SettingsThemeEditor .theme-preset-reds-1 { background: $ds-theme-preset-reds-1; }
+    SettingsThemeEditor .theme-preset-reds-2 { background: $ds-theme-preset-reds-2; }
+    SettingsThemeEditor .theme-preset-reds-3 { background: $ds-theme-preset-reds-3; }
+    SettingsThemeEditor .theme-preset-reds-4 { background: $ds-theme-preset-reds-4; }
+    SettingsThemeEditor .theme-preset-purples-0 { background: $ds-theme-preset-purples-0; }
+    SettingsThemeEditor .theme-preset-purples-1 { background: $ds-theme-preset-purples-1; }
+    SettingsThemeEditor .theme-preset-purples-2 { background: $ds-theme-preset-purples-2; }
+    SettingsThemeEditor .theme-preset-purples-3 { background: $ds-theme-preset-purples-3; }
+    SettingsThemeEditor .theme-preset-purples-4 { background: $ds-theme-preset-purples-4; }
+    SettingsThemeEditor .theme-preset-grays-0 { background: $ds-theme-preset-grays-0; }
+    SettingsThemeEditor .theme-preset-grays-1 { background: $ds-theme-preset-grays-1; }
+    SettingsThemeEditor .theme-preset-grays-2 { background: $ds-theme-preset-grays-2; }
+    SettingsThemeEditor .theme-preset-grays-3 { background: $ds-theme-preset-grays-3; }
+    SettingsThemeEditor .theme-preset-grays-4 { background: $ds-theme-preset-grays-4; }
+    SettingsThemeEditor .theme-preset-material-0 { background: $ds-theme-preset-material-0; }
+    SettingsThemeEditor .theme-preset-material-1 { background: $ds-theme-preset-material-1; }
+    SettingsThemeEditor .theme-preset-material-2 { background: $ds-theme-preset-material-2; }
+    SettingsThemeEditor .theme-preset-material-3 { background: $ds-theme-preset-material-3; }
+    SettingsThemeEditor .theme-preset-material-4 { background: $ds-theme-preset-material-4; }
+    SettingsThemeEditor .theme-preset-pastels-0 { background: $ds-theme-preset-pastels-0; }
+    SettingsThemeEditor .theme-preset-pastels-1 { background: $ds-theme-preset-pastels-1; }
+    SettingsThemeEditor .theme-preset-pastels-2 { background: $ds-theme-preset-pastels-2; }
+    SettingsThemeEditor .theme-preset-pastels-3 { background: $ds-theme-preset-pastels-3; }
+    SettingsThemeEditor .theme-preset-pastels-4 { background: $ds-theme-preset-pastels-4; }
+    SettingsThemeEditor .theme-preset-dark-0 { background: $ds-theme-preset-dark-0; }
+    SettingsThemeEditor .theme-preset-dark-1 { background: $ds-theme-preset-dark-1; }
+    SettingsThemeEditor .theme-preset-dark-2 { background: $ds-theme-preset-dark-2; }
+    SettingsThemeEditor .theme-preset-dark-3 { background: $ds-theme-preset-dark-3; }
+    SettingsThemeEditor .theme-preset-dark-4 { background: $ds-theme-preset-dark-4; }
+    SettingsThemeEditor .theme-preview-dark-ink { color: $ds-theme-preview-dark-ink !important; }
+    SettingsThemeEditor .theme-preview-light-ink { color: $ds-theme-preview-light-ink !important; }
+    SettingsThemeEditor .theme-preview-invalid { background: $ds-theme-preview-invalid !important; color: $ds-theme-preview-light-ink !important; }

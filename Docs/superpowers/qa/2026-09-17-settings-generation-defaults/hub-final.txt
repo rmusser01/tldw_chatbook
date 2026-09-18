@@ -1,0 +1,28 @@
+...........................................                              [100%]
+============================= slowest 25 durations =============================
+3.93s call     Tests/UI/test_settings_configuration_hub.py::test_settings_keeps_dormant_library_width_through_resize_mode_and_generation
+2.64s call     Tests/UI/test_settings_configuration_hub.py::test_settings_console_behavior_focus_reveals_full_guide_when_purpose_starts_flush_with_bottom_fold
+2.00s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_streaming_and_enums_prevent_invalid_input
+2.00s call     Tests/UI/test_settings_configuration_hub.py::test_settings_console_behavior_revert_button_works_with_input_focus
+1.96s call     Tests/UI/test_settings_configuration_hub.py::test_settings_paste_toggle_keeps_keyboard_focus_after_refresh
+1.89s call     Tests/UI/test_settings_configuration_hub.py::test_compact_input_edge_renders_under_real_bundle
+1.87s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_saves_openai_generation_profile
+1.81s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_saves_selected_model_profile
+1.76s call     Tests/UI/test_settings_configuration_hub.py::test_settings_console_behavior_focus_auto_scrolls_to_field_guide
+1.70s call     Tests/UI/test_settings_configuration_hub.py::test_settings_invalid_input_keeps_error_tint_while_focused
+1.70s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_rejects_out_of_range_model_profile[#settings-model-profile-temperature-2.1-Temperature must be between 0.0 and 2.0.]
+1.59s call     Tests/UI/test_settings_configuration_hub.py::test_slash_refocus_selects_existing_filter_text
+1.56s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_api_key_focus_style_has_no_underline
+1.55s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_picker_enter_provider_id_focuses_manual_field[Exact_Custom-ID]
+1.53s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_rejects_out_of_range_model_profile[#settings-model-profile-top-p-1.1-Top P must be between 0.0 and 1.0.]
+1.52s call     Tests/UI/test_settings_configuration_hub.py::test_settings_appearance_focused_input_keeps_typed_text_visible
+1.49s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_save_button_works_with_endpoint_input_focus
+1.49s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_picker_enter_provider_id_focuses_manual_field[OpenAI]
+1.39s call     Tests/UI/test_settings_configuration_hub.py::test_field_search_enter_focuses_the_field
+1.36s call     Tests/UI/test_settings_configuration_hub.py::test_settings_keyboard_category_focus_survives_selection_recompose
+1.34s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_profile_none_values_render_as_blank_inputs
+1.32s call     Tests/UI/test_settings_configuration_hub.py::test_conversation_settings_save_focuses_primary_return_above_compact_fold
+1.29s call     Tests/UI/test_settings_configuration_hub.py::test_field_search_finds_and_focuses_folder_files_tree_controls[Folder Files tree pane-settings-appearance-library-notes-files-tree-open]
+1.29s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_connect_block_precedes_collapsed_generation_defaults
+1.26s call     Tests/UI/test_settings_configuration_hub.py::test_sync_rows_recompose_mid_navigation_still_focuses_target_field
+43 passed, 376 deselected in 66.71s (0:01:06)

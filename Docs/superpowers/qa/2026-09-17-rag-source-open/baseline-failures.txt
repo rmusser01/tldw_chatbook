@@ -1,0 +1,770 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_library_starter_deep_link_opens_hidden_collection_or_note_route _____
+Tests/UI/test_library_shell.py:2535: in test_library_starter_deep_link_opens_hidden_collection_or_note_route
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+E   textual.worker.WorkerFailed: Worker raised exception: AttributeError("'types.SimpleNamespace' object has no attribute 'active_authority'")
+---------------------------- Captured stderr setup -----------------------------
+2026-09-16 21:01:19.036 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-16 21:01:19.044 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-16 21:01:19.044 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-16 21:01:19.045 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-16 21:01:19.047 | INFO     | tldw_chatbook.config:_load_settings_uncached:1843 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-16 21:01:19.048 | INFO     | tldw_chatbook.config:_load_settings_uncached:1846 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-16 21:01:19.048 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6111 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_starter_deep_link0/test_data/config/config.toml
+2026-09-16 21:01:19.049 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6140 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_starter_deep_link0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-16 21:01:19.049 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6149 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_starter_deep_link0/test_data/config/config.toml
+2026-09-16 21:01:19.050 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6214 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-16 21:01:19.050 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6218 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-16 21:01:19.051 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1869 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-16 21:01:19.051 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2190 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-16 21:01:19.052 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3405 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_starter_deep_link0/test_data/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-16 21:01:19.053 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3415 - load_settings: Configuration cached for future use
+2026-09-16 21:01:19.060 | INFO     | tldw_chatbook.app:__init__:7910 - Loaded app_config - strip_thinking_tags: True
+2026-09-16 21:01:19.062 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'notes_service' completed in 0.000s
+2026-09-16 21:01:19.062 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'prompts_service' completed in 0.000s
+2026-09-16 21:01:19.062 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'providers_models' completed in 0.000s
+2026-09-16 21:01:19.063 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'media_db' completed in 0.000s
+2026-09-16 21:01:19.106 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_starter_deep_link0/test_data/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:19.149 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ucde1wpo/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:19.197 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ucde1wpo/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:19.198 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:19.199 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ucde1wpo/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:19.199 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ucde1wpo/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:19.326 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-09-16 21:01:19.369 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-09-16 21:01:19.410 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-09-16 21:01:19.448 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-09-16 21:01:19.488 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+2026-09-16 21:01:19.526 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-09-16 21:01:19.526 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ucde1wpo/scheduled_tasks.sqlite [Client: default]
+2026-09-16 21:01:19.528 | DEBUG    | tldw_chatbook.app:__init__:8090 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-09-16 21:01:19.528 | DEBUG    | tldw_chatbook.app:__init__:8093 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-09-16 21:01:19.533 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:46 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+2026-09-16 21:01:19.575 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:541 - Created EvalsDB schema version 5
+2026-09-16 21:01:19.575 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:177 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_starter_deep_link0/test_data/home/.local/share/tldw_cli/default_user/evals.db
+2026-09-16 21:01:19.575 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-09-16 21:01:19.580 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-09-16 21:01:19.581 | INFO     | tldw_chatbook.app:_init_worker_handlers:11827 - Worker handler registry initialized with all handlers
+2026-09-16 21:01:19.581 | INFO     | tldw_chatbook.app:__init__:8266 - === STARTUP TIMING SUMMARY ===
+2026-09-16 21:01:19.582 | INFO     | tldw_chatbook.app:__init__:8267 - Total initialization time: 0.527 seconds
+2026-09-16 21:01:19.582 | INFO     | tldw_chatbook.app:__init__:8273 -   basic_init: 0.005s (1.0%)
+2026-09-16 21:01:19.582 | INFO     | tldw_chatbook.app:__init__:8273 -   attribute_init: 0.000s (0.0%)
+2026-09-16 21:01:19.583 | INFO     | tldw_chatbook.app:__init__:8273 -   parallel_init: 0.002s (0.3%)
+2026-09-16 21:01:19.583 | INFO     | tldw_chatbook.app:__init__:8286 -     - notes_service: 0.000s (0.1% of parallel_init)
+2026-09-16 21:01:19.583 | INFO     | tldw_chatbook.app:__init__:8286 -     - media_db: 0.000s (0.1% of parallel_init)
+2026-09-16 21:01:19.583 | INFO     | tldw_chatbook.app:__init__:8286 -     - providers_models: 0.000s (0.1% of parallel_init)
+2026-09-16 21:01:19.584 | INFO     | tldw_chatbook.app:__init__:8286 -     - prompts_service: 0.000s (0.0% of parallel_init)
+2026-09-16 21:01:19.584 | INFO     | tldw_chatbook.app:__init__:8290 - ==============================
+2026-09-16 21:01:19.585 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing LibraryScreen screen: library
+2026-09-16 21:01:19.909 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen library mounted
+2026-09-16 21:01:20.950 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen library unmounted
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/worker.py:370 in _run  │
+│                                                                              │
+│   367 │   │   │   self.state = WorkerState.RUNNING                           │
+│   368 │   │   │   app.log.worker(self)                                       │
+│   369 │   │   │   try:                                                       │
+│ ❱ 370 │   │   │   │   self._result = await self.run()                        │
+│   371 │   │   │   except asyncio.CancelledError as error:                    │
+│   372 │   │   │   │   self.state = WorkerState.CANCELLED                     │
+│   373 │   │   │   │   self._error = error                                    │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │           app = LibraryHarness(                                          │ │
+│ │                 │   title='LibraryHarness',                              │ │
+│ │                 │   classes={'-dark-mode'},                              │ │
+│ │                 │   pseudo_classes={'nocolor', 'focus', 'dark'}          │ │
+│ │                 )                                                        │ │
+│ │         error = AttributeError("'types.SimpleNamespace' object has no    │ │
+│ │                 attribute 'active_authority'")                           │ │
+│ │          self = <Worker                                                  │ │
+│ │                 │   ERROR                                                │ │
+│ │                 │   name='_load_library_collections_capture_entry'       │ │
+│ │                 │   group='library_collections_capture_entry'            │ │
+│ │                 │   description='<coroutine object                       │ │
+│ │                 LibraryScreen._load_library_collections_capture_entry at │ │
+│ │                 0x115'+7                                                 │ │
+│ │                 >                                                        │ │
+│ │ worker_failed = WorkerFailed('Worker raised exception:                   │ │
+│ │                 AttributeError("\'types.SimpleNamespace\' object has no  │ │
+│ │                 attribute \'active_authority\'")')                       │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/worker.py:354 in run   │
+│                                                                              │
+│   351 │   │   Returns:                                                       │
+│   352 │   │   │   Return value of the work.                                  │
+│   353 │   │   """                                                            │
+│ ❱ 354 │   │   return await (                                                 │
+│   355 │   │   │   self._run_threaded() if self._thread_worker else self._run │
+│   356 │   │   )                                                              │
+│   357                                                                        │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ self = <Worker                                                           │ │
+│ │        │   ERROR                                                         │ │
+│ │        │   name='_load_library_collections_capture_entry'                │ │
+│ │        │   group='library_collections_capture_entry'                     │ │
+│ │        │   description='<coroutine object                                │ │
+│ │        LibraryScreen._load_library_collections_capture_entry at 0x115'+7 │ │
+│ │        >                                                                 │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/worker.py:341 in       │
+│ _run_async                                                                   │
+│                                                                              │
+│   338 │   │   ):                                                             │
+│   339 │   │   │   return await self._work()                                  │
+│   340 │   │   elif inspect.isawaitable(self._work):                          │
+│ ❱ 341 │   │   │   return await self._work                                    │
+│   342 │   │   elif callable(self._work):                                     │
+│   343 │   │   │   raise WorkerError("Request to run a non-async function as  │
+│   344 │   │   raise WorkerError("Unsupported attempt to run an async worker" │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ self = <Worker                                                           │ │
+│ │        │   ERROR                                                         │ │
+│ │        │   name='_load_library_collections_capture_entry'                │ │
+│ │        │   group='library_collections_capture_entry'                     │ │
+│ │        │   description='<coroutine object                                │ │
+│ │        LibraryScreen._load_library_collections_capture_entry at 0x115'+7 │ │
+│ │        >                                                                 │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/library_screen.py:33651 in               │
+│ _load_library_collections_capture_entry                                      │
+│                                                                              │
+│   33648 │   │   return self._collections_controller._refresh_library_collect │
+│   33649 │                                                                    │
+│   33650 │   async def _load_library_collections_capture_entry(self) -> None: │
+│ ❱ 33651 │   │   return await self._collections_controller._load_library_coll │
+│   33652 │                                                                    │
+│   33653 │   async def _run_library_collections_capture_transition(           │
+│   33654 │   │   self,                                                        │
+│                                                                              │
+│ ╭────────────────────── locals ───────────────────────╮                      │
+│ │ self = LibraryScreen(classes='shell-header-normal') │                      │
+│ ╰─────────────────────────────────────────────────────╯                      │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Library_Modules/library_collections_controller.p │
+│ y:463 in _load_library_collections_capture_entry                             │
+│                                                                              │
+│    460 │   │   if controller is None:                                        │
+│    461 │   │   │   self._refresh_library_collections_capture_reader()        │
+│    462 │   │   │   return                                                    │
+│ ❱  463 │   │   controller.adopt_active_authority()                           │
+│    464 │   │   self._refresh_library_collections_capture_reader()            │
+│    465 │   │                                                                 │
+│    466 │   │   if controller.state.authority_key is None:                    │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ controller = <tldw_chatbook.UI.Library_Modules.library_collections_capt… │ │
+│ │              object at 0x115d4da30>                                      │ │
+│ │       self = <tldw_chatbook.UI.Library_Modules.library_collections_cont… │ │
+│ │              object at 0x115e6fec0>                                      │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Library_Modules/library_collections_capture_cont │
+│ roller.py:186 in adopt_active_authority                                      │
+│                                                                              │
+│   183 │   │   │   ``True`` when visible authority state changed and pending  │
+│   184 │   │   │   invalidated, otherwise ``False``.                          │
+│   185 │   │   """                                                            │
+│ ❱ 186 │   │   authority = self.scope_service.active_authority                │
+│   187 │   │   authority_key = authority.key if authority is not None else No │
+│   188 │   │   unavailable = authority is None                                │
+│   189 │   │   if (                                                           │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ self = <tldw_chatbook.UI.Library_Modules.library_collections_capture_co… │ │
+│ │        object at 0x115d4da30>                                            │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────╯
+AttributeError: 'types.SimpleNamespace' object has no attribute
+'active_authority'
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:8044 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:8143 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:8164 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+_____________ test_library_shell_open_in_console_triggers_handoff ______________
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/unittest/mock.py:928: in assert_called_once
+    raise AssertionError(msg)
+E   AssertionError: Expected 'mock' to have been called once. Called 0 times.
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_library_shell.py:7342: in test_library_shell_open_in_console_triggers_handoff
+    app.open_chat_with_handoff.assert_called_once()
+E   AssertionError: Expected 'mock' to have been called once. Called 0 times.
+----------------------------- Captured stderr call -----------------------------
+2026-09-16 21:01:21.326 | INFO     | tldw_chatbook.config:_load_settings_uncached:1843 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-16 21:01:21.326 | INFO     | tldw_chatbook.config:_load_settings_uncached:1846 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-16 21:01:21.327 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6111 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_shell_open_in_con0/test_data/config/config.toml
+2026-09-16 21:01:21.327 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6140 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_shell_open_in_con0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-16 21:01:21.328 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6149 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_shell_open_in_con0/test_data/config/config.toml
+2026-09-16 21:01:21.328 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6214 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-16 21:01:21.329 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6218 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-16 21:01:21.329 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1869 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-16 21:01:21.330 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2190 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-16 21:01:21.331 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3405 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_shell_open_in_con0/test_data/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-16 21:01:21.331 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3415 - load_settings: Configuration cached for future use
+2026-09-16 21:01:21.337 | INFO     | tldw_chatbook.app:__init__:7910 - Loaded app_config - strip_thinking_tags: True
+2026-09-16 21:01:21.338 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'notes_service' completed in 0.000s
+2026-09-16 21:01:21.338 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'providers_models' completed in 0.000s
+2026-09-16 21:01:21.339 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'prompts_service' completed in 0.000s
+2026-09-16 21:01:21.339 | INFO     | tldw_chatbook.app:__init__:8018 - Parallel init task 'media_db' completed in 0.000s
+2026-09-16 21:01:21.384 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_shell_open_in_con0/test_data/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:21.419 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i2djmj_8/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:21.460 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i2djmj_8/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:21.461 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:21.461 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i2djmj_8/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:21.462 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i2djmj_8/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-16 21:01:21.564 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-09-16 21:01:21.603 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-09-16 21:01:21.639 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-09-16 21:01:21.681 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-09-16 21:01:21.714 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+2026-09-16 21:01:21.747 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-09-16 21:01:21.747 | INFO     | tldw_chatbook.DB.base_db:__init__:762 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i2djmj_8/scheduled_tasks.sqlite [Client: default]
+2026-09-16 21:01:21.748 | DEBUG    | tldw_chatbook.app:__init__:8090 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-09-16 21:01:21.749 | DEBUG    | tldw_chatbook.app:__init__:8093 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-09-16 21:01:21.784 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:541 - Created EvalsDB schema version 5
+2026-09-16 21:01:21.784 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:177 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-482/test_library_shell_open_in_con0/test_data/home/.local/share/tldw_cli/default_user/evals.db
+2026-09-16 21:01:21.785 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-09-16 21:01:21.785 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-09-16 21:01:21.786 | INFO     | tldw_chatbook.app:_init_worker_handlers:11827 - Worker handler registry initialized with all handlers
+2026-09-16 21:01:21.786 | INFO     | tldw_chatbook.app:__init__:8266 - === STARTUP TIMING SUMMARY ===
+2026-09-16 21:01:21.786 | INFO     | tldw_chatbook.app:__init__:8267 - Total initialization time: 0.454 seconds
+2026-09-16 21:01:21.787 | INFO     | tldw_chatbook.app:__init__:8273 -   basic_init: 0.005s (1.1%)
+2026-09-16 21:01:21.787 | INFO     | tldw_chatbook.app:__init__:8273 -   attribute_init: 0.000s (0.0%)
+2026-09-16 21:01:21.787 | INFO     | tldw_chatbook.app:__init__:8273 -   parallel_init: 0.001s (0.3%)
+2026-09-16 21:01:21.788 | INFO     | tldw_chatbook.app:__init__:8286 -     - media_db: 0.000s (0.1% of parallel_init)
+2026-09-16 21:01:21.788 | INFO     | tldw_chatbook.app:__init__:8286 -     - notes_service: 0.000s (0.1% of parallel_init)
+2026-09-16 21:01:21.788 | INFO     | tldw_chatbook.app:__init__:8286 -     - providers_models: 0.000s (0.1% of parallel_init)
+2026-09-16 21:01:21.788 | INFO     | tldw_chatbook.app:__init__:8286 -     - prompts_service: 0.000s (0.0% of parallel_init)
+2026-09-16 21:01:21.789 | INFO     | tldw_chatbook.app:__init__:8290 - ==============================
+2026-09-16 21:01:21.796 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing LibraryScreen screen: library
+2026-09-16 21:01:21.872 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen library mounted
+2026-09-16 21:01:21.942 | DEBUG    | tldw_chatbook.UI.Screens.library_screen:_study_count_or_none:12908 - Failed to fetch quizzes count for Library create rail.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest/__main__.py", line 9, in <module>
+    raise SystemExit(_console_main())
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 253, in _console_main
+    code = _main(prog=_get_prog_name(sys.argv))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 229, in _main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 377, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 330, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 384, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 408, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 139, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 249, in call_and_report
+    call = CallInfo.from_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 361, in from_call
+    result: TResult | None = func()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 250, in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+    item.runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 569, in runtest
+    super().runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 1707, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 167, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 905, in inner
+    runner.run(coro, context=context)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+    self._run_once()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1999, in _run_once
+    handle._run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+> File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12904, in _study_count_or_none
+    result = await self._run_library_service_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12704, in _run_library_service_call
+    return await asyncio.to_thread(invoke_service_in_worker)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12698, in invoke_service_in_worker
+    return asyncio.run(  # policy-exception: worker-thread loop
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12693, in await_result
+    return await result
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Study_Interop/quiz_scope_service.py", line 234, in count_quizzes
+    await self._maybe_await(self._service_for(backend).count_quizzes())
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Study_Interop/quiz_scope_service.py", line 65, in _service_for
+    raise ValueError("Local quiz backend is unavailable.")
+ValueError: Local quiz backend is unavailable.
+2026-09-16 21:01:21.960 | DEBUG    | tldw_chatbook.UI.Screens.library_screen:_study_count_or_none:12908 - Failed to fetch flashcards due count for Library create rail.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest/__main__.py", line 9, in <module>
+    raise SystemExit(_console_main())
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 253, in _console_main
+    code = _main(prog=_get_prog_name(sys.argv))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 229, in _main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 377, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 330, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 384, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 408, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 139, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 249, in call_and_report
+    call = CallInfo.from_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 361, in from_call
+    result: TResult | None = func()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 250, in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+    item.runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 569, in runtest
+    super().runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 1707, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 167, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 905, in inner
+    runner.run(coro, context=context)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+    self._run_once()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1999, in _run_once
+    handle._run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+> File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12904, in _study_count_or_none
+    result = await self._run_library_service_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12704, in _run_library_service_call
+    return await asyncio.to_thread(invoke_service_in_worker)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12698, in invoke_service_in_worker
+    return asyncio.run(  # policy-exception: worker-thread loop
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12693, in await_result
+    return await result
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Study_Interop/study_scope_service.py", line 982, in count_due_flashcards
+    self._service_for_mode(normalized_mode).count_due_flashcards()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Study_Interop/study_scope_service.py", line 116, in _service_for_mode
+    raise ValueError("Local study backend is unavailable.")
+ValueError: Local study backend is unavailable.
+2026-09-16 21:01:21.961 | DEBUG    | tldw_chatbook.UI.Screens.library_screen:_study_count_or_none:12908 - Failed to fetch study decks count for Library create rail.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest/__main__.py", line 9, in <module>
+    raise SystemExit(_console_main())
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 253, in _console_main
+    code = _main(prog=_get_prog_name(sys.argv))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 229, in _main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 377, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 330, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 384, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 408, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 139, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 249, in call_and_report
+    call = CallInfo.from_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 361, in from_call
+    result: TResult | None = func()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 250, in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+    item.runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 569, in runtest
+    super().runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 1707, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 167, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 905, in inner
+    runner.run(coro, context=context)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+    self._run_once()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1999, in _run_once
+    handle._run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+> File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12904, in _study_count_or_none
+    result = await self._run_library_service_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12704, in _run_library_service_call
+    return await asyncio.to_thread(invoke_service_in_worker)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12698, in invoke_service_in_worker
+    return asyncio.run(  # policy-exception: worker-thread loop
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12693, in await_result
+    return await result
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Study_Interop/study_scope_service.py", line 946, in count_decks
+    self._service_for_mode(normalized_mode).count_decks()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Study_Interop/study_scope_service.py", line 116, in _service_for_mode
+    raise ValueError("Local study backend is unavailable.")
+ValueError: Local study backend is unavailable.
+2026-09-16 21:01:21.962 | WARNING  | tldw_chatbook.UI.Library_Modules.library_prompts_controller:_prompts_count_or_none:922 - Failed to fetch local prompts count; Prompts row will show no count.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest/__main__.py", line 9, in <module>
+    raise SystemExit(_console_main())
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 253, in _console_main
+    code = _main(prog=_get_prog_name(sys.argv))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 229, in _main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 377, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 330, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 384, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 408, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 139, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 249, in call_and_report
+    call = CallInfo.from_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 361, in from_call
+    result: TResult | None = func()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 250, in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+    item.runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 569, in runtest
+    super().runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 1707, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 167, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 905, in inner
+    runner.run(coro, context=context)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+    self._run_once()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1999, in _run_once
+    handle._run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12865, in _prompts_count_or_none
+    return await self._prompts_controller._prompts_count_or_none(count_prompts, **kwargs)
+> File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py", line 918, in _prompts_count_or_none
+    result = await self._run_library_service_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12704, in _run_library_service_call
+    return await asyncio.to_thread(invoke_service_in_worker)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12698, in invoke_service_in_worker
+    return asyncio.run(  # policy-exception: worker-thread loop
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/library_screen.py", line 12693, in await_result
+    return await result
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Prompt_Management/prompt_scope_service.py", line 1457, in count_prompts
+    service = self._service_for_mode(normalized_mode)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Prompt_Management/prompt_scope_service.py", line 1202, in _service_for_mode
+    raise ValueError("Local prompt backend is unavailable.")
+ValueError: Local prompt backend is unavailable.
+2026-09-16 21:01:22.488 | ERROR    | tldw_chatbook.UI.Console_Modules.archive:request_conversation_resume:52 - Conversation metadata unavailable
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest/__main__.py", line 9, in <module>
+    raise SystemExit(_console_main())
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 253, in _console_main
+    code = _main(prog=_get_prog_name(sys.argv))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py", line 229, in _main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 377, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 330, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 384, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 408, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 139, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 249, in call_and_report
+    call = CallInfo.from_call(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 361, in from_call
+    result: TResult | None = func()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 250, in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+    item.runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 569, in runtest
+    super().runtest()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 1707, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 167, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 905, in inner
+    runner.run(coro, context=context)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+    self._run_once()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1999, in _run_once
+    handle._run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/worker.py", line 370, in _run
+    self._result = await self.run()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/worker.py", line 354, in run
+    return await (
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/worker.py", line 341, in _run_async
+    return await self._work
+> File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Console_Modules/archive.py", line 48, in request_conversation_resume
+    row = await storage_call(service, "get_conversation_metadata", conversation_id)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Chat/conversation_archive_actions.py", line 66, in storage_call
+    call = getattr(service, method)
+AttributeError: '_StaticLibraryConversationDetailService' object has no attribute 'get_conversation_metadata'
+2026-09-16 21:01:22.557 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen library unmounted
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:8044 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:8143 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:8164 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+============================= slowest 25 durations =============================
+1.90s call     Tests/UI/test_library_shell.py::test_library_starter_deep_link_opens_hidden_collection_or_note_route
+1.23s call     Tests/UI/test_library_shell.py::test_library_shell_open_in_console_triggers_handoff
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_shell.py::test_library_starter_deep_link_opens_hidden_collection_or_note_route
+FAILED Tests/UI/test_library_shell.py::test_library_shell_open_in_console_triggers_handoff
+2 failed in 5.60s
+
+Baseline pytest exit: 1

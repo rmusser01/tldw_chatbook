@@ -14,7 +14,7 @@ from pathlib import Path
 from textual import on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
-from textual.events import Mount
+from textual.events import Mount, Resize
 from textual.widgets import Button, Input, Label, Select
 
 ##############################################################################
@@ -157,6 +157,10 @@ class BaseFileDialog(FileSystemPickerScreen):
         immediately clearing the flag it just set.
         """
 
+    def on_resize(self, event: Resize) -> None:
+        """Give the filename its own row when the footer needs compact layout."""
+        self.set_class(event.size.width < 96 or event.size.height < 30, "-compact")
+
     def _input_bar(self) -> ComposeResult:
         """Provide any widgets for the input before, before the buttons."""
         # (task-3304, MI-15) Name the field: the bar's Input was unlabeled.
@@ -177,7 +181,7 @@ class BaseFileDialog(FileSystemPickerScreen):
             )
 
     def _field_label_text(self, value: str) -> str:
-        """"File name:", or "Folder path:" once the typed text is a folder.
+        """ "File name:", or "Folder path:" once the typed text is a folder.
 
         Only ``FileOpen(offer_select_folder=True)`` sets ``_offer_select_
         folder`` -- ``FileSave`` (also a ``BaseFileDialog``) never does, so

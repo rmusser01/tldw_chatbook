@@ -1,0 +1,157 @@
+FFFFFFFFFFFFF                                                            [100%]
+=================================== FAILURES ===================================
+_ test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-dark] _
+Tests/UI/test_settings_model_catalog_save_journeys.py:90: in test_catalog_keyboard_failure_retry_and_fractional_interval
+    assert "not saved" in _status(screen).lower()
+                          ^^^^^^^^^^^^^^^
+Tests/UI/test_settings_model_catalog_save_journeys.py:72: in _status
+    return str(screen.query_one(STATUS, Static).renderable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#settings-model-catalog-save-status' on SettingsScreen(classes='shell-header-normal')
+_ test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-light] _
+Tests/UI/test_settings_model_catalog_save_journeys.py:90: in test_catalog_keyboard_failure_retry_and_fractional_interval
+    assert "not saved" in _status(screen).lower()
+                          ^^^^^^^^^^^^^^^
+Tests/UI/test_settings_model_catalog_save_journeys.py:72: in _status
+    return str(screen.query_one(STATUS, Static).renderable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#settings-model-catalog-save-status' on SettingsScreen(classes='shell-header-normal')
+_ test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-dark] _
+Tests/UI/test_settings_model_catalog_save_journeys.py:87: in test_catalog_keyboard_failure_retry_and_fractional_interval
+    await _tab_to(host, pilot, MASTER)
+Tests/UI/test_settings_provider_keyboard_journeys.py:40: in _tab_to
+    _assert_painted(host.screen, target)
+Tests/UI/test_library_rag_result_focus.py:27: in _assert_painted
+    assert region.intersection(clip) == region, (widget.id, region, clip)
+E   AssertionError: ('settings-model-catalog-auto-refresh', Region(x=43, y=12, width=44, height=3), Region(x=43, y=8, width=30, height=13))
+E   assert Region(x=43, ...=30, height=3) == Region(x=43, ...=44, height=3)
+E
+E     Omitting 3 identical items, use -vv to show
+E     Differing attributes:
+E     ['width']
+E
+E     Drill down into differing attribute width:
+E       width: 30 != 44
+E     Use -v to get more diff
+_ test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-light] _
+Tests/UI/test_settings_model_catalog_save_journeys.py:87: in test_catalog_keyboard_failure_retry_and_fractional_interval
+    await _tab_to(host, pilot, MASTER)
+Tests/UI/test_settings_provider_keyboard_journeys.py:40: in _tab_to
+    _assert_painted(host.screen, target)
+Tests/UI/test_library_rag_result_focus.py:27: in _assert_painted
+    assert region.intersection(clip) == region, (widget.id, region, clip)
+E   AssertionError: ('settings-model-catalog-auto-refresh', Region(x=43, y=12, width=44, height=3), Region(x=43, y=8, width=30, height=13))
+E   assert Region(x=43, ...=30, height=3) == Region(x=43, ...=44, height=3)
+E
+E     Omitting 3 identical items, use -vv to show
+E     Differing attributes:
+E     ['width']
+E
+E     Drill down into differing attribute width:
+E       width: 30 != 44
+E     Use -v to get more diff
+_________ test_catalog_exception_preserves_choices_and_redacts_message _________
+Tests/UI/test_settings_model_catalog_save_journeys.py:120: in test_catalog_exception_preserves_choices_and_redacts_message
+    assert "not saved" in _status(screen).lower()
+                          ^^^^^^^^^^^^^^^
+Tests/UI/test_settings_model_catalog_save_journeys.py:72: in _status
+    return str(screen.query_one(STATUS, Static).renderable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#settings-model-catalog-save-status' on SettingsScreen(classes='shell-header-normal')
+___ test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[12] ____
+Tests/UI/test_settings_model_catalog_save_journeys.py:153: in test_catalog_serializes_rapid_edits_including_saved_value_roundtrip
+    assert writer.config["model_catalog"]["stale_after_hours"] == int(latest)
+E   AssertionError: assert 6 == 12
+E    +  where 12 = int('12')
+___ test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[24] ____
+Tests/UI/test_settings_model_catalog_save_journeys.py:153: in test_catalog_serializes_rapid_edits_including_saved_value_roundtrip
+    assert writer.config["model_catalog"]["stale_after_hours"] == int(latest)
+E   AssertionError: assert 6 == 24
+E    +  where 24 = int('24')
+______ test_catalog_invalid_intervals_do_not_write_and_explain_recovery[] ______
+Tests/UI/test_settings_model_catalog_save_journeys.py:169: in test_catalog_invalid_intervals_do_not_write_and_explain_recovery
+    assert "hours" in _status(screen).lower()
+                      ^^^^^^^^^^^^^^^
+Tests/UI/test_settings_model_catalog_save_journeys.py:72: in _status
+    return str(screen.query_one(STATUS, Static).renderable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#settings-model-catalog-save-status' on SettingsScreen(classes='shell-header-compact')
+____ test_catalog_invalid_intervals_do_not_write_and_explain_recovery[abc] _____
+Tests/UI/test_settings_model_catalog_save_journeys.py:169: in test_catalog_invalid_intervals_do_not_write_and_explain_recovery
+    assert "hours" in _status(screen).lower()
+                      ^^^^^^^^^^^^^^^
+Tests/UI/test_settings_model_catalog_save_journeys.py:72: in _status
+    return str(screen.query_one(STATUS, Static).renderable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#settings-model-catalog-save-status' on SettingsScreen(classes='shell-header-compact')
+_____ test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-1] _____
+Tests/UI/test_settings_model_catalog_save_journeys.py:169: in test_catalog_invalid_intervals_do_not_write_and_explain_recovery
+    assert "hours" in _status(screen).lower()
+                      ^^^^^^^^^^^^^^^
+Tests/UI/test_settings_model_catalog_save_journeys.py:72: in _status
+    return str(screen.query_one(STATUS, Static).renderable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#settings-model-catalog-save-status' on SettingsScreen(classes='shell-header-compact')
+____ test_catalog_invalid_intervals_do_not_write_and_explain_recovery[nan] _____
+Tests/UI/test_settings_model_catalog_save_journeys.py:168: in test_catalog_invalid_intervals_do_not_write_and_explain_recovery
+    assert not writer.calls
+E   AssertionError: assert not [{'model_catalog': {'auto_refresh_enabled': True, 'stale_after_hours': nan, 'auto_refresh_disabled': [], 'write_to_config': []}}]
+E    +  where [{'model_catalog': {'auto_refresh_enabled': True, 'stale_after_hours': nan, 'auto_refresh_disabled': [], 'write_to_config': []}}] = <Tests.UI.test_settings_model_catalog_save_journeys.ConfigWriter object at 0x11a805010>.calls
+____ test_catalog_invalid_intervals_do_not_write_and_explain_recovery[inf] _____
+Tests/UI/test_settings_model_catalog_save_journeys.py:168: in test_catalog_invalid_intervals_do_not_write_and_explain_recovery
+    assert not writer.calls
+E   AssertionError: assert not [{'model_catalog': {'auto_refresh_enabled': True, 'stale_after_hours': inf, 'auto_refresh_disabled': [], 'write_to_config': []}}]
+E    +  where [{'model_catalog': {'auto_refresh_enabled': True, 'stale_after_hours': inf, 'auto_refresh_disabled': [], 'write_to_config': []}}] = <Tests.UI.test_settings_model_catalog_save_journeys.ConfigWriter object at 0x1160bfef0>.calls
+____ test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-inf] ____
+Tests/UI/test_settings_model_catalog_save_journeys.py:169: in test_catalog_invalid_intervals_do_not_write_and_explain_recovery
+    assert "hours" in _status(screen).lower()
+                      ^^^^^^^^^^^^^^^
+Tests/UI/test_settings_model_catalog_save_journeys.py:72: in _status
+    return str(screen.query_one(STATUS, Static).renderable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#settings-model-catalog-save-status' on SettingsScreen(classes='shell-header-compact')
+============================= slowest 25 durations =============================
+7.81s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-light]
+7.56s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-dark]
+6.96s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-light]
+6.77s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-dark]
+1.67s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[12]
+1.66s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[24]
+1.37s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_exception_preserves_choices_and_redacts_message
+1.25s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-1]
+1.23s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[]
+1.21s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[abc]
+1.20s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[nan]
+1.17s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[inf]
+1.15s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-inf]
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-dark]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-light]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-dark]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-light]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_exception_preserves_choices_and_redacts_message
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[12]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[24]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[abc]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-1]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[nan]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[inf]
+FAILED Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-inf]
+13 failed in 45.04s

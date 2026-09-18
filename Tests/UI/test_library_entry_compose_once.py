@@ -75,6 +75,7 @@ from Tests.UI.background_signals import (
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
+    LibraryProductionCSSHarness,
     _FakeSkillsScopeService,
     _active_library_screen,
     _build_test_app as _build_library_test_app,
@@ -569,7 +570,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
     _seed_conversations(app, [], notes=_two_notes())
     announcements: list = []
     app.notify = lambda message, **kwargs: announcements.append(message)
-    host = LibraryHarness(app)
+    host = LibraryProductionCSSHarness(app)
 
     def graduation_toasts() -> list:
         return [
@@ -607,9 +608,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         route_key = screen._library_entry_route_key()
         screen._library_entry_reconcile_dirty = True
         screen._library_entry_reconcile_pending = (generation, route_key)
-        reconciled = await screen._reconcile_library_entry_state(
-            generation, route_key
-        )
+        reconciled = await screen._reconcile_library_entry_state(generation, route_key)
         await pilot.pause()
 
         assert reconciled is LibraryEntryReconcileResult.APPLIED
@@ -648,7 +647,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ("reconcile", "replace"))
+@pytest.mark.parametrize("operation", ("reconcile", "replace", "route_swap"))
 async def test_library_notes_recompose_does_not_steal_newer_focus(
     monkeypatch, operation
 ):
@@ -692,7 +691,7 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
                 operation_task = asyncio.create_task(
                     screen._reconcile_library_entry_state(generation, route_key)
                 )
-            else:
+            elif operation == "replace":
                 replacement = screen._build_library_entry_active_child()
                 assert isinstance(replacement, LibraryNotesCanvas)
                 operation_task = asyncio.create_task(
@@ -701,6 +700,14 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
                         generation=generation,
                         route_key=route_key,
                     )
+                )
+            else:
+                shell = library_screen_module.build_library_shell_state(
+                    screen._build_library_shell_input(),
+                    selected_row_id=screen._library_selected_row_id,
+                )
+                operation_task = asyncio.create_task(
+                    screen._replace_library_browse_canvas(shell)
                 )
             await _wait_for_condition(
                 pilot,
@@ -711,7 +718,11 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
             newer_target.focus()
             release_recompose.set()
 
-            assert await operation_task is LibraryEntryReconcileResult.APPLIED
+            result = await operation_task
+            if operation == "route_swap":
+                assert result is True
+            else:
+                assert result is LibraryEntryReconcileResult.APPLIED
             await pilot.pause()
             await pilot.pause()
 
@@ -2128,7 +2139,7 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
     _seed_conversations(app, conversations)
     service = app.chat_conversation_scope_service
     original_locate = service.locate_conversation_page
-    host = LibraryHarness(app)
+    host = LibraryProductionCSSHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
@@ -2159,8 +2170,9 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         release = asyncio.Event()
 
         async def gated_locator(conversation_id: str, **kwargs):
-            started.set()
-            await release.wait()
+            if conversation_id == "chat-pending":
+                started.set()
+                await release.wait()
             return await original_locate(conversation_id, **kwargs)
 
         monkeypatch.setattr(
@@ -2177,19 +2189,24 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
             what="pending conversation point fetch",
         )
 
-        screen._selected_conversation_id = "chat-1"
+        # A new admitted navigation request supersedes the delayed locator.
+        # Old list rows are deliberately disabled during that lookup.
+        await screen._open_library_item_by_id("conversations", "chat-1")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._selected_conversation_id == "chat-1"
         owner = screen._library_entry_canvas_owner()
         assert isinstance(owner, LibraryConversationsCanvas)
-        owner.sync_state(screen._build_library_conversations_state())
-        await pilot.pause()
         focus = next(
             row
             for row in screen.query(".library-conversation-row")
             if getattr(row, "conversation_id", "") == "chat-1"
         )
+        assert not focus.disabled
         focus.focus()
         await pilot.pause()
 
+        assert screen.focused is focus
         release.set()
         result = await await_background_task(
             task,

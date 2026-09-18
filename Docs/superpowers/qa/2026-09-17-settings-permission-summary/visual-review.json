@@ -1,0 +1,62 @@
+[
+  {
+    "file": "textual-dark-190x55-disclosure.svg",
+    "stored_sha256": "2c148b63250416270579ce39da13a4d72a717eeef38f8fb1827fe439894d5180",
+    "inspection": "Final run byte-identical to inspected run 002"
+  },
+  {
+    "file": "textual-dark-190x55-failed.svg",
+    "stored_sha256": "297b6c1d25a602fe0e96c6adc6bd5f7ab93c4bee3ab60e5535cbc19be431e325",
+    "inspection": "Final run inspected directly"
+  },
+  {
+    "file": "textual-dark-190x55-saved.svg",
+    "stored_sha256": "210ac48f7a6ea79594e6e7d2e87dc768db280e38d2ba5b361af00c16dd38e055",
+    "inspection": "Final run byte-identical to inspected run 002"
+  },
+  {
+    "file": "textual-dark-80x24-disclosure.svg",
+    "stored_sha256": "2adff1fa86d8eca355393c55f1720e57edc89c41f1058e4f4170f9b714628bd1",
+    "inspection": "Final run byte-identical to inspected run 002"
+  },
+  {
+    "file": "textual-dark-80x24-failed.svg",
+    "stored_sha256": "5194110ebbc3979881170ae4c5946677452095b53751c11cdf851de9b46eafa5",
+    "inspection": "Final run inspected directly"
+  },
+  {
+    "file": "textual-dark-80x24-saved.svg",
+    "stored_sha256": "6fab59e770fc0827efa6c2b9d23ba003575666490701d60311bfa42f6dfa4549",
+    "inspection": "Final run byte-identical to inspected run 002"
+  },
+  {
+    "file": "textual-light-190x55-disclosure.svg",
+    "stored_sha256": "61d175dba33c34f3ae110d39ecdd0cb53a2019cd3fac1ecdba38b56bf92794cd",
+    "inspection": "Final run byte-identical to inspected run 002"
+  },
+  {
+    "file": "textual-light-190x55-failed.svg",
+    "stored_sha256": "6a01cdbfb235c8a00210266e2d0ecff9a36a93f09f1817457238e8ecd8d5f0a4",
+    "inspection": "Final run inspected directly"
+  },
+  {
+    "file": "textual-light-190x55-saved.svg",
+    "stored_sha256": "4f913fa23bdb30d1fa1597516f8a88a8a6cbd57d4073a4d72dbb7e5193bda375",
+    "inspection": "Final run byte-identical to inspected run 002"
+  },
+  {
+    "file": "textual-light-80x24-disclosure.svg",
+    "stored_sha256": "613c622b288e554bf9d3216a5303080061e189557750b4d79fd10d27921ef648",
+    "inspection": "Final run byte-identical to inspected run 002"
+  },
+  {
+    "file": "textual-light-80x24-failed.svg",
+    "stored_sha256": "5538eb258998be806b5b618608dc677f2396cb3f94f2cc65a1d7e277690d7483",
+    "inspection": "Final run inspected directly"
+  },
+  {
+    "file": "textual-light-80x24-saved.svg",
+    "stored_sha256": "efa63428fd736c0861cf3f4c3ad910d5d44e8f56080fa47cdec20c896cd1fdd3",
+    "inspection": "Final run byte-identical to inspected run 002"
+  }
+]

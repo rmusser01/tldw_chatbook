@@ -1,0 +1,282 @@
+{
+  "pid": 89310,
+  "runner_sha256": "a3b99ab41471ac5f19cb21c065440e700b6d65088c6313d8cea93bdceb1703cb",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "cbbfd573aac31175d618391abc4d56ba8b99e3d13b38546eef6be8fa75a8dddf",
+    "tldw_chatbook/css/features/_settings.tcss": "aa9cda96e3218e701f105b3d3a7950b2fd8bed55af8e3b054424dd5ad3ed3f11",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "bfe422026c935a5c1133b2990315477bbe966f579456ee69e63a1fd4cd2c354f",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "5fdd48f3923c9b79712e385d9c4767632ea25e46aecae26e3f1701ed1b608e4e"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "exact_profile_mutation": true,
+      "same_field_resize_painted": true,
+      "invalid_rejected": true,
+      "failed_save_recovered": true,
+      "blank_removes_override": true,
+      "revert_cancel_and_discard": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "exact_profile_mutation": true,
+      "same_field_resize_painted": true,
+      "invalid_rejected": true,
+      "failed_save_recovered": true,
+      "blank_removes_override": true,
+      "revert_cancel_and_discard": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "exact_profile_mutation": true,
+      "same_field_resize_painted": true,
+      "invalid_rejected": true,
+      "failed_save_recovered": true,
+      "blank_removes_override": true,
+      "revert_cancel_and_discard": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "exact_profile_mutation": true,
+      "same_field_resize_painted": true,
+      "invalid_rejected": true,
+      "failed_save_recovered": true,
+      "blank_removes_override": true,
+      "revert_cancel_and_discard": true
+    }
+  ],
+  "writes": [
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": true
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": true
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": true
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": true
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true,
+              "temperature": 0.35
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    },
+    {
+      "sections": {
+        "api_settings.openai": {
+          "model_defaults": {
+            "model-a": {
+              "max_tokens": 8192,
+              "streaming": true
+            },
+            "model-b": {
+              "temperature": 0.8,
+              "top_p": 0.9
+            }
+          }
+        }
+      },
+      "injected": false
+    }
+  ],
+  "waiting_for": "Notifications dismissed",
+  "passed": true,
+  "unrelated_config_unchanged": true,
+  "app_run_returned": true
+}

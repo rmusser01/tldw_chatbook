@@ -66,6 +66,7 @@ DESIGN_SYSTEM_SPEC = Path(
     "Docs/superpowers/specs/2026-05-02-agentic-terminal-design-system-design.md"
 )
 DESIGN_SYSTEM_TCSS = Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
+DS_PRIMITIVES_TCSS = Path("tldw_chatbook/css/components/_ds_primitives.tcss")
 CORE_VARIABLES_TCSS = Path("tldw_chatbook/css/core/_variables.tcss")
 MAIN_TCSS = Path("tldw_chatbook/css/main.tcss")
 LOADED_TCSS = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
@@ -104,10 +105,40 @@ def test_agentic_terminal_tcss_module_is_implemented_and_imported():
 
     assert '@import "./components/_agentic_terminal.tcss";' in main_text
     assert '"components/_agentic_terminal.tcss"' in build_text
+    # ADR-161 task 10: the design system's vocabulary was carved out of the
+    # monolith into single-purpose sheets -- the ds-* primitives family
+    # (task 9), the console/library/settings/home vocabularies and the
+    # destination workbench wrappers (task 10). The contract's classes are
+    # checkable against the UNION of those agentic-family sheets; the
+    # loaded-bundle checks above still prove every one of them reaches the
+    # running app.
+    family_sheets = [
+        class_text,
+        DS_PRIMITIVES_TCSS.read_text(encoding="utf-8"),
+    ]
+    family_sheets += [
+        (
+            DESIGN_SYSTEM_TCSS.parent.parent / rel
+        ).read_text(encoding="utf-8")
+        for rel in (
+            "features/_console.tcss",
+            "features/_console_panels.tcss",
+            "features/_library.tcss",
+            "features/_library_panels.tcss",
+            "features/_settings.tcss",
+            "features/_home.tcss",
+            "layout/_destination.tcss",
+        )
+    ]
+    family_union = "\n".join(family_sheets)
     for class_name in REQUIRED_DESIGN_SYSTEM_CLASSES | REQUIRED_STATE_CLASSES:
-        assert f".{class_name}" in class_text
-    assert ".density-compact" in class_text
-    assert ".density-comfortable" in class_text
+        assert f".{class_name}" in family_union, (
+            f".{class_name} missing from every agentic-family sheet "
+            "(monolith, ds-primitives, console/library/settings/home/"
+            "destination)"
+        )
+    assert ".density-compact" in family_union
+    assert ".density-comfortable" in family_union
 
 
 def test_loaded_stylesheet_contains_agentic_terminal_contract():
@@ -220,7 +251,14 @@ def test_disabled_menu_rows_survive_textuals_compounded_dim():
     """
     from pathlib import Path
 
-    source = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+    # ADR-161 task 10: the console vocabulary lives in the console sheets.
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
+    )
 
     match = re.search(
         r"\.console-composer-menu-item:disabled\s*\{([^}]*)\}", source, re.S
@@ -250,7 +288,14 @@ def test_console_action_row_disabled_rules_still_clear_dim():
     quietly delete the `text-style: none` that already protects it."""
     from pathlib import Path
 
-    source = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+    # ADR-161 task 10: the console vocabulary lives in the console sheets.
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
+    )
     rules = re.findall(r"(\.console-action-disabled[^{]*)\{([^}]*)\}", source, re.S)
     assert rules, "no .console-action-disabled rules found"
     for selector, body in rules:

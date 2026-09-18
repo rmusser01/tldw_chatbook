@@ -1,162 +1,24 @@
-"""Library Collections canvas controller.
+"""Collections capture-reader UI orchestration.
 
-Controller PR of the Collections extraction series (wave-2 task 6 of
-``.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio``;
-collections series 2/3; recipe:
-``backlog/docs/library-decomposition-recipe.md`` §13; export series --
-``library_export_controller.py`` -- is the template this mirrors
-byte-for-byte in shape). Owns the entire Collections capture-reader
-cluster: rail-scope/filter/sort/paging, quick-capture (open/close/draft
-retention/save/retry/refresh), the reader (mode switch, highlights,
-freeform/linked notes, content actions, archive/hard-delete/favorite/
-mark-read/open-original), the legacy-JSON-recovery export mechanism (an
-unrelated feature to the chatbook Export canvas -- see below), and the
-adaptive-reader-shell layout sync/preference mirror pair. ``LibraryScreen``
-keeps one-line delegators under every one of these original names.
+Owns capture scopes, filters, paging, quick capture, annotations, content actions,
+archive recovery and adaptive-reader layout. Saved-prompt grouping belongs to
+Prompts; legacy JSON recovery here is separate from the Export destination.
 
-**Cluster derivation -- ownership.** A mechanical ``ast`` scan of
-``LibraryScreen`` for method names containing ``"collection"`` (case-
-insensitive) finds 67 methods (matches wave-2 task 5's own census exactly,
-re-derived fresh at this task's execution time per the recipe's own
-"never trust a carried-over count" rule -- §6). Reading each of the 67
-bodies (not trusting the name match, per the recipe's own documented
-substring-match trap, §2/§11) finds **3 are Prompts-owned, not Collections-
-owned**: ``handle_library_prompts_collection`` (``@on``),
-``_apply_library_prompt_collection``, ``_sync_library_prompt_collection_
-label`` -- an entirely different feature (saved-prompt grouping), using
-``_library_prompt_collections_controller``/``_library_prompt_browse_
-controller``, not this cluster's ``_library_collections_capture_
-controller``. Task 5's own report already excluded these from the field
-census; this task reconfirms the same 3 are excluded from the METHOD
-census for the identical reason.
+LibraryScreen retains the Textual event boundary and shared shell dispatch.
+Framework services are live-read from that screen so mounted state is never
+snapshotted. Other shared dependencies are named constructor callables: the
+allocation guard prevents stale resize work; the selected Library row is read-only;
+the headless capture engine has both accessors because it is lazily constructed.
+That engine is wiring, not serializable UI state.
 
-**No further exclusions were found.** Unlike the export series (29 of 51
-candidates excluded across three rounds: other-subsystem ownership, a
-``@work`` framework-decorator hazard, and 9 unbound-fake-self/silent-Mock
-test bypasses), this cluster's remaining 64 candidates all: (a) have no
-``@work`` decorator (a full ``ast`` decorator-list scan over all 64 found
-zero -- confirmed, not assumed, before committing to this move); (b) are
-never called via ``LibraryScreen.<name>(fake, ...)`` unbound, in any test
-file under ``Tests/`` (a repo-wide grep for every one of the 64 exact
-names as ``LibraryScreen.<name>(`` found zero hits -- neither
-``Tests/UI/`` nor ``Tests/Library/``, matching the export series' own
-forward note to widen the search); (c) are never monkeypatched via
-``monkeypatch.setattr(screen, "<name>", ...)``/``monkeypatch.setattr(
-LibraryScreen, "<name>", ...)`` nor assigned directly as an instance
-attribute (``screen.<name> = ...``) anywhere in ``Tests/`` (a script-driven
-regex sweep over every ``.py`` file under ``Tests/`` for both shapes, all
-64 names, found zero); and (d) are none of recipe §3's four known
-screen-routed monkeypatch names (``_list_local_source_snapshot``,
-``_refresh_local_source_snapshot``, ``_apply_local_source_snapshot``,
-``_refresh_library_note_detail``). All 64 move onto this controller.
+Collections state is owned by LibraryCollectionsState through an accessor and
+generated single-prefix properties. The screen's reader-preference dispatch still
+resolves its own state shim. Capture service authority and request fences remain in
+the headless controller; this layer additionally fences annotation presentations.
 
-**A fourth, scattered group the naive "one contiguous block" read would
-miss**: 4 of the 64 live far from the other 60 in the pre-move file --
-``_sync_library_collections_reader_layout_from_shell`` (was line 6886),
-``_mirror_library_collections_reader_preference`` (was line 6926),
-``_restore_library_collections_page`` (was line 9554, a ``@staticmethod``),
-and ``_library_collections_capture_presentation`` (was line 13922) -- each
-sitting beside its sibling subsystems' own same-shaped methods (the
-adaptive-reader-shell layout-sync/preference-mirror family every browse
-subsystem has one of, and the RAG panel-state builder family). All four
-are genuinely Collections-owned (confirmed by body content, not position)
-and move here alongside the other 60. The first two are called by name
-from ``_toggle_library_media_reader_pane`` (a FOUR-subsystem shell
-dispatcher that stays on ``LibraryScreen``, unmoved) and from
-``_sync_library_reader_preference_layout``/``_persist_library_reader_
-preference``'s literal-string-keyed dispatch dicts (``"collections":
-self._mirror_library_collections_reader_preference``) -- both call sites
-resolve ``self.<name>`` on the SCREEN at call time, so a same-named screen
-delegator satisfies them exactly like every other cluster method's
-external callers, with no special-casing needed.
-
-**Already-extracted-wiring check (this series' own new bypass-adjacent
-shape, per the task brief): does any candidate already delegate to an
-existing controller, making it dead-on-arrival for a full-body move?**
-None do. Every one of the 64 candidates is a REAL, full-bodied
-``LibraryScreen`` method -- none is a bare one-line forward to
-``LibraryCollectionsCaptureController`` (the pre-existing headless
-orchestration engine this cluster depends on, distinct from the
-Textual-adjacent controller this file defines) or to any other
-already-existing controller. 28 of the 64 REFERENCE that headless engine
-via ``self._library_collections_capture_controller`` as a collaborator
-(building requests, calling ``controller.load_page``/``select_item``/
-``scope_service.<op>``, etc.), which is a data/business-logic dependency,
-not a wiring shortcut -- confirmed by reading every one of those 28
-bodies: each still carries its own request-building, validation, status-
-line, and recompose-scheduling logic around the calls into that engine.
-(Test guard, confirmed still green: ``Tests/UI/
-test_product_maturity_phase39_library_collections.py::
-test_collections_route_has_no_generic_container_controller_or_panel``
-asserts the literal string ``"LibraryCollectionsBrowseController"`` --
-note the DIFFERENT name -- never appears in ``library_screen.py``; this
-controller is named ``LibraryCollectionsController``, matching the
-``LibraryCollectionsState``/``LibraryExportController``/
-``LibraryExportState`` naming convention, and does not touch that guard.)
-
-**Dynamic-dispatch census (recipe §11 lesson 3, generalized), confirmed
-BEFORE moving anything:** a full grep for ``getattr(self,``/``getattr(
-screen,``/``setattr(self,``/``setattr(screen,`` using an f-string or
-dict-literal argument, across ``tldw_chatbook/``, found none touching any
-Collections field or method name. The one PRE-EXISTING dynamic-dispatch
-site that DOES reach a Collections name --
-``_replace_library_reader_preference``'s/``_persist_library_reader_
-preference``'s 7-destination ``{"collections": "_library_collections_
-reader_preferences", ...}`` string-keyed dict (``library_screen.py``,
-shared across every browse subsystem) -- resolves through
-``operator.attrgetter``/``_assign_library_reader_preferences_attribute``
-to the SCREEN's own ``_library_collections_reader_preferences`` property
-shim (installed by task 5's state PR, unaffected by this controller
-move -- that shim still lives on ``LibraryScreen``, reading through
-``self._collections_state``) rather than to any method this PR moves, so
-it is not a hazard for this task. An AST Store-context scan over all 64
-moved bodies additionally confirms ``_library_selected_row_id`` (the
-recipe's own canonical >=2-subsystems field, 226 refs) is read-only in
-this cluster -- no moved body writes it -- so only a read accessor is
-bound below, mirroring the export controller's identical treatment of the
-same field.
-
-**Byte-for-byte canon** (moved bodies never edited -- every name they
-reference that is not this controller's own state is rebound under the
-SAME name, per the two binding kinds; see
-``ConsoleDictationController.__init__``,
-``tldw_chatbook/UI/Console_Modules/dictation.py``, and
-``LibraryExportController.__init__`` for the sibling worked examples):
-
-1. **Framework services** (``app_instance``, ``app``, ``call_after_
-   refresh``, ``is_mounted``, ``query_one``, ``refresh``) are live-read
-   from the screen via ``@property`` on every access -- never snapshotted.
-2. **Everything else** the cluster depends on that is not its own state is
-   a NAMED constructor dependency. This cluster's dependencies: (a) one
-   general Library-wide shell helper a moved body calls with an explicit
-   argument (``_library_adaptive_reader_allocation_is_current``, shared
-   with Notes/File Notes/Media -- ``_sync_library_collections_reader_
-   layout_from_shell`` uses it to guard a stale-allocation shell resize);
-   (b) one piece of shared shell state this cluster only READS
-   (``_library_selected_row_id``, read-only per the Store-context scan
-   above -- ``_refresh_library_collections_capture_reader`` uses it to
-   gate the destination-owned recompose); and (c) the ONE screen-resident
-   wiring field this series' own state PR (task 5) deliberately kept OFF
-   ``LibraryCollectionsState`` (``_library_collections_capture_
-   controller``, holding a live ``LibraryCollectionsCaptureController``
-   instance -- the ``_conversation_reader_controller`` precedent task 5's
-   report named in advance), bound here as a GET+SET accessor PAIR (not a
-   read-only accessor like (b)) because ``_ensure_library_collections_
-   capture_controller`` both reads AND lazily WRITES it (confirmed by an
-   AST Store-context scan: exactly one moved body, this one, assigns to
-   it).
-
-This subsystem's OWN state (every ``_library_collections_<field>`` name
-the moved bodies reference) is exposed through generated properties
-reading ``self._collections_state_accessor().<field>`` -- the same
-generator shape task 5 installed on ``LibraryScreen`` and the export
-controller installed on itself, applied here. Collections uses a single
-``_library_collections_`` prefix for every field (task 5's report: no
-field needed a plural variant, since "collections" is already plural), so
-there is no per-field prefix-selection logic in the generator loop,
-matching the export controller's own precedent exactly. No ``_safe_text``
-class-binding is needed here (unlike Conversations/Export): no moved body
-in this cluster calls ``self._safe_text(...)``.
+Original extraction census and compatibility checks are preserved in
+Docs/superpowers/qa/2026-09-15-collections-reader/controller-extraction-history.md.
+See backlog/docs/library-decomposition-recipe.md for the extraction contract.
 """
 from __future__ import annotations
 
@@ -231,6 +93,7 @@ from .library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
+from .library_collections_saved_search_controller import load_saved_search_page
 from .library_collections_state import LibraryCollectionsState
 from .screen_constants import LIBRARY_COLLECTIONS_READER_PROFILE
 
@@ -239,16 +102,11 @@ if TYPE_CHECKING:
 
 
 class LibraryCollectionsController:
-    """Owns the entire Collections capture-reader cluster (64 methods).
+    """Coordinate Collections widgets with the headless capture engine.
 
-    Holds no state of its own beyond what it reads and writes through
-    ``LibraryCollectionsState`` (via the injected accessor), the shared
-    shell attributes bound below, and the ``LibraryCollectionsCaptureController``
-    headless-engine instance it borrows via a get+set accessor pair.
-    ``LibraryScreen`` constructs exactly one of these, in ``__init__``
-    right after ``self._export_controller``, and keeps one-line delegators
-    for every original name this cluster moved (64 -- see the module
-    docstring for the full derivation).
+    LibraryScreen owns one instance and forwards framework events here.
+    Persistent UI fields live in the injected LibraryCollectionsState; shared
+    shell state and engine wiring are accessed through named dependencies.
     """
 
     def __init__(
@@ -257,13 +115,12 @@ class LibraryCollectionsController:
         *,
         collections_state_accessor: Callable[[], LibraryCollectionsState],
         # -- general Library-wide shell helper, not moved (shared with
-        # other subsystems; see module docstring group (a)).
+        # other subsystems; rejects stale shell allocations).
         library_adaptive_reader_allocation_is_current: Callable[[Any], bool],
-        # -- shared shell state this cluster only reads (see module
-        # docstring group (b)).
+        # -- shared Library destination; read-only in this controller.
         library_selected_row_id_accessor: Callable[[], str],
         # -- the wiring field task 5 deliberately kept off
-        # LibraryCollectionsState (see module docstring group (c)).
+        # LibraryCollectionsState (live engine wiring, not UI state).
         library_collections_capture_controller_accessor: Callable[
             [], LibraryCollectionsCaptureController | None
         ],
@@ -271,45 +128,18 @@ class LibraryCollectionsController:
             [LibraryCollectionsCaptureController], None
         ],
     ) -> None:
-        """Build the controller and bind everything its moved bodies need.
-
-        Every one of the 64 method bodies below is a byte-for-byte copy of
-        the pre-extraction ``LibraryScreen`` method: no internal line was
-        edited to retarget a call or an attribute. That is possible
-        because this constructor binds every name those bodies reference
-        that is not this controller's own state, under the SAME name the
-        original method used. See the module docstring for the binding
-        kinds this follows.
+        """Bind live screen services and explicit shared dependencies.
 
         Args:
-            screen: The Library screen. Used ONLY for the six framework
-                services below (``app_instance``, ``app``, ``call_after_
-                refresh``, ``is_mounted``, ``query_one``, ``refresh``) --
-                this cluster owns no DOM of its own.
-            collections_state_accessor: Returns the live
-                ``LibraryCollectionsState`` (``LibraryScreen.
-                _collections_state``, task 5). Backs every generated
-                ``_library_collections_<field>`` property below.
-            library_adaptive_reader_allocation_is_current: ``LibraryScreen.
-                _library_adaptive_reader_allocation_is_current`` -- the
-                shared stale-allocation guard every adaptive-reader-shell
-                layout sync uses (Notes/File Notes/Media/Collections
-                alike); ``_sync_library_collections_reader_layout_from_
-                shell`` calls it before resolving a fresh layout.
-            library_selected_row_id_accessor: Reads ``LibraryScreen.
-                _library_selected_row_id`` -- the recipe's own canonical
-                >=2-subsystems shared field (226 refs). Read-only in this
-                cluster: confirmed by an AST Store-context check that no
-                moved body writes it directly, so no setter is bound.
-            library_collections_capture_controller_accessor: Reads
-                ``LibraryScreen._library_collections_capture_controller``
-                -- the live headless-engine instance task 5 kept OFF
-                ``LibraryCollectionsState`` ("wiring, not state").
-            set_library_collections_capture_controller: Writes that same
-                screen attribute -- ``_ensure_library_collections_capture_
-                controller`` lazily constructs and caches the engine the
-                first time it is needed, so both a getter and a setter are
-                bound (unlike the read-only accessor above).
+            screen: Owner of the DOM and live Textual services, including focus.
+            collections_state_accessor: Returns current Collections UI state.
+            library_adaptive_reader_allocation_is_current: Rejects stale shared
+                shell allocations before resolving Collections layout.
+            library_selected_row_id_accessor: Reads the shared Library destination;
+                this controller does not own or write that selection.
+            library_collections_capture_controller_accessor: Reads the live engine.
+            set_library_collections_capture_controller: Caches the lazily created
+                engine on the screen; a setter is needed only for this dependency.
         """
         self._screen = screen
         self._collections_state_accessor = collections_state_accessor
@@ -474,30 +304,50 @@ class LibraryCollectionsController:
                 page_error="capture_authority_unavailable"
             )
         )
+        ui = self._collections_state_accessor()
+        searches_current = ui.saved_searches_authority == state.authority_key
+        drafts = ui.annotation_drafts
+        for identity in tuple(drafts):
+            if identity.authority_key != state.authority_key:
+                del drafts[identity]
+        loaded = (
+            state.loaded_detail.capture if state.loaded_detail is not None else None
+        )
+        draft = drafts.get(loaded.identity, {}) if loaded is not None else {}
+        if loaded is not None and draft.get("freeform-note") == (
+            loaded.freeform_note or ""
+        ):
+            draft.pop("freeform-note", None)
         return CollectionsCaptureReaderPresentation(
             state=state,
             capabilities=self._library_collections_capture_capabilities,
-            saved_searches=self._library_collections_saved_searches,
-            saved_searches_total=self._library_collections_saved_searches_total,
+            saved_searches=ui.saved_searches if searches_current else (),
+            saved_searches_total=ui.saved_searches_total if searches_current else 0,
+            saved_searches_page=ui.saved_searches_page if searches_current else 1,
+            saved_searches_requested_page=ui.saved_searches_requested_page,
+            saved_searches_error=ui.saved_searches_error if searches_current else "",
             active_scope=self._library_collections_active_scope,
             authority_label="Server" if active_source == "server" else "Local",
             mode=self._library_collections_reader_mode,
-            highlights=self._library_collections_highlights,
+            highlights=(
+                self._library_collections_highlights
+                if loaded is not None
+                and self._collections_state_accessor().highlights_identity
+                == loaded.identity
+                else ()
+            ),
+            annotation_draft=dict(draft),
             quick_capture_open=self._library_collections_quick_capture_open,
             quick_capture_url=self._library_collections_quick_capture_url,
             quick_capture_title=self._library_collections_quick_capture_title,
             quick_capture_tags=self._library_collections_quick_capture_tags,
             quick_capture_note=self._library_collections_quick_capture_note,
             save_outcome_unknown=self._library_collections_save_outcome_unknown,
-            confirming_save_retry=(
-                self._library_collections_confirming_save_retry
-            ),
+            confirming_save_retry=(self._library_collections_confirming_save_retry),
             quick_capture_saving=self._library_collections_quick_capture_saving,
             filters_open=self._library_collections_filters_open,
             more_open=self._library_collections_more_open,
-            confirming_hard_delete=(
-                self._library_collections_confirming_hard_delete
-            ),
+            confirming_hard_delete=(self._library_collections_confirming_hard_delete),
             legacy_recovery_rows=self._library_collections_legacy_recovery_rows,
             legacy_recovery_open=self._library_collections_legacy_recovery_open,
             legacy_recovery_lines=self._library_collections_legacy_recovery_lines,
@@ -553,7 +403,56 @@ class LibraryCollectionsController:
             self.is_mounted
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
         ):
+            self._capture_reader_annotation_draft()
+            focus_id = getattr(self._screen.focused, "id", None)
             self.refresh(recompose=True)
+
+            def reveal_current_focus() -> None:
+                focused = self._screen.focused
+                if focus_id and focused is not None and focused.id == focus_id:
+                    focused.scroll_visible(animate=False)
+
+            self.call_after_refresh(
+                lambda: self.call_after_refresh(reveal_current_focus)
+            )
+
+    def _capture_reader_annotation_draft(self) -> None:
+        """Retain only live, editable fields under their painted capture identity."""
+        try:
+            pane = self.query_one("#library-collections-work")
+        except (NoMatches, QueryError):
+            return
+        resolved = pane.presentation.state.loaded_detail
+        controller = self._library_collections_capture_controller
+        if (
+            resolved is None
+            or controller is None
+            or resolved.capture.identity.authority_key != controller.state.authority_key
+        ):
+            return
+        identity = resolved.capture.identity
+        drafts = self._collections_state_accessor().annotation_drafts
+        for name in ("freeform-note", "highlight-quote", "highlight-note"):
+            controls = pane.query(f"#library-collections-{name}")
+            if not controls:
+                continue
+            control = controls.first()
+            if control.disabled:
+                continue
+            value = control.text if isinstance(control, TextArea) else control.value
+            baseline = (
+                resolved.capture.freeform_note or "" if name == "freeform-note" else ""
+            )
+            if value != baseline:
+                drafts.setdefault(identity, {})[name] = value
+            elif identity in drafts:
+                drafts[identity].pop(name, None)
+
+    def retain_reader_annotation_draft(
+        self, event: Input.Changed | TextArea.Changed
+    ) -> None:
+        """Capture current widgets, never the body of a delayed outgoing event."""
+        self._capture_reader_annotation_draft()
 
     async def _load_library_collections_capture_entry(self) -> None:
         """Adopt app authority, load bounded rail data, page, and first detail."""
@@ -573,14 +472,7 @@ class LibraryCollectionsController:
             )
         except Exception:
             self._library_collections_capture_capabilities = None
-        try:
-            saved = await scope.list_saved_searches(1)
-        except Exception:
-            self._library_collections_saved_searches = ()
-            self._library_collections_saved_searches_total = 0
-        else:
-            self._library_collections_saved_searches = tuple(saved.items)
-            self._library_collections_saved_searches_total = saved.total
+        await load_saved_search_page(self._collections_state_accessor(), scope, 1)
         recovery = getattr(
             self.app_instance, "collections_legacy_recovery_service", None
         )
@@ -644,6 +536,8 @@ class LibraryCollectionsController:
         await asyncio.sleep(0)
         self._refresh_library_collections_capture_reader()
         result = await task
+        if self._library_collections_reader_mode == "highlights":
+            await self._load_library_collection_capture_highlights()
         self._refresh_library_collections_capture_reader()
         return result
 
@@ -685,6 +579,10 @@ class LibraryCollectionsController:
         """Apply one built-in or saved capture scope from the Library rail."""
         event.stop()
         button_id = event.button.id or ""
+        page = getattr(event.button, "saved_search_page", None)
+        if page is not None:
+            await self._page_library_collection_saved_searches(page, event.button)
+            return
         prefix = "library-collections-scope-"
         if button_id.startswith(prefix):
             self._library_collections_active_scope = button_id[len(prefix) :]
@@ -709,14 +607,27 @@ class LibraryCollectionsController:
         controller = self._library_collections_capture_controller
         if controller is None or request is None:
             return
-        self._library_collections_requested_page = 1
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        await self._apply_library_collection_capture_request(request)
+
+    async def _page_library_collection_saved_searches(
+        self, page: int, opener: Button
+    ) -> None:
+        ui = self._collections_state_accessor()
+        controller = self._library_collections_capture_controller
+        if controller is None or ui.saved_searches_loading:
+            return
+        opener.label = "Loading searches…"
+        await load_saved_search_page(ui, controller.scope_service, page)
+        if (
+            not self.is_mounted
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
+        ):
+            return
+        try:
+            rows = self.query_one("#library-collections-scopes")
+        except (NoMatches, QueryError):
+            return
+        await rows.show_page(self._library_collections_capture_presentation(), opener)
 
     @on(Input.Submitted, "#library-collections-filter")
     async def filter_library_collection_captures(
@@ -726,6 +637,8 @@ class LibraryCollectionsController:
         event.stop()
         controller = self._library_collections_capture_controller
         current = controller.state.requested_scope if controller is not None else None
+        if current and current.sort == "relevance" and not event.value.strip():
+            current = dataclasses.replace(current, sort="saved_desc")
         request = (
             dataclasses.replace(current, search=event.value, page=1)
             if current is not None
@@ -733,14 +646,7 @@ class LibraryCollectionsController:
         )
         if controller is None or request is None:
             return
-        self._library_collections_requested_page = 1
-        await self._run_library_collections_capture_transition(
-            controller.load_page(request)
-        )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
+        await self._apply_library_collection_capture_request(request)
 
     @on(Button.Pressed, "#library-collections-quick-capture")
     def toggle_library_collection_quick_capture(
@@ -1013,6 +919,8 @@ class LibraryCollectionsController:
         if clear:
             return dataclasses.replace(
                 current,
+                search="",
+                sort="saved_desc" if current.sort == "relevance" else current.sort,
                 domain=None,
                 tags=(),
                 date_from=None,
@@ -1122,14 +1030,9 @@ class LibraryCollectionsController:
         page = max(1, current.page + delta)
         if page == current.page:
             return
-        self._library_collections_requested_page = page
-        await self._run_library_collections_capture_transition(
-            controller.load_page(dataclasses.replace(current, page=page))
+        await self._apply_library_collection_capture_request(
+            dataclasses.replace(current, page=page)
         )
-        if controller.state.selected_identity is not None:
-            await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
-            )
 
     @on(Button.Pressed, "#library-collections-page-previous")
     async def previous_library_collection_captures(
@@ -1165,7 +1068,7 @@ class LibraryCollectionsController:
         controller = self._library_collections_capture_controller
         if controller is not None and controller.state.selected_identity is not None:
             await self._run_library_collections_capture_transition(
-                controller.load_selected_now()
+                controller.refresh_selected_detail()
             )
 
     @on(
@@ -1340,25 +1243,38 @@ class LibraryCollectionsController:
         capture = self._library_collection_loaded_capture()
         return capture is not None and capture.identity == identity
 
-    async def _load_library_collection_capture_highlights(self) -> None:
-        """Load highlight state for the identity currently safe to mutate."""
+    async def _load_library_collection_capture_highlights(self) -> bool:
+        """Publish a highlight response only for its current capture and request."""
+        state = self._collections_state_accessor()
+        state.highlights_generation += 1
+        generation = state.highlights_generation
         controller = self._library_collections_capture_controller
         capture = self._library_collection_loaded_capture()
         if controller is None or capture is None:
-            self._library_collections_highlights = ()
-            return
+            state.highlights = ()
+            state.highlights_identity = None
+            return False
         identity = capture.identity
+        if state.highlights_identity != identity:
+            state.highlights = ()
+        state.highlights_identity = identity
         try:
             highlights = await controller.scope_service.list_highlights(identity)
         except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(identity):
-                return
-            self._library_collections_highlights = ()
-            self._notify_library_collections_warning(exc.reason)
-            return
-        if not self._library_collection_capture_is_current(identity):
-            return
-        self._library_collections_highlights = highlights.items
+            if (
+                generation == state.highlights_generation
+                and self._library_collection_capture_is_current(identity)
+            ):
+                self._notify_library_collections_warning(exc.reason)
+            return False
+        if (
+            generation != state.highlights_generation
+            or not self._library_collection_capture_is_current(identity)
+        ):
+            return False
+        state.highlights = highlights.items
+        state.highlights_identity = identity
+        return True
 
     @on(Button.Pressed, "#library-collections-highlight-save")
     async def save_library_collection_capture_highlight(
@@ -1369,35 +1285,55 @@ class LibraryCollectionsController:
         capture = self._library_collection_loaded_capture()
         if controller is None or capture is None:
             return
-        quote = self.query_one(
-            "#library-collections-highlight-quote", TextArea
-        ).text
-        note = self.query_one(
-            "#library-collections-highlight-note", Input
-        ).value
+        self._capture_reader_annotation_draft()
+        quote = self.query_one("#library-collections-highlight-quote", TextArea).text
+        note = self.query_one("#library-collections-highlight-note", Input).value
         try:
             await controller.scope_service.save_highlight(
-                capture.identity,
-                quote=quote,
-                note=note or None,
+                capture.identity, quote=quote, note=note or None
             )
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._library_collections_highlights = (
-                await controller.scope_service.list_highlights(capture.identity)
-            ).items
         except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._notify_library_collections_warning(exc.reason)
-            self._library_collections_action_status = (
-                f"Highlight was not saved: {exc.reason.replace('_', ' ')}."
-            )
-        else:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._library_collections_action_status = "Highlight saved."
-            self._library_collections_action_content = ""
+            if self._library_collection_capture_is_current(capture.identity):
+                self._library_collections_action_status = (
+                    f"Highlight was not saved: {exc.reason.replace('_', ' ')}."
+                )
+                self._notify_library_collections_warning(exc.reason)
+                self._refresh_library_collections_capture_reader()
+            return
+
+        # The write committed. Clear only that submitted version, even if a
+        # different capture or newer draft now owns the visible controls.
+        self._capture_reader_annotation_draft()
+        draft = self._collections_state_accessor().annotation_drafts.get(
+            capture.identity, {}
+        )
+        if (
+            draft.get("highlight-quote", "") == quote
+            and draft.get("highlight-note", "") == note
+        ):
+            draft.pop("highlight-quote", None)
+            draft.pop("highlight-note", None)
+            if self._library_collection_capture_is_current(capture.identity):
+                for name in ("highlight-quote", "highlight-note"):
+                    try:
+                        control = self.query_one(f"#library-collections-{name}")
+                    except (NoMatches, QueryError):
+                        continue
+                    if isinstance(control, TextArea):
+                        control.text = ""
+                    else:
+                        control.value = ""
+        if not self._library_collection_capture_is_current(capture.identity):
+            return
+        refreshed = await self._load_library_collection_capture_highlights()
+        if not self._library_collection_capture_is_current(capture.identity):
+            return
+        self._library_collections_action_status = (
+            "Highlight saved."
+            if refreshed
+            else "Highlight saved. Highlights could not be refreshed; reopen Highlights to retry."
+        )
+        self._library_collections_action_content = ""
         self._refresh_library_collections_capture_reader()
 
     @on(Button.Pressed, ".library-collections-highlight-delete")
@@ -1412,22 +1348,22 @@ class LibraryCollectionsController:
             return
         try:
             await controller.scope_service.delete_highlight(
-                capture.identity,
-                highlight_id,
+                capture.identity, highlight_id
             )
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._library_collections_highlights = (
-                await controller.scope_service.list_highlights(capture.identity)
-            ).items
         except CollectionsCaptureError as exc:
-            if not self._library_collection_capture_is_current(capture.identity):
-                return
-            self._notify_library_collections_warning(exc.reason)
+            if self._library_collection_capture_is_current(capture.identity):
+                self._notify_library_collections_warning(exc.reason)
             return
         if not self._library_collection_capture_is_current(capture.identity):
             return
-        self._library_collections_action_status = "Highlight deleted."
+        refreshed = await self._load_library_collection_capture_highlights()
+        if not self._library_collection_capture_is_current(capture.identity):
+            return
+        self._library_collections_action_status = (
+            "Highlight deleted."
+            if refreshed
+            else "Highlight deleted. Highlights could not be refreshed; reopen Highlights to retry."
+        )
         self._library_collections_action_content = ""
         self._refresh_library_collections_capture_reader()
 
@@ -1629,9 +1565,15 @@ class LibraryCollectionsController:
         if controller is None or not isinstance(identity, CaptureIdentity):
             return
         try:
-            await self._run_library_collections_capture_transition(
+            applied = await self._run_library_collections_capture_transition(
                 controller.undo_archive(identity)
             )
+            if not applied and controller.state.mutation_error == "revision_conflict":
+                self._library_collections_action_status = (
+                    "Undo was not applied because the archived capture changed. "
+                    "Choose Archived in the Library rail to review it."
+                )
+                self._refresh_library_collections_capture_reader()
         except CollectionsCaptureError as exc:
             self._notify_library_collections_warning(exc.reason)
 

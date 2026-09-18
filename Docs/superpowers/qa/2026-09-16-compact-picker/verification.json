@@ -1,0 +1,58 @@
+{
+  "base": "254e9f527f",
+  "full_suite_run": false,
+  "runs": [
+    {
+      "log": ".superpowers/sdd/2026-09-16-compact-picker/compact-red.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_fspicker_compact_journeys.py",
+      "note": "4 failed, 2 passed: compact listing has zero content rows and the path field clips.",
+      "sha256": "8ac47d8a0bb369058a0d65664d61462c950775be86a29860ccb171a8a41c2b72"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-compact-picker/compact-green.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_fspicker_compact_journeys.py",
+      "note": "6 passed after scoped layout repair.",
+      "sha256": "b7aeebe2cf01e48ea6ea21e21cfd8f808277837654d6d40053c1c816e24624b2"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-compact-picker/compact-final.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_fspicker_compact_journeys.py",
+      "note": "10 passed including empty/scrolling folders. Initial fixture-root sibling counts corrected by using a dedicated listing directory.",
+      "sha256": "c779c3f70f16f4e5d7adad7d0077df5c47c0b472953811a464499af26425e867"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-compact-picker/validation-red.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_fspicker_compact_journeys.py -k \"long_path or overlong\"",
+      "note": "5 failed, 10 deselected: same-folder stale error, long diagnostic consumes listing, overlong name raises OSError.",
+      "sha256": "1ec958b1f2662bf87ac0835293accdcb7aa7f51973c13419715433438df5120a"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-compact-picker/targeted-final.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_fspicker_compact_journeys.py Tests/UI/test_library_ingest_directory_journeys.py Tests/UI/test_fspicker_keyboard_save.py Tests/UI/test_fspicker_listing_columns.py Tests/UI/test_fspicker_entry_display.py Tests/UI/test_file_picker_progressive.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/UI/test_component_pattern_governance.py",
+      "note": "152 passed, 1 failed: all 15 picker regressions pass. Existing Library setup queried the provider child before mount; corrected readiness without increasing waits.",
+      "sha256": "87e529a6eeb931eb4aa2f871ed63a2a98fbf913ddd756bfc68b5b125aebac82c"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-compact-picker/readiness-rerun.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_directory_journeys.py",
+      "note": "16 passed after waiting for the actual provider control to mount.",
+      "sha256": "bd4f25f6da89ec839a8041c7daa294e47ff143c7c970efc16fd7a914b04f0427"
+    },
+    {
+      "log": ".superpowers/sdd/2026-09-16-compact-picker/css-budget.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/Performance/test_boot_css_byte_budget.py",
+      "note": "1 passed; boot CSS 615348/634050 bytes.",
+      "sha256": "f85dfe50524d4b71acbc1e0cf70ee7282b62a7038f5fc5cbd707055d24508fea"
+    }
+  ],
+  "distinct_passed": 154,
+  "count_basis": "137 passing picker/neighbor/governance checks outside the Library module + all 16 final Library directory journeys + 1 CSS budget check = 154. Earlier runs overlap and are not added.",
+  "native_run": "run-002",
+  "native_visual_inspection": "Six run-001 captures rendered and inspected in one batch; four run-002 validation captures inspected together as the final confirmation. Linked SVGs are run-002.",
+  "native_scope": "Actual TldwCli/LinuxDriver, private profile, real local preflight/listing/navigation. UI availability only simulated for Parakeet. No ingestion, installation, model execution or remote request.",
+  "native_exit": "Normal terminal Quit returned to observed shell, exit 0; owned tmux session closed.",
+  "new_ruff_diagnostics": 0,
+  "formatting": "New Python files and the adjusted Library journey file pass full Ruff format/check; changed production ranges formatted.",
+  "warnings": "Three inherited invalid-escape warnings from governance scanning; two inherited pytest temporary-directory cleanup warnings. Budget warning reports measured headroom.",
+  "review": "Focused independent review found three validation defects, all repaired and reproduced green; final read-only review has no actionable findings."
+}

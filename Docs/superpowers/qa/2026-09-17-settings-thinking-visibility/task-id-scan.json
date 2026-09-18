@@ -1,0 +1,10 @@
+{
+  "refs_scanned": 314,
+  "worktrees_scanned": 29,
+  "ref_matches": {},
+  "worktree_matches": {
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library": [
+      "backlog/tasks/task-32763 - Preserve-model-thinking-visibility-through-Settings-save-recovery-and-departure.md"
+    ]
+  }
+}

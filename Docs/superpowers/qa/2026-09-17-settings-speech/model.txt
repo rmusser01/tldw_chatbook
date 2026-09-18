@@ -1,0 +1,22 @@
+.................                                                        [100%]
+============================= slowest 25 durations =============================
+1.97s call     Tests/UI/test_settings_speech_tts_model.py::test_ordinary_save_excludes_credentials_and_targets_only_changed_provider
+1.92s call     Tests/UI/test_settings_speech_tts_model.py::test_cross_provider_save_owns_only_selected_fields_and_global_cleanup
+1.79s call     Tests/UI/test_settings_speech_tts_model.py::test_global_default_choices_are_bounded[provider_id-unknown-provider-provider_id]
+1.73s call     Tests/UI/test_settings_speech_tts_model.py::test_global_default_speed_enforces_the_visible_range[inf]
+1.69s call     Tests/UI/test_settings_speech_tts_model.py::test_global_default_choices_are_bounded[response_format-executable-response_format]
+1.68s call     Tests/UI/test_settings_speech_tts_model.py::test_selection_only_save_has_no_adapter_affecting_payload
+1.68s call     Tests/UI/test_settings_speech_tts_model.py::test_restore_non_secret_defaults_preserves_a_set_default_profile_id
+1.67s call     Tests/UI/test_settings_speech_tts_model.py::test_global_default_speed_enforces_the_visible_range[4.01]
+1.65s call     Tests/UI/test_settings_speech_tts_model.py::test_exact_global_identifiers_are_bounded_safe_and_non_echoing[voice_id-vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv-default_voice]
+1.65s call     Tests/UI/test_settings_speech_tts_model.py::test_audio_cpp_default_constraints_report_the_responsible_field[response_format-mp3-response_format]
+1.65s call     Tests/UI/test_settings_speech_tts_model.py::test_audio_cpp_default_constraints_report_the_responsible_field[speed-2.0-default_speed]
+1.63s call     Tests/UI/test_settings_speech_tts_model.py::test_global_default_speed_enforces_the_visible_range[0.24]
+1.62s call     Tests/UI/test_settings_speech_tts_model.py::test_exact_global_identifiers_are_bounded_safe_and_non_echoing[model_id- unsafe-model-default_model]
+1.62s call     Tests/UI/test_settings_speech_tts_model.py::test_exact_global_identifiers_are_bounded_safe_and_non_echoing[model_id-unsafe\nmodel-default_model]
+1.62s call     Tests/UI/test_settings_speech_tts_model.py::test_exact_global_identifiers_are_bounded_safe_and_non_echoing[voice_id-unsafe\x00voice-default_voice]
+1.61s call     Tests/UI/test_settings_speech_tts_model.py::test_restore_non_secret_defaults_never_changes_credential_state
+1.60s call     Tests/UI/test_settings_speech_tts_model.py::test_credential_mutations_require_explicit_intent_and_never_accept_placeholders
+
+(8 durations < 1s hidden.)
+17 passed, 85 deselected in 30.13s

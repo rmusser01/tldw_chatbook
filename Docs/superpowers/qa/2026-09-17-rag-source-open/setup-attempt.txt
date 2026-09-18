@@ -1,0 +1,153 @@
+FFFFFFFFFFFFFFFFFFFFFF                                                   [100%]
+=================================== FAILURES ===================================
+_______ test_result_open_resolves_exact_local_record[button-{id}-media] ________
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+_______ test_result_open_resolves_exact_local_record[button-{id}-prompt] _______
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+____ test_result_open_resolves_exact_local_record[button-{kind}_{id}-media] ____
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+___ test_result_open_resolves_exact_local_record[button-{kind}_{id}-prompt] ____
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+____ test_result_open_resolves_exact_local_record[button-{kind}-{id}-media] ____
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+___ test_result_open_resolves_exact_local_record[button-{kind}-{id}-prompt] ____
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+_ test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-media] _
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+_ test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-prompt] _
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+______ test_result_open_resolves_exact_local_record[keyboard-{id}-media] _______
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+______ test_result_open_resolves_exact_local_record[keyboard-{id}-prompt] ______
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+___ test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-media] ___
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+__ test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-prompt] ___
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+___ test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-media] ___
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+__ test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-prompt] ___
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+_ test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-media] _
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+_ test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-prompt] _
+Tests/UI/test_library_rag_open_source_ids.py:78: in test_result_open_resolves_exact_local_record
+    prompt_id, _, _ = prompts.add_prompt(
+E   TypeError: PromptsDatabase.add_prompt() missing 2 required positional arguments: 'author' and 'details'
+_ test_unresolvable_result_explains_refusal_without_leaving_search[media-media_bad-] _
+Tests/UI/test_library_rag_open_source_ids.py:157: in test_unresolvable_result_explains_refusal_without_leaving_search
+    await _until(pilot, lambda: notify.called)
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_unresolvable_result_explains_refusal_without_leaving_search.<locals>.<lambda> at 0x1142602c0>()
+_ test_unresolvable_result_explains_refusal_without_leaving_search[prompt-prompt_bad-] _
+Tests/UI/test_library_rag_open_source_ids.py:150: in test_unresolvable_result_explains_refusal_without_leaving_search
+    await _run_library_search_and_wait_for_open_result(screen, pilot, "exact")
+Tests/UI/test_library_shell.py:25055: in _run_library_search_and_wait_for_open_result
+    await _wait_for_selector(screen, pilot, f"#library-rag-open-result-{index}")
+Tests/UI/test_library_shell.py:3839: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: #library-rag-open-result-0 never mounted within 30.0s (1274 polls). Visible text: ‹ Library | Local  Navigation Browse Create Study Import / Export Details Status Source · Local Notes 0 · Media 1 · Conversations 2 Workspace Active · Local Default Handoff · 3 items can't be used in Console yet · not in this workspace · Copy or link them into this workspace Actions Everything here is stored on this machine · syncing to a server isn't available yet. Chunking Lab — compare how text is split for search ▾ scroll for more Search / RAG  Sources Scope: all local sources   Evidence · top 15 per source No evidence matched 'exact'.
+E   Try broader terms. ▶ Recent searches Select an entry to run it again. u use Library context in Console | o open evidence | / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit     ⌃1 Home ⌃2 Console   ⌃3 Library ⌃4 Roleplay ⌃5 Watchlists ⌃6 Artifacts ⌃7 Schedules ⌃8 Workflows ⌃9 MCP ⌃0 ACP F2 Lab F3 Logs F4 Settings F5 Research F7 Meetings More ▾ N
+E   a
+E   v Collapse Import… x ▾   Media (1) — your files   Conversations (2)   Notes (0)   Prompts — reuse   Skills (0) — AI add-ons   Collections (0) ▸ Search / RAG — find all ▾   New note   New prompt   New skill ▾   Study decks   Flashcards   Quizzes ▾   Import…   Export ▸ Create local workspace Import sources Use in Console Chunking Lab Try selected text ‹ Library mode: ✓ Search ⇄ RAG Answer Run ☐ Notes (0) ☑ Media (1) ☑ Conversations (2) ☐ Prompts (0) Re-chunk older-engine items exact Clear history
+_ test_unresolvable_result_explains_refusal_without_leaving_search[media-prompt_17-] _
+Tests/UI/test_library_rag_open_source_ids.py:157: in test_unresolvable_result_explains_refusal_without_leaving_search
+    await _until(pilot, lambda: notify.called)
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_unresolvable_result_explains_refusal_without_leaving_search.<locals>.<lambda> at 0x1157cfb00>()
+_ test_unresolvable_result_explains_refusal_without_leaving_search[prompt-media_17-] _
+Tests/UI/test_library_rag_open_source_ids.py:150: in test_unresolvable_result_explains_refusal_without_leaving_search
+    await _run_library_search_and_wait_for_open_result(screen, pilot, "exact")
+Tests/UI/test_library_shell.py:25055: in _run_library_search_and_wait_for_open_result
+    await _wait_for_selector(screen, pilot, f"#library-rag-open-result-{index}")
+Tests/UI/test_library_shell.py:3839: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: #library-rag-open-result-0 never mounted within 30.0s (1199 polls). Visible text: ‹ Library | Local  Navigation Browse Create Study Import / Export Details Status Source · Local Notes 0 · Media 1 · Conversations 2 Workspace Active · Local Default Handoff · 3 items can't be used in Console yet · not in this workspace · Copy or link them into this workspace Actions Everything here is stored on this machine · syncing to a server isn't available yet. Chunking Lab — compare how text is split for search ▾ scroll for more Search / RAG  Sources Scope: all local sources   Evidence · top 15 per source No evidence matched 'exact'.
+E   Try broader terms. ▶ Recent searches Select an entry to run it again. u use Library context in Console | o open evidence | / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit     ⌃1 Home ⌃2 Console   ⌃3 Library ⌃4 Roleplay ⌃5 Watchlists ⌃6 Artifacts ⌃7 Schedules ⌃8 Workflows ⌃9 MCP ⌃0 ACP F2 Lab F3 Logs F4 Settings F5 Research F7 Meetings More ▾ N
+E   a
+E   v Collapse Import… x ▾   Media (1) — your files   Conversations (2)   Notes (0)   Prompts — reuse   Skills (0) — AI add-ons   Collections (0) ▸ Search / RAG — find all ▾   New note   New prompt   New skill ▾   Study decks   Flashcards   Quizzes ▾   Import…   Export ▸ Create local workspace Import sources Use in Console Chunking Lab Try selected text ‹ Library mode: ✓ Search ⇄ RAG Answer Run ☐ Notes (0) ☑ Media (1) ☑ Conversations (2) ☐ Prompts (0) Re-chunk older-engine items exact Clear history
+_ test_unresolvable_result_explains_refusal_without_leaving_search[media-server:media:17-] _
+Tests/UI/test_library_rag_open_source_ids.py:157: in test_unresolvable_result_explains_refusal_without_leaving_search
+    await _until(pilot, lambda: notify.called)
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_unresolvable_result_explains_refusal_without_leaving_search.<locals>.<lambda> at 0x114e985e0>()
+_ test_unresolvable_result_explains_refusal_without_leaving_search[prompt-17-server] _
+Tests/UI/test_library_rag_open_source_ids.py:150: in test_unresolvable_result_explains_refusal_without_leaving_search
+    await _run_library_search_and_wait_for_open_result(screen, pilot, "exact")
+Tests/UI/test_library_shell.py:25055: in _run_library_search_and_wait_for_open_result
+    await _wait_for_selector(screen, pilot, f"#library-rag-open-result-{index}")
+Tests/UI/test_library_shell.py:3839: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: #library-rag-open-result-0 never mounted within 30.0s (1201 polls). Visible text: ‹ Library | Local  Navigation Browse Create Study Import / Export Details Status Source · Local Notes 0 · Media 1 · Conversations 2 Workspace Active · Local Default Handoff · 3 items can't be used in Console yet · not in this workspace · Copy or link them into this workspace Actions Everything here is stored on this machine · syncing to a server isn't available yet. Chunking Lab — compare how text is split for search ▾ scroll for more Search / RAG  Sources Scope: all local sources   Evidence · top 15 per source No evidence matched 'exact'.
+E   Try broader terms. ▶ Recent searches Select an entry to run it again. u use Library context in Console | o open evidence | / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit     ⌃1 Home ⌃2 Console   ⌃3 Library ⌃4 Roleplay ⌃5 Watchlists ⌃6 Artifacts ⌃7 Schedules ⌃8 Workflows ⌃9 MCP ⌃0 ACP F2 Lab F3 Logs F4 Settings F5 Research F7 Meetings More ▾ N
+E   a
+E   v Collapse Import… x ▾   Media (1) — your files   Conversations (2)   Notes (0)   Prompts — reuse   Skills (0) — AI add-ons   Collections (0) ▸ Search / RAG — find all ▾   New note   New prompt   New skill ▾   Study decks   Flashcards   Quizzes ▾   Import…   Export ▸ Create local workspace Import sources Use in Console Chunking Lab Try selected text ‹ Library mode: ✓ Search ⇄ RAG Answer Run ☐ Notes (0) ☑ Media (1) ☑ Conversations (2) ☐ Prompts (0) Re-chunk older-engine items exact Clear history
+============================= slowest 25 durations =============================
+31.10s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-prompt_bad-]
+31.03s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-media_17-]
+30.92s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-17-server]
+6.11s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-media_bad-]
+5.89s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-server:media:17-]
+5.87s call     Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-prompt_17-]
+
+(19 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}_{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-{kind}-{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[keyboard-local:{kind}:{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-media_bad-]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-prompt_bad-]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-prompt_17-]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-media_17-]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[media-server:media:17-]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_unresolvable_result_explains_refusal_without_leaving_search[prompt-17-server]
+22 failed in 115.98s (0:01:55)

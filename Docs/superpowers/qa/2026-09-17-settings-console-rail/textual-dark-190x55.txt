@@ -1,0 +1,55 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft.                   │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │ │ │ ▊ ▐X▌ Mask detected PII in traces (future calls)  ▎                                                │ │  │  │  │                                   │
+│  category search             │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                │ │  │  │  │ Selected category: Console        │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │ Behavior                          │
+│  Core                        │  │  │ │ │ Trace viewer            │ Safe                                                                 ▼ │ │ │  │  │  │ Unsaved changes                   │
+│     Overview (view)          │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  Guided edits: Save or Revert     │
+│     Providers & Models       │  │  │ │ │ Capture, PII masking, and viewing are separate. PII masking is irreversible for provider-only      │ │  │  │  │  changes.                         │
+│     Web Search               │  │  │ │ │ trace data but never rewrites the saved conversation. New traces reference saved messages instead  │ │▁ │  │  │     Save (s)                      │
+│     Speech & TTS             │  │  │ │ │ of copying the transcript. Safe and Full view the same trace; credentials stay blocked in both,    │ │  │  │  │    Revert (r)                     │
+│  Interface                   │  │  │ │ │ and older trace formats remain readable.                                                           │ │  │  │  │ Local-only: saves write your      │
+│     Appearance               │  │  │ │ │  Apply exchange capture                                                                            │ │  │  │  │ config file.                      │
+│     Theme                    │  │  │ │ │  Global exchange capture settings are active.                                                      │ │  │  │  │                                   │
+│     Splash Screen            │  │  │ │ │                                                                                                    │ │  │  │  │  Threshold: Minimum pasted        │
+│   > Console Behavior *       │  │  │ │ │  Rail presentation                                                                                 │ │  │  │  │  chunk size before collapse       │
+│  Data & Privacy              │  │  │ │ │ Rail layout scope                                                                                  │ │  │  │  │                                   │
+│     Storage                  │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  │ Focused field guide               │
+│     Workspaces               │  │  │ │ │ ▊  Global                                                                                     ▼  ▎ │ │  │  │  │  Purpose: Choose the collapsed    │
+│     Tool Profiles            │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │  Console rail label style.        │
+│     Privacy & Security       │  │  │ │ │                                                                                                    │ │  │  │  │                                   │
+│     Network                  │  │  │ │ │ Global keeps one arrangement everywhere. Per workspace restores and keeps each workspace's saved   │ │  │  │  │  Consequences: Stacked uses       │
+│     My Profile               │  │  │ │ │ arrangement.                                                                                       │ │  │  │  │  narrower 3-column handles;       │
+│  Troubleshooting             │  │  │ │ │ ▐X▌ Stack collapsed rail labels                                                                    │ │  │  │  │  Horizontal uses the              │
+│     Diagnostics (view)       │  │  │ │ │ Selected style: Stacked — unsaved                                                                  │ │  │  │  │  established 13- and 11-column    │
+│     About (view)             │  │  │ │ │ Uses narrower 3-column handles by stacking upright letters. Direction glyphs are omitted.          │ │  │  │  │  handles.                         │
+│     Agents                   │  │  │ │ │                                                                                                    │ │  │  │  │                                   │
+│  Expert                      │  │  │ │ │  Status row placement                                                                              │ │  │  │  │  Saved as: console.             ▃ │
+│     Internal Prompts         │  │  │ │ │ Where the Console status chips sit relative to the composer.                                       │ │  │  │  │    stack_collapsed_rail_labels    │
+│     Advanced Config          │  │  │ │ │  Above composer                                                                                    │ │  │  │  │                                   │
+│   Domain Defaults ▸ (11)     │  │  │ │ │ Above keeps the chips directly under the conversation; below closes the shell as a bottom status   │ │  │  │  │  Applies: After saving, when      │
+│                              │  │  │ │ │ row.                                                                                               │ │  │  │  │  Console is next opened.          │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │                                   │
+│                              │  │  │ │ │  Composer paste handling                                                                           │ │  │  │  │ Override rules                    │
+│                              │  │  │ │ │ Collapse large pasted chunks only when they exceed the threshold.                                  │ │  │  │  │  Priority: active Console         │
+│                              │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                     │ │  │  │  │  session, then provider+model     │
+│                              │  │  │ │ │ ▊ ▐X▌ Collapse large pastes  ▎                                                                     │ │  │  │  │  profile, then these global       │
+│                              │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                     │ │  │  │  │  fallbacks                        │
+│                              │  │  │ │ │ Threshold (chars)       │ 50                                                                       │ │  │  │  │                                   │
+│                              │  │  │ │ │ Normal typing stays literal. The canonical message payload is preserved.                           │ │  │  │  │  Scope:  response fallbacks and   │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │  paste display settings           │
+│                              │  │  │ │ │  Chat images                                                                                       │ │  │  │  │                                   │
+│                              │  │  │ │ │ Render images linked in assistant replies (remote fetch).                                          │ │  │  │  │  Save: staged - press s to        │
+│                              │  │  │ │ │     Disabled                                                                                       │ │  │  │  │  save, r to revert                │
+│                              │  │  │ │ │ Off by default: fetching a model-suggested link reveals your IP address to that host.              │ │  │  │  │                                   │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+ Use narrower stacked Context and Inspector rail labels.
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

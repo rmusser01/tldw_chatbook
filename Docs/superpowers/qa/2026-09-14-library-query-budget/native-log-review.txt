@@ -1,0 +1,9 @@
+Private native run diagnostics from the last app_started record:
+2026-09-14 21:09:04 [ERROR   ] root:11981 - !!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup.
+2026-09-14 21:09:06 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-14 21:09:06 [WARNING ] __main__:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 21:09:06 [WARNING ] __main__:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 21:09:06 [WARNING ] __main__:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 21:16:55 [WARNING ] __main__:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-14 21:16:55 [WARNING ] __main__:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)
+2026-09-14 21:16:55 [WARNING ] __main__:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)

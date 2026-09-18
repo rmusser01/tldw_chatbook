@@ -111,7 +111,9 @@ class ConsoleBoundedSection(Vertical):
         if native_scroll_owner is not None:
             # Prevent ScrollView's class-level ``1fr`` from inflating an
             # auto-height section before the first native geometry pass.
-            native_scroll_owner.styles.height = 0
+            native_scroll_owner.remove_class(*(name for name in native_scroll_owner.classes if name.startswith("h-")))
+            native_scroll_owner.set_styles(height=None)
+            native_scroll_owner.add_class("h-0")
             native_scroll_owner.styles.min_height = 0
 
         self._viewport: ScrollView
@@ -368,7 +370,9 @@ class ConsoleBoundedSection(Vertical):
         current_height = viewport.content_region.height
         if current_height != target_height:
             will_overflow = desired > target_height > 0
-            viewport.styles.height = target_height
+            viewport.remove_class(*(name for name in viewport.classes if name.startswith("h-")))
+            # ds-runtime: Measured available viewport and rendered content rows determine the bounded section height.
+            viewport.set_styles(height=target_height)
             viewport.scroll_y = min(
                 viewport.scroll_y,
                 max(0, desired - target_height),
@@ -428,8 +432,12 @@ class ConsoleBoundedSection(Vertical):
 
         self._desired_content_lines = desired
         if viewport.content_region.height != target_height:
-            viewport.styles.height = target_height
-            self.styles.height = fixed_lines + target_height
+            viewport.remove_class(*(name for name in viewport.classes if name.startswith("h-")))
+            # ds-runtime: Measured available viewport and rendered content rows determine the bounded section height.
+            viewport.set_styles(height=target_height)
+            self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+            # ds-runtime: Measured available viewport and rendered content rows determine the bounded section height.
+            self.set_styles(height=fixed_lines + target_height)
             viewport.scroll_y = min(
                 viewport.scroll_y,
                 max(0, virtual_lines - target_height),
@@ -454,7 +462,9 @@ class ConsoleBoundedSection(Vertical):
             self._retained_scroll_y = None
         native_height = fixed_lines + target_height + int(has_overflow)
         if self.region.height != native_height:
-            self.styles.height = native_height
+            self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+            # ds-runtime: Measured available viewport and rendered content rows determine the bounded section height.
+            self.set_styles(height=native_height)
             self._wait_for_reconcile_layout()
         self._recover_removed_focus_target()
         self._update_hint()

@@ -1,0 +1,28 @@
+{
+  "run": "run-004",
+  "captures": [
+    "configured-170.svg",
+    "configured-80.svg",
+    "draft-after-recovery-170.svg",
+    "draft-after-recovery-80.svg",
+    "picker-170.svg",
+    "picker-80.svg"
+  ],
+  "rendered_with": "qlmanage at 1600 px",
+  "inspection_batch": "confirmation after run-002 diagnostic batch",
+  "observations": [
+    "Provider configured status and chooser focus are readable in both themes.",
+    "Draft title retains its value; compact Input scrolls horizontally to show the end.",
+    "Focused Import controls remain above the Start dock and fold hint.",
+    "Wide GGUF picker has readable filename, filter, Open and Cancel controls."
+  ],
+  "open_findings": [
+    {
+      "severity": "P1",
+      "surface": "filtered file picker at 80x24",
+      "finding": "The fixed-width filter squeezes the filename Input and pushes Cancel outside the dialog.",
+      "scope": "Separate shared picker layout repair; Escape cancellation and typed-path submission were exercised here."
+    }
+  ],
+  "limits": "Qualifies provider-result continuity and routing with external admission and dispatch replaced; does not qualify actual model execution or the shared compact picker footer layout."
+}

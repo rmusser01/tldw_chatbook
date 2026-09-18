@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Speech & TTS
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s |           │
+│     Storage                  │  │  │  Application-wide defaults; Studio      │
+│     Workspaces               │  │  │  preferences remain separate.           │
+│     Tool Profiles            │  │  │ │                                    │  │
+│     Privacy & Security       │  │  │ │ Voice value                        │  │
+│     Network                  │  │  │ │                                    │  │
+│     My Profile               │  │  │ │ ┌────────────────────────────────┐ │  │
+│  Troubleshooting           ▇ │  │  │ │ │ review-textual-dark-190x55   ▼ │ │  │
+│     Diagnostics (view)       │  │  │ │ └────────────────────────────────┘ │  │
+│     About (view)             │  │  │ │        Browse in Speech Lab        │  │
+│     Agents                   │  │  │ │                                    │  │
+│  Expert                      │  │  │ │                                    │  │
+│     Internal Prompts         │  │  │ │ Output format                      │  │
+│     Advanced Config          │  │  │ │                                    │  │
+│   Domain Defaults ▸ (11)     │  │  │ │ ┌────────────────────────────────┐ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Known voices for this provider; pick Custom… to enter an exact ID
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

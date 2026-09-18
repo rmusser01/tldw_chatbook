@@ -1,0 +1,15 @@
+.......................................................                  [100%]
+============================= slowest 25 durations =============================
+5.34s call     Tests/UI/test_library_ingest_structural.py::test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen
+5.23s call     Tests/UI/test_library_ingest_structural.py::test_the_fold_pays_for_itself_in_the_shipped_screen
+4.92s call     Tests/UI/test_library_ingest_structural.py::test_start_and_forecast_are_visible_without_scrolling_at_52_rows
+4.82s call     Tests/UI/test_library_ingest_structural.py::test_submit_brings_the_queue_heading_into_view
+2.29s call     Tests/UI/test_library_ingest_structural.py::test_every_canvas_focusable_changes_at_the_glyph_level_on_focus
+2.01s call     Tests/Utils/test_install_clipboard_native.py::test_timed_out_clipboard_descendant_cannot_overwrite_a_later_copy
+1.39s call     Tests/Local_Ingestion/test_youtube_stt_selection.py::test_youtube_job_reaches_selected_transcription_runner[faster-whisper-faster-whisper]
+1.38s call     Tests/Local_Ingestion/test_youtube_stt_selection.py::test_youtube_job_reaches_selected_transcription_runner[parakeet-onnx-parakeet-onnx]
+1.35s call     Tests/Local_Ingestion/test_youtube_stt_selection.py::test_youtube_job_reaches_selected_transcription_runner[default-faster-whisper]
+1.33s call     Tests/Local_Ingestion/test_youtube_stt_selection.py::test_youtube_job_reaches_selected_transcription_runner[transcribe-cpp-transcribe-cpp]
+
+(15 durations < 1s hidden.)
+55 passed in 37.94s

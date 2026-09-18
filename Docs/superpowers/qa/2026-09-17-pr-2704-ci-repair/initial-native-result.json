@@ -1,0 +1,91 @@
+{
+  "pid": 33136,
+  "runner_sha256": "5aece208d4e17b781451db7727edb300b95103756dc5b6fdf835ec585452b6d9",
+  "source_hashes": {
+    "tldw_chatbook/app.py": "80d5a57d994ccabb471f24e04568fc8ce4f9130f3c4716fe1a4fee6683c15a94",
+    "tldw_chatbook/UI/LLM_Management_Window.py": "459cd86006328bdaea88d77388b0e9f2b63e2f7c2767ef970fb27aa8ffe99aa7",
+    "tldw_chatbook/css/features/_llm-management.tcss": "1ebe2724919d162f627b264abccad4b80f2ef7d00c546ccec7529b87f64de755",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "da2e73f4102cebaa79523005310b96bfe101e39b1c2ca0d25138946267f05865"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "provider": "llamacpp",
+      "mode": "managed",
+      "mode_region": [
+        45,
+        12,
+        20,
+        3
+      ],
+      "managed_region": [
+        27,
+        16,
+        38,
+        3
+      ],
+      "managed_disabled": true,
+      "inventory": "empty private profile; no server started"
+    },
+    {
+      "theme": "textual-dark",
+      "provider": "llamafile",
+      "mode": "managed",
+      "mode_region": [
+        45,
+        17,
+        20,
+        3
+      ],
+      "managed_region": [
+        27,
+        21,
+        38,
+        3
+      ],
+      "managed_disabled": true,
+      "inventory": "empty private profile; no server started"
+    },
+    {
+      "theme": "textual-light",
+      "provider": "llamacpp",
+      "mode": "managed",
+      "mode_region": [
+        45,
+        12,
+        20,
+        3
+      ],
+      "managed_region": [
+        27,
+        16,
+        38,
+        3
+      ],
+      "managed_disabled": true,
+      "inventory": "empty private profile; no server started"
+    },
+    {
+      "theme": "textual-light",
+      "provider": "llamafile",
+      "mode": "managed",
+      "mode_region": [
+        45,
+        17,
+        20,
+        3
+      ],
+      "managed_region": [
+        27,
+        21,
+        38,
+        3
+      ],
+      "managed_disabled": true,
+      "inventory": "empty private profile; no server started"
+    }
+  ],
+  "waiting_for": "Notices clear",
+  "passed": true,
+  "app_run_returned": true
+}

@@ -1,0 +1,41 @@
+.venv/bin/python -m pytest Tests/UI/test_library_prompt_save_continuity.py -q --tb=short
+8 passed, 2 warnings in 31.89s
+
+.venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py -k 'save or back or discard or create or geometry or editor_mode or basic_and_advanced or duplicate' -q --tb=short
+88 passed, 254 deselected, 2 warnings in 229.80s (0:03:49)
+
+.venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py::test_library_prompt_conflict_save_as_new_replaces_source_history_identity Tests/UI/test_library_prompts_canvas.py::test_library_shell_create_prompt_write_time_conflict_recovers_on_reload Tests/UI/test_library_prompts_canvas.py::test_library_shell_create_prompt_write_time_conflict_save_as_new_retries_create -q --tb=short
+3 passed, 2 warnings in 16.99s
+
+.venv/bin/python -m pytest Tests/UI/test_library_prompts_reader.py Tests/UI/test_library_prompt_browse_controller.py Tests/UI/test_library_resize_focus_gates_t23025.py -q --tb=short
+63 passed, 2 warnings in 84.09s (0:01:24)
+
+.venv/bin/python -m pytest Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/UI/test_component_pattern_governance.py -q --tb=short
+31 passed, 5 warnings in 47.04s
+
+Earlier differential evidence (overlapping runs; not added to final counts):
+Missing Items request
+E   AssertionError: PromptBrowseResult(scope=PromptBrowseScope(backend='local', query='', collection_id=None, sort_by='last_modified', sort_order='desc', page=1, page_size=20), items=(), total_items=0, total_pages=0, page=1, status='loading', request_fingerprint='a975c3693257ff9edbba4caf097a6fd81f0718998d0e274a9f1874e056ffa5d3', request_token=2, error='', requested_page=1)
+
+Clipped Basic field
+E   AssertionError: assert 'Retain this' in 'Saved.                                                               \n                                              ...───────────────────────────────────────────────\n+P palette · Ctrl+Q quit                                             '
+E    +  where 'Saved.                                                               \n                                              ...───────────────────────────────────────────────\n+P palette · Ctrl+Q quit                                             ' = _painted_text(LibraryProductionCSSHarness(title='LibraryProductionCSSHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'}), Region(x=98, y=42, width=69, height=6))
+
+Back stale work pane
+E   AssertionError: #library-prompt-work-empty never mounted within 30.0s (1130 polls). Visible text: ‹ Library | Local  Navigation Browse Create Study Import / Export Details Status Source · Local Notes 0 · Media 0 · Conversations 0 Workspace Active · Local Default Handoff · unavailable until sources exist Actions Everything here is stored on this machine · syncing to a server isn't available yet. Chunking Lab — compare how text is split for search ▾ scroll for more Prompts (1) 1-1 of 1  Read-only preview · Not included in bulk selection  Name Description  Prompt · Local · text format ▶ System · 0 blocks Empty — add a block to build this lane. ▼ User · 1 blocks Free-form ▼ ▲  Unsaved changes · first in lane; Move up unavailable · last in lane; Move down unavailable Empty — add a block to build this lane. Valid · 1 blocks Ready — Apply changes only the selected non-empty lanes.    Save… ▼ ▲  Instructions Instructions the model always follows. Message template The message inserted into the composer. Author Modified now · v1 Persisted source: Local · Prompt · text format History and collection memberships describe the saved Prompt; unsaved Basic or Advanced edits remain draft-only until Save. Saved. Collections Memberships unavailable Save this prompt before managing collections. / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit     ⌃1 Home ⌃2 Console   ⌃3 Library ⌃4 Roleplay ⌃5 Watchlists ⌃6 Artifacts ⌃7 Schedules ⌃8 Workflows ⌃9 MCP ⌃0 ACP F2 Lab F3 Logs F4 Settings F5 Research F7 Meetings More ▾ Collapse Import… x ▾   Media (0) — your files   Conversations (0)   Notes (0+)   Prompts (1) — reuse   Skills (0) — AI add-ons   Collections (0)   Search / RAG — find all ▾   New note ▸ New prompt   New skill ▾   Study decks   Flashcards   Quizzes ▾   Import…   Export ▸ Create local workspace Import sources Use in Console Chunking Lab Try selected text <--- collection: All prompts sort: Newest Select Import… Export… Continuity [bold] café
+E   Local · User only
+
+Saved block still dirty
+E   assert False
+E    +  where False = all(<generator object test_first_prompt_save_settles_items_without_leaving_editor.<locals>.<genexpr> at 0x112c211c0>)
+
+Native wide: final LinuxDriver journey passed; shell exit 0 verified.
+Native compact: final LinuxDriver journey passed; final shell exit was not verified.
+An older compact exit-0 file was stale; the final owned session was closed while python was still shown as active.
+Subsequent process inventory found no native_check.py processes.
+
+Task-ID audit: 312 local/remote refs plus live worktrees. CLI initially assigned 32601, already owned by a Workflows task. This audit was renumbered to 32603 above the swept maximum of 32602.
+
+Final reader and continuity rerun after all production edits:
+.venv/bin/python -m pytest Tests/UI/test_library_prompts_reader.py Tests/UI/test_library_prompt_save_continuity.py -q --tb=short
+28 passed, 2 warnings in 109.81s (0:01:49)

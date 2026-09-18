@@ -1,0 +1,61 @@
+{
+  "pid": 49639,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "visible_keyboard_actions": true,
+      "local_validation_and_revert": true,
+      "custom_voice_exact_saved_delta": true,
+      "guarded_leave_cancel_discard_and_save": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "visible_keyboard_actions": true,
+      "local_validation_and_revert": true,
+      "custom_voice_exact_saved_delta": true,
+      "guarded_leave_cancel_discard_and_save": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        190,
+        55
+      ],
+      "visible_keyboard_actions": true,
+      "local_validation_and_revert": true,
+      "custom_voice_exact_saved_delta": true,
+      "guarded_leave_cancel_discard_and_save": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "visible_keyboard_actions": true,
+      "local_validation_and_revert": true,
+      "custom_voice_exact_saved_delta": true,
+      "guarded_leave_cancel_discard_and_save": true
+    }
+  ],
+  "runner_sha256": "2d569b45e89fa0b07e41987256f36c429662f7d682ccbe62388f083fe5a7317a",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "29b4eaaed23a9ec03a6888bdbdd7b935e5b25162959586371f1188acecea3441",
+    "tldw_chatbook/UI/Screens/settings_speech_tts.py": "c7ac398248f1d514c16b8990023ecf328ceba82e7f322a3fe1c2dfe8fc46fd2b",
+    "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": "f989d53819382068c867003f688d2eddec81d6b32abd26d9adacf9d9a885cfda",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "7e78afb6a12a43d0aa99069091e43e9edd282ee0da1435ea6b383cf265b83271",
+    "tldw_chatbook/css/features/_settings.tcss": "2e156b520a878e62b56c582d5dfa02d4eea78d40ad70a5fc30f9bb5c01fbb48c",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "4aa4ff8aca932a38a21bdf94b379e95409f85f86495e58ab01f5b5f8ba13ae0a"
+  },
+  "waiting_for": "Saved before navigation",
+  "passed": true,
+  "app_run_returned": true
+}

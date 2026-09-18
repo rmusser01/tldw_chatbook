@@ -21,7 +21,10 @@ from textual.screen import ModalScreen, Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+)
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -114,6 +117,8 @@ def test_static_content_gate_skips_equal_copy_but_updates_changed_copy() -> None
 class _WorkspaceHarness(ConsolidatedCSSApp):
     """Mount one retained workspace without the rest of Library."""
 
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
         super().__init__()
         self.workspace = workspace
@@ -135,6 +140,8 @@ class _CssTrueWorkspaceHarness(_WorkspaceHarness):
 class _TwoWorkspaceHarness(ConsolidatedCSSApp):
     """Mount two workspaces that share one process owner."""
 
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
     def __init__(
         self,
         first: LibraryFileNotesWorkspace,
@@ -153,6 +160,8 @@ class _TwoWorkspaceHarness(ConsolidatedCSSApp):
 
 class _DynamicWorkspaceHarness(ConsolidatedCSSApp):
     """Mount a second workspace after the first is already running."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
         super().__init__()

@@ -30,6 +30,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -154,8 +155,9 @@ PERSISTED_PROVIDER_ALIASES = (
         ),
     ],
 )
+@private_profile_test
 async def test_console_capture_settings_reports_structured_mutation_outcomes(
-    monkeypatch, mutation_result, expected_status
+    request, monkeypatch, mutation_result, expected_status
 ):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -184,15 +186,20 @@ async def test_console_capture_settings_reports_structured_mutation_outcomes(
         button = screen.query_one(
             "#settings-console-exchange-capture-apply", Button
         )
-        await screen.handle_console_exchange_capture_apply(
+        screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
 
         assert screen._console_capture_status == expected_status
 
 
 @pytest.mark.asyncio
-async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch):
+@private_profile_test
+async def test_console_trace_viewer_full_uses_explicit_confirmation(
+    request, monkeypatch
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(80, 24)) as pilot:
@@ -233,9 +240,11 @@ async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch)
         button = screen.query_one(
             "#settings-console-exchange-capture-apply", Button
         )
-        await screen.handle_console_exchange_capture_apply(
+        screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
 
         modal = confirmation.await_args.args[0]
         assert "PII detectors missed" in modal.message
@@ -244,7 +253,9 @@ async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -278,7 +289,7 @@ async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
         controller = SimpleNamespace(
             store=SimpleNamespace(active_session_id="session-a"),
             capture_policy_snapshot=lambda _session: snapshot,
-            apply_global_capture_settings=coordinator,
+            apply_global_capture_settings_async=AsyncMock(side_effect=coordinator),
         )
         app.console_runtime = SimpleNamespace(chat_controller=controller)
         screen._console_capture_policy = SimpleNamespace(
@@ -303,9 +314,11 @@ async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
             "#settings-console-exchange-capture-apply", Button
         )
 
-        await screen.handle_console_exchange_capture_apply(
+        screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
 
         confirmation.assert_not_awaited()
         coordinator.assert_called_once_with(
@@ -1105,7 +1118,8 @@ def test_settings_optional_int_defaults_load_invalid_values_as_blank():
 
 
 @pytest.mark.asyncio
-async def test_settings_defaults_to_overview_category():
+@private_profile_test
+async def test_settings_defaults_to_overview_category(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -1201,7 +1215,9 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         assert owner in boundary_text
 
 
-def test_settings_overview_ownership_rows_are_sourced_from_record():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_ownership_rows_are_sourced_from_record(request):
     app = _build_test_app()
     screen = SettingsScreen(app)
 
@@ -2643,7 +2659,8 @@ def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
+@private_profile_test
+async def test_settings_storage_renders_guided_defaults_and_validates(request, tmp_path):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -2695,7 +2712,8 @@ async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_surfaces_check_action_before_long_path_editor(tmp_path):
+@private_profile_test
+async def test_settings_storage_surfaces_check_action_before_long_path_editor(request, tmp_path):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -2728,7 +2746,8 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(tm
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
+@private_profile_test
+async def test_settings_storage_save_and_revert_defaults(request, monkeypatch, tmp_path):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -2964,7 +2983,10 @@ def test_settings_server_sync_workspace_rows_use_source_contracts():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch):
+@private_profile_test
+async def test_settings_overview_detail_uses_cached_server_sync_rows(
+    request, monkeypatch
+):
     def fail_if_render_blocks_on_source_contracts(*_args, **_kwargs):
         raise AssertionError("Overview render must use cached source-contract rows")
 
@@ -2995,7 +3017,10 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_reselect_refreshes_cached_source_rows(monkeypatch):
+@private_profile_test
+async def test_settings_overview_reselect_refreshes_cached_source_rows(
+    request, monkeypatch
+):
     refresh_calls = 0
 
     def fake_refresh(self):
@@ -3501,7 +3526,10 @@ def test_settings_status_language_agrees_with_home_console_and_library_contracts
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_server_sync_workspace_contracts_in_diagnostics():
+@private_profile_test
+async def test_settings_overview_renders_server_sync_workspace_contracts_in_diagnostics(
+    request,
+):
     class FakeWorkspaceRegistry:
         def get_active_workspace(self):
             return WorkspaceRecord(
@@ -3562,7 +3590,8 @@ def test_settings_ownership_record_falls_back_without_crashing():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_ownership_contract_boundaries():
+@private_profile_test
+async def test_settings_overview_renders_ownership_contract_boundaries(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -3767,7 +3796,8 @@ async def test_settings_inspector_has_no_write_blocked_contradiction():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_leads_with_readiness_before_manual_sync():
+@private_profile_test
+async def test_settings_overview_leads_with_readiness_before_manual_sync(request):
     """task-181: Overview starts with user-relevant readiness, not Manual Sync."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -3794,7 +3824,8 @@ async def test_settings_overview_leads_with_readiness_before_manual_sync():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_renders_primary_user_tasks_before_diagnostics():
+@private_profile_test
+async def test_settings_overview_renders_primary_user_tasks_before_diagnostics(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -4920,7 +4951,7 @@ async def test_settings_active_category_uses_explicit_nav_marker():
 def test_settings_active_category_focus_style_keeps_label_readable():
     css_path = (
         Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+        / "tldw_chatbook/css/features/_settings.tcss"
     )
     css = css_path.read_text()
     match = re.search(
@@ -4938,7 +4969,7 @@ def test_settings_active_category_focus_style_keeps_label_readable():
 def test_settings_action_button_focus_style_keeps_label_readable():
     css_path = (
         Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+        / "tldw_chatbook/css/features/_settings.tcss"
     )
     css = css_path.read_text()
     match = re.search(
@@ -4957,7 +4988,7 @@ def test_settings_action_button_focus_style_keeps_label_readable():
 def test_settings_shell_button_focus_does_not_use_heavy_outline():
     css_path = (
         Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+        / "tldw_chatbook/css/features/_settings.tcss"
     )
     css = css_path.read_text()
     match = re.search(
@@ -4973,29 +5004,39 @@ def test_settings_shell_button_focus_does_not_use_heavy_outline():
 
 
 def test_settings_invalid_compact_fields_keep_focused_text_readable():
-    css_path = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-    )
-    css = css_path.read_text()
-    match = re.search(
-        r"\.settings-compact-input\.settings-invalid-input:focus,\s*"
-        r"\.settings-compact-select\.settings-invalid-input:focus\s*\{(?P<body>[^}]*)\}",
-        css,
-        flags=re.DOTALL,
-    )
+    # ADR-161 task 9: the compact-input half of the two invalid-state rules
+    # moved (tokenized) to the forms owning sheet; the compact-select half
+    # lives in the Settings feature sheet. The contract is identical on both
+    # sides, so each owning sheet is checked for its own half.
+    css_root = Path(__file__).resolve().parents[2] / "tldw_chatbook/css"
+    for sheet_name, selector in (
+        (
+            "components/_forms.tcss",
+            r"\.settings-compact-input\.settings-invalid-input:focus",
+        ),
+        (
+            "features/_settings.tcss",
+            r"\.settings-compact-select\.settings-invalid-input:focus",
+        ),
+    ):
+        css = (css_root / sheet_name).read_text()
+        match = re.search(
+            rf"{selector}\s*\{{(?P<body>[^}}]*)\}}",
+            css,
+            flags=re.DOTALL,
+        )
 
-    assert match
-    body = match.group("body")
-    assert "color: $ds-text-primary;" in body
-    assert "text-opacity: 1;" in body
-    # task-1369: the focused invalid field keeps an error-tinted background
-    # instead of restyling to the normal surface (the highlight must not be
-    # lost exactly while the user edits the field).
-    assert "background: $ds-status-error" in body
-    assert "$ds-surface-raised" not in body
-    assert "outline: none;" in body
-    assert "outline: heavy" not in body
+        assert match, f"{selector} not found in {sheet_name}"
+        body = match.group("body")
+        assert "color: $ds-text-primary;" in body
+        assert "text-opacity: 1;" in body
+        # task-1369: the focused invalid field keeps an error-tinted background
+        # instead of restyling to the normal surface (the highlight must not be
+        # lost exactly while the user edits the field).
+        assert "background: $ds-status-error" in body
+        assert "$ds-surface-raised" not in body
+        assert "outline: none;" in body
+        assert "outline: heavy" not in body
 
 
 @pytest.mark.asyncio
@@ -5730,7 +5771,10 @@ async def test_settings_category_search_reveals_domain_matches():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch):
+@private_profile_test
+async def test_settings_overview_paste_summary_updates_after_toggle(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
     # TASK-1310: 1df0c4cb4 ("reconcile privacy lifecycle eval and packaging
@@ -7103,7 +7147,10 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_raw_cli():
+@private_profile_test
+async def test_settings_read_only_overview_hides_actions_and_clean_privacy_disables_them(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -7127,13 +7174,16 @@ async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text=(
-                "Guided edit: raw CLI unlock only; posture remains read-only."
+                "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
             ),
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         visible = _visible_text(screen)
-        assert "Guided edit: raw CLI unlock only; posture remains read-only." in visible
+        assert (
+            "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
+            in visible
+        )
         assert "Check Privacy" in visible
 
 
@@ -10298,7 +10348,7 @@ async def test_model_discovery_crash_status_is_plain_language_without_raw_except
     assert "sk-super-secret" not in status
     assert status.startswith("Model discovery failed (RuntimeError).")
     assert "run Discover again" in status
-    assert "Logs (F8)" in status
+    assert "Logs (F3)" in status
 
 
 @pytest.mark.asyncio
@@ -10318,7 +10368,7 @@ async def test_discovered_model_save_crash_status_is_plain_language():
     assert "disk sadness" not in status
     assert status.startswith("Could not save the discovered models (OSError).")
     assert "Try Save again" in status
-    assert "Logs (F8)" in status
+    assert "Logs (F3)" in status
 
 
 def test_failure_status_text_never_carries_raw_exception_text():
@@ -10407,7 +10457,8 @@ def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypa
     ],
 )
 @pytest.mark.asyncio
-async def test_settings_first_slice_categories_have_real_content(button_id, expected):
+@private_profile_test
+async def test_settings_first_slice_categories_have_real_content(request, button_id, expected):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -10964,18 +11015,15 @@ def test_settings_privacy_secret_count_ignores_non_secret_numeric_token_limits()
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp_path):
-    config_path = tmp_path / "config" / "config.toml"
-    # TASK-1310: 1df0c4cb4 made application_owned_config_directory() return
-    # None whenever TLDW_CONFIG_PATH is set (custom config parents are never
-    # auto-created -- see config.py's docstring "never a custom parent"), so
-    # the config bootstrap no longer recovers from a missing parent directory
-    # for a test-overridden path. Pre-create it, matching real deployments
-    # where the parent always exists before TLDW_CONFIG_PATH points at it.
+@private_profile_test
+async def test_settings_storage_test_shortcut_runs_safety_check(request, monkeypatch, tmp_path):
+    from tldw_chatbook import config
+
+    config_path = Path(config.get_cli_config_path())
+    # The private-profile child selects this path before imports.
     config_path.parent.mkdir(parents=True, exist_ok=True)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = _build_test_app()
     app.user_data_dir = data_dir
     app.notifications_db_path = data_dir / "notifications.db"
@@ -11102,11 +11150,15 @@ def test_settings_config_path_delegates_to_shared_accessor(monkeypatch, tmp_path
     assert screen._config_path() == sentinel
 
 
-def test_settings_overview_config_path_label_hides_local_directory(
-    monkeypatch, tmp_path
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_config_path_label_hides_local_directory(
+    request, monkeypatch, tmp_path
 ):
     config_path = tmp_path / "config" / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(
+        settings_screen_module, "get_cli_config_path", lambda: config_path
+    )
     screen = SettingsScreen(SimpleNamespace(app_config={}))
 
     value = screen._config_path_overview_value()
@@ -11461,7 +11513,9 @@ def test_settings_source_labels_cover_every_resolvable_source():
 # ---- [chat.images] render_remote_images toggle (task-1537 settings UI) ----
 
 
-def test_remote_images_toggle_label_reflects_config():
+@pytest.mark.asyncio
+@private_profile_test
+def test_remote_images_toggle_label_reflects_config(request):
     """The remote-images toggle label mirrors [chat.images].render_remote_images."""
     app = _build_test_app()
     app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {
@@ -11477,7 +11531,9 @@ def test_remote_images_toggle_label_reflects_config():
     assert screen._remote_images_button_label() == "Disabled"
 
 
-def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+def test_remote_images_toggle_persists_and_pokes_live_config(request, monkeypatch):
     """Toggling persists the dotted section AND updates the live app_config.
 
     The App captures ``app_config`` once at startup, so the persisted write
@@ -11487,14 +11543,9 @@ def test_remote_images_toggle_persists_and_pokes_live_config(monkeypatch):
     app = _build_test_app()
     app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {"chat": {"images": {}}}
     screen = SettingsScreen(app)
-    # task-15470: the actual write moved into a `@work(thread=True)`
-    # instance method (`_persist_remote_images_toggle`), which needs a
-    # running/mounted app to dispatch through `run_worker` -- this screen
-    # is constructed but never pushed onto `app`'s screen stack. Patching
-    # the instance method (rather than the module-level
-    # `save_settings_to_cli_config` it wraps) keeps this test's own
-    # subject -- the dotted section shape and the live app_config poke --
-    # intact.
+    # Persistence is queued through an app-owned worker, while this screen
+    # is never mounted. Patch the enqueue seam to retain this test's original
+    # dotted-section payload and live-config assertions.
     saved = []
     screen._persist_remote_images_toggle = lambda next_value: saved.append(
         {"chat.images": {"render_remote_images": next_value}}
@@ -11833,7 +11884,9 @@ def test_internal_prompts_group_headers_use_display_titles():
     assert subsystem_display_title("console") == "Console"
 
 
-def test_mode_line_disclaimer_only_on_overview():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mode_line_disclaimer_only_on_overview(request):
     """'Runtime controls stay in MCP and ACP' repeated verbatim on all 17
     categories; it orients once on Overview, not as standing noise."""
     app = _build_test_app()
@@ -11927,12 +11980,12 @@ def test_compact_inputs_carry_rest_edge_and_focus_edge():
     the carrier) and a thick accent edge plus the distinct focus
     background when focused. Left borders cost a column, never a row, so
     the dense one-row forms keep their height."""
-    src = (_CONVENTION_CSS_ROOT / "components" / "_agentic_terminal.tcss").read_text()
+    src = (_CONVENTION_CSS_ROOT / "components" / "_forms.tcss").read_text()
     rest = re.search(r"\.settings-compact-input \{[^}]*\}", src)
     focus = re.search(r"\.settings-compact-input:focus \{[^}]*\}", src)
     assert rest and focus
     assert "border-left: solid $ds-control-edge;" in rest.group(0)
-    assert "height: 1;" in rest.group(0)
+    assert "height: $ds-control-height-compact;" in rest.group(0)
     assert "border-left: thick $ds-action-focus;" in focus.group(0)
 
 
@@ -12451,7 +12504,8 @@ def test_toast_severity_variants_pin_the_left_edge():
 
 
 @pytest.mark.asyncio
-async def test_reassurance_short_line_off_overview():
+@private_profile_test
+async def test_reassurance_short_line_off_overview(request):
     """The long reassurance paragraph is Overview-only.
 
     task-1714: elsewhere a single line keeps the local-first promise
@@ -12471,7 +12525,10 @@ async def test_reassurance_short_line_off_overview():
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_front_door_is_four_status_rows_with_open_affordances():
+@private_profile_test
+async def test_settings_overview_front_door_is_four_status_rows_with_open_affordances(
+    request,
+):
     """task-1369: the Overview landing card leads with at most four primary
     status rows, each with an Open-category affordance (the sync row carries
     the manual sync controls); the handoff detail and ownership table sit
@@ -12519,7 +12576,9 @@ async def test_settings_overview_front_door_is_four_status_rows_with_open_afford
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_settings_overview_status_reports_not_ready_without_credential(
+    request,
     monkeypatch,
 ):
     """TASK-31805: the Overview 'Status:' reflects send-path readiness.
@@ -12552,13 +12611,18 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_status_reports_ready_with_credential(monkeypatch):
+@private_profile_test
+async def test_settings_overview_status_reports_ready_with_credential(
+    request, monkeypatch
+):
     """Paired arm: a resolvable API key still reads 'Status: Ready'."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     api_settings = app.app_config.setdefault("api_settings", {})
-    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-ready-0123456789"
+    api_settings.setdefault("openai", {})["api_key"] = (
+        "sk-test-overview-ready-0123456789"
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -12573,7 +12637,10 @@ async def test_settings_overview_status_reports_ready_with_credential(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_status_reports_not_ready_without_model(monkeypatch):
+@private_profile_test
+async def test_settings_overview_status_reports_not_ready_without_model(
+    request, monkeypatch
+):
     """Qodo #2 (TASK-31805): credential present but no model -> not-ready.
 
     A credential-only check would return Ready here while the Overview
@@ -12587,7 +12654,9 @@ async def test_settings_overview_status_reports_not_ready_without_model(monkeypa
     # Valid credential resolves, but NO model is selected.
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": ""}
     api_settings = app.app_config.setdefault("api_settings", {})
-    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-nomodel-0123456789"
+    api_settings.setdefault("openai", {})["api_key"] = (
+        "sk-test-overview-nomodel-0123456789"
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -12605,7 +12674,8 @@ async def test_settings_overview_status_reports_not_ready_without_model(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_open_category_buttons_switch_category():
+@private_profile_test
+async def test_settings_overview_open_category_buttons_switch_category(request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -12708,7 +12778,10 @@ def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(
 
 
 @pytest.mark.asyncio
-async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recompose():
+@private_profile_test
+async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recompose(
+    request,
+):
     """An expanded Overview disclosure survives a sync-row change -- the user
     expands it precisely to watch a sync run.
 

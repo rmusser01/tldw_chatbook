@@ -1,0 +1,25 @@
+Package under test: /private/tmp/tldw-15390-dev-check/tldw_chatbook/__init__.py
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional ____
+Tests/UI/test_product_maturity_gate16_library_search_rag.py:262: in test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+    assert results_heading_text(rag_state) == "Evidence · top 15"
+E   AssertionError: assert 'Evidence · top 5' == 'Evidence · top 15'
+E
+E     - Evidence · top 15
+E     ?                -
+E     + Evidence · top 5
+---------------------------- Captured stderr setup -----------------------------
+2026-09-16 21:21:57.097 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-16 21:21:57.119 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-16 21:21:57.119 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-16 21:21:57.120 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-16 21:21:57.161 | DEBUG    | tldw_chatbook.Library.library_rag_state:library_rag_profile_top_k:697 - Library Search/RAG could not read the active RAG profile's top_k (exception_category=RecoveryRequired); using the fallback.
+2026-09-16 21:21:57.162 | DEBUG    | tldw_chatbook.Library.library_rag_state:library_rag_profile_top_k:697 - Library Search/RAG could not read the active RAG profile's top_k (exception_category=RecoveryRequired); using the fallback.
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional
+1 failed in 5.56s

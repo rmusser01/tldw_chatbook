@@ -1,0 +1,97 @@
+{
+  "pid": 64041,
+  "runner_sha256": "f973533bb098f38e9a2b5516a7c0bb622284674c6ab41caeac1d8803eb4c06b7",
+  "settings_source_sha256": "741ad5d60881e64f75e32031e7824aa8c27bee8d93b99ace9ade8ca9a0190f5d",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "selected": "audit-1-beta",
+      "saved": [
+        "audit-1-beta"
+      ],
+      "rebuild_preserved_selection": true,
+      "clear_preserved_saved_list": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "selected": "audit-2-beta",
+      "saved": [
+        "audit-1-beta",
+        "audit-2-beta"
+      ],
+      "rebuild_preserved_selection": true,
+      "clear_preserved_saved_list": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "selected": "audit-3-beta",
+      "saved": [
+        "audit-1-beta",
+        "audit-2-beta",
+        "audit-3-beta"
+      ],
+      "rebuild_preserved_selection": true,
+      "clear_preserved_saved_list": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "selected": "audit-4-beta",
+      "saved": [
+        "audit-1-beta",
+        "audit-2-beta",
+        "audit-3-beta",
+        "audit-4-beta"
+      ],
+      "rebuild_preserved_selection": true,
+      "clear_preserved_saved_list": true
+    }
+  ],
+  "waiting_for": "Cleared cache",
+  "discovery_failure": "Model discovery request failed. Check the endpoint URL, server availability, and credentials.",
+  "passed": true,
+  "http_requests": [
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ],
+    [
+      "GET",
+      "/v1/models"
+    ]
+  ],
+  "generation_requests": 0,
+  "app_run_returned": true,
+  "server_closed": true
+}

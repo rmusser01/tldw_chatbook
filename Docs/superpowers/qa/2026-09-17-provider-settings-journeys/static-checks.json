@@ -1,0 +1,43 @@
+[
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "Tests/UI/test_settings_provider_keyboard_journeys.py",
+      "Docs/superpowers/qa/2026-09-17-provider-settings-journeys/native_check.py"
+    ],
+    "exit_code": 0,
+    "output": "All checks passed!\n"
+  },
+  {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--check",
+      "Tests/UI/test_settings_provider_keyboard_journeys.py",
+      "Docs/superpowers/qa/2026-09-17-provider-settings-journeys/native_check.py"
+    ],
+    "exit_code": 0,
+    "output": "2 files already formatted\n"
+  },
+  {
+    "command": [
+      ".venv/bin/python",
+      "-m",
+      "py_compile",
+      "Tests/UI/test_settings_provider_keyboard_journeys.py",
+      "Docs/superpowers/qa/2026-09-17-provider-settings-journeys/native_check.py"
+    ],
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "output": ""
+  }
+]

@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Shared    │
+│     Storage                  │  │  │  with Console                           │
+│     Workspaces               │  │  │ │                                    │▅ │
+│     Tool Profiles            │  │  │ │  Connect                           │▅ │
+│     Privacy & Security       │  │  │ │ Provider                           │  │
+│     Network                  │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │
+│     My Profile               │  │  │ │ ▊  Search providers by name or   ▎ │  │
+│  Troubleshooting           ▇ │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │
+│     Diagnostics (view)       │  │  │ │ ┌───────────────────────────────▃▃ │  │
+│     About (view)             │  │  │ │ │roq                            ▂▂ │  │
+│     Agents                   │  │  │ │ │ugging Face                       │  │
+│  Expert                      │  │  │ │ │istralAI                          │  │
+│     Internal Prompts         │  │  │ │ │oonshot                           │  │
+│     Advanced Config          │  │  │ │ └───────────────────────────────   │  │
+│   Domain Defaults ▸ (11)     │  │  │ │ Choose a provider or enter a       │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

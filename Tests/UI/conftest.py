@@ -110,6 +110,16 @@ def _disable_model_catalog_refresh(monkeypatch, isolate_test_environment, reques
     back within its own scope.
     """
 
+    # The parent of an opted-in case only launches a fresh pytest process.
+    # Importing the app here would bind config to the parent's changing profile
+    # before the child gets to exercise its actual, lifetime-bound source.
+    from Tests.private_profile import is_private_profile_child
+
+    if getattr(request.function, "_private_profile_test", False) and not (
+        is_private_profile_child(request)
+    ):
+        return
+
     if request.node.path.name in {
         "test_personas_persona_visual_authoring.py",
         "test_personas_persona_visual_pack.py",

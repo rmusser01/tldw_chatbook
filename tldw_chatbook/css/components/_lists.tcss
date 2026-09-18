@@ -3,9 +3,13 @@
  * ======================================== 
  * ListViews, list items, and list patterns
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 ListView ListItem {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     height: auto;
 }
 
@@ -309,7 +313,7 @@ FileSystemPickerScreen #listing-sort-label {
     padding: $ds-space-0 $ds-space-inline;
 }
 FileSystemPickerScreen #listing-controls Select {
-    width: 1fr;
+    width: $ds-width-fill;
     height: $ds-control-height-compact;
 }
 FileSystemPickerScreen #listing-progress {

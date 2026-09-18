@@ -1,0 +1,30 @@
+{
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "baseline_diagnostics": 205,
+    "current_diagnostics": 205,
+    "added_diagnostics": [],
+    "changed_method_format_exit": 0
+  },
+  "tldw_chatbook/Widgets/Library/library_prompt_work_pane.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "added_diagnostics": []
+  },
+  "Tests/UI/test_library_prompt_resize_focus.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "added_diagnostics": []
+  },
+  "Tests/UI/test_library_prompts_reader.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "added_diagnostics": [],
+    "changed_method_format_exit": 0
+  },
+  "Tests/UI/test_library_shell.py": {
+    "baseline_diagnostics": 42,
+    "current_diagnostics": 42,
+    "added_diagnostics": [],
+    "changed_method_format_exit": 0
+  }
+}

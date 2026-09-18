@@ -1,0 +1,48 @@
+{
+  "pid": 91252,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "name": "zeta-170",
+      "invalid_path_recovered": true,
+      "candidate_cancel_preserved_draft": true,
+      "only_selected_candidate_imported": true,
+      "import_remained_blocked": true,
+      "captured_literal_content": true,
+      "stale_approval_blocked": true,
+      "fresh_snapshot_approved": true,
+      "approved_sha256": "7d5f912b8b25e13e21ddf80f7d3fe6df562c7a771db5d59894883113b09b2457",
+      "final_focus": "library-skill-mode-trust"
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "name": "zeta-80",
+      "invalid_path_recovered": true,
+      "candidate_cancel_preserved_draft": true,
+      "only_selected_candidate_imported": true,
+      "import_remained_blocked": true,
+      "captured_literal_content": true,
+      "stale_approval_blocked": true,
+      "fresh_snapshot_approved": true,
+      "approved_sha256": "b3a3ac24e27d7533b26a83f1ce23c3aaca92ca8e54984f6f00757c6472fef7b3",
+      "final_focus": "library-skill-mode-trust"
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "skills_dir": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-15-skills-import-trust/run-005/data/default_user/skills/skills",
+  "trust_dir": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-15-skills-import-trust/run-005/data/default_user/skills/trust",
+  "private_file_marker": true,
+  "bootstrap_blank_and_mismatch": true,
+  "passed": true,
+  "normal_quit_requested": true,
+  "app_run_returned": true
+}

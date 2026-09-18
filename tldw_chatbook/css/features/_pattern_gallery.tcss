@@ -1,0 +1,89 @@
+/* ========================================
+ * FEATURES: Pattern Gallery (ADR-161)
+ * ========================================
+ * Layout glue ONLY — no family styling here. The gallery must render the
+ * canonical sheets' output, not its own: every family class it composes
+ * (form-*, button-group*, .sidebar*, .section-*, .dialog-*, .status-*,
+ * .ds-*) keeps the rules its owning module already defines.
+ * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
+
+#pg-root {
+    padding: $ds-space-inset;
+}
+
+/* Preview frames: canonical containers with no height rule of their own
+   (form-col, bare ListView, status-area) keep Textual's Container default
+   of 1fr, which resolves against the scroll root's viewport and balloons
+   each preview to full screen height. Explicit frame heights pin the
+   previews. Geometry only — no family styling. */
+.pg-frame-forms {
+    height: $ds-size-44;
+}
+
+.pg-frame-list {
+    height: $ds-size-3;
+}
+
+/* 12 rows for the 1fr status-area preview (as before task 8a) + 8 for the
+   three status-item demo rows (1+1, 1+1, 3+1 incl. the app-wide `.error`
+   chrome on the error state). Geometry only — no family styling. */
+.pg-frame-status {
+    height: $ds-size-20;
+}
+
+/* Structure preview frame for the dialog vocabulary (not a pushed modal). */
+.pg-dialog-frame {
+    height: auto;
+    border: round $ds-grid-line;
+    padding: $ds-space-inset;
+}
+
+/* Bounding box for the sidebar preview: `.sidebar` docks left, so it needs
+   a definite-height container to dock inside rather than the scroll root.
+   28 rows = header 3 + button 3 + toggle 3 + listview 10 + collapsible 6
+   plus the button margins. */
+.pg-nav-frame {
+    height: $ds-size-28;
+}
+
+/* Speaker accents use the same dark/light-mode switch Textual applies to
+   the App (no unsuffixed assistant token exists; see core/_variables.tcss). */
+.pg-msg-user {
+    color: $ds-chat-user-accent;
+}
+
+/* ADR-161 task 8c: bounding frame for the shared bubble-grammar preview
+   (header 1 + padded body 3 + action strip 3 + the ChatMessage margin
+   slot). Geometry only -- the classes render with their owning sheet's
+   rules. */
+.pg-msg-frame {
+    height: $ds-size-9;
+}
+
+/* ADR-161 task 12: sizing-utilities preview frames. The utility strip hugs
+   its content (fixed-value rows only); the share-based h-full/h-fill demos
+   need a definite-height parent or their percentage/fr values resolve
+   against the scroll viewport and balloon, so each gets its own bounded
+   frame. Geometry only. */
+.pg-frame-sizing {
+    height: $ds-height-auto;
+}
+
+.pg-frame-sizing-share {
+    height: $ds-size-4;
+}
+
+.-dark-mode .pg-msg-assistant {
+    color: $ds-chat-assistant-accent-dark;
+}
+
+.-light-mode .pg-msg-assistant {
+    color: $ds-chat-assistant-accent-light;
+}
+
+.pg-utility-row { height: $ds-size-12; }
+.pg-utility-cell { width: $ds-width-fill; height: $ds-height-full; }

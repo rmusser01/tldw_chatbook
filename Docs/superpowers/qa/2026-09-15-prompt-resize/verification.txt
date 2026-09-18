@@ -1,0 +1,10 @@
+Prompt resize, reader, save continuity, and resize gates
+58 passed, 2 warnings in 134.35s (0:02:14)
+
+Notes focus neighbors
+6 passed, 837 deselected, 2 warnings in 26.06s
+
+Design-token, component-pattern and CSS governance
+31 passed, 5 warnings in 49.36s
+
+Native: 16 real tmux resize checks; LinuxDriver; exclusive disposable profile; final size 80x24; app.run returned; fresh shell exit 0.

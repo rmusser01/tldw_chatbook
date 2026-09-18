@@ -1,0 +1,12 @@
+..........                                                               [100%]
+============================= slowest 25 durations =============================
+2.57s call     Tests/UI/test_chat_screen_sidebar_state_debounce.py::test_toggle_during_in_flight_write_survives_a_quit
+2.10s call     Tests/UI/test_chat_screen_sidebar_state_debounce.py::test_debounced_write_lands_after_the_timer_fires
+1.87s call     Tests/UI/test_chat_screen_sidebar_state_debounce.py::test_reset_settings_schedules_a_write_even_from_an_empty_state
+1.83s call     Tests/UI/test_chat_screen_sidebar_state_debounce.py::test_saved_sidebar_state_restores_during_fresh_screen_construction[saved_states0]
+1.47s call     Tests/UI/test_chat_screen_sidebar_state_debounce.py::test_saved_sidebar_state_restores_during_fresh_screen_construction[saved_states1]
+1.42s call     Tests/UI/test_chat_screen_sidebar_state_debounce.py::test_quit_immediately_after_toggle_flushes_the_pending_write
+1.36s call     Tests/UI/test_chat_screen_sidebar_state_debounce.py::test_toggle_does_not_write_synchronously_on_the_event_loop
+
+(18 durations < 1s hidden.)
+10 passed in 15.90s

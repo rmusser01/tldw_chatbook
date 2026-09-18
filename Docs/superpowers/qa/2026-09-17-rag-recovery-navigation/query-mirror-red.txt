@@ -1,0 +1,18 @@
+F
+=================================== FAILURES ===================================
+_ test_provider_recovery_routes_and_restores_draft_with_current_readiness[False-size0-textual-dark] _
+Tests/UI/test_library_rag_recovery_navigation.py:144: in test_provider_recovery_routes_and_restores_draft_with_current_readiness
+    await host.switch_screen(screen)
+Tests/UI/test_library_rag_recovery_navigation.py:46: in _assert_draft
+    assert screen.query_one("#library-search-input", Input).value == QUERY
+E   AssertionError: assert '' == 'draft [/archive] résumé'
+E
+E     - draft [/archive] résumé
+============================= slowest 25 durations =============================
+2.26s call     Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[False-size0-textual-dark]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[False-size0-textual-dark]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 16 deselected in 3.59s

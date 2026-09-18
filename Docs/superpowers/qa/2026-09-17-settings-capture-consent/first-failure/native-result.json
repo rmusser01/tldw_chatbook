@@ -1,0 +1,28 @@
+{
+  "pid": 64096,
+  "cells": [],
+  "runner_sha256": "70cd3788ef5dbc3aa76a2cf3b7b41f92a98ba6e666befcc37e06a8df123c2f63",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "82211dc9fc0c644bb09991e72de1e957b8c9f94fde76a8e37016d70368d27742",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3614411d7ad34a3a7aa14d9ea9816a9d0695a2b9db082efdc9f64fb3a3a11fc9",
+    "tldw_chatbook/css/features/_settings.tcss": "78b06c168be62d24d5a4ca5f5e3f117b4e1c78d4271b414e751e25b4eead88a9",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "c49b428c2ec0c00f33ca5db1487d224f16c2fb5954fe97e9e6c907714a8d3897"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Capture settings settled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-capture-consent/native_check.py\", line 244, in journey\n    assert_values(\"full\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-capture-consent/native_check.py\", line 171, in assert_values\n    assert value[\"trace_viewer_profile\"] == viewer\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "app_run_returned": true
+}

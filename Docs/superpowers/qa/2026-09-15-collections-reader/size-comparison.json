@@ -1,0 +1,53 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "base": {
+      "lines": 35202,
+      "class_methods": {
+        "LibraryScreen": 1319
+      }
+    },
+    "current": {
+      "lines": 35210,
+      "class_methods": {
+        "LibraryScreen": 1320
+      }
+    }
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+    "base": {
+      "lines": 1747,
+      "class_methods": {
+        "LibraryCollectionsController": 75
+      }
+    },
+    "current": {
+      "lines": 1684,
+      "class_methods": {
+        "LibraryCollectionsController": 77
+      }
+    }
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py",
+    "base": {
+      "lines": 699,
+      "class_methods": {
+        "CaptureRequestFence": 0,
+        "CaptureArchiveReceipt": 0,
+        "CollectionsCaptureControllerState": 4,
+        "LibraryCollectionsCaptureController": 35
+      }
+    },
+    "current": {
+      "lines": 699,
+      "class_methods": {
+        "CaptureRequestFence": 0,
+        "CaptureArchiveReceipt": 0,
+        "CollectionsCaptureControllerState": 4,
+        "LibraryCollectionsCaptureController": 34
+      }
+    }
+  }
+]

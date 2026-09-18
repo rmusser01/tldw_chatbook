@@ -1,0 +1,196 @@
+........................................................................ [ 48%]
+.............................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+....--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+...............FF........FFFFF. [ 96%]
+F....                                                                    [100%]
+=================================== FAILURES ===================================
+_______________ test_on_screen_suspend_does_not_call_save_state ________________
+Tests/UI/test_chat_screen_suspend.py:115: in test_on_screen_suspend_does_not_call_save_state
+    calls = asyncio.run(_run_suspend_with_stubs(screen))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/UI/test_chat_screen_suspend.py:94: in _run_suspend_with_stubs
+    screen.on_screen_suspend()
+tldw_chatbook/UI/Screens/chat_screen.py:23162: in on_screen_suspend
+    controller = self._console_chat_controller
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9894: in _console_chat_controller
+    return self._console_runtime().chat_controller
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9847: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4714: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:3970: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3747: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:10201: in console_view_hooks
+    "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute '_console_wake_user_priority'
+_______________ test_on_screen_suspend_quiesces_every_visit_seam _______________
+Tests/UI/test_chat_screen_suspend.py:130: in test_on_screen_suspend_quiesces_every_visit_seam
+    calls = asyncio.run(_run_suspend_with_stubs(screen))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/UI/test_chat_screen_suspend.py:94: in _run_suspend_with_stubs
+    screen.on_screen_suspend()
+tldw_chatbook/UI/Screens/chat_screen.py:23162: in on_screen_suspend
+    controller = self._console_chat_controller
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9894: in _console_chat_controller
+    return self._console_runtime().chat_controller
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9847: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4714: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:3970: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3747: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:10201: in console_view_hooks
+    "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute '_console_wake_user_priority'
+_____ test_mounted_resume_orders_consumers_once_and_suppresses_competitors _____
+Tests/UI/test_console_roleplay_resume_navigation.py:356: in test_mounted_resume_orders_consumers_once_and_suppresses_competitors
+    assert events == [
+E   AssertionError: assert ['intermediat...-intent', ...] == ['first-chat'...pletion', ...]
+E
+E     At index 0 diff: 'intermediate-native-sync' != 'first-chat'
+E     Left contains one more item: 'final-presentation-focus'
+E     Use -v to get more diff
+________ test_mounted_global_resume_outranks_registry_active_workspace _________
+Tests/UI/test_console_roleplay_resume_navigation.py:420: in test_mounted_global_resume_outranks_registry_active_workspace
+    assert len(store.sessions()) == 1
+E   AssertionError: assert 2 == 1
+E    +  where 2 = len([ConsoleChatSession(title='Chat 1', workspace_id='global', id='11927b7d-80f0-4aea-936f-cb0d20767f67', persisted_conver...fork_trace_boundary=None, todo_store=<tldw_chatbook.Agents.session_todo_store.SessionTodoStore object at 0x1179ff920>)])
+E    +    where [ConsoleChatSession(title='Chat 1', workspace_id='global', id='11927b7d-80f0-4aea-936f-cb0d20767f67', persisted_conver...fork_trace_boundary=None, todo_store=<tldw_chatbook.Agents.session_todo_store.SessionTodoStore object at 0x1179ff920>)] = sessions()
+E    +      where sessions = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x11701abd0>.sessions
+_____ test_mounted_missing_resume_falls_back_to_registry_active_workspace ______
+Tests/UI/test_console_roleplay_resume_navigation.py:469: in test_mounted_missing_resume_falls_back_to_registry_active_workspace
+    assert active_session.workspace_id == workspace.workspace_id
+E   AssertionError: assert 'global' == 'workspace-startup'
+E
+E     - workspace-startup
+E     + global
+_ test_mounted_resume_settles_first_chat_once_without_intermediate_presentation _
+Tests/UI/test_console_roleplay_resume_navigation.py:556: in test_mounted_resume_settles_first_chat_once_without_intermediate_presentation
+    assert lifecycle_events == [
+E   AssertionError: assert ['intermediat...-final-focus'] == ['first-chat'...-final-focus']
+E
+E     At index 0 diff: 'intermediate-native-sync' != 'first-chat'
+E     Left contains one more item: 'resume-final-focus'
+E     Use -v to get more diff
+___ test_mounted_resume_releases_transient_first_chat_without_rollback_focus ___
+Tests/UI/test_console_roleplay_resume_navigation.py:658: in test_mounted_resume_releases_transient_first_chat_without_rollback_focus
+    assert lifecycle_events == [
+E   AssertionError: assert ['intermediat...-final-focus'] == ['first-chat'...-final-focus']
+E
+E     At index 0 diff: 'intermediate-native-sync' != 'first-chat'
+E     Left contains one more item: 'resume-final-focus'
+E     Use -v to get more diff
+_________ test_resume_navigation_continues_after_chat_handoff_release __________
+.venv/lib/python3.12/site-packages/textual/message_pump.py:257: in app
+    return active_app.get()
+           ^^^^^^^^^^^^^^^^
+E   LookupError: <ContextVar name='active_app' at 0x109a04ae0>
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_console_roleplay_resume_navigation.py:791: in test_resume_navigation_continues_after_chat_handoff_release
+    await screen._consume_resume_navigation_startup()
+tldw_chatbook/UI/Screens/chat_screen.py:16712: in _consume_resume_navigation_startup
+    await self._consume_pending_conversation_resume()
+tldw_chatbook/UI/Screens/chat_screen.py:17298: in _consume_pending_conversation_resume
+    if self.app.screen is not self or not handoffs.has_pending(HandoffChannel.CONSOLE_CONVERSATION_RESUME):
+       ^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/message_pump.py:265: in app
+    node = node._parent
+           ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/message_pump.py:149: in _parent
+    return None if self.__parent is None else self.__parent()
+                   ^^^^^^^^^^^^^
+E   AttributeError: 'ChatScreen' object has no attribute '_MessagePump__parent'
+============================= slowest 25 durations =============================
+5.03s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[False]
+4.62s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[True]
+4.22s call     Tests/UI/test_console_live_work_handoffs.py::test_console_wc_live_work_action_button_routes_run_details
+3.56s call     Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+3.47s call     Tests/UI/test_console_live_work_handoffs.py::test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+3.34s call     Tests/UI/test_console_live_work_handoffs.py::test_locked_console_shows_staged_evidence_receipt_task_2852
+3.26s call     Tests/UI/test_console_live_work_handoffs.py::test_console_renders_pending_launch_context
+3.23s call     Tests/UI/test_console_live_work_handoffs.py::test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+2.83s call     Tests/UI/test_console_live_work_handoffs.py::test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+2.28s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_preserves_rail_scroll
+2.12s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_workspace_receipts_and_actions_follow_mounted_source_transitions[textual-light]
+2.01s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_local_workspace_mouse_clicks
+1.94s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_still_auto_opens_inspector
+1.90s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_restage_replaces_single_card
+1.85s call     Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_resume_never_focuses_setup_modal_before_final_opener
+1.84s call     Tests/UI/test_console_live_work_handoffs.py::test_conversation_handoff_evidence_bundle_reaches_capture_as_real_context
+1.83s call     Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_global_resume_outranks_registry_active_workspace
+1.78s call     Tests/UI/test_console_live_work_handoffs.py::test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle
+1.68s call     Tests/UI/test_console_live_work_handoffs.py::test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
+1.68s teardown Tests/UI/test_console_live_work_handoffs.py::test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+1.68s call     Tests/UI/test_console_live_work_handoffs.py::test_notes_handoff_evidence_bundle_reaches_capture_as_real_context
+1.67s call     Tests/UI/test_console_live_work_handoffs.py::test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged
+1.65s call     Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_missing_resume_falls_back_to_registry_active_workspace
+1.65s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[conversation]
+1.65s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[notes]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_chat_screen_suspend.py::test_on_screen_suspend_does_not_call_save_state
+FAILED Tests/UI/test_chat_screen_suspend.py::test_on_screen_suspend_quiesces_every_visit_seam
+FAILED Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_resume_orders_consumers_once_and_suppresses_competitors
+FAILED Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_global_resume_outranks_registry_active_workspace
+FAILED Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_missing_resume_falls_back_to_registry_active_workspace
+FAILED Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_resume_settles_first_chat_once_without_intermediate_presentation
+FAILED Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_resume_releases_transient_first_chat_without_rollback_focus
+FAILED Tests/UI/test_console_roleplay_resume_navigation.py::test_resume_navigation_continues_after_chat_handoff_release
+8 failed, 141 passed in 186.28s (0:03:06)

@@ -1,0 +1,12 @@
+.......                                                                  [100%]
+============================= slowest 25 durations =============================
+8.45s call     Tests/UI/test_library_notes_w5_folder_files_layout.py::test_neither_folder_files_path_line_is_ever_folded_mid_token[size0]
+8.37s call     Tests/UI/test_library_notes_w5_folder_files_layout.py::test_neither_folder_files_path_line_is_ever_folded_mid_token[size2]
+8.35s call     Tests/UI/test_library_notes_w5_folder_files_layout.py::test_neither_folder_files_path_line_is_ever_folded_mid_token[size1]
+6.97s call     Tests/UI/test_library_notes_w5_kbd_focus.py::test_every_note_pane_tab_stop_paints_a_shape_change_on_focus[context]
+6.70s call     Tests/UI/test_library_notes_w5_kbd_focus.py::test_every_note_pane_tab_stop_paints_a_shape_change_on_focus[editor]
+6.47s call     Tests/UI/test_library_notes_w5_kbd_focus.py::test_every_note_pane_tab_stop_paints_a_shape_change_on_focus[preview]
+5.68s call     Tests/UI/test_library_notes_w5_kbd_focus.py::test_info_delete_reads_as_destructive_rather_than_disabled
+
+(14 durations < 1s hidden.)
+7 passed, 19 deselected in 53.28s

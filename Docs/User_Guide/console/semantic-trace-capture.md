@@ -74,6 +74,17 @@ read-only. Historical trace is also never editable: the viewer can inspect,
 filter, search its permitted projection, copy, export, or purge ownership. It
 cannot alter what a past provider call received.
 
+In **F4 > Console Behavior**, select **Full** in **Trace viewer**, then activate
+**Apply exchange capture**. Read the disclosure and choose **View Full** to save
+that choice. **Escape** or **Keep Safe** cancels the change without changing the
+saved viewer. Capture and PII masking remain separate choices.
+
+If a save fails, restore access to the configuration file and apply again. If
+Settings reports that the configuration changed, use **Diagnostics > Reload
+Config** (or **t**, Validate and Reload), return to Console Behavior, review the
+reloaded choices and retry. A successful choice is restored when Settings is
+reopened. Changing to Full does not recover content already removed by masking.
+
 ## Credentials and optional PII masking
 
 Credential filtering is mandatory in both views. Known credential fields,

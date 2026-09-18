@@ -1,0 +1,12 @@
+[
+  {
+    "widget": "Select(id='prompt-editor-save-menu', classes='w-18 -textual-compact')",
+    "shutdown_started": true,
+    "is_attached": true,
+    "is_mounted": false,
+    "children": [],
+    "app_running": false,
+    "app_exiting": false,
+    "stack": "Traceback (most recent call last):\n  File \"/tmp/task32628_compose_gate.py\", line 19, in traced_mount\n    return original_mount(self, event)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py\", line 628, in _on_mount\n    self._setup_options_renderables()\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py\", line 549, in _setup_options_renderables\n    option_list = self.query_one(SelectOverlay)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/dom.py\", line 1533, in query_one\n    raise NoMatches(f\"No nodes match {query_selector!r} on {base_node!r}\")\ntextual.css.query.NoMatches: No nodes match 'SelectOverlay' on Select(id='prompt-editor-save-menu', classes='w-18 -textual-compact')\n"
+  }
+]

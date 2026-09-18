@@ -119,6 +119,10 @@ def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
         if not target.is_absolute():
             target = current / target
         target = target.resolve()
+        if target.is_dir():
+            return target
+        if target.exists():
+            return f"Not a directory: {target.name}"
     except PermissionError:
         # A friendly, errno-free message (matches
         # FileSystemPickerScreen.ERROR_PERMISSION_ERROR) -- the generic
@@ -127,13 +131,6 @@ def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
         return FileSystemPickerScreen.ERROR_PERMISSION_ERROR
     except (RuntimeError, OSError, ValueError) as error:
         return str(error)
-    if target.is_dir():
-        return target
-    if target.exists():
-        # A real path that is not a directory is a different mistake than
-        # a nonexistent one; the vendored SelectDirectory distinguishes
-        # them too.
-        return f"Not a directory: {target.name}"
     return f"Path not found: {value}"
 
 

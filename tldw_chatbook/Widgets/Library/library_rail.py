@@ -9,9 +9,9 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.css.scalar import Scalar
 from textual.css.query import NoMatches
-from textual.events import Focus, Key, MouseDown, Resize
+from textual.css.scalar import Scalar
+from textual.events import DescendantFocus, Focus, Key, MouseDown, Resize
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
@@ -20,11 +20,6 @@ from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
 )
-from tldw_chatbook.Utils.library_rail_width import (
-    LIBRARY_DEFAULT_MAX_WIDTH,
-    LIBRARY_MIN_WIDTH,
-    OrdinaryRailStyleContract,
-)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_MEDIA,
@@ -32,12 +27,17 @@ from tldw_chatbook.Library.library_shell_state import (
     LibraryRailSectionState,
     LibraryShellState,
 )
-from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Utils.library_rail_width import (
+    LIBRARY_DEFAULT_MAX_WIDTH,
+    LIBRARY_MIN_WIDTH,
+    OrdinaryRailStyleContract,
+)
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailHandle,
     DestinationRailSectionHeader,
 )
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
@@ -140,7 +140,7 @@ def library_hang_details_row(renderable: Any, width: int) -> Any:
         return renderable
     global _HANG_CONSOLE
     if _HANG_CONSOLE is None:
-        from rich.console import Console  # noqa: PLC0415 -- lazy: measurement only
+        from rich.console import Console
 
         _HANG_CONSOLE = Console()
     lines = source.wrap(_HANG_CONSOLE, width - len(pad))
@@ -304,7 +304,7 @@ def library_diagnostics_disclosure(
         id="library-rail-section-body-details-diagnostics",
         classes="library-rail-section-body",
     )
-    body.styles.height = "auto"
+    body.add_class("h-auto")
     body.display = open_state
     return header, body
 
@@ -523,7 +523,7 @@ class LibraryRailRowButton(Button):
     """
 
     #: The row record the label is rebuilt from on every width change.
-    library_row: "LibraryRailRow | None" = None
+    library_row: LibraryRailRow | None = None
 
     def on_resize(self, event: Resize) -> None:
         row = self.library_row
@@ -550,7 +550,7 @@ class LibraryNavigationRailHandle(DestinationRailHandle):
             **kwargs,
         )
         self.add_class("console-rail-handle-vertical")
-        self.styles.width = self.WIDTH
+        self.add_class("w-3")
         self.styles.min_width = self.WIDTH
         self.styles.max_width = self.WIDTH
 
@@ -563,9 +563,10 @@ class LibraryNavigationRailHandle(DestinationRailHandle):
         for child in super().compose():
             if isinstance(child, Button):
                 child.add_class("console-rail-handle-button-vertical")
-                child.styles.width = 1
+                child.remove_class("w-11", "h-full")
+                child.add_class("w-1")
                 child.styles.max_width = 1
-                child.styles.height = "1fr"
+                child.add_class("h-fill")
                 child.styles.clear_rule("min_height")
                 child.styles.clear_rule("max_height")
                 child.styles.line_pad = 0
@@ -637,22 +638,26 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             )
         )
 
-    @staticmethod
-    def _ordinary_width_inline_declarations(
-        styles: Any,
+    def _ordinary_width_declarations(
+        self,
     ) -> tuple[
         bool | None,
         tuple[float, object, object] | None,
         tuple[float, object, object] | None,
         tuple[float, object, object] | None,
     ]:
-        """Return the four inline declarations in a Scalar-safe comparison shape."""
-        inline_styles = styles.inline
+        """Compare token-class widths and inline bounds without forcing a refresh."""
+        inline_styles = self.styles.inline
 
         def scalar_rule(rule_name: str) -> tuple[float, object, object] | None:
-            if not inline_styles.has_rule(rule_name):
+            if inline_styles.has_rule(rule_name):
+                value = inline_styles.get_rule(rule_name)
+            elif rule_name == "width" and (
+                self.has_class("w-fill") or self.has_class("w-3fr")
+            ):
+                value = Scalar.parse("1fr" if self.has_class("w-fill") else "3fr")
+            else:
                 return None
-            value = inline_styles.get_rule(rule_name)
             if not isinstance(value, Scalar):
                 return None
             return (value.value, value.unit, value.percent_unit)
@@ -702,29 +707,29 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     def apply_ordinary_width_contract(
         self, contract: OrdinaryRailStyleContract
     ) -> None:
-        """Apply ordinary-shell geometry as reversible inline declarations.
+        """Apply reversible fixed classes or measured ordinary-shell columns.
 
-        ``None`` width values deliberately remove the matching inline rule,
-        allowing the next ordinary presentation to re-establish its exact
-        bounded declaration.
+        Fixed fractional widths clear the previous measured inline width;
+        measured and hidden states release the fractional classes. ``None``
+        bounds remove inline rules so later presentations restore their limits.
         """
         expected = self._ordinary_width_contract_declarations(contract)
         if (
             self._last_ordinary_width_contract == contract
-            and self._ordinary_width_inline_declarations(self.styles) == expected
+            and self._ordinary_width_declarations() == expected
         ):
             return
 
         self.styles.display = "block" if contract.display else "none"
-        for rule_name, value in (
-            ("width", contract.width),
-            ("min_width", contract.min_width),
-            ("max_width", contract.max_width),
-        ):
-            if value is None:
-                self.styles.clear_rule(rule_name)
-            else:
-                setattr(self.styles, rule_name, value)
+        self.set_class(contract.width == "1fr", "w-fill")
+        self.set_class(contract.width == "3fr", "w-3fr")
+        if contract.width in (None, "1fr", "3fr"):
+            self.set_styles(width=None)
+        else:
+            # ds-runtime: rail columns resolved from shell measurements and saved user width
+            self.set_styles(width=contract.width)
+        self.styles.min_width = contract.min_width
+        self.styles.max_width = contract.max_width
         self._last_ordinary_width_contract = contract
 
     def invalidate_width_contract_owner(self) -> None:
@@ -774,9 +779,12 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             )
             for section in self.shell.sections
         )
+        # Opening Details can mount Diagnostics after this cached shell was
+        # built. Let the patch below use those rows; its NoMatches fallback
+        # still rebuilds when they are absent. Removing sizes needs a rebuild.
         details_shape_matches = bool(
-            len(self.shell.details_lines) > 2 and self.shell.details_lines[2]
-        ) == bool(len(shell.details_lines) > 2 and shell.details_lines[2])
+            len(shell.details_lines) > 2 and shell.details_lines[2]
+        ) or not bool(len(self.shell.details_lines) > 2 and self.shell.details_lines[2])
         can_patch_in_place = (
             self.is_mounted
             and self.lifecycle is LibraryLifecycle.EXPANDED
@@ -834,7 +842,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 # "see what carries over" meta line under each -- six rail
                 # rows for three destinations. The promise now lives on the
                 # staging canvas that keeps it, so every row is one cell.
-                button.styles.height = 1
+                button.add_class("h-1")
                 button.styles.min_height = 1
 
         details_lines = shell.details_lines
@@ -865,6 +873,14 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     def on_show(self) -> None:
         """Re-decide the fold cue when the rail becomes visible again."""
         self._schedule_fold_cue_sync()
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal keyboard targets above the docked fold cue."""
+        if self._fold_cue_visible and event.widget.has_focus:
+            # Screen.can_view_entire ignores dock gutters, so a covered
+            # toggle can bypass Textual's automatic focus scroll. The
+            # scroll operation itself accounts for each ancestor's docks.
+            self.scroll_to_widget(event.widget, animate=False, immediate=True)
 
     #: task-32357 AC#2: the one toggle this rail answers itself.
     _DIAGNOSTICS_TOGGLE_ID = f"{RAIL_SECTION_TOGGLE_PREFIX}library-details-diagnostics"
@@ -1054,12 +1070,12 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             and the Details header + body.
         """
         heading_row = Horizontal(id="library-rail-heading")
-        heading_row.styles.height = 1
+        heading_row.add_class("h-1")
         heading_row.styles.min_height = 1
         with heading_row:
             heading = Static("Navigation", id="library-rail-heading-label")
-            heading.styles.height = 1
-            heading.styles.width = "1fr"
+            heading.add_class("h-1")
+            heading.add_class("w-fill")
             yield heading
             collapse = Button(
                 "Collapse",
@@ -1067,11 +1083,11 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             collapse.tooltip = "Collapse Library navigation"
-            collapse.styles.width = "auto"
-            collapse.styles.height = 1
+            collapse.add_class("w-auto")
+            collapse.add_class("h-1")
             collapse.styles.min_height = 1
-            collapse.styles.padding = (0, 1)
-            collapse.styles.border = ("none", "transparent")
+            collapse.add_class("p-inline-1")
+            collapse.add_class("border-none")
             yield collapse
         if self.lifecycle in (LibraryLifecycle.UNKNOWN, LibraryLifecycle.STARTER):
             for row_id in (LIBRARY_ROW_INGEST_MEDIA, LIBRARY_ROW_CREATE_NOTE):
@@ -1081,7 +1097,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         if self.top_action_factory is not None:
             yield from self.top_action_factory()
         search_row = Horizontal(id="library-rail-search-row")
-        search_row.styles.height = "auto"
+        search_row.add_class("h-auto")
         with search_row:
             yield LibraryRailSearchInput(
                 value=self.query,
@@ -1120,7 +1136,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             id="library-rail-section-body-details",
             classes="library-rail-section-body",
         )
-        details_body.styles.height = "auto"
+        details_body.add_class("h-auto")
         details_body.display = details_open
         # TASK-23025 considered growing this body on demand (it is ~13
         # widgets mounted display=False on the default route), but the
@@ -1205,9 +1221,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         # cannot act on, standing in the same column as their own counts.
         # It keeps its place -- and its ids, which several tests query while
         # the Details body is closed -- behind its own closed disclosure.
-        size_rows = library_db_size_rows(
-            line for line in details_lines[2:] if line
-        )
+        size_rows = library_db_size_rows(line for line in details_lines[2:] if line)
         if size_rows:
             diagnostics_header, diagnostics_body = library_diagnostics_disclosure(
                 self.diagnostics_open
@@ -1283,6 +1297,11 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self._fold_cue_visible = wanted
         if cue.display != wanted:
             cue.display = wanted
+        # A retained control can move below the fold when status copy wraps.
+        # This runs after virtual-size layout, even without a new focus event.
+        focused = self.screen.focused
+        if wanted and focused is not None and self in focused.ancestors:
+            self.scroll_to_widget(focused, animate=False, immediate=True)
 
     def _row(self, row_id: str) -> LibraryRailRow:
         """Return one canonical row from the full shell state."""
@@ -1313,7 +1332,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         button.set_class(selected, "library-rail-row-selected")
         if row.count_emphasis:
             button.add_class(f"library-rail-row-due-{row.count_emphasis}")
-        button.styles.height = 1
+        button.add_class("h-1")
         button.styles.min_height = 1
         return button
 
@@ -1329,7 +1348,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             id=f"library-rail-section-body-{section.section_id}",
             classes="library-rail-section-body",
         )
-        body.styles.height = "auto"
+        body.add_class("h-auto")
         body.display = open_state
         with body:
             for row in section.rows:

@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 A  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N   Library notes · Ready · Next:    N  Select a note to edit it here.
+  a   Create a note or add from        o
+  v   Notes (0)                        t
+      Filter  Filter notes… (Enter)    e
+        New     Sort: Newest           s
+        ○ Select
+--->    Add from files…     Export
+        New folder
+                                     <---
+      No notes yet. Create your
+      first note.
+--->
+
+      ▸ Agent_Lessons — where Conso…
+
+
+
+
+  esc rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

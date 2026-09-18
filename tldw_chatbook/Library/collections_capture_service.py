@@ -797,6 +797,9 @@ class CollectionsCaptureScopeService:
     ) -> CaptureDetail:
         generation, authority_key, backend = self._claim()
         current = await backend.get_detail(identity)
+        if current.status == "archived":
+            # A second Archive would replace the status needed by the first Undo.
+            raise CollectionsCaptureError("capture_already_archived")
         changed = await backend.update_capture(
             identity,
             expected_revision,

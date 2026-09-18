@@ -1,0 +1,24 @@
+{
+  "base": "2e79851916",
+  "files": [
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "base_lines": 2341,
+      "current_lines": 2348,
+      "unchanged": false
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "base_lines": 35214,
+      "current_lines": 35214,
+      "unchanged": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py",
+      "base_lines": 3080,
+      "current_lines": 3080,
+      "unchanged": true
+    }
+  ],
+  "budgets_raised": false
+}

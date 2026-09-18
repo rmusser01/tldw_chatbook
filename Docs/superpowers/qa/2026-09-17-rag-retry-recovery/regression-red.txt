@@ -1,0 +1,45 @@
+.F.FFFFF                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-dark-size1] _
+Tests/UI/test_library_rag_retry_recovery.py:64: in test_retrieval_failure_is_visible_and_same_query_can_retry
+    assert "Retrieval unavailable" in painted if unavailable else "Retrieval failed" in painted
+E   assert False
+_ test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-light-size1] _
+Tests/UI/test_library_rag_retry_recovery.py:64: in test_retrieval_failure_is_visible_and_same_query_can_retry
+    assert "Retrieval unavailable" in painted if unavailable else "Retrieval failed" in painted
+E   assert False
+_ test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size0] _
+Tests/UI/test_library_rag_retry_recovery.py:64: in test_retrieval_failure_is_visible_and_same_query_can_retry
+    assert "Retrieval unavailable" in painted if unavailable else "Retrieval failed" in painted
+E   assert False
+_ test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size1] _
+Tests/UI/test_library_rag_retry_recovery.py:64: in test_retrieval_failure_is_visible_and_same_query_can_retry
+    assert "Retrieval unavailable" in painted if unavailable else "Retrieval failed" in painted
+E   assert False
+_ test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size0] _
+Tests/UI/test_library_rag_retry_recovery.py:64: in test_retrieval_failure_is_visible_and_same_query_can_retry
+    assert "Retrieval unavailable" in painted if unavailable else "Retrieval failed" in painted
+E   assert False
+_ test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size1] _
+Tests/UI/test_library_rag_retry_recovery.py:64: in test_retrieval_failure_is_visible_and_same_query_can_retry
+    assert "Retrieval unavailable" in painted if unavailable else "Retrieval failed" in painted
+E   assert False
+============================= slowest 25 durations =============================
+1.75s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-dark-size0]
+1.54s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-light-size0]
+1.25s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size0]
+1.21s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size1]
+1.18s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-dark-size1]
+1.16s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-light-size1]
+1.12s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size1]
+1.11s call     Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size0]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-dark-size1]
+FAILED Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[False-textual-light-size1]
+FAILED Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size0]
+FAILED Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-dark-size1]
+FAILED Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size0]
+FAILED Tests/UI/test_library_rag_retry_recovery.py::test_retrieval_failure_is_visible_and_same_query_can_retry[True-textual-light-size1]
+6 failed, 2 passed in 12.75s

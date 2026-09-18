@@ -3,6 +3,10 @@
  * ========================================
  * Media tab specific styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* --- Media Tab --- */
 /* MediaWindow v2 - Component-based architecture */
@@ -21,31 +25,31 @@
 .media-nav-pane {
     dock: left;
     width: auto;
-    min-width: 20;
-    max-width: 40;
+    min-width: $ds-size-20;
+    max-width: $ds-size-40;
     background: $boost;
-    padding: 1;
+    padding: $ds-space-1;
     border-right: thick $background-darken-1;
     overflow-y: auto;
     overflow-x: hidden;
 }
 
 .media-nav-pane.collapsed {
-    width: 0 !important;
-    min-width: 0 !important;
+    width: $ds-size-0 !important;
+    min-width: $ds-size-0 !important;
     border-right: none !important;
-    padding: 0 !important;
+    padding: $ds-space-0 !important;
     overflow: hidden !important;
     display: none !important;
 }
 
 .media-nav-pane .media-nav-button {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
     border: none;
-    height: 3;
+    height: $ds-size-3;
     text-align: left;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 .media-nav-pane .media-nav-button:hover {
     background: $surface-lighten-1;
@@ -53,26 +57,26 @@
 }
 
 .media-content-pane {
-    padding: 0;
+    padding: $ds-space-0;
     layout: vertical;
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 /* Ensure media views fill vertical space when shown */
 .media-content-pane > .media-view-area {
-    height: 1fr;
+    height: $ds-height-fill;
 }
 
 #media-sidebar-toggle-button {
     dock: top;
-    height: 3;
-    width: 5;
-    margin: 0 0 1 1;
+    height: $ds-size-3;
+    width: $ds-size-5;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 .media-view-area {
-    width: 100%;
-    height: 1fr;
+    width: $ds-width-full;
+    height: $ds-height-fill;
 }
 
 /* Grid layout for content area within each media view */
@@ -89,10 +93,10 @@
 
 /* Target ListItems inside the media list to control their height */
 .media-items-list > ListItem {
-    width: 100%;
+    width: $ds-width-full;
     height: auto; /* This prevents a single item from stretching to fill the whole ListView */
-    padding: 0;
-    margin: 0 0 1 0;
+    padding: $ds-space-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Styles for media item components */
@@ -104,7 +108,7 @@
 .media-item-snippet {
     height: auto;
     color: $text-muted;
-    max-height: 2;
+    max-height: $ds-size-2;
     overflow-y: hidden;
 }
 
@@ -117,12 +121,12 @@
 /* Style for the Vertical container inside ListItems */
 .media-items-list > ListItem > Vertical {
     height: auto;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* Ensure all child elements inside media items take full width */
 .media-items-list > ListItem > Vertical > * {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* DEPRECATED: MediaWindow_v2 uses different class names
@@ -134,26 +138,26 @@
 /* Children of .media-content-left-pane */
 .media-content-left-pane > Label.pane-title {
     height: auto;
-    width: 100%;
+    width: $ds-width-full;
     text-align: center;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 .media-content-left-pane > Input.media-search-input {
-    height: 3;
-    width: 100%;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 /* Keyword filter styles */
 .keyword-filter-label {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .keyword-filter-input {
-    height: 3;
-    width: 100%;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 /* ListView for media items */
@@ -171,19 +175,19 @@
 */
 
 .media-pagination-bar {
-    height: 3;
-    width: 100%;
+    height: $ds-size-3;
+    width: $ds-width-full;
     align-horizontal: center;
 }
 .media-pagination-bar Button {
     width: auto;
-    min-width: 10;
-    margin: 0 1;
+    min-width: $ds-size-10;
+    margin: $ds-space-0 $ds-space-1;
 }
 .media-pagination-bar .media-page-label {
-    width: 1fr;
+    width: $ds-width-fill;
     text-align: center;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* DEPRECATED: MediaWindow_v2 uses MediaViewerPanel with its own styling
@@ -197,38 +201,38 @@
 */
 
 .media-details-theme {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
     overflow-y: auto !important;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 /* Force Markdown content in Media tab to expand fully */
 .media-content-right-pane Markdown {
-    height: 1fr !important;
+    height: $ds-height-fill !important;
     overflow-y: auto !important;
 }
 
 /* Additional override for any potential Textual default constraints */
 VerticalScroll.media-content-right-pane {
-    height: 1fr !important;
+    height: $ds-height-fill !important;
 }
 
 VerticalScroll.media-content-right-pane > Markdown {
-    height: 1fr !important;
+    height: $ds-height-fill !important;
 }
 
 /* --- Media Details Widget --- */
 MediaDetailsWidget {
-    height: 1fr;
-    width: 100%;
+    height: $ds-height-fill;
+    width: $ds-width-full;
     layout: vertical;
 }
 
 .metadata-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
     background: $boost;
     border-bottom: thick $background-darken-1;
 }
@@ -240,46 +244,46 @@ MediaDetailsWidget {
 
 .metadata-section {
     height: auto;
-    width: 100%;
+    width: $ds-width-full;
     layout: vertical;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .metadata-view {
     layout: vertical;
     height: auto;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .metadata-display {
-    padding: 0 1;
-    margin-bottom: 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin-bottom: $ds-space-0;
     height: auto;
 }
 
 .metadata-edit {
     layout: vertical;
-    padding: 1;
+    padding: $ds-space-1;
     height: auto;
-    min-height: 30;
+    min-height: $ds-size-30;
 }
 
 .edit-fields {
     layout: vertical;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .edit-fields Label {
-    margin-top: 0;
-    margin-bottom: 0;
+    margin-top: $ds-space-0;
+    margin-bottom: $ds-space-0;
     text-style: bold;
-    height: 1;
+    height: $ds-size-1;
 }
 
 .edit-fields Input {
-    width: 100%;
-    margin-bottom: 0;
-    height: 3;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-0;
+    height: $ds-size-3;
 }
 
 .edit-fields Input:disabled {
@@ -289,18 +293,18 @@ MediaDetailsWidget {
 
 /* --- Formatting Options --- */
 .formatting-options {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 0 1;
-    margin-bottom: 1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-bottom: $ds-space-1;
     layout: horizontal;
     align: center middle;
 }
 
 .format-reading-checkbox {
     width: auto;
-    height: 3;
-    padding: 0 1;
+    height: $ds-size-3;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .format-reading-checkbox:hover {
@@ -311,24 +315,24 @@ MediaDetailsWidget {
     layout: horizontal;
     height: auto;
     align: left top;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 .edit-actions Button {
-    margin-right: 1;
-    min-width: 10;
+    margin-right: $ds-space-1;
+    min-width: $ds-size-10;
 }
 
 .media-content-display {
-    height: 1fr;
-    width: 100%;
-    padding: 1;
+    height: $ds-height-fill;
+    width: $ds-width-full;
+    padding: $ds-space-1;
 }
 
 /* Content search section */
 .content-search-section {
-    width: 100%;
-    padding: 1;
+    width: $ds-width-full;
+    padding: $ds-space-1;
     background: $boost;
     border-bottom: solid $primary-background;
 }
@@ -336,24 +340,24 @@ MediaDetailsWidget {
 .search-controls {
     layout: horizontal;
     align: center middle;
-    height: 3;
+    height: $ds-size-3;
 }
 
 .content-search-input {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .content-search-button {
-    width: 4;
-    min-width: 4;
-    margin-right: 1;
+    width: $ds-size-4;
+    min-width: $ds-size-4;
+    margin-right: $ds-space-1;
 }
 
 .content-search-nav {
-    width: 3;
-    min-width: 3;
-    margin-right: 1;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
+    margin-right: $ds-space-1;
 }
 
 .content-search-status {
@@ -383,30 +387,30 @@ MediaDetailsWidget {
 
 /* Show deleted checkbox styling */
 .show-deleted-checkbox {
-    width: 100%;
-    margin-bottom: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     height: auto;
 }
 
 /* Metadata buttons container */
 .metadata-buttons {
     layout: horizontal;
-    height: 3;
-    width: 100%;
-    margin-top: 1;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    width: $ds-width-full;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-1;
 }
 
 .metadata-edit-button {
     width: auto;
-    min-width: 10;
+    min-width: $ds-size-10;
     dock: left;
 }
 
 .metadata-delete-button {
     width: auto;
-    min-width: 10;
+    min-width: $ds-size-10;
     dock: right;
 }
 
@@ -418,33 +422,33 @@ MediaDetailsWidget {
 /* --- Collections/Tags Window --- */
 .collections-main-container {
     layout: horizontal;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .collections-left-pane {
-    width: 40%;
-    min-width: 30;
+    width: $ds-percent-40;
+    min-width: $ds-size-30;
     layout: vertical;
-    padding: 1;
+    padding: $ds-space-1;
     border-right: thick $background-darken-1;
 }
 
 .collections-right-pane {
-    width: 1fr;
-    padding: 1;
+    width: $ds-width-fill;
+    padding: $ds-space-1;
     overflow-y: auto;
 }
 
 .keyword-list {
-    height: 1fr;
+    height: $ds-height-fill;
     border: round $primary-lighten-2;
     background: $primary-background;
     overflow-y: auto;
 }
 
 .keyword-list .keyword-item {
-    padding: 1;
-    margin-bottom: 0;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-0;
 }
 
 .keyword-list .keyword-item.selected,
@@ -461,45 +465,45 @@ MediaDetailsWidget {
 
 .keyword-action-buttons {
     layout: horizontal;
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 .keyword-action-buttons Button {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .action-buttons-container {
     layout: vertical;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 .action-buttons-container Button {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 .selection-info {
-    padding: 1;
+    padding: $ds-space-1;
     background: $boost;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     text-align: center;
 }
 
 .keyword-details, .usage-stats {
-    padding: 1;
+    padding: $ds-space-1;
     background: $boost;
-    margin-top: 1;
-    min-height: 10;
+    margin-top: $ds-space-1;
+    min-height: $ds-size-10;
 }
 
 /* Rename/Merge Dialog Styles */
 #rename-dialog-container, #merge-dialog-container {
     align: center middle;
-    width: 50;
-    min-height: 10;
-    padding: 2;
+    width: $ds-size-50;
+    min-height: $ds-size-10;
+    padding: $ds-space-2;
     background: $surface;
     border: thick $primary;
 }
@@ -507,106 +511,106 @@ MediaDetailsWidget {
 #rename-title, #merge-title {
     text-align: center;
     text-style: bold;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #merge-instruction {
     text-align: center;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $text-muted;
 }
 
 #new-keyword-input, #new-target-input {
-    width: 100%;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
 }
 
 #target-keyword-list {
-    height: 15;
-    margin-bottom: 1;
+    height: $ds-size-15;
+    margin-bottom: $ds-space-1;
     border: round $primary-lighten-2;
     background: $primary-background;
 }
 
 #rename-buttons, #merge-buttons {
     layout: horizontal;
-    height: 3;
+    height: $ds-size-3;
     align: center middle;
 }
 
 #rename-buttons Button, #merge-buttons Button {
-    margin: 0 1;
-    min-width: 12;
+    margin: $ds-space-0 $ds-space-1;
+    min-width: $ds-size-12;
 }
 
 /* --- Multi-Item Review Window --- */
 .multi-review-container {
-    width: 100%;
-    padding: 1;
+    width: $ds-width-full;
+    padding: $ds-space-1;
 }
 
 .selection-section, .items-section, .analysis-section {
-    width: 100%;
-    margin-bottom: 1;
-    padding: 1;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-1;
     background: $boost;
 }
 
 .selection-section {
     height: auto;
-    min-height: 15;
+    min-height: $ds-size-15;
 }
 
 .items-section {
     height: auto;
-    min-height: 20;
-    max-height: 40;
+    min-height: $ds-size-20;
+    max-height: $ds-size-40;
 }
 
 .analysis-section {
     height: auto;
-    min-height: 30;
+    min-height: $ds-size-30;
 }
 
 .search-controls, .tag-filter-section, .selection-controls {
     layout: horizontal;
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 .search-controls Input {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 .tag-filter-section Label {
     width: auto;
-    margin-right: 1;
+    margin-right: $ds-space-1;
 }
 
 .tag-input {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .selection-controls Button {
-    margin-right: 1;
+    margin-right: $ds-space-1;
 }
 
 .selection-info {
     width: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .review-items-list {
-    height: 1fr;
+    height: $ds-height-fill;
     border: round $primary-lighten-2;
     background: $primary-background;
     overflow-y: auto;
 }
 
 .review-items-list .review-item {
-    padding: 1;
-    margin-bottom: 0;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-0;
 }
 
 .review-items-list .review-item.selected,
@@ -632,54 +636,54 @@ MediaDetailsWidget {
 }
 
 .analysis-prompt {
-    width: 100%;
-    height: 10;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-10;
+    margin-bottom: $ds-space-1;
 }
 
 .analysis-controls {
     layout: horizontal;
-    height: 3;
-    margin-bottom: 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 .analysis-controls Checkbox {
     width: auto;
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 
 .analysis-controls Button {
-    margin-right: 1;
-    min-width: 15;
+    margin-right: $ds-space-1;
+    min-width: $ds-size-15;
 }
 
 .analysis-progress {
-    width: 100%;
-    height: 1;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    margin-bottom: $ds-space-1;
 }
 
 .progress-label {
     text-align: center;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
     color: $text-muted;
 }
 
 .results-container {
-    height: 1fr;
+    height: $ds-height-fill;
     background: $primary-background;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 .analysis-results {
     layout: vertical;
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .analysis-result-card {
-    width: 100%;
-    padding: 1;
-    margin-bottom: 1;
+    width: $ds-width-full;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     background: $boost;
     border: round $primary-lighten-2;
 }
@@ -687,63 +691,46 @@ MediaDetailsWidget {
 .result-header {
     layout: horizontal;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .result-title {
-    width: 1fr;
+    width: $ds-width-fill;
     text-style: bold;
 }
 
 .result-meta {
     color: $text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .result-content {
-    padding: 1;
-    max-height: 20;
+    padding: $ds-space-1;
+    max-height: $ds-size-20;
     overflow-y: auto;
 }
 
 .result-separator {
     text-align: center;
     color: $text-disabled;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 /* Delete confirmation dialog for keywords */
 #delete-dialog {
     layout: vertical;
-    padding: 2;
-}
-
-.dialog-title {
-    text-align: center;
-    text-style: bold;
-    margin-bottom: 1;
+    padding: $ds-space-2;
 }
 
 .dialog-subtitle {
     text-align: center;
     color: $text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .dialog-message {
     text-align: center;
-    margin-bottom: 2;
-}
-
-.dialog-buttons {
-    layout: horizontal;
-    height: 3;
-    align: center middle;
-}
-
-.dialog-buttons Button {
-    margin: 0 1;
-    min-width: 12;
+    margin-bottom: $ds-space-2;
 }
 
 /* --- End of Media Tab --- */

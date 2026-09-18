@@ -1,5 +1,73 @@
 # Lessons: verifying against the real thing
 
+## Private config and data paths do not replace a private recovery HOME
+
+**TASK-32749, 2026-09-17.** The first integration probe selected private config
+and data paths before imports, but startup refused with `recovery_scope_uncertain`:
+incoming recovery ownership also derives a fixed control root from HOME. A fresh
+probe set HOME and USERPROFILE inside its owned profile before imports and reached
+the real app. Keep that refusal as an unqualified attempt; do not relax admission
+or reuse the user's recovery root to make a visual probe run. Verify the actual
+roots, process exit and default-file fingerprints separately.
+
+## Keep Textual's rendering stream attached to the native terminal
+
+**TASK-2530, 2026-09-16.** Two private audit launches redirected stderr to a
+file. They still constructed LinuxDriver and could save compositor SVGs, while
+tmux showed no app: Textual's console was rendering into the redirected stream.
+Those attempts also stopped on an early navigation check and were not counted
+as native qualification. The final runner asserts `app.console.file.isatty()`,
+keeps both output streams attached, and uses the private app log for diagnostics.
+Driver identity plus an SVG alone does not prove terminal-backed rendering.
+
+
+## Complete terminal capability probes before driving text input
+
+**TASK-32667, 2026-09-16.** Native queue run-002 timed out in preflight even
+though its private source existed. The captured input contained a trailing
+`[?1;2;4c`; the image library had queried terminal capabilities after Textual
+owned stdin, and the reply became path text. Its log also reported a probe
+timeout. The final audit runner invokes the real cached `probe_terminal()` before
+`app.run()`, as that dependency requires. This qualifies the queue journey with
+an explicitly primed terminal probe; it does not qualify the app's ordinary
+lazy image-probe startup ordering. Both failed-run exit receipts were checked
+before starting a fresh profile.
+
+
+## Clear exit receipts before reusing a native probe session
+
+**TASK-32603, 2026-09-14.** A compact Prompt journey wrote successful UI
+results while its process remained active. Its exit file still contained zero
+from an earlier run. Checking the terminal's current process caught the stale
+receipt before closeout; the final compact shutdown was left unqualified.
+Remove prior completion files before launch or use a unique run directory, and
+tie the exit receipt to the current process/run. UI assertions and shutdown are
+separate evidence. The owned session was closed and process absence checked.
+
+**TASK-32666, 2026-09-16.** The same audit mistake recurred with a different
+signal: tmux reported `zsh` while the native runner's `app_run_returned` and exit
+receipt were still absent. Closing that session invalidated its shutdown
+qualification. After confirming its process was gone, fresh runs recorded both
+receipts and healthy private persistence before cleanup. A terminal command name
+alone does not establish application exit.
+
+## Screen worker waits can include unrelated app jobs
+
+**TASK-32462, 2026-09-14.** A native Library probe copied
+`screen.workers.wait_for_complete()` from a small mounted harness and stalled
+with Notes already rendered. That manager included long-lived app workers,
+not just the Library projection. A retry warned that the first audit process
+still held the profile; checking its exact command confirmed the stale probe.
+The first process was terminated, and a final run asserted exclusive profile
+ownership, waited for Library's rendered snapshot generation, retained Notes
+focus through three refreshes, and saved a Prompt before exiting 0.
+
+Wait for the specific domain's completion state in the real app. A worker wait
+that terminates in a minimal test harness need not terminate with the app's
+background services present. Confirm the old probe exited before reusing its
+profile; a successful second window does not prove sole ownership.
+
+
 ## A dismissed modal may still report is_mounted
 
 **TASK-32709, 2026-09-16.** A mounted model-popover Escape regression showed
@@ -127,6 +195,13 @@ The subsequent UAT retention loop also sent Enter twice within Textual Button's
 waiting only for completion misreported a ten-minute operation timeout. Wait for
 the control to accept keyboard input and separately bound operation admission;
 do not infer that a server request exists just because the harness sent a key.
+
+**TASK-32739, 2026-09-17.** The Settings discovery audit repeated this trap:
+its loopback 503 returned while Discover still had `-active`, and an immediate
+Enter retry sent no request. The corrected runner waits for that class to clear
+before retrying. A separate fixture mistake added `llama_cpp` beside the existing
+`Llama_cpp` list, correctly triggering ambiguous-provider recovery. Reuse the
+exact saved catalog key when qualifying persistence rather than adding an alias.
 
 ---
 
@@ -839,21 +914,31 @@ never asks who else was supposed to construct it that way.
 
 ---
 
-## `save_screenshot` does not render the toast rack — probe `app._notifications`
+## Notification storage and visible toast behavior need separate checks
 
 **What happened.** TASK-2154.16 (FB-05) added an error toast on Console stream
 failure. The notification fired correctly — visible in `app._notifications` with
 `severity="error"`, alive 2.5s after posting — yet the UAT SVG capture
 (`app.save_screenshot`, Textual 8.2.8) showed no trace of it, and neither did a
 control probe that called `notify()` manually and screenshotted 0.3s later. The
-toast rack is simply absent from SVG exports in this Textual version, so "toast
-visible in capture" is unprovable by screenshot and a fix can look broken when it
-is not.
+toast rack was absent from SVG exports in that pilot configuration, so a
+screenshot alone could not establish whether the notification was posted.
 
-**What to do.** To verify toast behavior in a pilot session, assert on
-`app._notifications` (message text + severity + that it is still alive after the
-expected interval), not on the SVG/PNG capture. Use captures for transcript/row
-content only.
+**Follow-up incident (TASK-32629, 2026-09-15).** Prompt Copy/Export journeys
+passed in the headless production-CSS harness, but the same sequence under
+`LinuxDriver` at 80×24 stacked two toasts over focused Copy and the FileSave
+Save button. Waiting for the action to paint merely waited 1–3 seconds for
+toast expiry. This native run's SVG did contain the toast rack; the
+[before capture](../../Docs/superpowers/qa/2026-09-15-prompt-export/before-picker-80.svg)
+shows both notices covering Save. Inline Prompt status feedback resolved the
+obstruction without moving focus or rebuilding fields.
+
+**What to do.** Assert notification text and severity in `app._notifications`
+to establish posting, then check the next focused control in the actual native
+journey to establish visibility. Do not generalize one headless driver's toast
+capture behavior to every runtime, or mask obstruction by waiting for expiry.
+Inspect the rendered native capture and terminal output when they disagree with
+a headless check.
 
 ---
 
@@ -2960,6 +3045,16 @@ the rows it will never see again (here: forget them, `FileNotesReplica.
 forget_file`, never tombstone). Pin it with a replica seeded by hand
 (`Tests/Notes/test_file_notes_service.py::test_a_file_indexed_under_a_dot_
 directory_is_forgotten_not_recently_deleted`).
+
+## Check notification overlays on the active screen (TASK-32696, 2026-09-16)
+
+The first Recent imports native capture batch waited for `app.query("Toast")`
+to be empty, yet six inspected images still carried import-finished notices.
+The query did not inspect the pushed Library screen. Waiting on
+`app.screen.query("Toast")` produced the clean confirmation batch without
+suppressing notifications or changing product behavior. Scope screenshot-readiness
+checks to the surface actually being captured; a successful empty query alone
+is not evidence that the picture is unobscured.
 
 ## A "Verified against" stamp verifies what it names, not the page around it (task-32558, 2026-09-14)
 

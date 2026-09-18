@@ -1,0 +1,12 @@
+{
+  "render": "macOS Quick Look, size 1500; sixteen captures rendered as PNG",
+  "inspection": "All sixteen captures inspected in contact sheet; compact dark conversation and light media staging inspected individually at full size.",
+  "observations": [
+    "Use as source and Undo link remain visibly focused in all four theme/size cells.",
+    "The staged source title and Un-stage control remain readable above the unchanged draft.",
+    "At 80x24 the populated draft wraps into three visible lines; the source strip retains the full fixture title.",
+    "Wide Inspector secondary text remains truncated by its existing narrow column; this is not a proof of complete excerpt visibility.",
+    "Actual excerpt content is verified in capture JSON and assertions, not inferred from screenshots."
+  ],
+  "scope": "No CSS changed. No new actionable paint defect observed for these source controls."
+}

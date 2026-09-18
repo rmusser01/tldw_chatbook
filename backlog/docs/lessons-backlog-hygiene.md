@@ -329,6 +329,15 @@ lost work this way: your untracked files survived (stash skips them by default),
 foreign changes in your tree belong to someone else — save them to a patch and `git checkout
 --` them rather than committing them — and re-apply your own edits by hand.
 
+**Same trap, second door (ADR-161 task 11, 2026-09-13).** After committing, the tree was
+clean, so `git stash -q` was a SILENT NO-OP ("No local changes to save", entry never
+created) — and the paired `git stash pop -q` then popped whatever foreign entry sat at
+`stash@{0}` (an unrelated branch's WIP), conflicting into my tree. With a clean tree there
+is nothing to verify against HEAD anyway: skip the stash entirely and just run the command.
+Recovery when it fires: the pop keeps the foreign stash entry on conflict, so
+`git restore --source=HEAD --staged --worktree -- <file>` aborts the pop with zero loss
+(their entry is still in the stack; rerere may also record a resolution — harmless).
+
 ---
 
 ## A clean scoped rebase can still invalidate a repository-wide manifest

@@ -1,0 +1,20 @@
+{
+  "pid": 67840,
+  "cells": [],
+  "runner_sha256": "d7746c3de61eac225964d89bb2c08b29a50ea57a4ba96c5e5fa8152b0c09768d",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "f3a80aba8cdcade645bf9921566be26dba94407b98fb5a93302560dbe64ad7ab",
+    "tldw_chatbook/Widgets/settings_theme_editor.py": "b1d4385e79ca76a038a4794ef2d47b8ce06cdd382e00aed34ac82c3a9e400d43",
+    "tldw_chatbook/Widgets/settings_splash_screen_viewer.py": "ff4436e38bb68e984a6882825645c34e66f3680c352387cfceee25c80cd6a614",
+    "tldw_chatbook/css/components/_settings_splash_theme.tcss": "b0fc4c018af27fa28d481b19421d5a6d03d8ca10ad4ead210e7e22cfad13afee",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "fa558c0e13dbee6e1a769d83a00feddb55e3b1dc266f40c1245ebf1ef5937265",
+    "tldw_chatbook/css/features/_settings.tcss": "9e50259895e8bcb6ecc607efdee8869bfb3fdec6ca80324769263b85e2c29bca",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "07f609f24fc46a9408096a2ac97165c974271fdecd0ff029f86d94868781522f"
+  },
+  "waiting_for": "Notices clear before inspecting focus",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-interface/native_check.py\", line 348, in journey\n    await choose(\"#settings-splash-default-select\", card)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-interface/native_check.py\", line 175, in choose\n    index = options.index(value)\n            ^^^^^^^^^^^^^^^^^^^^\nValueError: 'minimal' is not in list\n",
+  "app_run_returned": true,
+  "observed_exit_code": 1,
+  "pid_absence_confirmed_before_next_launch": true
+}

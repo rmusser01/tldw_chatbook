@@ -1,0 +1,8 @@
+{
+  "exit_code": 1,
+  "reason": "recovery_scope_uncertain before app import completed",
+  "app_run_started": false,
+  "native_qualification": false,
+  "default_files_unchanged": true,
+  "resolution": "Give the private runner a private HOME before imports, as required by the incoming fixed recovery-control-root lifetime."
+}

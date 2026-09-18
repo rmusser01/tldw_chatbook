@@ -1,0 +1,322 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_splash_pending_input_preserves_newer_text_for_next_enter[True] ______
+
+self = <Coroutine test_splash_pending_input_preserves_newer_text_for_next_enter[True]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_splash_pending_input_preserves_newer_text_for_next_enter[True]>>, 'spl...color', 'focus'}), 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x109add970>, 'first_save_succeeds': True}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1296/test_splash_pending_input_pres0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _____ test_splash_pending_input_preserves_newer_text_for_next_enter[True] ______
+E
+E           request = <FixtureRequest for <Coroutine test_splash_pending_input_preserves_newer_text_for_next_enter[True]>>
+E           splash_app = _SplashTestApp(title='_SplashTestApp', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'})
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cd1b8f0>
+E           first_save_succeeds = True
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("first_save_succeeds", [True, False])
+E               @private_profile_test
+E               async def test_splash_pending_input_preserves_newer_text_for_next_enter(request, splash_app, monkeypatch, first_save_succeeds):
+E                   import asyncio
+E                   import threading
+E
+E                   started, release = threading.Event(), threading.Event()
+E                   writes = []
+E                   def write(sections):
+E                       writes.append(sections)
+E                       if len(writes) == 1:
+E                           started.set()
+E                           assert release.wait(5)
+E                       saved = first_save_succeeds or len(writes) > 1
+E                       return ConfigMutationResult(saved, saved, None if saved else "before_replace")
+E                   monkeypatch.setattr(splash_module, "apply_settings_mutation_to_cli_config", write)
+E                   async with splash_app.run_test(size=(120, 50)) as pilot:
+E                       viewer = splash_app.query_one(SettingsSplashScreenViewer)
+E                       field = viewer.query_one("#settings-splash-duration", Input)
+E                       previous = viewer._config["duration"]
+E                       field.focus()
+E                       await pilot.pause()
+E                       await pilot.press("home", "shift+end", "backspace", *"1.5", "enter")
+E                       try:
+E                           assert await asyncio.to_thread(started.wait, 3)
+E                           await pilot.press("home", "shift+end", "backspace", *"2.0", "enter")
+E           >               assert field.value == "2.0"
+E           E               AssertionError: assert '1.5' == '2.0'
+E           E
+E           E                 - 2.0
+E           E                 + 1.5
+E
+E           Tests/UI/test_settings_splash_screen_viewer.py:543: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 14:50:49.513 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-17 14:50:49.522 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-17 14:50:49.588 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 14:50:49.662 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 14:50:49.663 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 14:50:49.663 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-17 14:50:49.775 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-17 14:50:50.048 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 14:50:50.278 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:310 - Splash screen mounted - duration: 0s, card: default
+E           2026-09-17 14:50:50.278 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:330 - Starting splash screen - type: static, card: default
+E           2026-09-17 14:50:50.279 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:338 - Setting static content: 829 chars with style: bold white on rgb(0,0,0)
+E           ============================= slowest 25 durations =============================
+E           1.06s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[True]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[True]
+E           1 failed in 2.18s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 14:50:48.703 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-17 14:50:48.711 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-17 14:50:48.795 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 14:50:48.845 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 14:50:48.846 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 14:50:48.846 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_____ test_splash_pending_input_preserves_newer_text_for_next_enter[False] _____
+
+self = <Coroutine test_splash_pending_input_preserves_newer_text_for_next_enter[False]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_splash_pending_input_preserves_newer_text_for_next_enter[False]>>, 'sp...olor', 'focus'}), 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10b1aeb70>, 'first_save_succeeds': False}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1296/test_splash_pending_input_pres1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _____ test_splash_pending_input_preserves_newer_text_for_next_enter[False] _____
+E
+E           request = <FixtureRequest for <Coroutine test_splash_pending_input_preserves_newer_text_for_next_enter[False]>>
+E           splash_app = _SplashTestApp(title='_SplashTestApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b65f800>
+E           first_save_succeeds = False
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("first_save_succeeds", [True, False])
+E               @private_profile_test
+E               async def test_splash_pending_input_preserves_newer_text_for_next_enter(request, splash_app, monkeypatch, first_save_succeeds):
+E                   import asyncio
+E                   import threading
+E
+E                   started, release = threading.Event(), threading.Event()
+E                   writes = []
+E                   def write(sections):
+E                       writes.append(sections)
+E                       if len(writes) == 1:
+E                           started.set()
+E                           assert release.wait(5)
+E                       saved = first_save_succeeds or len(writes) > 1
+E                       return ConfigMutationResult(saved, saved, None if saved else "before_replace")
+E                   monkeypatch.setattr(splash_module, "apply_settings_mutation_to_cli_config", write)
+E                   async with splash_app.run_test(size=(120, 50)) as pilot:
+E                       viewer = splash_app.query_one(SettingsSplashScreenViewer)
+E                       field = viewer.query_one("#settings-splash-duration", Input)
+E                       previous = viewer._config["duration"]
+E                       field.focus()
+E                       await pilot.pause()
+E                       await pilot.press("home", "shift+end", "backspace", *"1.5", "enter")
+E                       try:
+E                           assert await asyncio.to_thread(started.wait, 3)
+E                           await pilot.press("home", "shift+end", "backspace", *"2.0", "enter")
+E           >               assert field.value == "2.0"
+E           E               AssertionError: assert '1.5' == '2.0'
+E           E
+E           E                 - 2.0
+E           E                 + 1.5
+E
+E           Tests/UI/test_settings_splash_screen_viewer.py:543: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 14:50:52.255 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-17 14:50:52.264 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-17 14:50:52.327 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 14:50:52.396 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 14:50:52.397 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 14:50:52.397 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-17 14:50:52.508 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-17 14:50:52.782 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 14:50:53.029 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:310 - Splash screen mounted - duration: 0s, card: default
+E           2026-09-17 14:50:53.029 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:330 - Starting splash screen - type: static, card: default
+E           2026-09-17 14:50:53.029 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:338 - Setting static content: 829 chars with style: bold white on rgb(0,0,0)
+E           ============================= slowest 25 durations =============================
+E           1.09s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[False]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[False]
+E           1 failed in 2.20s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+2.70s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[False]
+2.68s call     Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[True]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[True]
+FAILED Tests/UI/test_settings_splash_screen_viewer.py::test_splash_pending_input_preserves_newer_text_for_next_enter[False]
+2 failed, 16 deselected in 6.18s

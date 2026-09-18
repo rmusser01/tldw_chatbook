@@ -220,7 +220,7 @@ class PersonasInspectorPane(VerticalScroll):
                 "Inspector",
                 classes="destination-section personas-column-title console-rail-title",
             )
-            title.styles.width = "1fr"
+            title.add_class("w-fill")
             yield title
             collapse_button = Button(
                 ">",
@@ -1225,14 +1225,15 @@ class PersonasInspectorPane(VerticalScroll):
         thumb = Static(renderable)
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
-            thumb.styles.width, thumb.styles.height = grid_size
+            # ds-runtime: match the rendered image cell grid.
+            thumb.set_styles(width=grid_size[0], height=grid_size[1])
         else:
             # Per explicit_cell_size's documented contract, fall back to the
             # box dimensions when the grid can't be read (e.g. rich_pixels
             # Pixels, which is baked for the box anyway) - same fallback as
             # ChatScreen._build_character_avatar_widget.
-            thumb.styles.width = _THUMB_BOX_COLS
-            thumb.styles.height = _THUMB_BOX_LINES
+            thumb.add_class("w-24")
+            thumb.add_class("h-10")
         holder.mount(thumb)
 
     @on(ListView.Selected, "#personas-conversations-list")

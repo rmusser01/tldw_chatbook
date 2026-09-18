@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Overview | Runtime controls stay in MCP and ACP
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Read-only here | Review readiness across Settings categories.                        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │                                                                                              │  │  │                              │
+│  category search             │  │  │  Overview                                                                                    │  │  │ Selected category: Overview  │
+│                              │  │  │  Backup & Restore                                                                            │  │  │ No unsaved changes           │
+│  Core                        │  │  │ ┌──────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  Guided edits: choose        │
+│   > Overview (view)          │  │  │ │                                                                                          │ │  │  │  Providers or Console.       │
+│     Providers & Models       │  │  │ │  Status                                                                                  │ │  │  │  Open Theme editor           │
+│     Web Search               │  │  │ │  Configuration: OpenAI / not selected; Status: Not ready: Missing API key                │ │  │  │ Saves apply to your local    │
+│     Speech & TTS             │  │  │ │  Open Providers & Models                                                                 │ │  │  │ config file. Nothing is sent │
+│  Interface                   │  │  │ │  Last connection test: Configuration check has not run.                                  │ │  │  │ to a server unless you run   │
+│     Appearance               │  │  │ │  Storage & privacy: Config path: config.toml — override config, writable; Privacy:       │ │  │  │ Manual sync yourself.        │
+│     Theme                    │  │  │ │  local config by default; secret-looking diagnostics are redacted                        │ │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │ │   Open Storage    Open Privacy & Security                                                │ │  │  │ Readiness, storage,          │
+│     Console Behavior         │  │  │ │  Sync: blocked; pending outgoing: none                                                   │ │  │  │ privacy, Console behavior,   │
+│  Data & Privacy              │  │  │ │  Preview manual sync   Run manual sync                                                   │ │  │  │ diagnostics.                 │
+│     Storage                  │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  Runtime owner: owning       │
+│     Workspaces               │  │  │ │ ▊  ▶ Advanced / Diagnostics                                                            ▎ │ │  │  │  destinations                │
+│     Tool Profiles            │  │  │ │ ▊                                                                                      ▎ │ │  │  │                              │
+│     Privacy & Security       │  │  │ │ ▊                                                                                      ▎ │ │  │  │  Writes allowed: No          │
+│     Network                  │  │  │ │ ▊                                                                                      ▎ │ │  │  │                              │
+│     My Profile               │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  Owns: global defaults       │
+│  Troubleshooting             │  │  │ │                                                                                          │ │  │  │  validation status           │
+│     Diagnostics (view)       │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  recovery guidance           │
+│     About (view)             │  │  │ │ ▊  ▶ Where changes happen                                                              ▎ │ │  │  │                              │
+│     Agents                   │  │  │ │ ▊                                                                                      ▎ │ │  │  │  Read-only: Overview         │
+│  Expert                      │  │  │ │ ▊                                                                                      ▎ │ │  │  │  summarizes status and       │
+│     Internal Prompts         │  │  │ │ ▊                                                                                      ▎ │ │  │  │  ownership only.             │
+│     Advanced Config          │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │                              │
+│   Domain Defaults ▸ (11)     │  │  │ │                                                                                          │ │  │  │  Affected config: all        │
+│                              │  │  │ └──────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  Settings categories         │
+│                              │  │  │                                                                                              │  │  │  summarized for readiness    │
+│                              │  │  │                                                                                              │  │  │                            ▁ │
+│                              │  │  │                                                                                              │  │  │  Recovery: open the          │
+│                              │  │  │                                                                                              │  │  │  specific category before    │
+│                              │  │  │                                                                                              │  │  │  changing values             │
+│                              │  │  │                                                                                              │  │  │                              │
+│                              │  │  │                                                                                              │  │  │ ▼ more — scroll the          │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+ Open the Providers & Models category.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

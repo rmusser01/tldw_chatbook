@@ -1,0 +1,182 @@
+Captured pytest output; trailing whitespace normalized for repository hygiene.
+
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+___ test_multi_module_split_requires_outputs_only_for_complete_sources[None] ___
+
+css_tree = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-10224/test_multi_module_split_requir0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c634d70>
+missing_source = None
+
+    @pytest.mark.parametrize("missing_source", [None, "first.tcss", "second.tcss"])
+    def test_multi_module_split_requires_outputs_only_for_complete_sources(
+        css_tree: Path, monkeypatch: pytest.MonkeyPatch, missing_source: str | None
+    ) -> None:
+        """Startup must follow the builder's multi-source split/partial-tree contract."""
+        split = build_css.ScreenOwnedSplit(
+            modules=("first.tcss", "second.tcss"),
+            sheets={"example": "screen_example.tcss"},
+            prefixes={"example": ("example",)},
+            pinned=frozenset(),
+        )
+        monkeypatch.setattr(build_css, "SCREEN_OWNED_SPLITS", (split,))
+        manifest = _manifest_with_current(css_tree)
+        for module in split.modules:
+            if module == missing_source:
+                continue
+            source = css_tree / "css" / module
+            source.write_text("/* source */\n")
+            manifest[f"css/{module}"] = [
+                build_css._file_sha256(source), source.stat().st_mtime
+            ]
+        _write_manifest(css_tree, manifest)
+
+>       stale, reason = _generated_css_is_stale(css_tree)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_css_staleness_manifest.py:143:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/app.py:19563: in _generated_css_is_stale
+    generated = [
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+.0 = <tuple_iterator object at 0x10dbd1960>
+
+        *(
+            css_dir / name
+            for split in build_css.SCREEN_OWNED_SPLITS
+>           if (css_dir / split.module).is_file()
+                          ^^^^^^^^^^^^
+            for name in split.sheets.values()
+        ),
+    ]
+E   AttributeError: 'ScreenOwnedSplit' object has no attribute 'module'. Did you mean: 'modules'?
+
+tldw_chatbook/app.py:19579: AttributeError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-14 18:09:31.369 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-14 18:09:31.415 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-14 18:09:31.415 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-14 18:09:31.415 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_multi_module_split_requires_outputs_only_for_complete_sources[first.tcss] _
+
+css_tree = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-10224/test_multi_module_split_requir1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d852780>
+missing_source = 'first.tcss'
+
+    @pytest.mark.parametrize("missing_source", [None, "first.tcss", "second.tcss"])
+    def test_multi_module_split_requires_outputs_only_for_complete_sources(
+        css_tree: Path, monkeypatch: pytest.MonkeyPatch, missing_source: str | None
+    ) -> None:
+        """Startup must follow the builder's multi-source split/partial-tree contract."""
+        split = build_css.ScreenOwnedSplit(
+            modules=("first.tcss", "second.tcss"),
+            sheets={"example": "screen_example.tcss"},
+            prefixes={"example": ("example",)},
+            pinned=frozenset(),
+        )
+        monkeypatch.setattr(build_css, "SCREEN_OWNED_SPLITS", (split,))
+        manifest = _manifest_with_current(css_tree)
+        for module in split.modules:
+            if module == missing_source:
+                continue
+            source = css_tree / "css" / module
+            source.write_text("/* source */\n")
+            manifest[f"css/{module}"] = [
+                build_css._file_sha256(source), source.stat().st_mtime
+            ]
+        _write_manifest(css_tree, manifest)
+
+>       stale, reason = _generated_css_is_stale(css_tree)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_css_staleness_manifest.py:143:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/app.py:19563: in _generated_css_is_stale
+    generated = [
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+.0 = <tuple_iterator object at 0x107e85ed0>
+
+        *(
+            css_dir / name
+            for split in build_css.SCREEN_OWNED_SPLITS
+>           if (css_dir / split.module).is_file()
+                          ^^^^^^^^^^^^
+            for name in split.sheets.values()
+        ),
+    ]
+E   AttributeError: 'ScreenOwnedSplit' object has no attribute 'module'. Did you mean: 'modules'?
+
+tldw_chatbook/app.py:19579: AttributeError
+_ test_multi_module_split_requires_outputs_only_for_complete_sources[second.tcss] _
+
+css_tree = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-10224/test_multi_module_split_requir2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107e84ef0>
+missing_source = 'second.tcss'
+
+    @pytest.mark.parametrize("missing_source", [None, "first.tcss", "second.tcss"])
+    def test_multi_module_split_requires_outputs_only_for_complete_sources(
+        css_tree: Path, monkeypatch: pytest.MonkeyPatch, missing_source: str | None
+    ) -> None:
+        """Startup must follow the builder's multi-source split/partial-tree contract."""
+        split = build_css.ScreenOwnedSplit(
+            modules=("first.tcss", "second.tcss"),
+            sheets={"example": "screen_example.tcss"},
+            prefixes={"example": ("example",)},
+            pinned=frozenset(),
+        )
+        monkeypatch.setattr(build_css, "SCREEN_OWNED_SPLITS", (split,))
+        manifest = _manifest_with_current(css_tree)
+        for module in split.modules:
+            if module == missing_source:
+                continue
+            source = css_tree / "css" / module
+            source.write_text("/* source */\n")
+            manifest[f"css/{module}"] = [
+                build_css._file_sha256(source), source.stat().st_mtime
+            ]
+        _write_manifest(css_tree, manifest)
+
+>       stale, reason = _generated_css_is_stale(css_tree)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_css_staleness_manifest.py:143:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/app.py:19563: in _generated_css_is_stale
+    generated = [
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+.0 = <tuple_iterator object at 0x107e86fb0>
+
+        *(
+            css_dir / name
+            for split in build_css.SCREEN_OWNED_SPLITS
+>           if (css_dir / split.module).is_file()
+                          ^^^^^^^^^^^^
+            for name in split.sheets.values()
+        ),
+    ]
+E   AttributeError: 'ScreenOwnedSplit' object has no attribute 'module'. Did you mean: 'modules'?
+
+tldw_chatbook/app.py:19579: AttributeError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1beab28d-fff5-47b0-9189-90daf65cc1a5/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1beab28d-fff5-47b0-9189-90daf65cc1a5/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1beab28d-fff5-47b0-9189-90daf65cc1a5
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1beab28d-fff5-47b0-9189-90daf65cc1a5'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_css_staleness_manifest.py::test_multi_module_split_requires_outputs_only_for_complete_sources[None]
+FAILED Tests/UI/test_css_staleness_manifest.py::test_multi_module_split_requires_outputs_only_for_complete_sources[first.tcss]
+FAILED Tests/UI/test_css_staleness_manifest.py::test_multi_module_split_requires_outputs_only_for_complete_sources[second.tcss]
+3 failed, 15 deselected, 2 warnings in 1.51s

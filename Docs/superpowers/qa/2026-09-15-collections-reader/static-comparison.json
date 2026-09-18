@@ -1,0 +1,54 @@
+{
+  "base": "213200441a",
+  "files": [
+    {
+      "path": "Tests/UI/test_library_collections_reader_geometry.py",
+      "base_diagnostics": 1,
+      "current_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py",
+      "base_diagnostics": 7,
+      "current_diagnostics": 7,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+      "base_diagnostics": 11,
+      "current_diagnostics": 11,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_state.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "base_diagnostics": 205,
+      "current_diagnostics": 205,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_collections_capture_reader.py",
+      "base_diagnostics": 1,
+      "current_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_collection_reader_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-15-collections-reader/native_check.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "new_diagnostics": 0
+}

@@ -1,0 +1,46 @@
+{
+  "task": "TASK-32704",
+  "baseline_commit": "faed7c3d3d8c977b3a3e6c4fff85ebcaf8c876f2",
+  "production_code_changed": false,
+  "native_run": "run-002",
+  "runner_sha256": "e274a57b7461d0a87777a12624063621556e4a57e3fc0831d863c9524a92c74b",
+  "post_exit_checker_sha256": "3f24a87a54162169af82ce4314cb6b01348b8a445110b8323c0796d747464487",
+  "baseline_targeted_tests": {
+    "passed": 120,
+    "failed": 3,
+    "seconds": 42.75,
+    "exit_code": 1
+  },
+  "final_targeted_tests": {
+    "passed": 122,
+    "failed": 0,
+    "seconds": 40.39,
+    "exit_code": 0,
+    "command": ".venv/bin/python -m pytest Tests/UI/test_library_multiselect_conversations.py Tests/UI/test_library_export_cancel.py Tests/UI/test_library_export_destination_validation.py Tests/UI/test_library_export_receipt.py Tests/Library/test_library_export_scope.py Tests/Library/test_library_export_scope_ids.py Tests/Library/test_library_export_execution.py Tests/Library/test_library_export_roundtrip.py -q --tb=short --show-capture=no"
+  },
+  "test_count_change": "One obsolete fake-self test removed; its selection/reader assertions moved into the existing mounted journey, with bulk control assertions added.",
+  "full_suite_run": false,
+  "native_model_request_sent": false,
+  "early_probe": {
+    "run": "run-001",
+    "pid": 71312,
+    "app_run_returned": true,
+    "exit_code": 1,
+    "pid_absent": true,
+    "reason": "Harness compared full multiline markup label to compositor paint; corrected to assert the identifying row title while retaining focus check. Final run-002 starts from a new profile."
+  },
+  "persistence_probe_note": "Initial system-Python read-only connections reported SQLITE_CANTOPEN for nine files, including outside the sandbox. Follow-up reads with both interpreters succeeded; final complete receipt uses the project interpreter and mode=ro. No database rewrite or app restart was used; cause of the transient probe failure is unestablished.",
+  "test_output_normalization": "Trailing whitespace stripped from text output only; results and diagnostic text unchanged.",
+  "test_output_hashes": [
+    {
+      "file": "baseline-targeted-tests.txt",
+      "raw_sha256": "3f755aa817fe4fa5aadf0d023bf1fc8aa1b46f0e56390ee10e04fffb71fb00d2",
+      "stored_sha256": "f5300dfa6c1286303aba3a509dae7676adb50bb18efdac2465058c58bdd31dd9"
+    },
+    {
+      "file": "targeted-tests.txt",
+      "raw_sha256": "018a1feb60295115da66ff20aea476092d27f593b1b4f797e4a28352fb2aaf06",
+      "stored_sha256": "018a1feb60295115da66ff20aea476092d27f593b1b4f797e4a28352fb2aaf06"
+    }
+  ]
+}

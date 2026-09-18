@@ -1,0 +1,22 @@
+{
+  "tldw_chatbook/UI/Screens/settings_screen.py": {
+    "baseline_lint": 118,
+    "current_lint": 118,
+    "added": [],
+    "syntax": "pass",
+    "sha256": "741ad5d60881e64f75e32031e7824aa8c27bee8d93b99ace9ade8ca9a0190f5d"
+  },
+  "Tests/UI/test_settings_configuration_hub.py": {
+    "baseline_lint": 11,
+    "current_lint": 11,
+    "added": [],
+    "syntax": "pass",
+    "sha256": "7ed368a18a60c06619852845d70ae1585322bf1f8092f8fc7d4b1e2843c42836"
+  },
+  "new_files": {
+    "lint": "pass",
+    "format": "pass",
+    "syntax": "pass"
+  },
+  "changed_range_format": "pass"
+}

@@ -66,9 +66,11 @@ class _Inspector:
 
 class _Host(App[None]):
     _CSS_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    # ADR-161 task 10: the console vocabulary rides the boot bundle via
+    # features/_console{,_panels}.tcss (the always-boot-parsed console
+    # split sheet was dissolved), so the bundle alone is the app-tier set.
     CSS_PATH = [
         str(_CSS_ROOT / "tldw_cli_modular.tcss"),
-        str(_CSS_ROOT / "screen_agentic_console.tcss"),
     ]
 
     def compose(self) -> ComposeResult:

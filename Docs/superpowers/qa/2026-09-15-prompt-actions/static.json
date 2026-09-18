@@ -1,0 +1,53 @@
+{
+  "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+    "baseline_diagnostics": 16,
+    "current_diagnostics": 16,
+    "added_diagnostics": [],
+    "changed_method_formatting": {
+      "_update_library_prompt_status_static": 0,
+      "_delete_library_prompts": 0,
+      "_library_prompt_mutation_is_current": 0
+    }
+  },
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "baseline_diagnostics": 205,
+    "current_diagnostics": 205,
+    "added_diagnostics": [],
+    "changed_method_formatting": {
+      "_settle_library_prompt_delete": 0
+    }
+  },
+  "tldw_chatbook/Widgets/Library/library_prompt_work_pane.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "added_diagnostics": [],
+    "changed_method_formatting": {},
+    "whole_file_format_exit": 0
+  },
+  "Tests/UI/test_library_prompt_action_journeys.py": {
+    "current_diagnostics": 0,
+    "whole_file_format_exit": 0
+  },
+  "Docs/superpowers/qa/2026-09-15-prompt-actions/native_check.py": {
+    "current_diagnostics": 0,
+    "whole_file_format_exit": 0,
+    "executed_probe_ast_matches_allowing_import_order": true
+  },
+  "Tests/UI/test_library_prompts_reader.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "added_diagnostics": [],
+    "changed_test_format_exit": 0
+  },
+  "Tests/UI/test_library_prompt_save_continuity.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "added_diagnostics": [],
+    "changed_test_format_exit": 0,
+    "whole_file_format_exit": 0
+  },
+  "Docs/superpowers/qa/2026-09-15-prompt-actions/reader_compose_probe.py": {
+    "current_diagnostics": 0,
+    "whole_file_format_exit": 0
+  }
+}

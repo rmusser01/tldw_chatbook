@@ -1,0 +1,17 @@
+{
+  "Tests/UI/test_library_multiselect_conversations.py": {
+    "baseline_count": 1,
+    "current_count": 1,
+    "added_diagnostics": []
+  },
+  "Tests/UI/test_library_export_destination_validation.py": {
+    "baseline_count": 0,
+    "current_count": 0,
+    "added_diagnostics": []
+  },
+  "Docs/superpowers/qa/2026-09-16-conversation-export/native_check.py": {
+    "baseline_count": 0,
+    "current_count": 0,
+    "added_diagnostics": []
+  }
+}

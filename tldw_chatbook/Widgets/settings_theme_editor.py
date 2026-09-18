@@ -36,6 +36,13 @@ class SettingsThemeEditor(Vertical):
             self.is_modified = is_modified
             super().__init__()
 
+    class LaunchDefaultChanged(Message):
+        """Publish a saved launch preference to the surrounding Settings draft."""
+
+        def __init__(self, theme_name: str) -> None:
+            self.theme_name = theme_name
+            super().__init__()
+
     current_theme_name = reactive("textual-dark")
     current_theme_data: reactive[dict[str, str]] = reactive(dict, layout=False)
     is_dark_theme = reactive(True)
@@ -194,7 +201,7 @@ class SettingsThemeEditor(Vertical):
                         id=f"settings-theme-preset-{palette_name}-{idx}",
                         classes="color-preset-swatch",
                     )
-                    swatch.styles.background = color
+                    swatch.add_class(f"theme-preset-{palette_name.lower()}-{idx}")
                     swatch.can_focus = True
                     swatch.tooltip = f"Apply {color} to the selected color"
                     yield swatch
@@ -409,9 +416,11 @@ class SettingsThemeEditor(Vertical):
             foreground = self.current_theme_data.get(fg_key)
             try:
                 if background:
-                    row.styles.background = background
+                    # ds-runtime: preview the user-edited theme palette.
+                    row.set_styles(background=background)
                 if foreground:
-                    row.styles.color = foreground
+                    # ds-runtime: preview the user-edited theme palette.
+                    row.set_styles(color=foreground)
             except Exception:  # noqa: BLE001 - a half-typed hex must not break painting
                 continue
 
@@ -426,15 +435,19 @@ class SettingsThemeEditor(Vertical):
         if color_name in self.color_swatches:
             try:
                 parsed_color = Color.parse(color_value)
-                self.color_swatches[color_name].styles.background = color_value
-                self.color_swatches[color_name].update(color_value.upper())
-                self.color_swatches[color_name].styles.color = (
-                    "black" if parsed_color.brightness > 0.5 else "white"
-                )
+                swatch = self.color_swatches[color_name]
+                swatch.remove_class("theme-preview-invalid")
+                swatch.set_class(parsed_color.brightness > 0.5, "theme-preview-dark-ink")
+                swatch.set_class(parsed_color.brightness <= 0.5, "theme-preview-light-ink")
+                # ds-runtime: preview the user-entered theme color before applying it.
+                swatch.set_styles(background=color_value)
+                swatch.update(color_value.upper())
             except Exception:
-                self.color_swatches[color_name].styles.background = "#808080"
-                self.color_swatches[color_name].update("Invalid")
-                self.color_swatches[color_name].styles.color = "white"
+                swatch = self.color_swatches[color_name]
+                swatch.set_styles(background=None)
+                swatch.remove_class("theme-preview-dark-ink", "theme-preview-light-ink")
+                swatch.add_class("theme-preview-invalid")
+                swatch.update("Invalid")
 
     def _validate_color_input(self, color_value: str) -> bool:
         """Validate a color input value."""
@@ -659,16 +672,28 @@ class SettingsThemeEditor(Vertical):
                 severity="warning",
             )
             return
-        from ..config import save_setting_to_cli_config
+        self._save_launch_default(name, f"'{name}' will load at the next launch")
 
-        # PR #2375 review #7: the config write reports success as a bool.
-        if not save_setting_to_cli_config("general", "default_theme", name):
+    def _save_launch_default(self, name: str, success_message: str) -> None:
+        from ..config import apply_settings_mutation_to_cli_config
+
+        result = apply_settings_mutation_to_cli_config(
+            {"general": {"default_theme": name}}
+        )
+        if not result.file_replaced:
             self.app.notify(
                 "Could not save the launch default; check the config file",
                 severity="error",
             )
             return
-        self.app.notify(f"'{name}' will load at the next launch", severity="success")
+        self.post_message(self.LaunchDefaultChanged(name))
+        if result.caches_reloaded:
+            self.app.notify(success_message, severity="success")
+        else:
+            self.app.notify(
+                "Launch default saved, but configuration refresh failed. Reopen Settings to refresh.",
+                severity="warning",
+            )
 
     @on(Button.Pressed, "#settings-theme-reset")
     def on_reset_theme(self) -> None:
@@ -854,11 +879,11 @@ class SettingsThemeEditor(Vertical):
     def _delete_user_theme(self, theme_path: Path, theme_name: str) -> None:
         """Unlink a user theme file and reset the editor (post-confirmation)."""
         try:
-            with raw._scope(self, "theme_file", writing=True, selected_read=theme_path) as operation:
+            with raw._scope(
+                self, "theme_file", writing=True, selected_read=theme_path
+            ) as operation:
                 raw._unlink(operation, theme_path)
-            self.app.notify(
-                f"Deleted theme '{theme_name}'", severity="success"
-            )
+            self.app.notify(f"Deleted theme '{theme_name}'", severity="success")
 
             tree = self.query_one("#settings-theme-tree", Tree)
             for node in tree.root.children:
@@ -880,18 +905,15 @@ class SettingsThemeEditor(Vertical):
             else:
                 self.app.unregister_theme(theme_name)
 
-            from ..config import get_cli_setting, save_setting_to_cli_config
+            from ..config import get_cli_setting
 
-            if str(get_cli_setting("general", "default_theme", "textual-dark")) == theme_name:
-                if save_setting_to_cli_config("general", "default_theme", "textual-dark"):
-                    self.app.notify(
-                        "Launch default reset to textual-dark", severity="information"
-                    )
-                else:
-                    self.app.notify(
-                        "Could not reset the launch default; check the config file",
-                        severity="error",
-                    )
+            if (
+                str(get_cli_setting("general", "default_theme", "textual-dark"))
+                == theme_name
+            ):
+                self._save_launch_default(
+                    "textual-dark", "Launch default reset to textual-dark"
+                )
 
             self.load_theme("textual-dark")
         except Exception as e:

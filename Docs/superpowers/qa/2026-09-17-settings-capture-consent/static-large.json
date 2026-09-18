@@ -1,0 +1,35 @@
+{
+  "baseline_commit": "881ea47926aa89b8913453f26060f53fb6194af3",
+  "files": [
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "baseline_lint_count": 116,
+      "current_lint_count": 116,
+      "introduced_lint": [],
+      "baseline_format_edits": 83,
+      "current_format_edits": 82,
+      "introduced_format_edits": [],
+      "source_compiles": true
+    },
+    {
+      "file": "Tests/UI/test_settings_configuration_hub.py",
+      "baseline_lint_count": 11,
+      "current_lint_count": 11,
+      "introduced_lint": [],
+      "baseline_format_edits": 36,
+      "current_format_edits": 36,
+      "introduced_format_edits": [],
+      "source_compiles": true
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_chat_controller.py",
+      "baseline_lint_count": 191,
+      "current_lint_count": 191,
+      "introduced_lint": [],
+      "baseline_format_edits": 143,
+      "current_format_edits": 143,
+      "introduced_format_edits": [],
+      "source_compiles": true
+    }
+  ]
+}

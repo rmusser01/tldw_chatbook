@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Storage
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  apply on next launch; active handles   │
+│     Overview (view)          │  │  │  stay unchanged.                        │
+│     Providers & Models       │  │  │ │ Library Collections DB             │  │
+│     Web Search               │  │  │ │ │ /private/tmp/tldw-32761-native-  │  │
+│     Speech & TTS             │  │  │ │                                    │  │
+│  Interface                   │  │  │ │ Workspaces DB                      │  │
+│     Appearance               │  │  │ │ █ tual-light-80x24/workspaces.db   │  │
+│     Theme                  ▁ │  │  │ │                                    │  │
+│     Splash Screen            │  │  │ │  Active files (resolved this       │  │
+│     Console Behavior         │  │  │ │  Config path: /private/tmp/        │  │
+│  Data & Privacy              │  │  │ │    tldw-32761-native-004/          │▄ │
+│   > Storage                  │  │  │ │    config.toml                     │▂ │
+│     Workspaces               │  │  │ │  User data directory:              │  │
+│     Tool Profiles            │  │  │ │  /private/tmp/                     │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q

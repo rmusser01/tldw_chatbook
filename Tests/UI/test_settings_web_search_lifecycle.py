@@ -7,6 +7,7 @@ import tomllib
 import pytest
 from textual.widgets import Button, Input, Select
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_category_sweep import (
     _build_test_app,
     _click_settings_category,
@@ -23,7 +24,8 @@ from tldw_chatbook.Widgets.settings_web_search_panel import WebSearchSettingsPan
 
 
 @pytest.mark.asyncio
-async def test_status_refresh_keeps_queued_masked_input(setup):
+@private_profile_test
+async def test_status_refresh_keeps_queued_masked_input(request, setup):
     host = SearchSettingsHarness(_build_test_app(), "settings")
     async with host.run_test(size=(120, 35)) as pilot:
         await _settle_settings(pilot)
@@ -50,7 +52,8 @@ async def test_status_refresh_keeps_queued_masked_input(setup):
 
 
 @pytest.mark.asyncio
-async def test_backend_and_masked_draft_survive_destination_recreation(setup):
+@private_profile_test
+async def test_backend_and_masked_draft_survive_destination_recreation(request, setup):
     host = SearchSettingsHarness(_build_test_app(), "settings")
     async with host.run_test(size=(120, 35)) as pilot:
         await _settle_settings(pilot)
@@ -74,7 +77,10 @@ async def test_backend_and_masked_draft_survive_destination_recreation(setup):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("write_fails", [False, True])
-async def test_save_result_reaches_recreated_settings(setup, monkeypatch, write_fails):
+@private_profile_test
+async def test_save_result_reaches_recreated_settings(
+    request, setup, monkeypatch, write_fails
+):
     _, path = setup
     host = SearchSettingsHarness(_build_test_app(), "settings")
     async with host.run_test(size=(120, 35)) as pilot:
@@ -139,8 +145,9 @@ async def test_save_result_reaches_recreated_settings(setup, monkeypatch, write_
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_pending_test_stays_in_progress_after_navigation_and_discards_result(
-    setup, monkeypatch
+    request, setup, monkeypatch
 ):
     from tldw_chatbook.Web_Scraping import search_backend_settings as catalog
 
@@ -184,7 +191,8 @@ async def test_pending_test_stays_in_progress_after_navigation_and_discards_resu
 
 
 @pytest.mark.asyncio
-async def test_recreated_clear_detects_intervening_credential_edit(setup):
+@private_profile_test
+async def test_recreated_clear_detects_intervening_credential_edit(request, setup):
     _, path = setup
     host = SearchSettingsHarness(_build_test_app(), "settings")
     async with host.run_test(size=(120, 35)) as pilot:
@@ -214,7 +222,8 @@ async def test_recreated_clear_detects_intervening_credential_edit(setup):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["clear-serper_search_api_key", "revert"])
-async def test_explicit_clear_or_revert_wins_over_pending_input(setup, action):
+@private_profile_test
+async def test_explicit_clear_or_revert_wins_over_pending_input(request, setup, action):
     _, path = setup
     original = path.read_text()
     host = SearchSettingsHarness(_build_test_app(), "settings")
@@ -245,8 +254,9 @@ async def test_explicit_clear_or_revert_wins_over_pending_input(setup, action):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_committed_write_with_reload_failure_reports_saved_to_disk(
-    setup, monkeypatch
+    request, setup, monkeypatch
 ):
     model, path = setup
     original = config.apply_settings_mutation_to_cli_config

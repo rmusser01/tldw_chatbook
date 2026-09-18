@@ -1,0 +1,42 @@
+........................................................................ [ 66%]
+.....................................                                    [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/Performance/test_boot_css_byte_budget.py:237: UserWarning: boot-css-bytes: 616786/634050 bytes (headroom 17264)
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+20.30s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-light]
+20.25s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-dark]
+19.85s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-dark]
+19.74s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-light]
+18.51s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+17.02s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+2.89s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+2.73s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size0-textual-light]
+2.69s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size1-textual-light]
+2.56s call     Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[revert]
+2.55s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size0-textual-dark]
+2.51s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[model-profile-temperature-0.4-restored]
+2.44s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-dark]
+2.33s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[model-value-unsaved-model-restored]
+2.26s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-light]
+2.24s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-endpoint-value-https://draft.invalid/v1-restored]
+2.21s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size1-textual-dark]
+2.20s call     Tests/UI/test_settings_saved_provider_return.py::test_api_mode_only_draft_keeps_its_provider_on_return[restored]
+2.16s call     Tests/UI/test_settings_saved_provider_return.py::test_second_edit_after_default_change_uses_draft_originals[save]
+2.14s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-credential-env-var-REVIEW_PROVIDER_KEY-restored]
+2.14s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size1-textual-dark]
+2.07s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size1-textual-light]
+1.97s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[model-profile-temperature-0.4-retained]
+1.95s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size0-textual-dark]
+1.94s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-credential-env-var-REVIEW_PROVIDER_KEY-retained]
+109 passed, 4 warnings in 197.72s (0:03:17)

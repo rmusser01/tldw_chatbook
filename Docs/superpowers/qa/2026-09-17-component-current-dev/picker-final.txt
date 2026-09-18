@@ -1,0 +1,13 @@
+.................                                                        [100%]
+============================= slowest 25 durations =============================
+2.43s call     Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-dark-size0]
+2.29s call     Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-light-size0]
+2.25s call     Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-light-size1]
+2.02s call     Tests/UI/test_fspicker_compact_journeys.py::test_folder_rows_paint_and_keyboard_navigation_selects_child[textual-dark-size1]
+1.44s call     Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[scrolling-textual-dark]
+1.41s call     Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[scrolling-textual-light]
+1.29s call     Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[empty-textual-dark]
+1.25s call     Tests/UI/test_fspicker_compact_journeys.py::test_compact_empty_or_scrolled_folder_keeps_visible_selection[empty-textual-light]
+
+(17 durations < 1s hidden.)
+17 passed, 10 deselected in 23.25s

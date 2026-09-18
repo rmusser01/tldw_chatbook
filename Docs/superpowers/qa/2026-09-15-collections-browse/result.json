@@ -1,0 +1,57 @@
+{
+  "pid": 94242,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "clear_restores_two_saved_results": true,
+      "clear_remains_visible_and_focused": true,
+      "clear_resets_all_filters_and_relevance": true,
+      "more_reaches_second_page_and_preserves_scope": true,
+      "saved_search_enter_filters_to_alpha": true,
+      "previous_preserves_active_search": true,
+      "repeated_archive_disabled_and_rejected": true,
+      "original_undo_restores_read": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "clear_restores_two_saved_results": true,
+      "clear_remains_visible_and_focused": true,
+      "clear_resets_all_filters_and_relevance": true,
+      "more_reaches_second_page_and_preserves_scope": true,
+      "saved_search_enter_filters_to_alpha": true,
+      "previous_preserves_active_search": true,
+      "repeated_archive_disabled_and_rejected": true,
+      "original_undo_restores_read": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "capture_ids": [
+    "capture-3f416908f4e44451baf7c053190d22c1",
+    "capture-e51acec1aee64ffdb3aabd1728709146"
+  ],
+  "persisted": [
+    {
+      "capture_id": "capture-3f416908f4e44451baf7c053190d22c1",
+      "title": "Alpha",
+      "note": "Saved Alpha note",
+      "status": "read"
+    },
+    {
+      "capture_id": "capture-e51acec1aee64ffdb3aabd1728709146",
+      "title": "Beta",
+      "note": "Saved Beta note",
+      "status": "saved"
+    }
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

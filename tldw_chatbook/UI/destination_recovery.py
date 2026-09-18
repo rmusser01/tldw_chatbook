@@ -276,7 +276,7 @@ def load_failure_callout(
     # defaults the 1fr Static swallows the row and pushes the button outside
     # the callout (measured on the Media callout at 235x52 and 100x30).
     copy = Static(failure.message, id=copy_id, markup=False)
-    copy.styles.width = "1fr"
+    copy.add_class("w-fill")
     copy.styles.min_width = 0
     retry = Button(
         "Retry",
@@ -285,7 +285,7 @@ def load_failure_callout(
         compact=True,
         tooltip=failure.disabled_tooltip,
     )
-    retry.styles.width = "auto"
+    retry.add_class("w-auto")
     retry.styles.min_width = 0
     if gate is not None:
         gate(retry, "Retry")
@@ -301,7 +301,7 @@ def load_failure_callout(
     )
     # Bare harnesses never load the bundle, and Horizontal defaults to 1fr
     # height -- the callout must wrap to its copy either way.
-    callout.styles.height = "auto"
+    callout.add_class("h-auto")
     return callout
 
 

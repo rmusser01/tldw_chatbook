@@ -1,0 +1,81 @@
+........FFFFFF                                                           [100%]
+=================================== FAILURES ===================================
+_ test_clean_settings_follows_changed_saved_provider[retained-size0-textual-dark] _
+Tests/UI/test_settings_saved_provider_return.py:76: in test_clean_settings_follows_changed_saved_provider
+    _assert_projection(
+Tests/UI/test_settings_saved_provider_return.py:27: in _assert_projection
+    assert screen._provider_widget_value() == provider
+E   AssertionError: assert 'openai' == 'llama_cpp'
+E
+E     - llama_cpp
+E     + openai
+_ test_clean_settings_follows_changed_saved_provider[retained-size0-textual-light] _
+Tests/UI/test_settings_saved_provider_return.py:76: in test_clean_settings_follows_changed_saved_provider
+    _assert_projection(
+Tests/UI/test_settings_saved_provider_return.py:27: in _assert_projection
+    assert screen._provider_widget_value() == provider
+E   AssertionError: assert 'openai' == 'llama_cpp'
+E
+E     - llama_cpp
+E     + openai
+_ test_clean_settings_follows_changed_saved_provider[retained-size1-textual-dark] _
+Tests/UI/test_settings_saved_provider_return.py:76: in test_clean_settings_follows_changed_saved_provider
+    _assert_projection(
+Tests/UI/test_settings_saved_provider_return.py:27: in _assert_projection
+    assert screen._provider_widget_value() == provider
+E   AssertionError: assert 'openai' == 'llama_cpp'
+E
+E     - llama_cpp
+E     + openai
+_ test_clean_settings_follows_changed_saved_provider[retained-size1-textual-light] _
+Tests/UI/test_settings_saved_provider_return.py:76: in test_clean_settings_follows_changed_saved_provider
+    _assert_projection(
+Tests/UI/test_settings_saved_provider_return.py:27: in _assert_projection
+    assert screen._provider_widget_value() == provider
+E   AssertionError: assert 'openai' == 'llama_cpp'
+E
+E     - llama_cpp
+E     + openai
+_____ test_saved_default_change_does_not_retarget_a_model_draft[restored] ______
+Tests/UI/test_settings_saved_provider_return.py:112: in test_saved_default_change_does_not_retarget_a_model_draft
+    _assert_projection(
+Tests/UI/test_settings_saved_provider_return.py:26: in _assert_projection
+    assert screen._provider_setting_values()["provider"] == provider
+E   AssertionError: assert 'llama_cpp' == 'openai'
+E
+E     - openai
+E     + llama_cpp
+_____ test_saved_default_change_does_not_retarget_a_model_draft[retained] ______
+Tests/UI/test_settings_saved_provider_return.py:112: in test_saved_default_change_does_not_retarget_a_model_draft
+    _assert_projection(
+Tests/UI/test_settings_saved_provider_return.py:26: in _assert_projection
+    assert screen._provider_setting_values()["provider"] == provider
+E   AssertionError: assert 'llama_cpp' == 'openai'
+E
+E     - openai
+E     + llama_cpp
+============================= slowest 25 durations =============================
+3.23s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size1-textual-dark]
+2.68s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_model_draft[restored]
+2.53s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-dark]
+2.45s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-light]
+2.36s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_model_draft[retained]
+2.25s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size1-textual-light]
+2.13s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size0-textual-dark]
+2.07s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size0-textual-light]
+1.98s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size1-textual-dark]
+1.93s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[restored-size1-textual-light]
+1.93s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size1-textual-light]
+1.93s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size1-textual-dark]
+1.75s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size0-textual-light]
+1.71s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size0-textual-dark]
+
+(11 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size0-textual-dark]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size0-textual-light]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size1-textual-dark]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[retained-size1-textual-light]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_model_draft[restored]
+FAILED Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_model_draft[retained]
+6 failed, 8 passed in 36.26s

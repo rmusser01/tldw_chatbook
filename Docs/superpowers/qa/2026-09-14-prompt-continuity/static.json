@@ -1,0 +1,37 @@
+{
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "baseline_diagnostics": 205,
+    "current_diagnostics": 205,
+    "new_diagnostics": [],
+    "changed_methods_formatted": [
+      "_select_library_rail_row"
+    ]
+  },
+  "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+    "baseline_diagnostics": 16,
+    "current_diagnostics": 16,
+    "new_diagnostics": [],
+    "changed_methods_formatted": [
+      "_save_library_prompt",
+      "_sync_library_prompts_browse_result"
+    ]
+  },
+  "tldw_chatbook/Widgets/Library/library_prompts_canvas.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "new_diagnostics": [],
+    "changed_methods_formatted": [
+      "sync_saved_editor_state"
+    ]
+  },
+  "Tests/UI/test_library_prompts_canvas.py": {
+    "baseline_diagnostics": 24,
+    "current_diagnostics": 24,
+    "new_diagnostics": [],
+    "changed_methods_formatted": [
+      "test_library_prompt_conflict_save_as_new_replaces_source_history_identity",
+      "test_library_shell_create_prompt_write_time_conflict_recovers_on_reload",
+      "test_library_shell_create_prompt_write_time_conflict_save_as_new_retries_create"
+    ]
+  }
+}

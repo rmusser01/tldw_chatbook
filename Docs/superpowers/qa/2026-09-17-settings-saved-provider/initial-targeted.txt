@@ -1,0 +1,54 @@
+........................................................................ [ 26%]
+........................................................................ [ 52%]
+...................................................F.................... [ 79%]
+....................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+...................                [100%]
+=================================== FAILURES ===================================
+_ test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces _
+Tests/UI/test_settings_configuration_hub.py:7755: in test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces
+    console_screen = _bare_console_state_screen(console_store)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_session_settings.py:248: in _bare_console_state_screen
+    screen._pending_console_launch_context = None
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9862: in _pending_console_launch_context
+    self._console_runtime().stage_console_staged_evidence(launch)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute 'stage_console_staged_evidence'
+============================= slowest 25 durations =============================
+21.23s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-light]
+20.88s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-dark]
+20.88s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-light]
+20.54s call     Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-dark]
+6.30s call     Tests/ProductionApp/test_provider_selection_ownership.py::test_settings_save_preserves_user_session_then_away_command_hands_off
+5.61s call     Tests/UI/test_settings_provider_switch_atomic.py::test_exact_draft_key_probe_evidence_survives_successful_commit
+5.57s call     Tests/UI/test_settings_provider_switch_atomic.py::test_exact_probe_evidence_survives_returned_model_selection_and_save
+4.65s call     Tests/ProductionApp/test_provider_selection_ownership.py::test_real_console_consumes_typed_provider_intents_and_opens_real_picker
+3.09s call     Tests/ProductionApp/test_provider_selection_ownership.py::test_real_app_restart_routes_saved_global_and_model_profile_to_new_chat
+2.45s call     Tests/UI/test_settings_save_commit_models.py::test_staged_fields_document_staged_save_in_the_inspector
+2.41s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_saves_and_clears_local_api_key
+2.37s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_saves_selected_runtime_models
+2.32s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-dark]
+2.29s call     Tests/UI/test_settings_saved_provider_return.py::test_clean_settings_follows_changed_saved_provider[fresh-size0-textual-light]
+2.26s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_revert_restores_provider_dependent_placeholders
+2.26s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-credential-env-var-REVIEW_PROVIDER_KEY-restored]
+2.19s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_repopulation_is_not_a_user_edit
+2.18s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[model-profile-temperature-0.4-restored]
+2.16s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[provider-endpoint-value-https://draft.invalid/v1-restored]
+2.16s call     Tests/UI/test_settings_saved_provider_return.py::test_saved_default_change_does_not_retarget_a_draft[model-value-unsaved-model-restored]
+2.13s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_route_echoes_do_not_survive_widget_lifecycle[category_departure]
+2.09s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_does_not_depend_on_console_sampling_defaults
+2.07s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_uses_api_settings_env_var_without_secret_leak
+2.01s call     Tests/UI/test_settings_configuration_hub.py::test_save_revert_pair_hidden_on_non_draft_categories
+2.00s call     Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_discovery_shows_ambiguous_provider_recovery
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_configuration_hub.py::test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces
+1 failed, 272 passed, 297 deselected in 409.18s (0:06:49)

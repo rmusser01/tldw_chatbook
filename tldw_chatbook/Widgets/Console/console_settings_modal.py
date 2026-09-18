@@ -1746,7 +1746,9 @@ class ConsoleSettingsModal(
                             new_endpoint.tooltip = (
                                 "Create a custom endpoint entry from a template"
                             )
-                            new_endpoint.styles.width = ENDPOINT_NEW_BUTTON_WIDTH
+                            new_endpoint.remove_class(*(name for name in new_endpoint.classes if name.startswith("w-")))
+                            new_endpoint.set_styles(width=None)
+                            new_endpoint.add_class("w-17")
                             new_endpoint.styles.min_width = ENDPOINT_NEW_BUTTON_WIDTH
                             new_endpoint.styles.max_width = ENDPOINT_NEW_BUTTON_WIDTH
                             new_endpoint.display = self._endpoint_new_button_visible(
@@ -1795,7 +1797,9 @@ class ConsoleSettingsModal(
                                 disabled=not use_model_select,
                                 classes="console-settings-control",
                             )
-                            model_select.styles.width = "1fr"
+                            model_select.remove_class(*(name for name in model_select.classes if name.startswith("w-")))
+                            model_select.set_styles(width=None)
+                            model_select.add_class("w-fill")
                             model_select.styles.min_width = 0
                             model_select.display = use_model_select
                             yield model_select
@@ -1806,7 +1810,9 @@ class ConsoleSettingsModal(
                                 disabled=has_model_options,
                                 classes="console-settings-control",
                             )
-                            model_input.styles.width = "1fr"
+                            model_input.remove_class(*(name for name in model_input.classes if name.startswith("w-")))
+                            model_input.set_styles(width=None)
+                            model_input.add_class("w-fill")
                             model_input.styles.min_width = 0
                             model_input.display = not use_model_select
                             yield model_input
@@ -1995,7 +2001,9 @@ class ConsoleSettingsModal(
                         streaming_toggle.tooltip = (
                             "Toggle streaming on or off for this session"
                         )
-                        streaming_toggle.styles.width = STREAMING_TOGGLE_WIDTH
+                        streaming_toggle.remove_class(*(name for name in streaming_toggle.classes if name.startswith("w-")))
+                        streaming_toggle.set_styles(width=None)
+                        streaming_toggle.add_class("w-12")
                         streaming_toggle.styles.min_width = STREAMING_TOGGLE_WIDTH
                         streaming_toggle.styles.max_width = STREAMING_TOGGLE_WIDTH
                         yield streaming_toggle
@@ -2170,7 +2178,9 @@ class ConsoleSettingsModal(
                 # this nested view reports its full intrinsic height. A 1fr
                 # default collapsed the view to the five-row viewport and made
                 # lower sections both clipped and invisible to max_scroll_y.
-                context_view.styles.height = "auto"
+                context_view.remove_class(*(name for name in context_view.classes if name.startswith("h-")))
+                context_view.set_styles(height=None)
+                context_view.add_class("h-auto")
                 with context_view:
                     with Vertical(classes="console-settings-modal-section"):
                         yield Static("Model capacity", classes="destination-section")
@@ -2548,7 +2558,9 @@ class ConsoleSettingsModal(
                         "Apply to this chat and save the shown generation profile "
                         "for this exact provider and model."
                     )
-                    save_default.styles.width = 24
+                    save_default.remove_class(*(name for name in save_default.classes if name.startswith("w-")))
+                    save_default.set_styles(width=None)
+                    save_default.add_class("w-24")
                     save_default.styles.min_width = 24
                     yield save_default
                 with Horizontal(classes="console-settings-action-group"):
@@ -2557,7 +2569,9 @@ class ConsoleSettingsModal(
                         id="console-settings-make-default",
                         disabled=not self._can_save,
                     )
-                    make_default.styles.width = 28
+                    make_default.remove_class(*(name for name in make_default.classes if name.startswith("w-")))
+                    make_default.set_styles(width=None)
+                    make_default.add_class("w-28")
                     make_default.styles.min_width = 28
                     yield make_default
                     apply = Button(
@@ -2566,7 +2580,9 @@ class ConsoleSettingsModal(
                         variant="primary",
                         disabled=not self._can_save,
                     )
-                    apply.styles.width = 20
+                    apply.remove_class(*(name for name in apply.classes if name.startswith("w-")))
+                    apply.set_styles(width=None)
+                    apply.add_class("w-20")
                     apply.styles.min_width = 20
                     yield apply
             guard = Vertical(
@@ -3198,11 +3214,15 @@ class ConsoleSettingsModal(
         actions = self.query_one("#console-settings-actions", Vertical)
         for button in actions.query(Button):
             if compact:
-                button.styles.width = "100%"
+                button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+                button.set_styles(width=None)
+                button.add_class("w-full")
                 button.styles.min_width = 0
             else:
                 width = max(12, len(str(button.label)) + 2)
-                button.styles.width = width
+                button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+                # ds-runtime: Current action-label text length determines the footer button width.
+                button.set_styles(width=width)
                 button.styles.min_width = width
 
     def _sync_action_layout(self, viewport_width: int) -> None:
@@ -3217,38 +3237,56 @@ class ConsoleSettingsModal(
         )
         view_tabs = self.query_one("#console-settings-view-tabs", Horizontal)
         view_height = 1 if compact else MODAL_CONTROL_HEIGHT
-        view_tabs.styles.height = view_height
+        view_tabs.remove_class(*(name for name in view_tabs.classes if name.startswith("h-")))
+        view_tabs.set_styles(height=None)
+        view_tabs.add_class("h-1" if compact else "h-3")
         view_tabs.styles.min_height = view_height
         for button in view_tabs.query(Button):
-            button.styles.height = view_height
+            button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+            button.set_styles(height=None)
+            button.add_class("h-1" if compact else "h-3")
             button.styles.min_height = view_height
         for selector in ("#console-settings-readiness", "#console-settings-scope"):
             summary = self.query_one(selector, Static)
-            summary.styles.height = "auto"
+            summary.remove_class(*(name for name in summary.classes if name.startswith("h-")))
+            summary.set_styles(height=None)
+            summary.add_class("h-auto")
             summary.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         recovery_actions = self.query_one(
             "#console-settings-default-recovery-actions", Horizontal
         )
-        recovery_actions.styles.height = 1 if compact else MODAL_CONTROL_HEIGHT
+        recovery_actions.remove_class(*(name for name in recovery_actions.classes if name.startswith("h-")))
+        recovery_actions.set_styles(height=None)
+        recovery_actions.add_class("h-1" if compact else "h-3")
         recovery_actions.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         for button in recovery_actions.query(Button):
-            button.styles.height = 1 if compact else MODAL_CONTROL_HEIGHT
+            button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+            button.set_styles(height=None)
+            button.add_class("h-1" if compact else "h-3")
             button.styles.min_height = 1 if compact else MODAL_CONTROL_HEIGHT
         actions = self.query_one("#console-settings-actions", Vertical)
         actions.styles.layout = "vertical" if compact else "horizontal"
-        actions.styles.height = "auto" if compact else 1
+        actions.remove_class(*(name for name in actions.classes if name.startswith("h-")))
+        actions.set_styles(height=None)
+        actions.add_class("h-auto" if compact else "h-1")
         actions.styles.min_height = 1
         action_groups = list(actions.query(".console-settings-action-group"))
         for group in action_groups:
             group.styles.layout = "vertical" if compact else "horizontal"
-            group.styles.width = "100%" if compact else "auto"
-            group.styles.height = "auto" if compact else 1
+            group.remove_class(*(name for name in group.classes if name.startswith("w-")))
+            group.set_styles(width=None)
+            group.add_class("w-full" if compact else "w-auto")
+            group.remove_class(*(name for name in group.classes if name.startswith("h-")))
+            group.set_styles(height=None)
+            group.add_class("h-auto" if compact else "h-1")
             group.styles.min_height = 1
             group.styles.align_horizontal = "right"
         if len(action_groups) > 1:
             action_groups[1].display = not recovery_active
         for button in actions.query(Button):
-            button.styles.height = 1
+            button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+            button.set_styles(height=None)
+            button.add_class("h-1")
             button.styles.min_height = 1
 
     def _show_settings_view(self, view: str) -> None:
@@ -3450,7 +3488,9 @@ class ConsoleSettingsModal(
             else "Save as generation defaults"
         )
         save_width = max(24, len(str(save_button.label)) + 2)
-        save_button.styles.width = save_width
+        save_button.remove_class(*(name for name in save_button.classes if name.startswith("w-")))
+        # ds-runtime: Current action-label text length determines the footer button width.
+        save_button.set_styles(width=save_width)
         save_button.styles.min_width = save_width
         save_button.tooltip = (
             "Save this endpoint and model for future conversations, then use "
@@ -3821,7 +3861,9 @@ class ConsoleSettingsModal(
         )
         label_width = 16 if compact else MODAL_LABEL_WIDTH
         for label in self.query(".console-settings-modal-label"):
-            label.styles.width = label_width
+            label.remove_class(*(name for name in label.classes if name.startswith("w-")))
+            label.set_styles(width=None)
+            label.add_class("w-16" if compact else "w-23")
             label.styles.min_width = label_width
             label.styles.max_width = label_width
         self.call_after_refresh(self._sync_fold_hint)
@@ -3958,7 +4000,9 @@ class ConsoleSettingsModal(
 
     def _modal_label(self, text: str) -> Static:
         label = Static(text, classes="console-settings-modal-label")
-        label.styles.width = MODAL_LABEL_WIDTH
+        label.remove_class(*(name for name in label.classes if name.startswith("w-")))
+        label.set_styles(width=None)
+        label.add_class("w-23")
         label.styles.min_width = MODAL_LABEL_WIDTH
         label.styles.max_width = MODAL_LABEL_WIDTH
         return label

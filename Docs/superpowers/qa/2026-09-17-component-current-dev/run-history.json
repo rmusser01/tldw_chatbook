@@ -1,0 +1,65 @@
+[
+  {
+    "run": "governance-initial",
+    "source": "/private/tmp/tldw-32749-governance-initial.txt",
+    "bytes": 482395,
+    "sha256": "1fb0e3e6778a0d51864e1498b201ae87241db710468f94863b03ea572ed0e678",
+    "summary": "2 failed, 2 passed, 97 errors in 27.01s"
+  },
+  {
+    "run": "governance-private",
+    "source": "/private/tmp/tldw-32749-governance-private.txt",
+    "bytes": 139181,
+    "sha256": "8c3175423a77dd74a509d4534fd2e4bad9264bcf1e96a1e474bcc618c008a3cb",
+    "summary": "10 failed, 91 passed in 223.19s (0:03:43)"
+  },
+  {
+    "run": "exact-dev-baseline",
+    "source": "/private/tmp/tldw-32749-exact-dev-baseline.txt",
+    "bytes": 4416,
+    "sha256": "7e7dcca6e72a66543ed4be99ab3d67fb7f4482ac21a298670d7195855fa95d7f",
+    "summary": "1 failed, 1 passed in 4.98s"
+  },
+  {
+    "run": "exact-dev-governance",
+    "source": "/private/tmp/tldw-32749-exact-dev-governance.txt",
+    "bytes": 203111,
+    "sha256": "2e47e2eba717152b63f16a626db00af8a13dbfb6c357890170151525e81ce41c",
+    "summary": "1 passed, 40 errors in 11.40s"
+  },
+  {
+    "run": "adjacent",
+    "source": "/private/tmp/tldw-32749-adjacent.txt",
+    "bytes": 19163,
+    "sha256": "ff3609a42043b461e0f33739a4d15f10c6aeea3a970c9d6d1a4ee27314153114",
+    "summary": "10 failed, 7 passed in 7.79s"
+  },
+  {
+    "run": "governance-final-rerun",
+    "source": "/private/tmp/tldw-32749-governance-final-rerun.txt",
+    "bytes": 1472,
+    "sha256": "7f563ffa5aa872f16171852ff7b0e43923bceafef27f36da0d752b84bc46e721",
+    "summary": "10 passed in 17.53s"
+  },
+  {
+    "run": "picker-final",
+    "source": "/private/tmp/tldw-32749-picker-final.txt",
+    "bytes": 1361,
+    "sha256": "10fc98578a8d80bf57cd7547dbf3f97349a01fd6e1571299a0c50094c17d9342",
+    "summary": "17 passed, 10 deselected in 23.25s"
+  },
+  {
+    "run": "adjacent-final",
+    "source": "/private/tmp/tldw-32749-adjacent-final.txt",
+    "bytes": 1305,
+    "sha256": "0966de6215c4cb8eb8d3ecb0f4d98d159684a51b75eae9f68d9b7dcf4603d7be",
+    "summary": "============================== 2 passed in 2.54s ==============================="
+  },
+  {
+    "run": "settings-private",
+    "source": "/private/tmp/tldw-32749-settings-private.txt",
+    "bytes": 2639,
+    "sha256": "7cccc34a6e683b14b3fe8aa3650dc37484955899a0d0c72fc9a4666ba0625f48",
+    "summary": "15 passed in 477.11s (0:07:57)"
+  }
+]

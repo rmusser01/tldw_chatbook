@@ -1,0 +1,62 @@
+{
+  "pid": 77029,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "appearance_validation_preview_revert_save": true,
+      "theme_browse_edit_apply_save_launch": true,
+      "launch_default_visible_in_appearance": true,
+      "splash_exact_saved_values_and_preview": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "appearance_validation_preview_revert_save": true,
+      "theme_browse_edit_apply_save_launch": true,
+      "launch_default_visible_in_appearance": true,
+      "splash_exact_saved_values_and_preview": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        190,
+        55
+      ],
+      "appearance_validation_preview_revert_save": true,
+      "theme_browse_edit_apply_save_launch": true,
+      "launch_default_visible_in_appearance": true,
+      "splash_exact_saved_values_and_preview": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "appearance_validation_preview_revert_save": true,
+      "theme_browse_edit_apply_save_launch": true,
+      "launch_default_visible_in_appearance": true,
+      "splash_exact_saved_values_and_preview": true
+    }
+  ],
+  "runner_sha256": "c6f59f355a1b21817ada95292cf3cb1e9fc7b4a6fc5f7652b7503501ed6e5fd7",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "b9a54a031ba443262afc5d54efa3b1cb0bcab1b7e0fc7897457dc90889cf5c11",
+    "tldw_chatbook/Widgets/settings_theme_editor.py": "b0bc97fd25efcb516190865b1ed5e9bfbbb30f4b33afc7aec8e521be4c11e1ce",
+    "tldw_chatbook/Widgets/settings_splash_screen_viewer.py": "e220cffaaab4872468b3a8577b6887cea52281461864004cb428510ec4fde60f",
+    "tldw_chatbook/css/components/_settings_splash_theme.tcss": "b0fc4c018af27fa28d481b19421d5a6d03d8ca10ad4ead210e7e22cfad13afee",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "261f12ecd72fde979d0daff265a97bfa66fc79fbe031437b616dae472dde9b30",
+    "tldw_chatbook/css/features/_settings.tcss": "553b1f319e937b6228e0a75020822b0ad9478d9e32e3028105d9ff88b8191572",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "6f9efa2c281438096bb66ae6828a82ba9d991d93150df4e579221414bc26811b"
+  },
+  "waiting_for": "Category settled",
+  "passed": true,
+  "app_run_returned": true
+}

@@ -57,49 +57,6 @@ SKILL_TEXT_LIMITS = {
 class SkillTrustPassphraseModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Prompt for the local skill trust passphrase without logging it."""
 
-    DEFAULT_CSS = """
-    SkillTrustPassphraseModal {
-        align: center middle;
-    }
-
-    #skill-trust-passphrase-modal {
-        width: 64;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
-
-    #skill-trust-passphrase-message {
-        margin: 1 0;
-    }
-
-    #skill-trust-passphrase-input {
-        width: 100%;
-    }
-
-    #skill-trust-passphrase-error {
-        height: auto;
-        min-height: 1;
-        color: red;
-    }
-
-    #skill-trust-passphrase-actions {
-        height: 3;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
-
-    #skill-trust-passphrase-cancel,
-    #skill-trust-passphrase-submit {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
-    """
-
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
     SAFE_MODAL_CONTENT = "#skill-trust-passphrase-modal"
 
@@ -296,54 +253,6 @@ class SkillTrustBootstrapModal(SafeModalDismissMixin, ModalScreen[str | None]):
     Skills editor's first-run "Set up skill trust" state (the Phase-1 gate
     fix: a brand-new install previously had no live-UI path to bootstrap
     trust at all).
-    """
-
-    DEFAULT_CSS = """
-    SkillTrustBootstrapModal {
-        align: center middle;
-    }
-
-    #skill-trust-bootstrap-modal {
-        width: 64;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
-
-    #skill-trust-bootstrap-message {
-        margin: 1 0;
-    }
-
-    #skill-trust-bootstrap-input {
-        width: 100%;
-        margin: 0 0 1 0;
-    }
-
-    #skill-trust-bootstrap-confirm-input {
-        width: 100%;
-    }
-
-    #skill-trust-bootstrap-error {
-        height: auto;
-        min-height: 1;
-        color: red;
-    }
-
-    #skill-trust-bootstrap-actions {
-        height: 3;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
-
-    #skill-trust-bootstrap-cancel,
-    #skill-trust-bootstrap-submit {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
     """
 
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]

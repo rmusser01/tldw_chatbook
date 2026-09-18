@@ -1,0 +1,19 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+________________ test_answer_reveal_respects_newer_focus[False] ________________
+Tests/UI/test_library_rag_history_keyboard.py:225: in test_answer_reveal_respects_newer_focus
+    assert pending
+E   assert []
+________________ test_answer_reveal_respects_newer_focus[True] _________________
+Tests/UI/test_library_rag_history_keyboard.py:225: in test_answer_reveal_respects_newer_focus
+    assert pending
+E   assert []
+============================= slowest 25 durations =============================
+3.56s call     Tests/UI/test_library_rag_history_keyboard.py::test_answer_reveal_respects_newer_focus[False]
+3.14s call     Tests/UI/test_library_rag_history_keyboard.py::test_answer_reveal_respects_newer_focus[True]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_history_keyboard.py::test_answer_reveal_respects_newer_focus[False]
+FAILED Tests/UI/test_library_rag_history_keyboard.py::test_answer_reveal_respects_newer_focus[True]
+2 failed, 16 deselected in 8.47s

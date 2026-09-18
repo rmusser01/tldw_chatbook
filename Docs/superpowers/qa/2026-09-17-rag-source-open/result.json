@@ -1,0 +1,118 @@
+{
+  "pid": 5190,
+  "runner_sha256": "243a464b6298e0aa3593d2ba9cb8b733b49bf7d9ecc837a92b6d138b78969c95",
+  "seam": "real keyword search; legacy result-ID adapter; real local readers",
+  "retrievals": [
+    {
+      "query": "auditdarkwide",
+      "mode": "search",
+      "ids": {
+        "media": {
+          "original": "1",
+          "wrapped": "media_1"
+        },
+        "prompt": {
+          "original": "1",
+          "wrapped": "prompt_1"
+        }
+      }
+    },
+    {
+      "query": "auditdarkcompact",
+      "mode": "search",
+      "ids": {
+        "media": {
+          "original": "2",
+          "wrapped": "media_2"
+        },
+        "prompt": {
+          "original": "2",
+          "wrapped": "prompt_2"
+        }
+      }
+    },
+    {
+      "query": "auditlightwide",
+      "mode": "search",
+      "ids": {
+        "media": {
+          "original": "3",
+          "wrapped": "media_3"
+        },
+        "prompt": {
+          "original": "3",
+          "wrapped": "prompt_3"
+        }
+      }
+    },
+    {
+      "query": "auditlightcompact",
+      "mode": "search",
+      "ids": {
+        "media": {
+          "original": "4",
+          "wrapped": "media_4"
+        },
+        "prompt": {
+          "original": "4",
+          "wrapped": "prompt_4"
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "query": "auditdarkwide",
+      "media_id": 1,
+      "prompt_id": 1,
+      "exact_source_bodies": true,
+      "refusals_keep_search_and_focus": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "query": "auditdarkcompact",
+      "media_id": 2,
+      "prompt_id": 2,
+      "exact_source_bodies": true,
+      "refusals_keep_search_and_focus": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "query": "auditlightwide",
+      "media_id": 3,
+      "prompt_id": 3,
+      "exact_source_bodies": true,
+      "refusals_keep_search_and_focus": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "query": "auditlightcompact",
+      "media_id": 4,
+      "prompt_id": 4,
+      "exact_source_bodies": true,
+      "refusals_keep_search_and_focus": true
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "retained results",
+  "source_records_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

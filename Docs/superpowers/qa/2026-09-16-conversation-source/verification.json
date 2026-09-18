@@ -1,0 +1,180 @@
+{
+  "base_commit": "0960d40433c1806537c2d09055a2e2d6ad287822",
+  "targeted_command": ".venv/bin/python -m pytest Tests/UI/test_library_crit8_conversation_handoff.py Tests/UI/test_library_crit10_layout.py Tests/UI/test_post_release_workspaces_library_depth.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_chat_screen_resume_handoff_registration.py -q --tb=short --show-capture=no",
+  "baseline": {
+    "passed": 113,
+    "failed": 12,
+    "exit": 1,
+    "seconds": 169.36
+  },
+  "fixture_repairs": {
+    "passed": 124,
+    "failed": 1,
+    "exit": 1,
+    "seconds": 162.68
+  },
+  "warm_regression_red": {
+    "failed": 2,
+    "exit": 1,
+    "seconds": 16.45,
+    "reason": "exact live-work revisions remain pending in both resident states"
+  },
+  "focused_green": {
+    "passed": 5,
+    "exit": 0,
+    "seconds": 18.92
+  },
+  "presentation_failure_ownership": {
+    "passed": 2,
+    "exit": 0,
+    "seconds": 3.38
+  },
+  "expanded": {
+    "passed": 141,
+    "failed": 8,
+    "exit": 1,
+    "seconds": 186.28
+  },
+  "neighbor_baseline": {
+    "passed": 13,
+    "failed": 8,
+    "exit": 1,
+    "seconds": 15.26
+  },
+  "same_neighbor_failures_on_original_production": [
+    "Tests/UI/test_chat_screen_suspend.py::test_on_screen_suspend_does_not_call_save_state",
+    "Tests/UI/test_chat_screen_suspend.py::test_on_screen_suspend_quiesces_every_visit_seam",
+    "Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_resume_orders_consumers_once_and_suppresses_competitors",
+    "Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_global_resume_outranks_registry_active_workspace",
+    "Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_missing_resume_falls_back_to_registry_active_workspace",
+    "Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_resume_settles_first_chat_once_without_intermediate_presentation",
+    "Tests/UI/test_console_roleplay_resume_navigation.py::test_mounted_resume_releases_transient_first_chat_without_rollback_focus",
+    "Tests/UI/test_console_roleplay_resume_navigation.py::test_resume_navigation_continues_after_chat_handoff_release"
+  ],
+  "final": {
+    "passed": 130,
+    "failed": 0,
+    "exit": 0,
+    "seconds": 155.21
+  },
+  "static_checks": [
+    {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "check",
+        "Tests/UI/test_console_live_work_handoffs.py",
+        "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-source/native_check.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-source/verify_profile.py"
+      ],
+      "exit": 0,
+      "output": "All checks passed!\n"
+    },
+    {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "format",
+        "--check",
+        "Tests/UI/test_console_live_work_handoffs.py",
+        "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-source/native_check.py",
+        "Docs/superpowers/qa/2026-09-16-conversation-source/verify_profile.py"
+      ],
+      "exit": 0,
+      "output": "4 files already formatted\n"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "output": ""
+    }
+  ],
+  "production_ruff": {
+    "baseline": {
+      "exit": 1,
+      "diagnostics": 212,
+      "codes": {
+        "I001": 6,
+        "UP035": 1,
+        "PLC0414": 1,
+        "PLE1205": 33,
+        "ISC004": 7,
+        "BLE001": 99,
+        "RUF034": 1,
+        "RUF012": 4,
+        "S110": 5,
+        "TRY004": 2,
+        "UP041": 1,
+        "SIM103": 1,
+        "F401": 1,
+        "UP037": 1,
+        "UP045": 26,
+        "DTZ011": 1,
+        "B009": 1,
+        "UP017": 2,
+        "SIM102": 3,
+        "B010": 2,
+        "UP006": 9,
+        "DTZ005": 1,
+        "RET501": 1,
+        "RUF100": 1,
+        "F811": 2
+      }
+    },
+    "current": {
+      "exit": 1,
+      "diagnostics": 212,
+      "codes": {
+        "I001": 6,
+        "UP035": 1,
+        "PLC0414": 1,
+        "PLE1205": 33,
+        "ISC004": 7,
+        "BLE001": 99,
+        "RUF034": 1,
+        "RUF012": 4,
+        "S110": 5,
+        "TRY004": 2,
+        "UP041": 1,
+        "SIM103": 1,
+        "F401": 1,
+        "UP037": 1,
+        "UP045": 26,
+        "DTZ011": 1,
+        "B009": 1,
+        "UP017": 2,
+        "SIM102": 3,
+        "B010": 2,
+        "UP006": 9,
+        "DTZ005": 1,
+        "RET501": 1,
+        "RUF100": 1,
+        "F811": 2
+      }
+    },
+    "new_diagnostics": [],
+    "comparison": "code and message multiset; embedded previous-definition line offsets normalized"
+  },
+  "production_changed_ranges_formatted": true,
+  "python_files_parsed": [
+    "Tests/UI/test_console_live_work_handoffs.py",
+    "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+    "Docs/superpowers/qa/2026-09-16-conversation-source/native_check.py",
+    "Docs/superpowers/qa/2026-09-16-conversation-source/verify_profile.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+  ],
+  "native_handoffs": {
+    "CHAT": 8,
+    "CONSOLE_LIVE_WORK": 8
+  },
+  "full_suite_run": false,
+  "production_scope": "Unify fresh live-work claim/surface refresh; register ordinary warm resume consumer. No CSS, storage or authority change.",
+  "json_svg_capture_hashes_and_readme_links_valid": true,
+  "native_runner_matches_executed_hash": true,
+  "source_snapshots_equal": true,
+  "test_log_normalization": "Trailing line whitespace only"
+}

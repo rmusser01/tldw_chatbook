@@ -1,0 +1,28 @@
+{
+  "red-existing": {
+    "summary": "2 failed, 11 passed, 2 warnings in 19.39s",
+    "failures": [
+      "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff",
+      "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_library_details_section_renders_grouped_headers_and_drops_policy_prose"
+    ]
+  },
+  "red-settled": {
+    "summary": "2 failed, 13 deselected, 2 warnings in 4.92s",
+    "failures": [
+      "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_workspace_receipts_and_actions_follow_mounted_source_transitions[textual-dark]",
+      "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_workspace_receipts_and_actions_follow_mounted_source_transitions[textual-light]"
+    ]
+  },
+  "final-workspaces": {
+    "summary": "15 passed, 2 warnings in 26.07s",
+    "failures": []
+  },
+  "neighbor-checks": {
+    "summary": "41 passed, 79 deselected, 2 warnings in 51.96s",
+    "failures": []
+  },
+  "captures": {
+    "summary": "2 passed, 2 warnings in 5.10s",
+    "failures": []
+  }
+}

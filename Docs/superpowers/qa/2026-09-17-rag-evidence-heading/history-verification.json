@@ -1,0 +1,32 @@
+{
+  "commits": {
+    "introduction": "13916d8abebc9c3dfd3e16733d918b43db6b3e46",
+    "correction": "67c667d063809376b9431bd8e2da4a55e05825ac",
+    "profile_depth_update": "f875d8225fd3f6247afd0eac38616d97b0d0b4d9",
+    "saved_dev": "24094f23d59c7a9d3cfac964c19fd263bc0393b2",
+    "verified_head": "6b50af0a33f1f0859a9c72c2bfd155cd4c4f2105"
+  },
+  "nodes": {
+    "test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional": {
+      "path": "Tests/UI/test_product_maturity_gate16_library_search_rag.py",
+      "head_matches_saved_dev_ast": true
+    },
+    "results_heading_text": {
+      "path": "tldw_chatbook/Widgets/Library/library_search_rag_panel.py",
+      "head_matches_saved_dev_ast": true
+    },
+    "library_rag_results_body_children": {
+      "path": "tldw_chatbook/Widgets/Library/library_search_rag_panel.py",
+      "head_matches_saved_dev_ast": true
+    },
+    "library_rag_coverage_note_children": {
+      "path": "tldw_chatbook/Widgets/Library/library_search_rag_panel.py",
+      "head_matches_saved_dev_ast": true
+    }
+  },
+  "introduction_is_in_saved_dev": true,
+  "correction_is_in_saved_dev": true,
+  "profile_depth_update_is_in_saved_dev": true,
+  "comparison_phase": "before test-isolation repair",
+  "dev_profile_storage_admission_commit": "b5251e9a6eb"
+}

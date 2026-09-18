@@ -1,0 +1,46 @@
+.............................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+........................... [ 37%]
+........................................................................ [ 74%]
+.................................................                        [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/Performance/test_boot_css_byte_budget.py:237: UserWarning: boot-css-bytes: 616683/634050 bytes (headroom 17367)
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+20.38s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+20.37s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-light]
+20.19s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-dark]
+19.07s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-light]
+18.51s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-dark]
+17.68s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+9.38s call     Tests/UI/test_model_catalog_consent_modal.py::test_splash_finishes_before_catalog_consent_and_deny_returns_home
+3.30s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+2.58s call     Tests/UI/test_app_startup_model_catalog_offline.py::test_full_boot_with_consented_settings_makes_no_catalog_egress
+2.31s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-api_key]
+2.27s call     Tests/UI/test_settings_model_discovery_journeys.py::test_rebuild_keeps_selection_with_connection_drafts
+2.25s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip]
+2.25s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-provider]
+2.17s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-credential_env]
+2.13s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint]
+2.06s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint_roundtrip]
+2.02s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-provider]
+2.00s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[endpoint_roundtrip-True]
+2.00s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[endpoint_roundtrip-False]
+1.94s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint]
+1.92s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-credential_env]
+1.88s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[provider-False]
+1.82s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_a_changed_form[provider-True]
+1.79s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-api_key]
+1.79s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_clear_cannot_overwrite_a_changed_form[False]
+193 passed, 4 warnings in 227.50s (0:03:47)

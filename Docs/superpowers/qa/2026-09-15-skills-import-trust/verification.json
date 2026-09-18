@@ -1,0 +1,57 @@
+{
+  "base_commit": "53890aa2bd",
+  "distinct_targeted_passing_checks": 355,
+  "full_suite_run": false,
+  "groups": [
+    {
+      "scope": "New import/trust journeys, prior editor journeys, import, candidate chooser, trust preview/service/Library flow, Skills canvas and reader",
+      "log": "targeted-qualified.txt",
+      "passed": 296,
+      "failed": 2,
+      "resolution": "The two backdrop tests lacked the moved app CSS. Their corrected harnesses pass below."
+    },
+    {
+      "scope": "Trust modal purpose, dismissal, click boundaries, positive results and repeated dismissal",
+      "log": "modal-contracts-final.txt",
+      "passed": 13,
+      "failed": 0,
+      "overlap_with_previous_passes": 11
+    },
+    {
+      "scope": "Skills wiring, token governance, CSS build synchronization and consolidation",
+      "log": "governance-final.txt",
+      "passed": 54,
+      "inherited_failed": 1
+    },
+    {
+      "scope": "Skills controller size ratchet",
+      "log": "controller-size-final.txt",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "scope": "Library screen size ratchet",
+      "log": "screen-size-final.txt",
+      "passed": 1,
+      "inherited_failed": 1
+    }
+  ],
+  "inherited_failures": [
+    {
+      "test": "test_class_level_css_stays_within_the_allowlist",
+      "detail": "22 existing offenders; zero added; see css-baseline.json"
+    },
+    {
+      "test": "test_screen_does_not_grow_past_its_budget[library_screen.py]",
+      "detail": "35,202 lines vs 33,204 budget; HEAD 35,203; budget unchanged"
+    }
+  ],
+  "new_files_and_work_pane_ruff": "check and format pass",
+  "modified_existing_ruff": "No new code/message diagnostics against HEAD; see lint-final.json",
+  "native_run": "run-005",
+  "normal_exit_code": 0,
+  "owned_terminal_session_closed": true,
+  "visual_inspection": "All 12 native SVGs rendered through Quick Look and inspected at both terminal sizes.",
+  "review": "Independent bounded production review found no further issues after the retained Items and focus repairs.",
+  "scratch_logs": ".superpowers/sdd/2026-09-15-skills-import-trust"
+}

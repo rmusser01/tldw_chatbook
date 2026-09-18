@@ -1,0 +1,11 @@
+.                                                                        [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Tests/Performance/test_boot_css_byte_budget.py:240: UserWarning: boot-css-bytes: 620062/634050 bytes (headroom 13988)
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+1 passed, 1 warning in 1.19s

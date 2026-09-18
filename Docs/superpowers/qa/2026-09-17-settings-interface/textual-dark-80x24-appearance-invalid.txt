@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Appearance
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Needs correction | Font size    │
+│     Storage                  │  │  │  must be between 6 and 32.              │
+│     Workspaces               │  │  │ │  category for full theme editing   │▃ │
+│     Tool Profiles            │  │  │ │  and deeper visual preview.        │  │
+│     Privacy & Security       │  │  │ │ Theme                              │  │
+│     Network                  │  │  │ │ ┌────────────────────────────────┐ │  │
+│     My Profile               │  │  │ │ │ Review Textual Dark 190      ▼ │ │  │
+│  Troubleshooting           ▇ │  │  │ │ └────────────────────────────────┘ │  │
+│     Diagnostics (view)       │  │  │ │                                    │  │
+│     About (view)             │  │  │ │ Palette limit (themes)             │  │
+│     Agents                   │  │  │ │ │ 1                                │  │
+│  Expert                      │  │  │ │                                    │  │
+│     Internal Prompts         │  │  │ │ Web font size (px)                 │  │
+│     Advanced Config          │  │  │ │ │ 99                               │  │
+│   Domain Defaults ▸ (11)     │  │  │ │                                    │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

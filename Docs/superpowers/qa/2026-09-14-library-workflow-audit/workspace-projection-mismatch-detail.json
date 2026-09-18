@@ -1,0 +1,35 @@
+{
+  "counts": {
+    "notes": 2,
+    "media": 1,
+    "conversations": 1
+  },
+  "records": {
+    "notes": [
+      {
+        "title": "Workspace B research note",
+        "id": "note-cross"
+      },
+      {
+        "title": "Workspace A field note",
+        "id": "note-local"
+      }
+    ],
+    "media": [
+      {
+        "title": "Workspace A transcript",
+        "id": "media-local"
+      }
+    ],
+    "conversations": [
+      {
+        "title": "Workspace B planning chat",
+        "id": "chat-cross"
+      }
+    ]
+  },
+  "cached_handoff": "Console/RAG handoff: 2 eligible, 2 blocked",
+  "fresh_handoff": "Console/RAG handoff: 2 eligible, 2 blocked",
+  "painted_receipt": "Handoff \u00b7 unavailable until sources exist",
+  "source_row_count": 4
+}

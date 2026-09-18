@@ -1,0 +1,9 @@
+Independent read-only review (requesting-code-review skill), reviewer /root/rag_heading_review.
+
+Initial finding: compact Browse was only focused, not activated. Added actual Enter handoff assertions using DestinationHarness.seen_routes/seen_contexts. This exposed the 190-column horizontal clipping recorded in wide-browse-red.txt.
+
+Follow-up: Voice selector fill width and compact override correctly ordered/scoped; new test exercises stts/playground/provider/refresh-voices. No remaining finding.
+
+Parent-width extension: direct control-stack fill rule beats the full-width base, while the existing stacked override remains more specific. Expanded global defaults/provider/endpoint traversal verifies complete compositor geometry. No finding.
+
+Modal follow-up: dirty Speech dialog selector is isolated; vertical row and full-width buttons fit. Tests inspect all three labels; native Save-and-continue checks the exact current and legacy speed fields after transient toasts clear. No finding.

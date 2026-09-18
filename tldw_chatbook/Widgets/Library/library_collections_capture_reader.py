@@ -12,7 +12,8 @@ late-result fencing remain in ``LibraryCollectionsCaptureController``.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from textual.app import ComposeResult
@@ -104,6 +105,16 @@ class LibraryCollectionsItemButton(Button):
         self.capture_identity = capture_identity
 
 
+class LibraryCollectionsSavedSearchPageButton(Button):
+    """Rail continuation carrying the page represented by this control."""
+
+    def __init__(self, label: str, *, page: int, **kwargs: Any) -> None:
+        super().__init__(
+            label, compact=True, classes="library-collections-scope-row", **kwargs
+        )
+        self.saved_search_page = page
+
+
 class LibraryCollectionsArchiveUndoButton(Button):
     """Undo action carrying the archived capture's stable identity."""
 
@@ -141,10 +152,14 @@ class CollectionsCaptureReaderPresentation:
     capabilities: CaptureCapabilities | None = None
     saved_searches: tuple[SavedCaptureSearch, ...] = ()
     saved_searches_total: int = 0
+    saved_searches_page: int = 1
+    saved_searches_requested_page: int = 1
+    saved_searches_error: str = ""
     active_scope: str = "all"
     authority_label: str = "Local"
     mode: CollectionsReaderMode = "read"
     highlights: tuple[CaptureHighlight, ...] = ()
+    annotation_draft: Mapping[str, str] = field(default_factory=dict)
     quick_capture_open: bool = False
     quick_capture_url: str = ""
     quick_capture_title: str = ""
@@ -164,6 +179,13 @@ class CollectionsCaptureReaderPresentation:
 
     def capability(self, action: str) -> tuple[bool, str]:
         """Return enabled state and a truthful reason for one action."""
+        loaded = self.state.loaded_detail
+        if (
+            action == "archive"
+            and loaded is not None
+            and loaded.capture.status == "archived"
+        ):
+            return False, "This capture is already archived."
         if self.capabilities is None:
             return False, "Availability has not been checked."
         capability = self.capabilities.for_action(action)
@@ -184,7 +206,36 @@ class LibraryCollectionsScopeRows(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self.presentation = presentation
-        self.styles.height = "auto"
+        self.add_class("h-auto")
+
+    async def show_page(
+        self, presentation: CollectionsCaptureReaderPresentation, opener: Button
+    ) -> None:
+        """Replace only the saved-search rail, preserving newer focus elsewhere."""
+        focused = self.screen.focused
+        restore = focused is not None and self in focused.ancestors
+        retained_id = focused.id if restore and focused.id != opener.id else None
+        self.presentation = presentation
+        await self.recompose()
+        focused_id = getattr(self.screen.focused, "id", None)
+        if restore and focused_id in {
+            None,
+            opener.id,
+            retained_id,
+            "library-row-browse-collections",
+        }:
+            selector = (
+                "#library-collections-retry-saved-searches"
+                if presentation.saved_searches_error
+                else "#library-collections-more-saved-searches"
+                if presentation.saved_searches_page == 1
+                else ".library-collections-saved-search-row"
+            )
+            targets = self.query(f"#{retained_id}") if retained_id else []
+            if not targets:
+                targets = self.query(selector)
+            if targets:
+                targets.first().focus()
 
     def compose(self) -> ComposeResult:
         """Render bounded built-ins, saved searches, and continuation."""
@@ -213,13 +264,37 @@ class LibraryCollectionsScopeRows(Vertical):
                 classes="library-collections-scope-row library-collections-saved-search-row",
                 compact=True,
             )
-        if self.presentation.saved_searches_total > len(
-            self.presentation.saved_searches
-        ):
-            yield Button(
-                "More saved searches…",
+        page = self.presentation.saved_searches_page
+        total = self.presentation.saved_searches_total
+        if total > CAPTURE_PAGE_SIZE:
+            start = (page - 1) * CAPTURE_PAGE_SIZE + 1
+            end = start + len(self.presentation.saved_searches) - 1
+            yield Static(
+                f"Searches {start}–{end} of {total}"
+                if end >= start
+                else "No searches on this page.",
+                classes="h-auto",
+            )
+        if self.presentation.saved_searches_error:
+            yield Static(
+                self.presentation.saved_searches_error, classes="h-auto ds-text-error"
+            )
+            yield LibraryCollectionsSavedSearchPageButton(
+                "Retry searches",
+                page=self.presentation.saved_searches_requested_page,
+                id="library-collections-retry-saved-searches",
+            )
+        if page > 1:
+            yield LibraryCollectionsSavedSearchPageButton(
+                "Previous",
+                page=page - 1,
+                id="library-collections-previous-saved-searches",
+            )
+        if page * CAPTURE_PAGE_SIZE < total:
+            yield LibraryCollectionsSavedSearchPageButton(
+                "More searches…",
+                page=page + 1,
                 id="library-collections-more-saved-searches",
-                compact=True,
             )
 
 
@@ -304,7 +379,7 @@ class LibraryCollectionsItemsPane(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self.presentation = presentation
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
@@ -435,7 +510,7 @@ class LibraryCollectionsItemsPane(Vertical):
                     placeholder="To date (YYYY-MM-DD)",
                     id="library-collections-filter-date-to",
                 )
-                with Horizontal(classes="ds-toolbar"):
+                with Vertical(classes="ds-toolbar"):
                     yield Button(
                         "Apply filters",
                         id="library-collections-filters-apply",
@@ -498,7 +573,7 @@ class LibraryCollectionsItemsPane(Vertical):
                 else None
             )
             rows = VerticalScroll(id="library-collections-items-scroll")
-            rows.styles.height = "1fr"
+            rows.add_class("h-fill")
             with rows:
                 for index, item in enumerate(page.items):
                     selected = item.identity == state.selected_identity
@@ -515,7 +590,7 @@ class LibraryCollectionsItemsPane(Vertical):
                         compact=True,
                         capture_identity=item.identity,
                     )
-                    button.styles.height = 2
+                    button.add_class("h-2")
                     button.styles.min_height = 2
                     yield button
 
@@ -655,6 +730,25 @@ def _open_original_button(
     )
 
 
+class LibraryCollectionsActionBar(Horizontal):
+    """Stack complete controls when their measured row would overflow."""
+
+    def on_resize(self) -> None:
+        """Change layout in place so focus and reader drafts stay mounted."""
+        if self.content_size.width <= 0:
+            return
+        required = sum(
+            button.get_content_width(self.size, self.size)
+            + button.styles.gutter.width
+            + button.styles.margin.width
+            for button in self.children
+            if isinstance(button, Button) and button.display
+        )
+        self.set_class(
+            required > self.content_size.width, "collections-actions-stacked"
+        )
+
+
 class LibraryCollectionsWorkPane(VerticalScroll):
     """Permanent reading-first Work region for one loaded capture."""
 
@@ -665,7 +759,7 @@ class LibraryCollectionsWorkPane(VerticalScroll):
     ) -> None:
         super().__init__(**kwargs)
         self.presentation = presentation
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 0
 
     def compose(self) -> ComposeResult:
@@ -687,6 +781,21 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 markup=False,
             )
             yield Button("Retry", id="library-collections-reader-retry", compact=True)
+        elif state.mutation_error or state.extraction_error:
+            reason = state.mutation_error or state.extraction_error
+            yield Static(
+                "This capture changed since the action was prepared. The action was not applied."
+                if reason == "revision_conflict"
+                else f"Action failed: {_reason_copy(reason)}. Refresh the reader to review its current state.",
+                id="library-collections-mutation-error",
+                markup=False,
+            )
+            if state.selected_identity is not None:
+                yield Button(
+                    "Refresh reader",
+                    id="library-collections-reader-retry",
+                    compact=True,
+                )
         if self.presentation.action_status:
             yield Static(
                 self.presentation.action_status,
@@ -749,7 +858,9 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             markup=False,
         )
 
-        with Horizontal(classes="ds-toolbar", id="library-collections-primary-toolbar"):
+        with LibraryCollectionsActionBar(
+            classes="ds-toolbar", id="library-collections-primary-toolbar"
+        ):
             yield _action_button(
                 self.presentation,
                 "update",
@@ -765,10 +876,10 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             yield _action_button(
                 self.presentation,
                 "archive",
-                "Move to Archive",
+                "Archived" if capture.status == "archived" else "Move to Archive",
                 button_id="library-collections-archive",
             )
-        with Horizontal(
+        with LibraryCollectionsActionBar(
             classes="ds-toolbar",
             id="library-collections-secondary-toolbar",
         ):
@@ -779,7 +890,9 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 compact=True,
             )
 
-        with Horizontal(classes="ds-toolbar", id="library-collections-mode-toolbar"):
+        with LibraryCollectionsActionBar(
+            classes="ds-toolbar", id="library-collections-mode-toolbar"
+        ):
             for mode in ("read", "highlights", "notes", "info"):
                 label = f"✓ {mode.title()}" if self.presentation.mode == mode else mode.title()
                 yield Button(
@@ -916,12 +1029,13 @@ class LibraryCollectionsWorkPane(VerticalScroll):
         supported, reason = self.presentation.capability("highlights")
         enabled = supported and self.presentation.state.identity_actions_enabled
         yield TextArea(
-            "",
+            self.presentation.annotation_draft.get("highlight-quote", ""),
             id="library-collections-highlight-quote",
             disabled=not enabled,
             tooltip=reason or "Quote to keep with this capture.",
         )
         yield Input(
+            value=self.presentation.annotation_draft.get("highlight-note", ""),
             placeholder="Highlight note (optional)",
             id="library-collections-highlight-note",
             disabled=not enabled,
@@ -969,7 +1083,9 @@ class LibraryCollectionsWorkPane(VerticalScroll):
             linked_reason = "Wait until the selected capture is loaded and current."
         yield Static("Capture note", id="library-collections-freeform-note-heading", markup=False)
         yield TextArea(
-            resolved.capture.freeform_note or "",
+            self.presentation.annotation_draft.get(
+                "freeform-note", resolved.capture.freeform_note or ""
+            ),
             id="library-collections-freeform-note",
             disabled=(
                 not self.presentation.capability("update")[0]

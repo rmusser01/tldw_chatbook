@@ -1,11 +1,16 @@
 /* Research Workspace: established Neon Workbench extension.
  * All regions mount once; responsive classes only change display and sizing.
  */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent/fr scales + the named
+   $ds-research-chat-pane-floor), transcribed value-identically from the
+   raw literals; comments stay load-bearing. */
+
 
 #research-workspace-shell {
-    width: 100%;
-    height: 100%;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
     background: $background;
 }
 
@@ -17,48 +22,48 @@
  */
 ResearchScreen #research-window.window {
     layout: vertical;
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 #research-workspace-header {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
     background: $panel;
 }
 
 #research-workspace-header .workbench-header {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
 }
 
 #research-mode-strip {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     overflow: hidden;
     background: $panel;
 }
 
 #research-mode-strip .research-mode-label {
-    width: 10;
-    height: 1;
-    min-height: 1;
+    width: $ds-size-10;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     color: $accent;
     text-style: bold;
 }
 
 #research-mode-strip Button.research-mode-chip {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface-darken-1;
     color: $text-muted;
@@ -82,46 +87,46 @@ ResearchScreen #research-window.window {
 }
 
 #research-authority-summary {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
 }
 
 #research-processing-summary {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
 }
 
 #research-authority-summary Static,
 #research-processing-summary Static {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-right: 2;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-right: $ds-space-2;
     color: $text-muted;
 }
 
 #research-data-source-label {
     color: $accent;
     text-style: bold;
-    margin-right: 1;
+    margin-right: $ds-space-1;
 }
 
 #research-authority-summary #research-data-source-separator {
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 #research-authority-summary .research-data-source-button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface-darken-1;
     color: $text-muted;
@@ -145,34 +150,34 @@ ResearchScreen #research-window.window {
 }
 
 #research-authority-recovery {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $warning 15%;
     color: $text;
 }
 
 #research-workspace-menu {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $panel;
 }
 
 #research-workspace-selection {
-    width: 1fr;
-    height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
     color: $text-muted;
 }
 
 #research-manage-workspaces {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface;
     color: $text;
@@ -187,20 +192,20 @@ ResearchScreen #research-window.window {
 }
 
 #research-pane-mode-strip {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
     align-horizontal: center;
 }
 
 #research-pane-mode-strip .research-pane-mode-button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface-darken-1;
     color: $text-muted;
@@ -222,17 +227,17 @@ ResearchScreen #research-window.window {
 }
 
 #research-workspace-grid {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     background: $background;
     overflow: hidden;
 }
 
 .research-workspace-pane {
-    height: 100%;
-    min-height: 0;
-    padding: 1;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-1;
     border: round $surface-lighten-1;
     background: $panel;
     color: $text;
@@ -244,58 +249,58 @@ ResearchScreen #research-window.window {
 }
 
 .research-pane-title {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     color: $accent;
     text-style: bold;
 }
 
 .research-pane-summary {
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
     color: $text-muted;
 }
 
 .research-pane-empty {
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
     color: $text;
 }
 
 #research-sources-pane {
-    width: 1fr;
-    min-width: 32;
-    max-width: 38;
+    width: $ds-width-fill;
+    min-width: $ds-size-32;
+    max-width: $ds-size-38;
 }
 
 #research-chat-pane {
-    width: 4fr;
-    min-width: 58;
+    width: $ds-fr-4;
+    min-width: $ds-research-chat-pane-floor;
 }
 
 #research-studio-pane {
-    width: 2fr;
-    min-width: 42;
-    max-width: 50;
+    width: $ds-fr-2;
+    min-width: $ds-size-42;
+    max-width: $ds-size-50;
 }
 
 ResearchPaneHandle {
-    width: 4;
-    min-width: 4;
-    max-width: 4;
-    height: 100%;
-    min-height: 0;
+    width: $ds-size-4;
+    min-width: $ds-size-4;
+    max-width: $ds-size-4;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
     background: $surface-darken-1;
     align: center middle;
 }
 
 ResearchPaneHandle .research-pane-handle-button {
-    width: 4;
-    min-width: 4;
-    max-width: 4;
-    height: 3;
-    min-height: 3;
-    padding: 0;
+    width: $ds-size-4;
+    min-width: $ds-size-4;
+    max-width: $ds-size-4;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    padding: $ds-space-0;
     border: none;
     background: $surface;
     color: $text-muted;
@@ -311,34 +316,34 @@ ResearchPaneHandle .research-pane-handle-button:focus {
 
 #research-workspace-grid.layout-medium #research-sources-pane,
 #research-workspace-grid.layout-medium #research-studio-pane {
-    width: 2fr;
-    min-width: 32;
-    max-width: 42;
+    width: $ds-fr-2;
+    min-width: $ds-size-32;
+    max-width: $ds-size-42;
 }
 
 #research-workspace-grid.layout-medium #research-chat-pane {
-    width: 4fr;
-    min-width: 58;
+    width: $ds-fr-4;
+    min-width: $ds-research-chat-pane-floor;
 }
 
 #research-workspace-grid.layout-narrow .research-workspace-pane {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
 }
 
 #research-workspace-status {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $panel;
     color: $text-muted;
 }
 
 #research-workspace-shell.height-compact #research-destination-header {
-    height: 2;
-    min-height: 2;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
 }
 
 #research-workspace-shell.height-compact #workbench-header-subtitle {
@@ -350,7 +355,7 @@ ResearchPaneHandle .research-pane-handle-button:focus {
 }
 
 #research-workspace-shell.height-compact .research-workspace-pane {
-    padding: 0;
+    padding: $ds-space-0;
     border: none;
 }
 
@@ -361,26 +366,26 @@ ResearchPaneHandle .research-pane-handle-button:focus {
 
 /* Task 4 Sources workbench: compact, keyboard-first controls. */
 ResearchSourcesRegion {
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    padding: 0;
+    width: $ds-width-full;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
     scrollbar-size: 1 1;
 }
 
 ResearchSourcesRegion Horizontal,
 ResearchSourcesRegion Vertical {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 ResearchSourcesRegion Button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface;
     color: $text;
@@ -404,9 +409,9 @@ ResearchSourcesRegion Button:focus {
 
 ResearchSourcesRegion Input,
 ResearchSourcesRegion Select {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface-darken-1;
 }
@@ -417,8 +422,8 @@ ResearchSourcesRegion Select {
 #research-source-selection-row,
 #research-source-selection-summary,
 #research-source-page-actions {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 #research-sources-heading,
@@ -426,7 +431,7 @@ ResearchSourcesRegion Select {
 #research-source-search,
 #research-source-selected-count,
 #research-source-page-summary {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #research-source-add,
@@ -438,10 +443,10 @@ ResearchSourcesRegion Select {
 }
 
 #research-source-recovery {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     background: $warning 15%;
     color: $text;
 }
@@ -450,29 +455,29 @@ ResearchSourcesRegion Select {
 #research-source-move-copy-reason,
 #research-source-remove-scope,
 #research-source-filter-owner-limits {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $text-muted;
 }
 
 #research-source-advanced-controls {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
 }
 
 .research-source-filter-row {
-    height: 1;
+    height: $ds-size-1;
 }
 
 .research-source-filter-row Select {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #research-source-selection-row Button {
-    width: 1fr;
-    padding: 0;
+    width: $ds-width-fill;
+    padding: $ds-space-0;
 }
 
 #research-source-batch-actions,
@@ -486,92 +491,92 @@ ResearchSourcesRegion Select {
 #research-source-batch-actions Button,
 .research-source-folder-actions Button,
 .research-source-row-actions Button {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 #research-source-folders {
-    margin-top: 1;
-    padding: 0 1;
+    margin-top: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     border-left: solid $surface-lighten-1;
 }
 
 #research-source-folders-label,
 #research-source-receipts-heading {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
     color: $accent;
     text-style: bold;
 }
 
 #research-source-folder-name,
 #research-source-folder-tree {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 ResearchSourceList,
 ResearchSourceReceiptList {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 _ResearchSourceRowSlot,
 _ResearchSourceReceiptSlot {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 0 1;
-    margin-top: 1;
+    padding: $ds-space-0 $ds-space-1;
+    margin-top: $ds-space-1;
     background: $surface-darken-1;
     border-left: solid $surface-lighten-1;
 }
 
 .research-source-row-heading,
 .research-source-receipt-actions {
-    height: 1;
+    height: $ds-size-1;
 }
 
 .research-source-row-heading Static {
-    width: 1fr;
-    height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
     color: $text;
     text-style: bold;
 }
 
 _ResearchSourceRowSlot Static,
 _ResearchSourceReceiptSlot Static {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 #research-source-receipts-bound {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $text-muted;
 }
 
 /* Task 5 Quick Notes: compact canonical owner editor inside Studio. */
 ResearchQuickNotesSection {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
-    margin-top: 1;
-    padding: 0 1 1 1;
+    min-height: $ds-size-0;
+    margin-top: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
     background: $surface-darken-1;
     border-left: solid $accent;
 }
 
 ResearchQuickNotesSection Horizontal {
-    width: 100%;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 ResearchQuickNotesSection Button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface;
     color: $text;
@@ -594,29 +599,29 @@ ResearchQuickNotesSection Button:focus {
 }
 
 #research-quick-notes-heading {
-    width: 1fr;
+    width: $ds-width-fill;
     color: $accent;
     text-style: bold;
 }
 
 #research-quick-note-count {
     width: auto;
-    margin-right: 1;
+    margin-right: $ds-space-1;
     color: $text-muted;
 }
 
 #research-quick-note-search,
 #research-quick-note-page {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #research-quick-note-list,
 #research-quick-note-title,
 #research-quick-note-tags {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $surface;
 }
@@ -625,15 +630,15 @@ ResearchQuickNotesSection Button:focus {
 #research-quick-note-mode-row,
 #research-quick-note-actions,
 #research-quick-note-file-actions {
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #research-quick-note-provenance,
 #research-quick-note-status,
 #research-quick-note-owner-limits {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $text-muted;
 }
 
@@ -647,11 +652,11 @@ ResearchQuickNotesSection Button:focus {
 
 #research-quick-note-body,
 #research-quick-note-preview {
-    width: 100%;
-    height: 10;
-    min-height: 5;
-    margin-top: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-10;
+    min-height: $ds-size-5;
+    margin-top: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     border: solid $surface-lighten-1;
     background: $panel;
 }
@@ -664,7 +669,7 @@ ResearchQuickNotesSection Button:focus {
 
 #research-workspace-shell.height-compact #research-quick-note-body,
 #research-workspace-shell.height-compact #research-quick-note-preview {
-    height: 6;
+    height: $ds-size-6;
 }
 
 /* Add Sources and source inspector modals share the workbench visual world. */
@@ -682,11 +687,11 @@ ResearchNoteSwitchRecoveryModal {
 #research-overlay-conflict-dialog,
 #research-note-conflict-dialog,
 #research-note-switch-dialog {
-    width: 90%;
-    max-width: 110;
-    height: 90%;
-    min-height: 18;
-    padding: 1;
+    width: $ds-percent-90;
+    max-width: $ds-size-110;
+    height: $ds-percent-90;
+    min-height: $ds-size-18;
+    padding: $ds-space-1;
     border: round $accent;
     background: $panel;
 }
@@ -695,7 +700,7 @@ ResearchNoteSwitchRecoveryModal {
 #research-note-conflict-dialog,
 #research-note-switch-dialog {
     height: auto;
-    max-width: 76;
+    max-width: $ds-size-76;
 }
 
 #research-overlay-conflict-dialog Button,
@@ -704,20 +709,20 @@ ResearchNoteSwitchRecoveryModal {
 #research-note-conflict-dialog Static,
 #research-note-switch-dialog Button,
 #research-note-switch-dialog Static {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 #research-add-source-heading-row,
 #research-source-inspector-heading {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
 }
 
 #research-add-source-title,
 #research-source-inspector-title {
-    width: 1fr;
+    width: $ds-width-fill;
     color: $accent;
     text-style: bold;
 }
@@ -725,16 +730,16 @@ ResearchNoteSwitchRecoveryModal {
 #research-add-authority {
     width: auto;
     color: $text-muted;
-    margin-right: 2;
+    margin-right: $ds-space-2;
 }
 
 #research-add-source-dialog Button,
 #research-source-inspector-dialog Button {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
 }
 
@@ -752,24 +757,24 @@ ResearchNoteSwitchRecoveryModal {
 }
 
 #research-add-error {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     background: $error 15%;
     color: $text;
 }
 
 #research-add-source-tabs {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 .research-add-tab-body,
 #research-source-inspector-body {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 .research-add-tab-body Input,
@@ -777,29 +782,29 @@ ResearchNoteSwitchRecoveryModal {
 .research-add-tab-body TextArea,
 #research-source-inspector-body Input,
 #research-source-inspector-body TextArea {
-    width: 100%;
-    min-height: 1;
+    width: $ds-width-full;
+    min-height: $ds-size-1;
 }
 
 .research-add-actions,
 .research-add-filters {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 .research-add-filters Select {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #research-source-preview-text {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
     background: $surface-darken-1;
 }
 
 #research-source-annotation-label {
-    margin-top: 1;
+    margin-top: $ds-space-1;
     color: $accent;
     text-style: bold;
 }
@@ -812,13 +817,13 @@ ResearchNoteSwitchRecoveryModal {
  */
 #research-toolbar,
 #research-create-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 #research-source-select {
-    width: 16;
+    width: $ds-size-16;
 }
 
 /* ID subjects, not `<row> Input`: the ancestor-scoped bare-type ratchet
@@ -827,43 +832,43 @@ ResearchNoteSwitchRecoveryModal {
 #research-query-input,
 #research-limits-input,
 #research-providers-input {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #research-policy-select {
-    width: 20;
+    width: $ds-size-20;
 }
 
 #research-rounds-select {
-    width: 14;
+    width: $ds-size-14;
 }
 
 #research-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $text-muted;
 }
 
 #research-body {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 #research-run-list {
-    width: 30%;
-    min-width: 24;
-    height: 100%;
+    width: $ds-percent-30;
+    min-width: $ds-size-24;
+    height: $ds-height-full;
     border-right: solid $surface-lighten-1;
 }
 
 #research-detail-panel {
-    width: 1fr;
-    height: 100%;
-    min-height: 0;
-    padding: 0 1;
+    width: $ds-width-fill;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
     overflow-y: auto;
 }
 
@@ -871,16 +876,16 @@ ResearchNoteSwitchRecoveryModal {
 #research-observe-actions,
 #research-checkpoint-actions,
 #research-followup-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 #research-artifact-name,
 #research-followup-input {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #research-checkpoint-patch {
-    height: 6;
+    height: $ds-size-6;
 }

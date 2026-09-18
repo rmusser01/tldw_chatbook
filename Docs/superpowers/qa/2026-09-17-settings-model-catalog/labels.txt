@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+11.69s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_checkbox_labels_are_fully_painted[size1-textual-dark]
+11.54s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_checkbox_labels_are_fully_painted[size1-textual-light]
+11.05s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_checkbox_labels_are_fully_painted[size2-textual-light]
+10.96s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_checkbox_labels_are_fully_painted[size2-textual-dark]
+10.72s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_checkbox_labels_are_fully_painted[size0-textual-dark]
+10.70s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_checkbox_labels_are_fully_painted[size0-textual-light]
+
+(12 durations < 1s hidden.)
+6 passed, 13 deselected in 69.88s (0:01:09)

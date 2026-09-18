@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Input
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from tldw_chatbook.css import build_css
 from Tests.UI.test_library_file_notes_git import (
@@ -191,7 +192,10 @@ async def test_a_backlink_row_names_itself_even_though_it_has_no_dom_id():
 
 @pytest.mark.parametrize("mode", ("editor", "preview", "context"))
 @pytest.mark.asyncio
-async def test_every_note_pane_tab_stop_paints_a_shape_change_on_focus(mode: str):
+@private_profile_test
+async def test_every_note_pane_tab_stop_paints_a_shape_change_on_focus(
+    request, mode: str
+):
     """task-32613 AC#1/#4 and task-32607 AC#2.
 
     Enumerates the pane's own stops from the SCREEN's focus chain (so a new
@@ -230,7 +234,8 @@ async def test_every_note_pane_tab_stop_paints_a_shape_change_on_focus(mode: str
 
 
 @pytest.mark.asyncio
-async def test_info_delete_reads_as_destructive_rather_than_disabled():
+@private_profile_test
+async def test_info_delete_reads_as_destructive_rather_than_disabled(request):
     """task-32607 AC#3.
 
     The ANSI decode showed Delete's label at #a5a5a5 against its siblings'

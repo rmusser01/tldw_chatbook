@@ -1,0 +1,1461 @@
+FFFF..FF                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark] _
+
+self = <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark]>>, 'theme': 'textual-dark', 'size': (190, 55), 'category': 'Console Behavior'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark] _
+E
+E           request = <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark]>>
+E           theme = 'textual-dark', size = (190, 55), category = 'Console Behavior'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.timeout(180)
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E               @pytest.mark.parametrize("category", ["Console Behavior", "Storage"])
+E               @private_profile_test
+E               async def test_console_and_storage_controls_paint_readable_values(
+E                   request, theme, size, category
+E               ):
+E                   """Clipped controls or narrow value slivers prevent reliable keyboard edits."""
+E                   host = _StyledDestinationHarness(_build_test_app(), "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=size) as pilot:
+E                       await _category(host, pilot, category)
+E                       card = host.screen.query_one(
+E                           "#settings-console-behavior-card"
+E                           if category == "Console Behavior"
+E                           else "#settings-storage-card"
+E                       )
+E                       for group in card.query(Collapsible):
+E                           group.collapsed = False
+E                       await pilot.pause()
+E                       controls = [
+E                           control
+E                           for control in card.query("Button, Checkbox, Input, Select")
+E                           if control.id and control.display and not control.disabled
+E                       ]
+E                       assert controls
+E                       failures = []
+E                       for control in controls:
+E                           control.focus()
+E                           await pilot.wait_for_scheduled_animations()
+E                           await pilot.pause()
+E                           try:
+E                               assert host.screen.focused is control
+E                               _assert_painted(host.screen, control)
+E                               if isinstance(control, Input):
+E                                   assert control.content_region.width >= 12, (
+E                                       control.id,
+E                                       control.content_region,
+E                                   )
+E                                   if control.value:
+E                                       await pilot.press("end")
+E                                       assert control.value[-8:] in _painted(host, control), (
+E                                           control.id,
+E                                           control.value,
+E                                           _painted(host, control),
+E                                       )
+E                               elif isinstance(control, (Button, Checkbox)):
+E                                   painted = " ".join(_painted(host, control).split())
+E                                   assert " ".join(str(control.label).split()) in painted, (
+E                                       control.id,
+E                                       painted,
+E                                   )
+E                                   if isinstance(control, Checkbox):
+E                                       assert "X" in painted, (control.id, painted)
+E                               elif isinstance(control, Select):
+E                                   label = next(
+E                                       str(label)
+E                                       for label, value in control._options
+E                                       if value == control.value
+E                                   )
+E                                   assert " ".join(label.split()) in " ".join(
+E                                       _painted(host, control).split()
+E                                   ), (control.id, label, _painted(host, control))
+E                           except AssertionError as exc:
+E                               failures.append(str(exc))
+E           >           assert not failures, "\n".join(failures)
+E           E           AssertionError: ('settings-console-default-streaming', Region(x=67, y=28, width=7, height=3), Region(x=43, y=28, width=98, height=1))
+E           E             assert Region(x=67, ...h=7, height=1) == Region(x=67, ...h=7, height=3)
+E           E
+E           E               Omitting 3 identical items, use -vv to show
+E           E               Differing attributes:
+E           E               ['height']
+E           E
+E           E               Drill down into differing attribute height:
+E           E                 height: 1 != 3
+E           E               Use -v to get more diff
+E           E           assert not ["('settings-console-default-streaming', Region(x=67, y=28, width=7, height=3), Region(x=43, y=28, width=98, height=1)...utes:\n  ['height']\n  \n  Drill down into differing attribute height:\n    height: 1 != 3\n  Use -v to get more diff"]
+E
+E           Tests/UI/test_settings_console_storage_journeys.py:80: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:46:09.703 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:46:09.709 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:46:09.709 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:46:09.710 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:46:09.801 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:46:09.825 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:46:09.825 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:46:09.825 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:46:09.826 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:46:09.903 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:09.978 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fd4d9r9r/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:10.160 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fd4d9r9r/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:10.175 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:10.176 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fd4d9r9r/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:10.176 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fd4d9r9r/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:10.306 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:46:10.341 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:46:10.384 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:46:10.422 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:46:10.465 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:46:10.508 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:46:10.508 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fd4d9r9r/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:46:10.555 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:46:10.555 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:46:10.564 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:46:10.642 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:46:10.643 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:46:10.643 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:46:10.713 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:46:10.713 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:46:10.714 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:46:10.714 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.993 seconds
+E           2026-09-17 15:46:10.714 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.102s (10.2%)
+E           2026-09-17 15:46:10.715 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:46:10.715 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.001s (0.1%)
+E           2026-09-17 15:46:10.715 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:10.716 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:10.716 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:10.716 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:46:10.717 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E           2026-09-17 15:46:10.944 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:46:11.037 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:46:24.183 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           14.47s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark]
+E           1 failed in 16.51s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 15:46:07.695 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 15:46:07.701 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 15:46:07.702 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 15:46:07.702 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light] _
+
+self = <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light]>>, 'theme': 'textual-light', 'size': (190, 55), 'category': 'Console Behavior'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light] _
+E
+E           request = <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light]>>
+E           theme = 'textual-light', size = (190, 55), category = 'Console Behavior'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.timeout(180)
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E               @pytest.mark.parametrize("category", ["Console Behavior", "Storage"])
+E               @private_profile_test
+E               async def test_console_and_storage_controls_paint_readable_values(
+E                   request, theme, size, category
+E               ):
+E                   """Clipped controls or narrow value slivers prevent reliable keyboard edits."""
+E                   host = _StyledDestinationHarness(_build_test_app(), "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=size) as pilot:
+E                       await _category(host, pilot, category)
+E                       card = host.screen.query_one(
+E                           "#settings-console-behavior-card"
+E                           if category == "Console Behavior"
+E                           else "#settings-storage-card"
+E                       )
+E                       for group in card.query(Collapsible):
+E                           group.collapsed = False
+E                       await pilot.pause()
+E                       controls = [
+E                           control
+E                           for control in card.query("Button, Checkbox, Input, Select")
+E                           if control.id and control.display and not control.disabled
+E                       ]
+E                       assert controls
+E                       failures = []
+E                       for control in controls:
+E                           control.focus()
+E                           await pilot.wait_for_scheduled_animations()
+E                           await pilot.pause()
+E                           try:
+E                               assert host.screen.focused is control
+E                               _assert_painted(host.screen, control)
+E                               if isinstance(control, Input):
+E                                   assert control.content_region.width >= 12, (
+E                                       control.id,
+E                                       control.content_region,
+E                                   )
+E                                   if control.value:
+E                                       await pilot.press("end")
+E                                       assert control.value[-8:] in _painted(host, control), (
+E                                           control.id,
+E                                           control.value,
+E                                           _painted(host, control),
+E                                       )
+E                               elif isinstance(control, (Button, Checkbox)):
+E                                   painted = " ".join(_painted(host, control).split())
+E                                   assert " ".join(str(control.label).split()) in painted, (
+E                                       control.id,
+E                                       painted,
+E                                   )
+E                                   if isinstance(control, Checkbox):
+E                                       assert "X" in painted, (control.id, painted)
+E                               elif isinstance(control, Select):
+E                                   label = next(
+E                                       str(label)
+E                                       for label, value in control._options
+E                                       if value == control.value
+E                                   )
+E                                   assert " ".join(label.split()) in " ".join(
+E                                       _painted(host, control).split()
+E                                   ), (control.id, label, _painted(host, control))
+E                           except AssertionError as exc:
+E                               failures.append(str(exc))
+E           >           assert not failures, "\n".join(failures)
+E           E           AssertionError: ('settings-console-default-streaming', Region(x=67, y=28, width=7, height=3), Region(x=43, y=28, width=98, height=1))
+E           E             assert Region(x=67, ...h=7, height=1) == Region(x=67, ...h=7, height=3)
+E           E
+E           E               Omitting 3 identical items, use -vv to show
+E           E               Differing attributes:
+E           E               ['height']
+E           E
+E           E               Drill down into differing attribute height:
+E           E                 height: 1 != 3
+E           E               Use -v to get more diff
+E           E           assert not ["('settings-console-default-streaming', Region(x=67, y=28, width=7, height=3), Region(x=43, y=28, width=98, height=1)...utes:\n  ['height']\n  \n  Drill down into differing attribute height:\n    height: 1 != 3\n  Use -v to get more diff"]
+E
+E           Tests/UI/test_settings_console_storage_journeys.py:80: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:46:27.589 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:46:27.595 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:46:27.595 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:46:27.596 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:46:27.682 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:46:27.710 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:46:27.710 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:46:27.711 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:46:27.711 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:46:27.792 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:27.858 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pm14c02_/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:28.036 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pm14c02_/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:28.054 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:28.055 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pm14c02_/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:28.056 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pm14c02_/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:28.191 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:46:28.234 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:46:28.278 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:46:28.319 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:46:28.360 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:46:28.402 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:46:28.403 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-pm14c02_/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:46:28.452 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:46:28.452 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:46:28.461 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:46:28.540 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:46:28.541 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:46:28.541 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:46:28.611 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:46:28.612 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:46:28.612 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:46:28.613 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 1.005 seconds
+E           2026-09-17 15:46:28.613 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.101s (10.0%)
+E           2026-09-17 15:46:28.613 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:46:28.613 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 15:46:28.614 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:28.614 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:28.614 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:28.615 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:46:28.615 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E           2026-09-17 15:46:28.831 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:46:28.928 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:46:42.039 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           14.44s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light]
+E           1 failed in 16.44s
+
+Tests/private_profile.py:84: Failed
+_ test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark] _
+
+self = <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark]>>, 'theme': 'textual-dark', 'size': (80, 24), 'category': 'Console Behavior'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr2/private-profile-process/pytest.log
+E           .content_region
+E           E             ('settings-console-default-min-p', Region(x=68, y=16, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=16, width=5, height=1).width
+E           E              +    where Region(x=68, y=16, width=5, height=1) = Input(id='settings-console-default-min-p', classes='-valid settings-compact-input').content_region
+E           E             ('settings-console-default-top-k', Region(x=68, y=17, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=17, width=5, height=1).width
+E           E              +    where Region(x=68, y=17, width=5, height=1) = Input(id='settings-console-default-top-k', classes='-valid settings-compact-input').content_region
+E           E             ('settings-console-default-max-tokens', Region(x=68, y=18, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=18, width=5, height=1).width
+E           E              +    where Region(x=68, y=18, width=5, height=1) = Input(id='settings-console-default-max-tokens', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-seed', Region(x=68, y=19, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=19, width=5, height=1).width
+E           E              +    where Region(x=68, y=19, width=5, height=1) = Input(id='settings-console-default-seed', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-presence-penalty', Region(x=68, y=20, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=20, width=5, height=1).width
+E           E              +    where Region(x=68, y=20, width=5, height=1) = Input(id='settings-console-default-presence-penalty', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-frequency-penalty', Region(x=68, y=13, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=13, width=5, height=1).width
+E           E              +    where Region(x=68, y=13, width=5, height=1) = Input(id='settings-console-default-frequency-penalty', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-thinking-budget-tokens', Region(x=68, y=13, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=13, width=5, height=1).width
+E           E              +    where Region(x=68, y=13, width=5, height=1) = Input(id='settings-console-default-thinking-budget-tokens', classes='settings-compact-input').content_region
+E           E             ('settings-console-background-effect-enabled', Region(x=42, y=12, width=34, height=3), Region(x=42, y=9, width=32, height=12))
+E           E             assert Region(x=42, ...=32, height=3) == Region(x=42, ...=34, height=3)
+E           E
+E           E               Omitting 3 identical items, use -vv to show
+E           E               Differing attributes:
+E           E               ['width']
+E           E
+E           E               Drill down into differing attribute width:
+E           E                 width: 32 != 34
+E           E               Use -v to get more diff
+E           E             ('settings-console-background-effect-type', 'None', '┌──────┐
+E           E               │ No ▼ │
+E           E               └──────┘')
+E           E             assert 'None' in '┌──────┐ │ No ▼ │ └──────┘'
+E           E              +  where 'None' = <built-in method join of str object at 0x102c8a990>(['None'])
+E           E              +    where <built-in method join of str object at 0x102c8a990> = ' '.join
+E           E              +    and   ['None'] = <built-in method split of str object at 0x1014c2a90>()
+E           E              +      where <built-in method split of str object at 0x1014c2a90> = 'None'.split
+E           E              +  and   '┌──────┐ │ No ▼ │ └──────┘' = <built-in method join of str object at 0x102c8a990>(['┌──────┐', '│', 'No', '▼', '│', '└──────┘'])
+E           E              +    where <built-in method join of str object at 0x102c8a990> = ' '.join
+E           E              +    and   ['┌──────┐', '│', 'No', '▼', '│', '└──────┘'] = <built-in method split of str object at 0x114571e60>()
+E           E              +      where <built-in method split of str object at 0x114571e60> = '┌──────┐\n│ No ▼ │\n└──────┘'.split
+E           E              +        where '┌──────┐\n│ No ▼ │\n└──────┘' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'}), Select(id='settings-console-background-effect-type', classes='-textual-compact settings-compact-select'))
+E           E             ('settings-console-background-effect-scope', 'Transcript (recommended)', '┌──────┐
+E           E               │ Tr ▼ │
+E           E               └──────┘')
+E           E             assert 'Transcript (recommended)' in '┌──────┐ │ Tr ▼ │ └──────┘'
+E           E              +  where 'Transcript (recommended)' = <built-in method join of str object at 0x102c8a990>(['Transcript', '(recommended)'])
+E           E              +    where <built-in method join of str object at 0x102c8a990> = ' '.join
+E           E              +    and   ['Transcript', '(recommended)'] = <built-in method split of str object at 0x110edb0f0>()
+E           E              +      where <built-in method split of str object at 0x110edb0f0> = 'Transcript (recommended)'.split
+E           E              +  and   '┌──────┐ │ Tr ▼ │ └──────┘' = <built-in method join of str object at 0x102c8a990>(['┌──────┐', '│', 'Tr', '▼', '│', '└──────┘'])
+E           E              +    where <built-in method join of str object at 0x102c8a990> = ' '.join
+E           E              +    and   ['┌──────┐', '│', 'Tr', '▼', '│', '└──────┘'] = <built-in method split of str object at 0x1143c0f10>()
+E           E              +      where <built-in method split of str object at 0x1143c0f10> = '┌──────┐\n│ Tr ▼ │\n└──────┘'.split
+E           E              +        where '┌──────┐\n│ Tr ▼ │\n└──────┘' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'}), Select(id='settings-console-background-effect-scope', classes='-textual-compact settings-compact-select'))
+E           E             ('settings-console-background-effect-intensity', 'Low', '┌──────┐
+E           E               │ Lo ▼ │
+E           E               └──────┘')
+E           E             assert 'Low' in '┌──────┐ │ Lo ▼ │ └──────┘'
+E           E              +  where 'Low' = <built-in method join of str object at 0x102c8a990>(['Low'])
+E           E              +    where <built-in method join of str object at 0x102c8a990> = ' '.join
+E           E              +    and   ['Low'] = <built-in method split of str object at 0x110e8ffc0>()
+E           E              +      where <built-in method split of str object at 0x110e8ffc0> = 'Low'.split
+E           E              +  and   '┌──────┐ │ Lo ▼ │ └──────┘' = <built-in method join of str object at 0x102c8a990>(['┌──────┐', '│', 'Lo', '▼', '│', '└──────┘'])
+E           E              +    where <built-in method join of str object at 0x102c8a990> = ' '.join
+E           E              +    and   ['┌──────┐', '│', 'Lo', '▼', '│', '└──────┘'] = <built-in method split of str object at 0x108462aa0>()
+E           E              +      where <built-in method split of str object at 0x108462aa0> = '┌──────┐\n│ Lo ▼ │\n└──────┘'.split
+E           E              +        where '┌──────┐\n│ Lo ▼ │\n└──────┘' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'}), Select(id='settings-console-background-effect-intensity', classes='-textual-compact settings-compact-select'))
+E           E             ('settings-console-background-effect-fps', Region(x=68, y=15, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=15, width=5, height=1).width
+E           E              +    where Region(x=68, y=15, width=5, height=1) = Input(id='settings-console-background-effect-fps', classes='-valid settings-compact-input').content_region
+E           E           assert not ["('settings-console-show-model-thinking', Region(x=42, y=12, width=33, height=3), Region(x=42, y=10, width=32, height... = Input(id='settings-console-paste-collapse-threshold', classes='-valid settings-compact-input').content_region", ...]
+E
+E           Tests/UI/test_settings_console_storage_journeys.py:80: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:46:45.121 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:46:45.127 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:46:45.127 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:46:45.127 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:46:45.219 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:46:45.245 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:46:45.246 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:46:45.246 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:46:45.246 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:46:45.328 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:45.391 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fdd0wnkv/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:45.560 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fdd0wnkv/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:45.575 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:45.577 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fdd0wnkv/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:45.578 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fdd0wnkv/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:46:45.691 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:46:45.726 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:46:45.763 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:46:45.804 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:46:45.844 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:46:45.883 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:46:45.883 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fdd0wnkv/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:46:45.934 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:46:45.934 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:46:45.943 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:46:46.025 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:46:46.026 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:46:46.026 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:46:46.097 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:46:46.097 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:46:46.098 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:46:46.098 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.957 seconds
+E           2026-09-17 15:46:46.098 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.102s (10.7%)
+E           2026-09-17 15:46:46.099 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:46:46.099 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 15:46:46.099 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:46.100 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:46:46.100 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:46:46.100 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:46:46.101 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E           2026-09-17 15:46:46.301 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:46:46.390 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:47:01.116 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           15.99s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark]
+E           1 failed in 17.84s
+
+Tests/private_profile.py:84: Failed
+_ test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light] _
+
+self = <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light]>>, 'theme': 'textual-light', 'size': (80, 24), 'category': 'Console Behavior'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr3/private-profile-process/pytest.log
+E           16, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=16, width=5, height=1).width
+E           E              +    where Region(x=68, y=16, width=5, height=1) = Input(id='settings-console-default-min-p', classes='-valid settings-compact-input').content_region
+E           E             ('settings-console-default-top-k', Region(x=68, y=17, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=17, width=5, height=1).width
+E           E              +    where Region(x=68, y=17, width=5, height=1) = Input(id='settings-console-default-top-k', classes='-valid settings-compact-input').content_region
+E           E             ('settings-console-default-max-tokens', Region(x=68, y=18, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=18, width=5, height=1).width
+E           E              +    where Region(x=68, y=18, width=5, height=1) = Input(id='settings-console-default-max-tokens', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-seed', Region(x=68, y=19, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=19, width=5, height=1).width
+E           E              +    where Region(x=68, y=19, width=5, height=1) = Input(id='settings-console-default-seed', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-presence-penalty', Region(x=68, y=20, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=20, width=5, height=1).width
+E           E              +    where Region(x=68, y=20, width=5, height=1) = Input(id='settings-console-default-presence-penalty', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-frequency-penalty', Region(x=68, y=13, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=13, width=5, height=1).width
+E           E              +    where Region(x=68, y=13, width=5, height=1) = Input(id='settings-console-default-frequency-penalty', classes='settings-compact-input').content_region
+E           E             ('settings-console-default-thinking-budget-tokens', Region(x=68, y=13, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=13, width=5, height=1).width
+E           E              +    where Region(x=68, y=13, width=5, height=1) = Input(id='settings-console-default-thinking-budget-tokens', classes='settings-compact-input').content_region
+E           E             ('settings-console-background-effect-enabled', Region(x=42, y=12, width=34, height=3), Region(x=42, y=9, width=32, height=12))
+E           E             assert Region(x=42, ...=32, height=3) == Region(x=42, ...=34, height=3)
+E           E
+E           E               Omitting 3 identical items, use -vv to show
+E           E               Differing attributes:
+E           E               ['width']
+E           E
+E           E               Drill down into differing attribute width:
+E           E                 width: 32 != 34
+E           E               Use -v to get more diff
+E           E             ('settings-console-background-effect-type', 'None', '┌──────┐
+E           E               │ No ▼ │
+E           E               └──────┘')
+E           E             assert 'None' in '┌──────┐ │ No ▼ │ └──────┘'
+E           E              +  where 'None' = <built-in method join of str object at 0x1025fe990>(['None'])
+E           E              +    where <built-in method join of str object at 0x1025fe990> = ' '.join
+E           E              +    and   ['None'] = <built-in method split of str object at 0x1007caa90>()
+E           E              +      where <built-in method split of str object at 0x1007caa90> = 'None'.split
+E           E              +  and   '┌──────┐ │ No ▼ │ └──────┘' = <built-in method join of str object at 0x1025fe990>(['┌──────┐', '│', 'No', '▼', '│', '└──────┘'])
+E           E              +    where <built-in method join of str object at 0x1025fe990> = ' '.join
+E           E              +    and   ['┌──────┐', '│', 'No', '▼', '│', '└──────┘'] = <built-in method split of str object at 0x1132a7520>()
+E           E              +      where <built-in method split of str object at 0x1132a7520> = '┌──────┐\n│ No ▼ │\n└──────┘'.split
+E           E              +        where '┌──────┐\n│ No ▼ │\n└──────┘' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-light-mode', '-theme-textual-light'}, pseudo_classes={'light', 'nocolor', 'focus'}), Select(id='settings-console-background-effect-type', classes='-textual-compact settings-compact-select'))
+E           E             ('settings-console-background-effect-scope', 'Transcript (recommended)', '┌──────┐
+E           E               │ Tr ▼ │
+E           E               └──────┘')
+E           E             assert 'Transcript (recommended)' in '┌──────┐ │ Tr ▼ │ └──────┘'
+E           E              +  where 'Transcript (recommended)' = <built-in method join of str object at 0x1025fe990>(['Transcript', '(recommended)'])
+E           E              +    where <built-in method join of str object at 0x1025fe990> = ' '.join
+E           E              +    and   ['Transcript', '(recommended)'] = <built-in method split of str object at 0x110b4f140>()
+E           E              +      where <built-in method split of str object at 0x110b4f140> = 'Transcript (recommended)'.split
+E           E              +  and   '┌──────┐ │ Tr ▼ │ └──────┘' = <built-in method join of str object at 0x1025fe990>(['┌──────┐', '│', 'Tr', '▼', '│', '└──────┘'])
+E           E              +    where <built-in method join of str object at 0x1025fe990> = ' '.join
+E           E              +    and   ['┌──────┐', '│', 'Tr', '▼', '│', '└──────┘'] = <built-in method split of str object at 0x113d29990>()
+E           E              +      where <built-in method split of str object at 0x113d29990> = '┌──────┐\n│ Tr ▼ │\n└──────┘'.split
+E           E              +        where '┌──────┐\n│ Tr ▼ │\n└──────┘' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-light-mode', '-theme-textual-light'}, pseudo_classes={'light', 'nocolor', 'focus'}), Select(id='settings-console-background-effect-scope', classes='-textual-compact settings-compact-select'))
+E           E             ('settings-console-background-effect-intensity', 'Low', '┌──────┐
+E           E               │ Lo ▼ │
+E           E               └──────┘')
+E           E             assert 'Low' in '┌──────┐ │ Lo ▼ │ └──────┘'
+E           E              +  where 'Low' = <built-in method join of str object at 0x1025fe990>(['Low'])
+E           E              +    where <built-in method join of str object at 0x1025fe990> = ' '.join
+E           E              +    and   ['Low'] = <built-in method split of str object at 0x110b0bcc0>()
+E           E              +      where <built-in method split of str object at 0x110b0bcc0> = 'Low'.split
+E           E              +  and   '┌──────┐ │ Lo ▼ │ └──────┘' = <built-in method join of str object at 0x1025fe990>(['┌──────┐', '│', 'Lo', '▼', '│', '└──────┘'])
+E           E              +    where <built-in method join of str object at 0x1025fe990> = ' '.join
+E           E              +    and   ['┌──────┐', '│', 'Lo', '▼', '│', '└──────┘'] = <built-in method split of str object at 0x1132e5760>()
+E           E              +      where <built-in method split of str object at 0x1132e5760> = '┌──────┐\n│ Lo ▼ │\n└──────┘'.split
+E           E              +        where '┌──────┐\n│ Lo ▼ │\n└──────┘' = _painted(_StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-light-mode', '-theme-textual-light'}, pseudo_classes={'light', 'nocolor', 'focus'}), Select(id='settings-console-background-effect-intensity', classes='-textual-compact settings-compact-select'))
+E           E             ('settings-console-background-effect-fps', Region(x=68, y=15, width=5, height=1))
+E           E             assert 5 >= 12
+E           E              +  where 5 = Region(x=68, y=15, width=5, height=1).width
+E           E              +    where Region(x=68, y=15, width=5, height=1) = Input(id='settings-console-background-effect-fps', classes='-valid settings-compact-input').content_region
+E           E           assert not ["('settings-console-show-model-thinking', Region(x=42, y=12, width=33, height=3), Region(x=42, y=10, width=32, height... = Input(id='settings-console-paste-collapse-threshold', classes='-valid settings-compact-input').content_region", ...]
+E
+E           Tests/UI/test_settings_console_storage_journeys.py:80: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:47:04.098 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:47:04.105 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:47:04.106 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:47:04.106 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:47:04.207 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:47:04.235 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:47:04.235 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:47:04.235 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:47:04.236 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:47:04.316 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:04.389 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykqcj_4m/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:04.554 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykqcj_4m/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:04.568 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:04.568 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykqcj_4m/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:04.569 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykqcj_4m/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:04.672 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:47:04.707 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:47:04.743 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:47:04.777 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:47:04.811 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:47:04.845 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:47:04.846 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-ykqcj_4m/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:47:04.892 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:47:04.892 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:47:04.900 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:47:04.976 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:47:04.976 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:47:04.977 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:47:05.047 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:47:05.047 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:47:05.048 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:47:05.048 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.930 seconds
+E           2026-09-17 15:47:05.048 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.115s (12.4%)
+E           2026-09-17 15:47:05.049 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:47:05.049 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 15:47:05.049 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:47:05.050 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:47:05.050 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:47:05.050 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:47:05.050 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E           2026-09-17 15:47:05.270 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:47:05.355 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:47:20.265 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           16.16s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light]
+E           1 failed in 17.98s
+
+Tests/private_profile.py:84: Failed
+_ test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark] _
+
+self = <Coroutine test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]>>, 'theme': 'textual-dark', 'size': (80, 24), 'category': 'Storage'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr6/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark] _
+E
+E           request = <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]>>
+E           theme = 'textual-dark', size = (80, 24), category = 'Storage'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.timeout(180)
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E               @pytest.mark.parametrize("category", ["Console Behavior", "Storage"])
+E               @private_profile_test
+E               async def test_console_and_storage_controls_paint_readable_values(
+E                   request, theme, size, category
+E               ):
+E                   """Clipped controls or narrow value slivers prevent reliable keyboard edits."""
+E                   host = _StyledDestinationHarness(_build_test_app(), "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=size) as pilot:
+E                       await _category(host, pilot, category)
+E                       card = host.screen.query_one(
+E                           "#settings-console-behavior-card"
+E                           if category == "Console Behavior"
+E                           else "#settings-storage-card"
+E                       )
+E                       for group in card.query(Collapsible):
+E                           group.collapsed = False
+E                       await pilot.pause()
+E                       controls = [
+E                           control
+E                           for control in card.query("Button, Checkbox, Input, Select")
+E                           if control.id and control.display and not control.disabled
+E                       ]
+E                       assert controls
+E                       failures = []
+E                       for control in controls:
+E                           control.focus()
+E                           await pilot.wait_for_scheduled_animations()
+E                           await pilot.pause()
+E                           try:
+E                               assert host.screen.focused is control
+E                               _assert_painted(host.screen, control)
+E                               if isinstance(control, Input):
+E                                   assert control.content_region.width >= 12, (
+E                                       control.id,
+E                                       control.content_region,
+E                                   )
+E                                   if control.value:
+E                                       await pilot.press("end")
+E                                       assert control.value[-8:] in _painted(host, control), (
+E                                           control.id,
+E                                           control.value,
+E                                           _painted(host, control),
+E                                       )
+E                               elif isinstance(control, (Button, Checkbox)):
+E                                   painted = " ".join(_painted(host, control).split())
+E                                   assert " ".join(str(control.label).split()) in painted, (
+E                                       control.id,
+E                                       painted,
+E                                   )
+E                                   if isinstance(control, Checkbox):
+E                                       assert "X" in painted, (control.id, painted)
+E                               elif isinstance(control, Select):
+E                                   label = next(
+E                                       str(label)
+E                                       for label, value in control._options
+E                                       if value == control.value
+E                                   )
+E                                   assert " ".join(label.split()) in " ".join(
+E                                       _painted(host, control).split()
+E                                   ), (control.id, label, _painted(host, control))
+E                           except AssertionError as exc:
+E                               failures.append(str(exc))
+E           >           assert not failures, "\n".join(failures)
+E           E           AssertionError: ('settings-storage-user-db-base-dir', Region(x=67, y=14, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=14, width=7, height=1).width
+E           E              +    where Region(x=67, y=14, width=7, height=1) = Input(id='settings-storage-user-db-base-dir', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-chachanotes-db-path', Region(x=67, y=15, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=15, width=7, height=1).width
+E           E              +    where Region(x=67, y=15, width=7, height=1) = Input(id='settings-storage-chachanotes-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-prompts-db-path', Region(x=67, y=16, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=16, width=7, height=1).width
+E           E              +    where Region(x=67, y=16, width=7, height=1) = Input(id='settings-storage-prompts-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-media-db-path', Region(x=67, y=17, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=17, width=7, height=1).width
+E           E              +    where Region(x=67, y=17, width=7, height=1) = Input(id='settings-storage-media-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-research-db-path', Region(x=67, y=18, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=18, width=7, height=1).width
+E           E              +    where Region(x=67, y=18, width=7, height=1) = Input(id='settings-storage-research-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-writing-db-path', Region(x=67, y=19, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=19, width=7, height=1).width
+E           E              +    where Region(x=67, y=19, width=7, height=1) = Input(id='settings-storage-writing-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-library-collections-db-path', Region(x=67, y=20, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=20, width=7, height=1).width
+E           E              +    where Region(x=67, y=20, width=7, height=1) = Input(id='settings-storage-library-collections-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-workspaces-db-path', Region(x=67, y=14, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=14, width=7, height=1).width
+E           E              +    where Region(x=67, y=14, width=7, height=1) = Input(id='settings-storage-workspaces-db-path', classes='-valid settings-compact-input').content_region
+E           E           assert not ["('settings-storage-user-db-base-dir', Region(x=67, y=14, width=7, height=1))\nassert 7 >= 12\n +  where 7 = Region(x...height=1) = Input(id='settings-storage-writing-db-path', classes='-valid settings-compact-input').content_region", ...]
+E
+E           Tests/UI/test_settings_console_storage_journeys.py:80: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:47:37.503 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:47:37.510 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:47:37.510 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:47:37.510 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:47:37.598 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:47:37.623 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:47:37.624 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:47:37.624 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:47:37.624 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:47:37.704 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr6/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:37.776 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-au8iq_pg/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:37.949 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-au8iq_pg/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:37.963 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:37.964 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-au8iq_pg/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:37.964 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-au8iq_pg/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:38.097 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:47:38.140 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:47:38.183 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:47:38.224 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:47:38.266 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:47:38.307 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:47:38.307 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-au8iq_pg/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:47:38.355 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:47:38.356 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:47:38.365 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:47:38.445 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:47:38.445 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr6/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:47:38.445 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:47:38.515 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:47:38.516 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:47:38.516 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:47:38.517 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.995 seconds
+E           2026-09-17 15:47:38.517 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.100s (10.0%)
+E           2026-09-17 15:47:38.517 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:47:38.517 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E           2026-09-17 15:47:38.518 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:47:38.518 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:47:38.518 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:47:38.518 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:47:38.519 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E           2026-09-17 15:47:38.743 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:47:38.841 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:47:41.847 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           4.34s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]
+E           1 failed in 6.19s
+
+Tests/private_profile.py:84: Failed
+_ test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light] _
+
+self = <Coroutine test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]>>, 'theme': 'textual-light', 'size': (80, 24), 'category': 'Storage'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr7/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light] _
+E
+E           request = <FixtureRequest for <Coroutine test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]>>
+E           theme = 'textual-light', size = (80, 24), category = 'Storage'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.timeout(180)
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E               @pytest.mark.parametrize("category", ["Console Behavior", "Storage"])
+E               @private_profile_test
+E               async def test_console_and_storage_controls_paint_readable_values(
+E                   request, theme, size, category
+E               ):
+E                   """Clipped controls or narrow value slivers prevent reliable keyboard edits."""
+E                   host = _StyledDestinationHarness(_build_test_app(), "settings")
+E                   host.theme = theme
+E                   async with host.run_test(size=size) as pilot:
+E                       await _category(host, pilot, category)
+E                       card = host.screen.query_one(
+E                           "#settings-console-behavior-card"
+E                           if category == "Console Behavior"
+E                           else "#settings-storage-card"
+E                       )
+E                       for group in card.query(Collapsible):
+E                           group.collapsed = False
+E                       await pilot.pause()
+E                       controls = [
+E                           control
+E                           for control in card.query("Button, Checkbox, Input, Select")
+E                           if control.id and control.display and not control.disabled
+E                       ]
+E                       assert controls
+E                       failures = []
+E                       for control in controls:
+E                           control.focus()
+E                           await pilot.wait_for_scheduled_animations()
+E                           await pilot.pause()
+E                           try:
+E                               assert host.screen.focused is control
+E                               _assert_painted(host.screen, control)
+E                               if isinstance(control, Input):
+E                                   assert control.content_region.width >= 12, (
+E                                       control.id,
+E                                       control.content_region,
+E                                   )
+E                                   if control.value:
+E                                       await pilot.press("end")
+E                                       assert control.value[-8:] in _painted(host, control), (
+E                                           control.id,
+E                                           control.value,
+E                                           _painted(host, control),
+E                                       )
+E                               elif isinstance(control, (Button, Checkbox)):
+E                                   painted = " ".join(_painted(host, control).split())
+E                                   assert " ".join(str(control.label).split()) in painted, (
+E                                       control.id,
+E                                       painted,
+E                                   )
+E                                   if isinstance(control, Checkbox):
+E                                       assert "X" in painted, (control.id, painted)
+E                               elif isinstance(control, Select):
+E                                   label = next(
+E                                       str(label)
+E                                       for label, value in control._options
+E                                       if value == control.value
+E                                   )
+E                                   assert " ".join(label.split()) in " ".join(
+E                                       _painted(host, control).split()
+E                                   ), (control.id, label, _painted(host, control))
+E                           except AssertionError as exc:
+E                               failures.append(str(exc))
+E           >           assert not failures, "\n".join(failures)
+E           E           AssertionError: ('settings-storage-user-db-base-dir', Region(x=67, y=14, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=14, width=7, height=1).width
+E           E              +    where Region(x=67, y=14, width=7, height=1) = Input(id='settings-storage-user-db-base-dir', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-chachanotes-db-path', Region(x=67, y=15, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=15, width=7, height=1).width
+E           E              +    where Region(x=67, y=15, width=7, height=1) = Input(id='settings-storage-chachanotes-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-prompts-db-path', Region(x=67, y=16, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=16, width=7, height=1).width
+E           E              +    where Region(x=67, y=16, width=7, height=1) = Input(id='settings-storage-prompts-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-media-db-path', Region(x=67, y=17, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=17, width=7, height=1).width
+E           E              +    where Region(x=67, y=17, width=7, height=1) = Input(id='settings-storage-media-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-research-db-path', Region(x=67, y=18, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=18, width=7, height=1).width
+E           E              +    where Region(x=67, y=18, width=7, height=1) = Input(id='settings-storage-research-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-writing-db-path', Region(x=67, y=19, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=19, width=7, height=1).width
+E           E              +    where Region(x=67, y=19, width=7, height=1) = Input(id='settings-storage-writing-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-library-collections-db-path', Region(x=67, y=20, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=20, width=7, height=1).width
+E           E              +    where Region(x=67, y=20, width=7, height=1) = Input(id='settings-storage-library-collections-db-path', classes='-valid settings-compact-input').content_region
+E           E             ('settings-storage-workspaces-db-path', Region(x=67, y=14, width=7, height=1))
+E           E             assert 7 >= 12
+E           E              +  where 7 = Region(x=67, y=14, width=7, height=1).width
+E           E              +    where Region(x=67, y=14, width=7, height=1) = Input(id='settings-storage-workspaces-db-path', classes='-valid settings-compact-input').content_region
+E           E           assert not ["('settings-storage-user-db-base-dir', Region(x=67, y=14, width=7, height=1))\nassert 7 >= 12\n +  where 7 = Region(x...height=1) = Input(id='settings-storage-writing-db-path', classes='-valid settings-compact-input').content_region", ...]
+E
+E           Tests/UI/test_settings_console_storage_journeys.py:80: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 15:47:44.727 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 15:47:44.733 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 15:47:44.734 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 15:47:44.734 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 15:47:44.813 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 15:47:44.836 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 15:47:44.837 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 15:47:44.837 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 15:47:44.837 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 15:47:44.908 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr7/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:44.970 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i5olchfz/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:45.130 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i5olchfz/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:45.144 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:45.145 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i5olchfz/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:45.145 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i5olchfz/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 15:47:45.263 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 15:47:45.299 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 15:47:45.337 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 15:47:45.371 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 15:47:45.407 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 15:47:45.442 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 15:47:45.443 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i5olchfz/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 15:47:45.487 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 15:47:45.488 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 15:47:45.497 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 15:47:45.568 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 15:47:45.568 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1344/test_console_and_storage_contr7/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 15:47:45.569 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 15:47:45.634 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 15:47:45.634 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E           2026-09-17 15:47:45.635 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 15:47:45.635 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.891 seconds
+E           2026-09-17 15:47:45.635 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.090s (10.2%)
+E           2026-09-17 15:47:45.635 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 15:47:45.636 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.001s (0.2%)
+E           2026-09-17 15:47:45.636 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:47:45.636 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 15:47:45.637 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:47:45.637 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 15:47:45.637 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E           2026-09-17 15:47:45.839 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 15:47:45.926 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 15:47:48.722 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           3.99s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]
+E           1 failed in 5.84s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+19.11s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light]
+18.95s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark]
+17.77s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark]
+17.61s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light]
+7.20s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size0-textual-light]
+7.13s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]
+6.84s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size0-textual-dark]
+6.76s call     Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-dark]
+FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size0-textual-light]
+FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-dark]
+FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Console Behavior-size1-textual-light]
+FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-dark]
+FAILED Tests/UI/test_settings_console_storage_journeys.py::test_console_and_storage_controls_paint_readable_values[Storage-size1-textual-light]
+6 failed, 2 passed in 104.05s (0:01:44)

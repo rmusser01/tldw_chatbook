@@ -431,6 +431,9 @@ prefix, since the source strip above it already says which notes these
 are, and the toolbar moves the action that does not fit onto a row of its
 own. Nothing is ever painted as half a word.
 
+At other compact widths, the list's introductory status wraps to the height
+it needs: at 80 columns, the complete next action occupies three rows.
+
 This rule holds for every toolbar row at every width, not only the browse
 actions on a narrow terminal (task-32544, task-32557). Any group of
 actions wider than the pane it is in wraps onto as many rows as it needs,
@@ -442,6 +445,11 @@ width rather than the one its last compose had. A
 pane that *widens* keeps its shape until the next time the list refreshes —
 a row with room to spare costs nothing, and re-shaping on every resize would
 undo the in-place updates that keep a terminal drag cheap.
+
+The same wrapping applies when no note is selected: on the wide layout,
+disabled folder actions keep their complete labels and the selection explanation
+stays below them. The compact layout keeps its existing single **New folder**
+action so the list retains its row budget.
 
 ### Edit, Preview, and Info
 

@@ -1,0 +1,26 @@
+[
+  {
+    "file": "compact-overview-before.svg",
+    "original_sha256": "cfc60fc79d5073d5116ffed7ad03e361859908b20e7571d1c88b262bdfa7a5dd",
+    "stored_sha256": "d153ddf589d25cfccda7ca82dae38fa45fad047228a7e8778f09f6796e93797d",
+    "normalization": "trailing whitespace and extra blank EOF lines only"
+  },
+  {
+    "file": "compact-geometry-red.txt",
+    "original_sha256": "e2c65f6355b7495dd757681e421841ed0ded00445e3e1411cee62fff6b4fe2f0",
+    "stored_sha256": "114c4b4e2b6a20f72aeda00b008a43544facab4405baf010e612a868cc50304d",
+    "normalization": "trailing whitespace and extra blank EOF lines only"
+  },
+  {
+    "file": "compact-action-red.txt",
+    "original_sha256": "599da0bdaf346ddace016550edb487a833caf202b7a6dd9a0f64993d6d73605d",
+    "stored_sha256": "85702d8cd94bb4e0ff34ba89967f9236e3fccf7ea48f79c2054e2adb38304b0f",
+    "normalization": "trailing whitespace and extra blank EOF lines only"
+  },
+  {
+    "file": "backlog-final.txt",
+    "original_sha256": "82a7d6fb88cd71af1bbd03916a0ad948ba068bf43796c88089bab05ca59b83ab",
+    "stored_sha256": "a2ddf03a84fab30137be539e841baf3580f8fc2a7aef559561fe25f3a0ca5e61",
+    "normalization": "trailing whitespace and extra blank EOF lines only"
+  }
+]

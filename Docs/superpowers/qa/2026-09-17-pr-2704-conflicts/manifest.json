@@ -1,0 +1,562 @@
+[
+  {
+    "commit": "acfdc333da",
+    "conflicts": [
+      {
+        "file": "diff --git a/Tests/UI/test_library_file_notes_workspace.py b/Tests/UI/test_library_file_notes_workspace.py",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -21,11 +21,10 @@ from textual.screen import ModalScreen, Screen",
+          "@@ -118,7 +117,7 @@ def test_static_content_gate_skips_equal_copy_but_updates_changed_copy() -> None",
+          "@@ -141,7 +140,7 @@ class _CssTrueWorkspaceHarness(_WorkspaceHarness):",
+          "@@ -162,7 +161,7 @@ class _TwoWorkspaceHarness(ConsolidatedCSSApp):"
+        ],
+        "bytes": 2210
+      },
+      {
+        "file": "diff --git a/Tests/UI/test_library_shell.py b/Tests/UI/test_library_shell.py",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -25,11 +25,10 @@ from textual.errors import NoWidget",
+          "@@ -250,7 +249,7 @@ _RAIL_STYLE_TEST_PREFERENCES = LibraryRailPreferences()"
+        ],
+        "bytes": 1384
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/css/components/_agentic_terminal.tcss b/tldw_chatbook/css/components/_agentic_terminal.tcss",
+        "conflict_blocks": 5,
+        "hunks": [
+          "@@ -151,141 +151,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {",
+          "@@ -574,2858 +439,404 @@ ConsoleRunLogModal {",
+          "@@ -4568,61 +1979,5 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }"
+        ],
+        "bytes": 102603
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/css/screen_agentic_console.tcss b/tldw_chatbook/css/screen_agentic_console.tcss",
+        "conflict_blocks": 0,
+        "hunks": [
+          "@@ -1,4307 +0,0 @@"
+        ],
+        "bytes": 114685
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/css/tldw_cli_modular.tcss b/tldw_chatbook/css/tldw_cli_modular.tcss",
+        "conflict_blocks": 3,
+        "hunks": [
+          "@@ -319,6 +319,9 @@ $ds-theme-preview-dark-ink: #000000;",
+          "@@ -1819,7 +1822,7 @@ Select.-textual-compact:focus {",
+          "@@ -1827,7 +1830,7 @@ FileSystemPickerScreen #listing-sort-label {",
+          "@@ -2160,7 +2163,12 @@ EnhancedFileDialog InputBar Select {",
+          "@@ -2179,44 +2187,6 @@ EnhancedFileDialog InputBar Select {",
+          "@@ -2385,44 +2355,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {",
+          "@@ -3053,135 +2985,6 @@ ChatScreen.-focus MainNavigationBar {",
+          "@@ -3962,56 +3765,6 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }",
+          "@@ -7656,14 +7409,15 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {",
+          "@@ -7672,7 +7426,10 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {",
+          "@@ -7973,6 +7730,12 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn",
+          "@@ -9841,6 +9604,56 @@ ConsolePromptsModal.-narrow #console-prompts-search {",
+          "@@ -10005,6 +9818,71 @@ ConsolePromptsModal.-narrow #console-prompts-search {"
+        ],
+        "bytes": 15779
+      }
+    ],
+    "other_remerge_diffs": [
+      "diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/console-120.ansi b/Docs/superpowers/qa/2026-09-14-component-integration/console-120.ansi",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/console-80.ansi b/Docs/superpowers/qa/2026-09-14-component-integration/console-80.ansi",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/diagnostic-green.txt b/Docs/superpowers/qa/2026-09-14-component-integration/diagnostic-green.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/diagnostic-review.txt b/Docs/superpowers/qa/2026-09-14-component-integration/diagnostic-review.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/layout.txt b/Docs/superpowers/qa/2026-09-14-component-integration/layout.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/lint.txt b/Docs/superpowers/qa/2026-09-14-component-integration/lint.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/mermaid.txt b/Docs/superpowers/qa/2026-09-14-component-integration/mermaid.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/review.md b/Docs/superpowers/qa/2026-09-14-component-integration/review.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-14-component-integration/upstream-css-preservation.json b/Docs/superpowers/qa/2026-09-14-component-integration/upstream-css-preservation.json",
+      "diff --git a/Docs/superpowers/reports/2026-09-14-component-integration.md b/Docs/superpowers/reports/2026-09-14-component-integration.md",
+      "diff --git a/Docs/superpowers/reports/2026-09-14-component-pattern-library-closeout.md b/Docs/superpowers/reports/2026-09-14-component-pattern-library-closeout.md",
+      "diff --git a/Tests/Performance/test_boot_css_byte_budget.py b/Tests/Performance/test_boot_css_byte_budget.py",
+      "diff --git a/Tests/UI/test_consolidated_css_harness.py b/Tests/UI/test_consolidated_css_harness.py",
+      "diff --git a/Tests/UI/test_library_honesty_accessibility.py b/Tests/UI/test_library_honesty_accessibility.py",
+      "diff --git a/Tests/UI/test_library_media_toolbar_adapt.py b/Tests/UI/test_library_media_toolbar_adapt.py",
+      "diff --git a/Tests/UI/test_library_media_trash.py b/Tests/UI/test_library_media_trash.py",
+      "diff --git a/Tests/UI/test_library_style_transitions.py b/Tests/UI/test_library_style_transitions.py",
+      "diff --git a/backlog/decisions/097-boot-budget-ratchets.md b/backlog/decisions/097-boot-budget-ratchets.md",
+      "diff --git a/backlog/docs/lessons-testing-evidence.md b/backlog/docs/lessons-testing-evidence.md",
+      "diff --git a/backlog/tasks/task-24451 - Split-the-agentic-terminal-CSS-grab-bag-and-ratchet-rule-count.md b/backlog/tasks/task-24451 - Split-the-agentic-terminal-CSS-grab-bag-and-ratchet-rule-count.md",
+      "diff --git a/backlog/tasks/task-31500 - Pay-down-the-boot-CSS-byte-ratchet-breach-821753-B-over-the-806000-B-limit.md b/backlog/tasks/task-31500 - Pay-down-the-boot-CSS-byte-ratchet-breach-821753-B-over-the-806000-B-limit.md",
+      "diff --git a/backlog/tasks/task-32532 - Component-pattern-library-catalog-governance-monolith-carve-up-zero-literal-migration.md b/backlog/tasks/task-32596 - Component-pattern-library-catalog-governance-monolith-carve-up-zero-literal-migration.md",
+      "diff --git a/backlog/tasks/task-32532.1 - Dead-code-deletion.md b/backlog/tasks/task-32596.1 - Dead-code-deletion.md",
+      "diff --git a/backlog/tasks/task-32532.10 - In-place-literal-migration.md b/backlog/tasks/task-32596.10 - In-place-literal-migration.md",
+      "diff --git a/backlog/tasks/task-32532.11 - Python-styles-cleanup.md b/backlog/tasks/task-32596.11 - Python-styles-cleanup.md",
+      "diff --git a/backlog/tasks/task-32532.12 - Close-out.md b/backlog/tasks/task-32596.12 - Close-out.md",
+      "diff --git a/backlog/tasks/task-32532.2 - Registry-catalog-doc.md b/backlog/tasks/task-32596.2 - Registry-catalog-doc.md",
+      "diff --git a/backlog/tasks/task-32532.3 - CSS-only-dedupe-and-promotions.md b/backlog/tasks/task-32596.3 - CSS-only-dedupe-and-promotions.md",
+      "diff --git a/backlog/tasks/task-32532.4 - Pattern-gallery-snapshots.md b/backlog/tasks/task-32596.4 - Pattern-gallery-snapshots.md",
+      "diff --git a/backlog/tasks/task-32532.5 - Governance-tests-ratchet-pinning.md b/backlog/tasks/task-32596.5 - Governance-tests-ratchet-pinning.md",
+      "diff --git a/backlog/tasks/task-32532.6 - Label-consolidation.md b/backlog/tasks/task-32596.6 - Label-consolidation.md",
+      "diff --git a/backlog/tasks/task-32532.7 - Remaining-family-consolidations.md b/backlog/tasks/task-32596.7 - Remaining-family-consolidations.md",
+      "diff --git a/backlog/tasks/task-32532.8 - Monolith-carve-up-batch-1.md b/backlog/tasks/task-32596.8 - Monolith-carve-up-batch-1.md",
+      "diff --git a/backlog/tasks/task-32532.9 - Monolith-carve-up-batch-2-ceiling.md b/backlog/tasks/task-32596.9 - Monolith-carve-up-batch-2-ceiling.md",
+      "diff --git a/backlog/tasks/task-32591 - Reconcile-component-pattern-library-with-current-dev-before-integration.md b/backlog/tasks/task-32591 - Reconcile-component-pattern-library-with-current-dev-before-integration.md",
+      "diff --git a/tldw_chatbook/UI/Library_Modules/library_notes_controller.py b/tldw_chatbook/UI/Library_Modules/library_notes_controller.py",
+      "diff --git a/tldw_chatbook/Widgets/Library/library_notes_canvas.py b/tldw_chatbook/Widgets/Library/library_notes_canvas.py",
+      "diff --git a/tldw_chatbook/css/components/_lists.tcss b/tldw_chatbook/css/components/_lists.tcss",
+      "diff --git a/tldw_chatbook/css/core/_variables.tcss b/tldw_chatbook/css/core/_variables.tcss",
+      "diff --git a/tldw_chatbook/css/features/_console.tcss b/tldw_chatbook/css/features/_console.tcss",
+      "diff --git a/tldw_chatbook/css/features/_console_panels.tcss b/tldw_chatbook/css/features/_console_panels.tcss",
+      "diff --git a/tldw_chatbook/css/features/_library.tcss b/tldw_chatbook/css/features/_library.tcss",
+      "diff --git a/tldw_chatbook/css/features/_settings.tcss b/tldw_chatbook/css/features/_settings.tcss",
+      "diff --git a/tldw_chatbook/css/screen_agentic_library.tcss b/tldw_chatbook/css/screen_agentic_library.tcss",
+      "diff --git a/tldw_chatbook/css/screen_agentic_settings.tcss b/tldw_chatbook/css/screen_agentic_settings.tcss",
+      "diff --git a/tldw_chatbook/css/screen_feature_evals.tcss b/tldw_chatbook/css/screen_feature_evals.tcss",
+      "diff --git a/tldw_chatbook/css/screen_feature_scheduling.tcss b/tldw_chatbook/css/screen_feature_scheduling.tcss",
+      "diff --git a/tldw_chatbook/css/screen_feature_watchlists.tcss b/tldw_chatbook/css/screen_feature_watchlists.tcss"
+    ],
+    "parents": [
+      "705a39bdb88ef4f64a926eeec169f0d9a02469e4",
+      "fd30614dcdc1e6cbd39b1532769d3e10be9b12b6"
+    ],
+    "diff_sha256": "5d5c3fd7caf84a2ca75139aa37b638dc6c45609dbaa0a596830e6b2bef6cc45b",
+    "resolved_conflict_blocks": 11,
+    "conflict_diff_sha256": "a426bc3c2b326aa08680104d698b51009ca862342c8a93a18569aced3ddd396e",
+    "readable_diff_sha256": "48f06386a25604c96ed8b172ff4d2903b2ab117353d753b863a534313249b6ce"
+  },
+  {
+    "commit": "36164f9ccc",
+    "conflicts": [
+      {
+        "file": "diff --git a/Docs/User_Guide/library/import-and-export.md b/Docs/User_Guide/library/import-and-export.md",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -1049,7 +1049,6 @@ accepts nothing; the ingest **Browse\u2026** opens at the folder `[notes]",
+          "@@ -1061,7 +1060,7 @@ or Cancel. Selecting updates the staged folder without replacing other draft",
+          "@@ -1129,4 +1128,3 @@ bare, so prose *about* the Notes export action, inside a Notes module,"
+        ],
+        "bytes": 1758
+      },
+      {
+        "file": "diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -3005,7 +3005,7 @@",
+          "@@ -3194,7 +3194,7 @@",
+          "@@ -3887,7 +3887,14 @@",
+          "@@ -11498,20 +11505,11 @@"
+        ],
+        "bytes": 2304
+      },
+      {
+        "file": "diff --git a/Tests/UI/test_chat_screen_sidebar_state_debounce.py b/Tests/UI/test_chat_screen_sidebar_state_debounce.py",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -20,6 +20,7 @@ import threading",
+          "@@ -41,11 +42,11 @@ async def _mounted_console_screen(pilot):",
+          "@@ -73,7 +74,8 @@ async def test_saved_sidebar_state_restores_during_fresh_screen_construction(",
+          "@@ -103,7 +105,8 @@ async def test_toggle_does_not_write_synchronously_on_the_event_loop():",
+          "@@ -129,7 +132,8 @@ async def test_debounced_write_lands_after_the_timer_fires():",
+          "@@ -157,7 +161,8 @@ async def test_quit_immediately_after_toggle_flushes_the_pending_write():",
+          "@@ -183,7 +188,8 @@ async def test_reset_settings_schedules_a_write_even_from_an_empty_state():",
+          "@@ -211,7 +217,9 @@ async def test_toggle_during_in_flight_write_survives_a_quit(monkeypatch):",
+          "@@ -254,25 +262,25 @@ async def test_toggle_during_in_flight_write_survives_a_quit(monkeypatch):",
+          "@@ -306,7 +314,8 @@ async def test_exclusive_sidebar_cancel_preserves_running_writer_and_latest_togg",
+          "@@ -340,10 +349,14 @@ async def test_queued_textual_sidebar_cancel_keeps_dirty_and_flushes_later():",
+          "@@ -351,8 +364,12 @@ async def test_queued_textual_sidebar_cancel_keeps_dirty_and_flushes_later():",
+          "@@ -373,8 +390,10 @@ async def test_sidebar_refusal_failure_and_retry_preserve_latest_state(monkeypat",
+          "@@ -389,7 +408,10 @@ async def test_sidebar_refusal_failure_and_retry_preserve_latest_state(monkeypat",
+          "@@ -416,18 +438,25 @@ async def test_queued_sidebar_snapshot_cannot_switch_config_profiles(monkeypatch"
+        ],
+        "bytes": 10496
+      },
+      {
+        "file": "diff --git a/Tests/UI/test_console_live_work_handoffs.py b/Tests/UI/test_console_live_work_handoffs.py",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -11,20 +11,17 @@ import pytest",
+          "@@ -379,7 +376,9 @@ async def _wait_for_destination_recovery_state(",
+          "@@ -433,7 +432,8 @@ class StaticReadItLaterSnapshotService:",
+          "@@ -495,7 +495,8 @@ def test_console_setup_staged_receipt_names_the_launch_source():",
+          "@@ -528,7 +529,8 @@ def test_open_console_for_live_work_routes_to_chat_route():",
+          "@@ -787,7 +789,8 @@ def test_console_live_work_primary_action_routes_acp_session_details():",
+          "@@ -818,7 +821,8 @@ def test_app_console_live_work_primary_action_routes_wc_run_details():",
+          "@@ -867,7 +871,9 @@ async def test_schedules_console_follow_uses_home_dashboard_app_inputs():",
+          "@@ -899,7 +905,10 @@ async def test_skeletal_destination_console_actions_are_disabled_with_recovery_c",
+          "@@ -920,7 +929,8 @@ async def test_schedules_destination_keeps_console_follow_disabled_without_activ",
+          "@@ -962,7 +972,8 @@ async def test_schedules_destination_routes_latest_active_run_to_console():",
+          "@@ -996,7 +1007,8 @@ def test_workflows_console_launch_uses_home_dashboard_app_inputs():",
+          "@@ -1019,7 +1031,8 @@ def test_workflows_console_launch_accepts_route_style_source():",
+          "@@ -1044,7 +1057,10 @@ async def test_workflows_destination_loads_console_follow_item_off_main_thread()",
+          "@@ -1066,7 +1082,8 @@ async def test_workflows_destination_keeps_console_launch_disabled_without_activ",
+          "@@ -1112,7 +1129,8 @@ async def test_workflows_destination_routes_latest_active_run_to_console():",
+          "@@ -1139,7 +1157,10 @@ async def test_workflows_destination_preserves_existing_pending_status():",
+          "@@ -1164,7 +1185,8 @@ async def test_watchlists_destination_keeps_console_follow_disabled_without_acti",
+          "@@ -1214,7 +1236,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():",
+          "@@ -1252,7 +1276,10 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(",
+          "@@ -1364,7 +1391,8 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt",
+          "@@ -1411,7 +1439,8 @@ async def test_watchlists_destination_click_uses_item_promised_by_button_label()",
+          "@@ -1440,7 +1469,10 @@ async def test_watchlists_destination_escapes_console_follow_markup_labels():",
+          "@@ -1469,7 +1501,8 @@ async def test_schedules_destination_keeps_console_launch_disabled_without_diges",
+          "@@ -1518,7 +1551,10 @@ async def test_schedules_destination_routes_latest_digest_output_to_console():",
+          "@@ -1551,7 +1587,8 @@ async def test_artifacts_destination_keeps_console_launch_disabled_without_chatb",
+          "@@ -1615,7 +1652,10 @@ async def test_artifacts_destination_launches_latest_local_chatbook_in_console()",
+          "@@ -1683,7 +1723,10 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_provena",
+          "@@ -1753,7 +1796,10 @@ async def test_artifacts_destination_reopens_console_saved_chatbook_with_citatio",
+          "@@ -1813,7 +1859,10 @@ async def test_artifacts_destination_sanitizes_chatbook_metadata_before_console_",
+          "@@ -1850,7 +1899,10 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo",
+          "@@ -1902,7 +1954,10 @@ async def test_artifacts_destination_consumes_pending_chatbook_target_before_lat",
+          "@@ -1929,7 +1984,8 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from",
+          "@@ -2068,7 +2124,10 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:",
+          "@@ -2204,7 +2263,8 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea",
+          "@@ -2247,7 +2307,8 @@ async def test_locked_console_shows_staged_evidence_receipt_task_2852():",
+          "@@ -2298,7 +2359,8 @@ async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852()",
+          "@@ -2345,7 +2407,9 @@ async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel()",
+          "@@ -2441,7 +2505,9 @@ async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_",
+          "@@ -2565,7 +2631,8 @@ def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or",
+          "@@ -2612,7 +2679,8 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()",
+          "@@ -2696,7 +2764,10 @@ def _spy_screen_recompose(screen):",
+          "@@ -2733,7 +2804,8 @@ async def test_stage_console_library_rag_launch_swaps_card_without_screen_recomp",
+          "@@ -2763,7 +2835,10 @@ async def test_stage_console_library_rag_launch_restage_replaces_single_card():",
+          "@@ -2836,7 +2911,8 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom",
+          "@@ -2933,7 +3009,10 @@ def _conversation_handoff_payload() -> ChatHandoffPayload:",
+          "@@ -2966,7 +3045,10 @@ async def test_non_rag_handoff_stages_a_non_empty_evidence_bundle(build_payload)",
+          "@@ -3067,7 +3149,8 @@ class _ExistingChaChaDBDouble:",
+          "@@ -3092,7 +3175,8 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context():",
+          "@@ -3118,7 +3202,10 @@ async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context():",
+          "@@ -3154,7 +3241,10 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont",
+          "@@ -3187,7 +3277,10 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b"
+        ],
+        "bytes": 24332
+      },
+      {
+        "file": "diff --git a/backlog/docs/lessons-live-verification.md b/backlog/docs/lessons-live-verification.md",
+        "conflict_blocks": 2,
+        "hunks": [
+          "@@ -1,6 +1,15 @@",
+          "@@ -58,7 +67,7 @@ that terminates in a minimal test harness need not terminate with the app's",
+          "@@ -73,7 +82,6 @@ not evidence that a callback cannot finish. The regression tests in",
+          "@@ -3038,7 +3046,6 @@ forget_file`, never tombstone). Pin it with a replica seeded by hand",
+          "@@ -3048,7 +3055,7 @@ The query did not inspect the pushed Library screen. Waiting on",
+          "@@ -3214,4 +3221,3 @@ diff. Cite those by symbol with the file and no line number"
+        ],
+        "bytes": 3335
+      },
+      {
+        "file": "diff --git a/backlog/docs/lessons-testing-evidence.md b/backlog/docs/lessons-testing-evidence.md",
+        "conflict_blocks": 2,
+        "hunks": [
+          "@@ -1,5 +1,18 @@",
+          "@@ -157,7 +170,6 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden",
+          "@@ -268,7 +280,7 @@ preserve quoted strings and original whitespace boundaries, and compare parsed",
+          "@@ -392,7 +404,6 @@ safe: whole-root guards can traverse `.superpowers` and any other nested scratch",
+          "@@ -14862,7 +14873,6 @@ and that worker never ran in tests at all.",
+          "@@ -15064,7 +15074,7 @@ being taken from the newly saved provider. Also test an unchanged return: a raw",
+          "@@ -15539,4 +15549,3 @@ the failure. Name-only BLOB extraction and local `surrogatepass` decoding fixed"
+        ],
+        "bytes": 3784
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/UI/Screens/chat_screen.py b/tldw_chatbook/UI/Screens/chat_screen.py",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -7542,12 +7542,9 @@ class ChatScreen(BaseAppScreen):"
+        ],
+        "bytes": 1076
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/Widgets/Console/console_bounded_section.py b/tldw_chatbook/Widgets/Console/console_bounded_section.py",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -462,15 +462,10 @@ class ConsoleBoundedSection(Vertical):"
+        ],
+        "bytes": 1260
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/Widgets/Library/library_file_notes_workspace.py b/tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -1883,18 +1883,8 @@ class LibraryFileNotesWorkspace(Vertical):"
+        ],
+        "bytes": 1475
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/css/components/_agentic_terminal.tcss b/tldw_chatbook/css/components/_agentic_terminal.tcss",
+        "conflict_blocks": 2,
+        "hunks": [
+          "@@ -510,2405 +510,6 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {",
+          "@@ -4229,501 +1830,6 @@ LibraryIngestCanvas:focus-within {"
+        ],
+        "bytes": 90784
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/css/screen_agentic_library.tcss b/tldw_chatbook/css/screen_agentic_library.tcss",
+        "conflict_blocks": 2,
+        "hunks": [
+          "@@ -76,6 +76,8 @@ $ds-console-workspace-grid-height: 1fr;",
+          "@@ -1161,6 +1163,16 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -1258,7 +1270,8 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -1267,6 +1280,7 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -1274,6 +1288,7 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -1327,6 +1342,13 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -2567,45 +2589,15 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -2621,16 +2613,8 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -2667,24 +2651,6 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -2702,19 +2668,6 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -2736,26 +2689,27 @@ with stray left-edge border fragments), and padding 0 1 so the full",
+          "@@ -4255,428 +4209,8 @@ LibraryIngestCanvas #library-ingest-latest-batch {",
+          "@@ -4707,6 +4241,12 @@ LibraryIngestCanvas #library-ingest-latest-batch {"
+        ],
+        "bytes": 22667
+      },
+      {
+        "file": "diff --git a/tldw_chatbook/css/tldw_cli_modular.tcss b/tldw_chatbook/css/tldw_cli_modular.tcss",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -91,6 +91,8 @@ $ds-console-workspace-grid-height: 1fr;",
+          "@@ -3748,34 +3750,6 @@ LibraryIngestCanvas:focus-within {",
+          "@@ -9864,7 +9838,6 @@ WorktreeRecoveryDialog {",
+          "@@ -19064,16 +19037,16 @@ LogsWindow {",
+          "@@ -19082,12 +19055,12 @@ WorkflowsScreen #workflow-library-search > .input--placeholder {"
+        ],
+        "bytes": 4862
+      }
+    ],
+    "other_remerge_diffs": [
+      "diff --git a/.impeccable/critique/2026-09-15T06-47-45Z__w-chatbook-widgets-library-library-notes-canvas-py.md b/.impeccable/critique/2026-09-15T06-47-45Z__w-chatbook-widgets-library-library-notes-canvas-py.md",
+      "diff --git a/Docs/superpowers/plans/2026-09-17-component-current-dev-integration.md b/Docs/superpowers/plans/2026-09-17-component-current-dev-integration.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-15-prompt-actions/README.md b/Docs/superpowers/qa/2026-09-15-prompt-actions/README.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/README.md b/Docs/superpowers/qa/2026-09-17-component-current-dev/README.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/adjacent-final.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/adjacent-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/adjacent-summary.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/adjacent-summary.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/backlog-final.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/backlog-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/budget-final.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/budget-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/budget-private-child.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/budget-private-child.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/capture-manifest.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/capture-manifest.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/console-private.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/console-private.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/covered-layout.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/covered-layout.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/css-preservation.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/css-preservation.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/earlier-run-001.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/earlier-run-001.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/earlier-run-002.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/earlier-run-002.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/exact-dev-baseline.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/exact-dev-baseline.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/fatal-baseline-test_library_screen.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/fatal-baseline-test_library_screen.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/fatal-baseline-test_mcp_workbench.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/fatal-baseline-test_mcp_workbench.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/fatal-ruff-final.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/fatal-ruff-final.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/governance-final-rerun.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/governance-final-rerun.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/governance-first-summary.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/governance-first-summary.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/library-private.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/library-private.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/lifecycle.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/lifecycle.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/mermaid.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/mermaid.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/native-result.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/native-result.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/native_check.py b/Docs/superpowers/qa/2026-09-17-component-current-dev/native_check.py",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/picker-final.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/picker-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/preflight-final.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/preflight-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/renumber-allocation.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/renumber-allocation.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/review.md b/Docs/superpowers/qa/2026-09-17-component-current-dev/review.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/run-history.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/run-history.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/settings-private.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/settings-private.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/sidebar-private.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/sidebar-private.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/static-delta.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/static-delta.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-console.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-console.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-console.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-console.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-notes.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-notes.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-notes.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-170x48-notes.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-console.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-console.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-console.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-console.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-notes.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-notes.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-notes.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-dark-80x24-notes.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-console.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-console.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-console.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-console.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-notes.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-notes.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-notes.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-170x48-notes.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-console.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-console.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-console.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-console.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-notes.svg b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-notes.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-notes.txt b/Docs/superpowers/qa/2026-09-17-component-current-dev/textual-light-80x24-notes.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-component-current-dev/workflow-preservation.json b/Docs/superpowers/qa/2026-09-17-component-current-dev/workflow-preservation.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-rag-result-focus/README.md b/Docs/superpowers/qa/2026-09-17-rag-result-focus/README.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-rag-scope-recovery/README.md b/Docs/superpowers/qa/2026-09-17-rag-scope-recovery/README.md",
+      "diff --git a/Docs/superpowers/reports/2026-09-14-library-workflow-audit.md b/Docs/superpowers/reports/2026-09-14-library-workflow-audit.md",
+      "diff --git a/Docs/superpowers/reports/2026-09-17-component-current-dev-integration.md b/Docs/superpowers/reports/2026-09-17-component-current-dev-integration.md",
+      "diff --git a/Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md b/Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md",
+      "diff --git a/Tests/UI/conftest.py b/Tests/UI/conftest.py",
+      "diff --git a/Tests/UI/test_component_pattern_governance.py b/Tests/UI/test_component_pattern_governance.py",
+      "diff --git a/Tests/UI/test_css_build_integrity.py b/Tests/UI/test_css_build_integrity.py",
+      "diff --git a/Tests/UI/test_css_bundle_sync_guard.py b/Tests/UI/test_css_bundle_sync_guard.py",
+      "diff --git a/Tests/UI/test_design_token_governance.py b/Tests/UI/test_design_token_governance.py",
+      "diff --git a/Tests/UI/test_fspicker_compact_journeys.py b/Tests/UI/test_fspicker_compact_journeys.py",
+      "diff --git a/Tests/UI/test_library_notes_files_sync_journey.py b/Tests/UI/test_library_notes_files_sync_journey.py",
+      "diff --git a/Tests/UI/test_library_notes_w5_folder_files_layout.py b/Tests/UI/test_library_notes_w5_folder_files_layout.py",
+      "diff --git a/Tests/UI/test_library_notes_w5_kbd_focus.py b/Tests/UI/test_library_notes_w5_kbd_focus.py",
+      "diff --git a/Tests/UI/test_python_style_inventory.py b/Tests/UI/test_python_style_inventory.py",
+      "diff --git a/Tests/UI/test_settings_generation_default_journeys.py b/Tests/UI/test_settings_generation_default_journeys.py",
+      "diff --git a/backlog/tasks/task-32628 - Review-Library-Prompt-More-actions-and-deletion-recovery.md b/backlog/tasks/task-32750 - Review-Library-Prompt-More-actions-and-deletion-recovery.md",
+      "diff --git a/backlog/tasks/task-32707 - Keep-Search-RAG-keyboard-focus-visible-after-results-arrive.md b/backlog/tasks/task-32751 - Keep-Search-RAG-keyboard-focus-visible-after-results-arrive.md",
+      "diff --git a/backlog/tasks/task-32749 - Reconcile-current-dev-with-the-reviewed-design-system-workstream.md b/backlog/tasks/task-32749 - Reconcile-current-dev-with-the-reviewed-design-system-workstream.md",
+      "diff --git a/backlog/tasks/task-32752 - Keep-empty-Notes-folder-actions-fully-visible.md b/backlog/tasks/task-32752 - Keep-empty-Notes-folder-actions-fully-visible.md",
+      "diff --git a/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py b/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py",
+      "diff --git a/tldw_chatbook/Widgets/Library/library_notes_add_from_files_canvas.py b/tldw_chatbook/Widgets/Library/library_notes_add_from_files_canvas.py",
+      "diff --git a/tldw_chatbook/css/build_css.py b/tldw_chatbook/css/build_css.py",
+      "diff --git a/tldw_chatbook/css/core/_variables.tcss b/tldw_chatbook/css/core/_variables.tcss",
+      "diff --git a/tldw_chatbook/css/features/_library.tcss b/tldw_chatbook/css/features/_library.tcss",
+      "diff --git a/tldw_chatbook/css/features/_library_panels.tcss b/tldw_chatbook/css/features/_library_panels.tcss",
+      "diff --git a/tldw_chatbook/css/features/_workflows.tcss b/tldw_chatbook/css/features/_workflows.tcss",
+      "diff --git a/tldw_chatbook/css/screen_agentic_settings.tcss b/tldw_chatbook/css/screen_agentic_settings.tcss",
+      "diff --git a/tldw_chatbook/css/screen_feature_evals.tcss b/tldw_chatbook/css/screen_feature_evals.tcss",
+      "diff --git a/tldw_chatbook/css/screen_feature_scheduling.tcss b/tldw_chatbook/css/screen_feature_scheduling.tcss",
+      "diff --git a/tldw_chatbook/css/screen_feature_watchlists.tcss b/tldw_chatbook/css/screen_feature_watchlists.tcss",
+      "diff --git a/tldw_chatbook/css/screen_feature_workflows.tcss b/tldw_chatbook/css/screen_feature_workflows.tcss"
+    ],
+    "parents": [
+      "6e0a71dc749a717efdfb2405e26773af28e84906",
+      "1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6"
+    ],
+    "diff_sha256": "dc6b65cea5681111322f21b9e09bddcedbb5f6a9b87b074b3965572d0824bd38",
+    "resolved_conflict_blocks": 16,
+    "conflict_diff_sha256": "c1fbf54e18320c79dafabc773d81307db178d6ab2ce43d0d2a4284f7d9127cc6",
+    "readable_diff_sha256": "13f09cf12b3a9cbc90450714133175950cce0c304b819a69ab5700dc27c679db"
+  },
+  {
+    "commit": "bd5cd5aae8",
+    "conflicts": [
+      {
+        "file": "diff --git a/Docs/User_Guide/library/import-and-export.md b/Docs/User_Guide/library/import-and-export.md",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -265,7 +265,6 @@ checkpoint before any tool is allowed to run, as required by",
+          "@@ -275,7 +274,7 @@ row, an accepted model selection retries that job; cancelling the picker or",
+          "@@ -291,7 +290,6 @@ For native clipboard copying on Fedora Wayland, install"
+        ],
+        "bytes": 2771
+      }
+    ],
+    "other_remerge_diffs": [
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/README.md b/Docs/superpowers/qa/2026-09-17-settings-interface/README.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/capture-manifest.json b/Docs/superpowers/qa/2026-09-17-settings-interface/capture-manifest.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/default-card-paint-red.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/default-card-paint-red.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/governance.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/governance.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-css-sync.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-css-sync.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-expanded-initial.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-expanded-initial.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-fatal.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-fatal.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-final.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-initial.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-initial.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-select-final.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-select-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-select-red.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-select-red.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/integration-static.json b/Docs/superpowers/qa/2026-09-17-settings-interface/integration-static.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/lifecycle.json b/Docs/superpowers/qa/2026-09-17-settings-interface/lifecycle.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/native-result.json b/Docs/superpowers/qa/2026-09-17-settings-interface/native-result.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/options-private-final.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/options-private-final.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/preflight.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/preflight.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/review.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/review.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/task-id-check.json b/Docs/superpowers/qa/2026-09-17-settings-interface/task-id-check.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-invalid.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-invalid.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-invalid.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-invalid.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-saved.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-saved.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-saved.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-appearance-saved.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-default.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-default.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-default.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-default.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-preview.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-preview.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-preview.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-preview.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-settings.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-settings.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-settings.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-splash-settings.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-actions.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-actions.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-actions.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-actions.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-palette.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-palette.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-palette.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-190x55-theme-palette.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-invalid.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-invalid.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-invalid.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-invalid.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-saved.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-saved.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-saved.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-appearance-saved.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-default.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-default.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-default.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-default.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-preview.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-preview.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-preview.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-preview.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-settings.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-settings.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-settings.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-splash-settings.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-actions.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-actions.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-actions.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-actions.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-palette.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-palette.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-palette.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-dark-80x24-theme-palette.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-invalid.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-invalid.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-invalid.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-invalid.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-saved.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-saved.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-saved.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-appearance-saved.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-default.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-default.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-default.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-default.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-preview.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-preview.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-preview.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-preview.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-settings.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-settings.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-settings.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-splash-settings.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-actions.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-actions.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-actions.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-actions.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-palette.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-palette.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-palette.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-190x55-theme-palette.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-invalid.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-invalid.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-invalid.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-invalid.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-saved.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-saved.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-saved.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-appearance-saved.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-default.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-default.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-default.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-default.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-preview.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-preview.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-preview.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-preview.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-settings.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-settings.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-settings.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-splash-settings.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-actions.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-actions.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-actions.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-actions.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-palette.svg b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-palette.svg",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-palette.txt b/Docs/superpowers/qa/2026-09-17-settings-interface/textual-light-80x24-theme-palette.txt",
+      "diff --git a/Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md b/Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md",
+      "diff --git a/Tests/UI/test_library_ingest_option_event_order.py b/Tests/UI/test_library_ingest_option_event_order.py",
+      "diff --git a/Tests/UI/test_library_ingest_option_journeys.py b/Tests/UI/test_library_ingest_option_journeys.py",
+      "diff --git a/Tests/UI/test_library_ingest_structural.py b/Tests/UI/test_library_ingest_structural.py",
+      "diff --git a/backlog/docs/lessons-testing-evidence.md b/backlog/docs/lessons-testing-evidence.md",
+      "diff --git a/backlog/tasks/task-32757 - Qualify-Appearance-Theme-and-Splash-Settings-workflows.md b/backlog/tasks/task-32757 - Qualify-Appearance-Theme-and-Splash-Settings-workflows.md",
+      "diff --git a/tldw_chatbook/Widgets/Library/library_ingest_canvas.py b/tldw_chatbook/Widgets/Library/library_ingest_canvas.py"
+    ],
+    "parents": [
+      "65cc565d84d4cc7555baa4db27c16402b32177e9",
+      "c97a64eba54d18f88cecc77bf6233e208df8bf24"
+    ],
+    "diff_sha256": "59e203e3109e4bf646cc974be4b4bb023bed155ca87f1f65b87134cd4a7d4e29",
+    "resolved_conflict_blocks": 1,
+    "conflict_diff_sha256": "8d6cad06865a8790d4d495dfd0b322dd48fabf349ac1b2ec480eb985084ee995",
+    "readable_diff_sha256": "2767a34cd833902a9b5734841d5f3a3f8510ab6332bcebdc20d1e2852b7a06b9"
+  },
+  {
+    "commit": "96d4ca2b96",
+    "conflicts": [
+      {
+        "file": "diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -11510,10 +11510,6 @@"
+        ],
+        "bytes": 744
+      },
+      {
+        "file": "diff --git a/backlog/docs/lessons-testing-evidence.md b/backlog/docs/lessons-testing-evidence.md",
+        "conflict_blocks": 1,
+        "hunks": [
+          "@@ -207,7 +207,6 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden",
+          "@@ -318,7 +317,6 @@ preserve quoted strings and original whitespace boundaries, and compare parsed",
+          "@@ -331,7 +329,6 @@ sink and assert the persisted record. Keep native exception text and paths out"
+        ],
+        "bytes": 1402
+      }
+    ],
+    "other_remerge_diffs": [
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-console-rail/README.md b/Docs/superpowers/qa/2026-09-17-settings-console-rail/README.md",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-console-rail/integration-preflight.txt b/Docs/superpowers/qa/2026-09-17-settings-console-rail/integration-preflight.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-console-rail/integration-static.json b/Docs/superpowers/qa/2026-09-17-settings-console-rail/integration-static.json",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-console-rail/integration-tests.txt b/Docs/superpowers/qa/2026-09-17-settings-console-rail/integration-tests.txt",
+      "diff --git a/Docs/superpowers/qa/2026-09-17-settings-console-rail/test-log-manifest.json b/Docs/superpowers/qa/2026-09-17-settings-console-rail/test-log-manifest.json",
+      "diff --git a/Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md b/Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md",
+      "diff --git a/backlog/tasks/task-32759 - Keep-Console-rail-label-toggle-inside-compact-Settings.md b/backlog/tasks/task-32759 - Keep-Console-rail-label-toggle-inside-compact-Settings.md"
+    ],
+    "parents": [
+      "2614d6c135e9634ed13498cc34dfd3b4b424cdd7",
+      "d8fb4053f9a27a799d5cdb8ee58f7fd1de91efce"
+    ],
+    "diff_sha256": "aab51dd54c54333a273357d17dbd8eb98b3904b5468b01bce37af3b3d1053e1d",
+    "resolved_conflict_blocks": 2,
+    "conflict_diff_sha256": "55360fd68b80d503816a631795dcc1032bb8cb7b3eb85cc30ef18e490051c885",
+    "readable_diff_sha256": "2fd57d18971272fae454cf8cbd241ca4606cb03d9a8d12a3e19efecb03db8ded"
+  }
+]

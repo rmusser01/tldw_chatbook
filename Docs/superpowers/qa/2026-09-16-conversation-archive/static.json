@@ -1,0 +1,23 @@
+{
+  "native_runner_ruff_check": "passed",
+  "native_runner_ruff_format_check": "passed",
+  "tracked_diff_whitespace_check": "passed",
+  "new_evidence_trailing_whitespace_check": "passed",
+  "evidence_consistency": {
+    "json_files_valid": 7,
+    "svg_xml_and_raw_stored_hashes_valid": 10,
+    "runner_hash_matches_both_native_results": true,
+    "fixture_message_identity_owner_and_hashes_match": true,
+    "ten_integrity_receipts_ok": true,
+    "readme_links_valid_except_pending_closeout_receipts": true,
+    "new_files_trailing_whitespace": 0
+  },
+  "task_id_collision_check": {
+    "committed_32703_paths_across_all_available_refs": [],
+    "live_worktrees_checked": 27,
+    "sole_live_task_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32703 - Verify-Library-conversation-archive-and-restore-journeys.md"
+  },
+  "production_source_or_css_changed": false,
+  "css_rebuild_required": false,
+  "full_suite_run": false
+}

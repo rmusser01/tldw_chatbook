@@ -77,8 +77,9 @@ class _CanvasHost(ConsolidatedCSSApp):
         *,
         external_busy: bool = False,
         external_status: str = "",
+        css_path: list[str] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(css_path=css_path)
         self._state = state
         self._external_busy = external_busy
         self._external_status = external_status
@@ -1584,7 +1585,8 @@ async def test_parakeet_directory_row_fits_real_eighty_column_viewport() -> None
             total_files=1,
         ),
     )
-    app = _CanvasHost(state)
+    # This geometry depends on app-tier w-fill/w-full/h-3 utility classes.
+    app = _CanvasHost(state, css_path=[str(path) for path in APP_STYLESHEETS])
     with patch(
         "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
         return_value=True,
@@ -2627,7 +2629,7 @@ def test_option_reset_during_external_hash_preserves_reset_and_fences_callback(
     screen._library_external_submit_worker = None
     worker = MagicMock(is_finished=False)
     screen._prepare_library_external_submission = MagicMock(return_value=worker)
-    screen._refresh_library_ingest_canvas_preserving_context = MagicMock()
+    screen._update_library_ingest_option_group = MagicMock()
     # task-15470: the actual persistence call moved into a
     # `@work(thread=True)` instance method (`_save_library_ingest_options`),
     # which needs a running app to dispatch through `run_worker` -- this

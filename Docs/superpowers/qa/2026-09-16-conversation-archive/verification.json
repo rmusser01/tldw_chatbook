@@ -1,0 +1,26 @@
+{
+  "task": "TASK-32703",
+  "baseline_commit": "a4efad70569ffa71234ddcfea1e970c6ac4fac36",
+  "production_code_changed": false,
+  "native_run": "run-002",
+  "runner_sha256": "9695245821dcf29ed2a9ad22a0ece2e74a70023fb4e187d3e8a01d34ded32a61",
+  "targeted_tests": {
+    "passed": 56,
+    "elapsed_seconds": 21.64,
+    "exit_code": 0,
+    "command": ".venv/bin/python -m pytest Tests/UI/test_library_conversation_recovery_flow.py Tests/UI/test_library_archive_review_v5.py Tests/DB/test_conversation_archive.py Tests/Chat/test_conversation_archive_actions.py Tests/Chat/test_conversation_archive_scope_service.py -q --tb=short --show-capture=no"
+  },
+  "full_suite_run": false,
+  "native_model_request_sent": false,
+  "unqualified": [
+    "Export",
+    "Exact Resume",
+    "Restore and resume",
+    "Nonempty Console draft or attachments",
+    "Complete Tab traversal",
+    "Bulk native mutation",
+    "Real optional or remote providers",
+    "Arbitrary transcript shapes",
+    "Ordinary unprimed terminal-probe timing"
+  ]
+}
