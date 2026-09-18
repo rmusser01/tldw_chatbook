@@ -18,7 +18,7 @@ modified_files:
 - Tests/UI/test_console_dispatch_recovery_repeated_actions.py
 - Docs/User_Guide/console/chat-basics.md
 - backlog/docs/lessons-console-wiring.md
-updated_date: 2026-09-18 21:27
+updated_date: 2026-09-18 21:31
 ---
 
 ## Description
@@ -67,6 +67,8 @@ All GitHub checks on 7d0501a0ed passed, including PR Fast Lane, derived artifact
 Final Qodo documentation fix adds Args and Raises sections describing callback scope/timing and action-versus-cleanup error precedence. AST comparison after removing docstrings confirms executable behavior is unchanged. Latest dev remains e89f28d751. Task acceptance tracks the verified implementation and review work; final integration status is tracked by PR #2709. All code-head CI gates passed before this documentation-only update; required checks will run again before merge.
 Final docs-head CI: 1129 passed, one intermittent untouched MCP test failed (test_test_tool_active_watcher_never_updates_stale_panel[switch]) with a retained preview. The same executable code passed prior CI; both variants pass locally and repeated fresh-process switch runs pass. Inspection identifies a test synchronization gap: 20 pilot.pause calls do not join the watcher/preview revocation worker or its asyncio.to_thread operation. Replace the fixed UI-pause count with app.workers.wait_for_complete after confirming the switch precondition and releasing the simulated active run. This preserves the no-stale-preview assertion and avoids a speculative production change.
 MCP test synchronization update verified: 7 targeted watcher/cancellation/reopen lifecycle tests pass; unchanged original switch test passed 20 fresh-process repetitions, confirming the CI failure was intermittent rather than a reproducible recovery regression. New test precondition verifies the selected owner, and worker completion now precedes preview cleanup assertions. Independent review confirms the active flag is released before joining, preventing a polling deadlock. No production MCP changes. No new Ruff findings in the touched test; syntax and diff checks pass. Total unique local targeted cases: 198. Final CI rerun follows publication; merge remains tracked by PR #2709.
+Controlled replay confirmed a second MCP harness race: reproducing the inspector's real call_after_refresh(first_control.focus) during _select_tools_mode_row redirects Enter into the raw JSON TextArea. The new owner precondition fails with fetch != search, explaining why a later active-run release can legitimately mint preview-1. Use DataTable.action_select_cursor for this watcher-specific switch so it emits the normal selection event independently of unrelated mount focus; retain owner assertions and the worker join. Diagnostic RED: /tmp/chatbook2709-mcp-focus-red-v2.log.
+MCP focus-race GREEN: the controlled deferred-focus replay passes when the watcher test selects through DataTable.action_select_cursor (normal RowSelected/ToolSelected routing); the seven focused lifecycle tests also pass again. No MCP production behavior changed. Added the incident to lessons-testing-evidence.md. Final local unique count remains 198; the extra diagnostic replay exercises an existing case under forced focus timing. Publishing this deterministic selection change and rerunning final CI.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
