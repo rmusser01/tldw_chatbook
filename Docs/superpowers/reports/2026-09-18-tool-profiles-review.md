@@ -37,19 +37,46 @@ This is mounted lifecycle evidence, not a new native visual qualification.
 No visual values changed. The remaining management review below still needs
 its own complete native journeys.
 
-## Export recovery — still open
+## Export recovery — TASK-32779
 
-The current save picker accepts an existing regular file. The publication
-owner deliberately rejects replacement with `publication_unsupported`, but
-Settings describes that result as missing platform primitives on POSIX.
-Preserve the existing file and publication authority. Offer a new filename
-with truthful recovery, retaining the already captured export review. Verify
-an existing archive on supported POSIX as well as the separate Windows result.
-This is source-confirmed and awaits a mounted regression and repair.
+Existing regular files previously reached the no-overwrite publisher and
+produced misleading unsupported-platform copy. Settings now retains the
+reviewed snapshot and reopens filename selection with local copy for existing,
+invalid or changed destinations. Publication authority remains unchanged.
+
+Real-service mounted evidence first exposed an earlier crash: the review read
+`payload.rules`, but the actual payload has `tools`. The old fake payload had
+invented the same wrong attribute. The review now uses `tools`; its existing
+policy-count assertions run against a real typed payload.
+
+86 distinct targeted cases and four native dark/light × compact/wide journeys
+qualify the repair. Native journeys verify the archive manifest, unchanged
+incumbent and permission-store bytes, correction and cancellation. The three
+terminal-outcome worker cases inject unsupported/failed/uncertain results;
+real service/publication tests qualify the underlying boundaries. Capture
+checks initial policy authority; publication uses the immutable reviewed
+snapshot without recapturing current policy. [Evidence and visual gallery](../qa/2026-09-18-tool-profile-export/README.md).
+
+## Confirmed remaining defects
+
+- **Delayed import review can steal focus after category navigation.** A
+  mounted production-CSS probe held inspection after Options → Inspect,
+  navigated to Theme through its real rail action, then released inspection.
+  The old import review opened over Theme. Guard the originating visit after
+  asynchronous inspection. Screen removal already suppresses a late modal.
+- **Unchanged profile refresh loses focused actions.** Import/Edit/Remove
+  focus falls to the detail-pane body after recomposition. Cancelling import
+  or removal also triggers this through Settings resume. Restore by stable
+  profile/action identity while respecting newer navigation and focus.
+
+Read-only boundary probes confirmed that cancelling import review performs no
+import, cancelling removal performs no removal, and real removal rejects a
+stale revision without changing permission-store bytes. Those bounded probes
+do not qualify the remaining native management journeys.
 
 ## Remaining scope
 
-Import/export/removal cancellation and stale-context journeys, focus through
-refresh, production CSS and native compact/wide dark/light presentation remain
-to be qualified. This ledger does not claim the Tool Profiles feature review
-or the broader component workstream is complete.
+Import/removal stale-context journeys, focus through refresh, and their native
+compact/wide dark/light presentation remain to be qualified. This ledger does
+not claim the Tool Profiles feature review or the broader component workstream
+is complete.

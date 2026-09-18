@@ -4735,33 +4735,56 @@ class SettingsScreen(BaseAppScreen):
             if confirmed is not candidate or worker.is_cancelled:
                 self._set_tool_profiles_result("Export cancelled")
                 return
-            selected = await self.app.push_screen_wait(
-                EnhancedFileSave(
+            location = Path(".")
+            filename = f"{candidate.snapshot.manifest.suggested_id}.tldw-tool-pack"
+            recovery = ""
+            while True:
+                picker = EnhancedFileSave(
+                    location=location,
                     title="Export Tool Pack",
                     filters=Filters(
                         (
                             "Tool Pack archives",
-                            lambda path: path.suffix.casefold()
-                            == ".tldw-tool-pack",
+                            lambda path: path.suffix.casefold() == ".tldw-tool-pack",
                         )
                     ),
-                    default_filename=f"{candidate.snapshot.manifest.suggested_id}.tldw-tool-pack",
+                    default_filename=filename,
                     context="tool_pack_export",
                 )
-            )
-            if selected is None or worker.is_cancelled:
-                self._set_tool_profiles_result("Export cancelled")
-                return
-            destination = await asyncio.to_thread(
-                CapturedToolPackDestination.capture,
-                Path(selected),
-            )
-            result = await asyncio.to_thread(
-                service.publish_export,
-                candidate,
-                destination,
-                cancelled=lambda: worker.is_cancelled,
-            )
+                if recovery:
+                    picker.call_after_refresh(picker._set_error, recovery)
+                selected = await self.app.push_screen_wait(picker)
+                if selected is None or worker.is_cancelled:
+                    self._set_tool_profiles_result("Export cancelled")
+                    return
+                selected_path = Path(selected)
+                location, filename = selected_path.parent, selected_path.name
+                try:
+                    destination = await asyncio.to_thread(
+                        CapturedToolPackDestination.capture,
+                        selected_path,
+                    )
+                except ToolPackError as exc:
+                    if exc.category != "destination_invalid":
+                        raise
+                    recovery = "Use a .tldw-tool-pack filename in an existing folder."
+                    continue
+                if destination.target_identity is not None:
+                    recovery = "Name already exists. Choose a new filename."
+                    continue
+                try:
+                    result = await asyncio.to_thread(
+                        service.publish_export,
+                        candidate,
+                        destination,
+                        cancelled=lambda: worker.is_cancelled,
+                    )
+                except ToolPackError as exc:
+                    if exc.category != "destination_changed":
+                        raise
+                    recovery = "Destination changed. Choose a new filename."
+                    continue
+                break
             if type(result) is not ToolPackPublicationResult:
                 raise ToolPackError("export", "publication_failed")
             if result.durability_uncertain:

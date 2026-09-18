@@ -25,7 +25,12 @@ from tldw_chatbook.Tool_Packs.binding import (
     ToolProfileBindingReview,
     ToolProfileBindingSummary,
 )
-from tldw_chatbook.Tool_Packs.contracts import PortableFallback, PortableToolRule
+from tldw_chatbook.Tool_Packs.contracts import (
+    TOOL_PROFILE_SCHEMA,
+    PortableFallback,
+    PortableToolRule,
+    ToolProfilePayload,
+)
 from tldw_chatbook.Tool_Packs.export import (
     ToolPackExportReview,
     ToolPackExportSnapshot,
@@ -307,21 +312,21 @@ def _export_review() -> ToolPackExportReview:
                     "content_digest": "5" * 64,
                 },
             )(),  # type: ignore[arg-type]
-            payload=type(
-                "Payload",
-                (),
-                {
-                    "fallbacks": (
-                        PortableFallback("mcp", "*", "ask"),
-                        PortableFallback("builtin", "agent:builtin", "deny"),
-                    ),
-                    "rules": (
-                        _rule("source:one", "lookup", "allow"),
-                        _rule("source:two", "write", "ask"),
-                        _rule("source:three", "erase", "deny"),
-                    ),
-                },
-            )(),  # type: ignore[arg-type]
+            payload=ToolProfilePayload(
+                schema=TOOL_PROFILE_SCHEMA,
+                fallbacks=(
+                    PortableFallback("builtin", "agent:builtin", "deny"),
+                    PortableFallback("mcp", "*", "ask"),
+                    PortableFallback("mcp", "source:one", "ask"),
+                    PortableFallback("mcp", "source:three", "deny"),
+                    PortableFallback("mcp", "source:two", "ask"),
+                ),
+                tools=(
+                    _rule("source:one", "lookup", "allow"),
+                    _rule("source:three", "erase", "deny"),
+                    _rule("source:two", "write", "ask"),
+                ),
+            ),
         ),
         inventory_digest="4" * 64,
         excluded_counts=(("unsupported_authority", 2),),

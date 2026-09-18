@@ -1,5 +1,14 @@
 # Lessons: what counts as evidence a change works
 
+## A fake payload can preserve the same wrong contract as its consumer
+
+**TASK-32779, 2026-09-18.** Export-review tests invented `payload.rules`,
+matching the UI, while the real `ToolProfilePayload` exposes `tools`. A real
+service export crashed before filename selection despite passing policy-count
+tests. Construct the actual validated payload in presentation fixtures and
+retain at least one real capture → review → publication journey. Fixing only
+the fixture's field spelling would still leave its contract unvalidated.
+
 ## A reused widget ID cannot identify the action that was pressed
 
 **TASK-32778, 2026-09-18.** Holding a real Tool Profiles button event across
