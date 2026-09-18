@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+7.27s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-light]
+6.97s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]
+
+(4 durations < 1s hidden.)
+2 passed, 6 deselected in 15.90s

@@ -1,0 +1,202 @@
+[
+  {
+    "file": "textual-dark-170x48-catalog-refresh.svg",
+    "original_sha256": "564a001285aff65b9736f1b12422258ff2f0e19f3f9b7022e6213bc92bad81cc",
+    "stored_sha256": "3b1764ccc9c1e5158036382dff147949ce8b6314ea23c8649bc64d196fd490f7"
+  },
+  {
+    "file": "textual-dark-170x48-catalog-refresh.txt",
+    "original_sha256": "02d8b965e254508401813df9116aff274b632b444cfec5b1390a336df3229035",
+    "stored_sha256": "02d8b965e254508401813df9116aff274b632b444cfec5b1390a336df3229035"
+  },
+  {
+    "file": "textual-dark-170x48-empty-focus.svg",
+    "original_sha256": "f5244c1b21913e672fbf292fbd02a5f76c5cb000d1e5909f31f02180f408883d",
+    "stored_sha256": "06d40b91d6d2356680ccea499aaae7e264129eab55de7233f2bc67416537e5f6"
+  },
+  {
+    "file": "textual-dark-170x48-empty-focus.txt",
+    "original_sha256": "848f56dac8a137aaf4e2bff40d8e2d1a97b490c9588302ba779cc6d795237b24",
+    "stored_sha256": "848f56dac8a137aaf4e2bff40d8e2d1a97b490c9588302ba779cc6d795237b24"
+  },
+  {
+    "file": "textual-dark-170x48-open-refresh.svg",
+    "original_sha256": "5ec66e7eb5d44db4578bc04f6d06c7b2be5716b6431dd4a888b940c1f810d3eb",
+    "stored_sha256": "e26255b9cdbd4d79caf012178a0a7c5e7d7deae312816b97ff5637112dfcdce3"
+  },
+  {
+    "file": "textual-dark-170x48-open-refresh.txt",
+    "original_sha256": "047fe9233326e039485baffc04e8e64365bef78be5e4a1f06e08d854c8c1deed",
+    "stored_sha256": "047fe9233326e039485baffc04e8e64365bef78be5e4a1f06e08d854c8c1deed"
+  },
+  {
+    "file": "textual-dark-170x48-recovery-action.svg",
+    "original_sha256": "9cabdab885c0d119d907257645350bac68fcedaaf9a2295ec3da6782270b3916",
+    "stored_sha256": "baf8c10f77de2f798a7280a0e38bf9c7b4b11fbd60ca46ce489cc4d2435c7891"
+  },
+  {
+    "file": "textual-dark-170x48-recovery-action.txt",
+    "original_sha256": "b3f6a16aed39aeac0e2467c4f9b291b61b7d41e416dce2f63c095a014e3edbd0",
+    "stored_sha256": "b3f6a16aed39aeac0e2467c4f9b291b61b7d41e416dce2f63c095a014e3edbd0"
+  },
+  {
+    "file": "textual-dark-170x48-restored-focus.svg",
+    "original_sha256": "534ff96bd45cf5305caf6f253c0d069c37bc65b2ab0977cd0a000bc3a506cef2",
+    "stored_sha256": "c0465342aa0e6fd4f77187116436665c702c7fe2d4d8f5f774af15ad2fad8610"
+  },
+  {
+    "file": "textual-dark-170x48-restored-focus.txt",
+    "original_sha256": "290686912c04fc1b3044c1ea88d22679920f53513cd84fc6d0074e0a6c559885",
+    "stored_sha256": "290686912c04fc1b3044c1ea88d22679920f53513cd84fc6d0074e0a6c559885"
+  },
+  {
+    "file": "textual-dark-80x24-catalog-refresh.svg",
+    "original_sha256": "26e3e6b8a886a1755bbac348d2da5fa34884eb446a40c7e541a6a1d7c60bdb22",
+    "stored_sha256": "8eb35012535d993420abfd95f906e1937a316365af1b81eef9102c9ebe288a7c"
+  },
+  {
+    "file": "textual-dark-80x24-catalog-refresh.txt",
+    "original_sha256": "604dfd021d64dca4544fa77fa757769f7ac10c322d66ceef43a0c0c2f1c601ea",
+    "stored_sha256": "604dfd021d64dca4544fa77fa757769f7ac10c322d66ceef43a0c0c2f1c601ea"
+  },
+  {
+    "file": "textual-dark-80x24-empty-focus.svg",
+    "original_sha256": "2b1e378f601908d6040ad49d3bfc3aa2d1177654a4b22ea10cb6b8129d595642",
+    "stored_sha256": "695d1471cb3d4b0716c1404248fef3153fc2fe82fe780edb4334b03e7ed1718d"
+  },
+  {
+    "file": "textual-dark-80x24-empty-focus.txt",
+    "original_sha256": "0d72b9fa821298ecc0336ac71a3ee109c4abde4f3c78b6107bf2d18855167c64",
+    "stored_sha256": "0d72b9fa821298ecc0336ac71a3ee109c4abde4f3c78b6107bf2d18855167c64"
+  },
+  {
+    "file": "textual-dark-80x24-open-refresh.svg",
+    "original_sha256": "ef57de45d244042e1169ec1687edb82c0935f29e528e37b620bc4c0279ff4e73",
+    "stored_sha256": "d192f979caec7cf9512665b2112873ca12cd7be678e4d3b31ccc672cff38122c"
+  },
+  {
+    "file": "textual-dark-80x24-open-refresh.txt",
+    "original_sha256": "af141ec58ddfc97f68dd0f4c32ce333daa105df435dcf10315e25f33150cf4ec",
+    "stored_sha256": "af141ec58ddfc97f68dd0f4c32ce333daa105df435dcf10315e25f33150cf4ec"
+  },
+  {
+    "file": "textual-dark-80x24-recovery-action.svg",
+    "original_sha256": "5241da24bd5e792dcbcac3553c8dcfb4b3512908b3f05ec370df679d5d81a120",
+    "stored_sha256": "b0eb7e7631b8abf1c5b1ab46c2539b2f6f4c0ab0a762d1a09f5177a33a01dade"
+  },
+  {
+    "file": "textual-dark-80x24-recovery-action.txt",
+    "original_sha256": "b40ad8262ab623fb2e722b348ca312c9c605f5522b14c30f03e92e6afc158147",
+    "stored_sha256": "b40ad8262ab623fb2e722b348ca312c9c605f5522b14c30f03e92e6afc158147"
+  },
+  {
+    "file": "textual-dark-80x24-restored-focus.svg",
+    "original_sha256": "3bec6fbe168d6fa2927f015e4771022b2af4fec763702030826f587ce108b53c",
+    "stored_sha256": "4c6efb6da1dbd60b36029ba421c58310ad3873168de03199f2739d09b751a026"
+  },
+  {
+    "file": "textual-dark-80x24-restored-focus.txt",
+    "original_sha256": "717da7cc93c3e5ecc1af486e09f936530ab1aca9ea6d4b49ca4b83e4436b4a86",
+    "stored_sha256": "717da7cc93c3e5ecc1af486e09f936530ab1aca9ea6d4b49ca4b83e4436b4a86"
+  },
+  {
+    "file": "textual-light-170x48-catalog-refresh.svg",
+    "original_sha256": "37d7103461a98ddfe5f2f5c47db41aa76769bd5d114fcc88261a68d93532f7a4",
+    "stored_sha256": "80bd02d6f958cc0e23f1e4464398e6ea4fafdb9d9b8089265f167284019331d0"
+  },
+  {
+    "file": "textual-light-170x48-catalog-refresh.txt",
+    "original_sha256": "02d8b965e254508401813df9116aff274b632b444cfec5b1390a336df3229035",
+    "stored_sha256": "02d8b965e254508401813df9116aff274b632b444cfec5b1390a336df3229035"
+  },
+  {
+    "file": "textual-light-170x48-empty-focus.svg",
+    "original_sha256": "1327e72cd4cae45d4d58babd4cec1aeaa4a68375858f3f4ba7537bc60c9de359",
+    "stored_sha256": "15250ebda43f9d830fe70ddc24a83c3d5ffc5c84ee95d3b7643f67c9ffa68c58"
+  },
+  {
+    "file": "textual-light-170x48-empty-focus.txt",
+    "original_sha256": "848f56dac8a137aaf4e2bff40d8e2d1a97b490c9588302ba779cc6d795237b24",
+    "stored_sha256": "848f56dac8a137aaf4e2bff40d8e2d1a97b490c9588302ba779cc6d795237b24"
+  },
+  {
+    "file": "textual-light-170x48-open-refresh.svg",
+    "original_sha256": "db1a68e597482ef5616fdf9cc4f158d679b588441db8d31108e8f2e9916b91e7",
+    "stored_sha256": "bc00f3b9070b2700b1eebfcbb86671ac6d8ec0090d308e789962526ed767e9b7"
+  },
+  {
+    "file": "textual-light-170x48-open-refresh.txt",
+    "original_sha256": "3314677c08259fac36438928f2ed79b05da222c135800e2fad94aa2cf76164fe",
+    "stored_sha256": "3314677c08259fac36438928f2ed79b05da222c135800e2fad94aa2cf76164fe"
+  },
+  {
+    "file": "textual-light-170x48-recovery-action.svg",
+    "original_sha256": "744b6332e561fe09033d26f80d9538f86ccb28239db0d03a6b784c187a39b83f",
+    "stored_sha256": "62f08f6b416d7dc8036acb8bc43f0278f42d6d852fb4ad3a90c427250a9410e1"
+  },
+  {
+    "file": "textual-light-170x48-recovery-action.txt",
+    "original_sha256": "b3f6a16aed39aeac0e2467c4f9b291b61b7d41e416dce2f63c095a014e3edbd0",
+    "stored_sha256": "b3f6a16aed39aeac0e2467c4f9b291b61b7d41e416dce2f63c095a014e3edbd0"
+  },
+  {
+    "file": "textual-light-170x48-restored-focus.svg",
+    "original_sha256": "5cfe15fe5e9ab3c7010b149f9126ae083df8c8aa938a7d45c621798f9830b4cc",
+    "stored_sha256": "dd2c9f3a58dfc8dfe6daf47ac9a6af4a53f37cfe07681a5419437ef7683c1137"
+  },
+  {
+    "file": "textual-light-170x48-restored-focus.txt",
+    "original_sha256": "290686912c04fc1b3044c1ea88d22679920f53513cd84fc6d0074e0a6c559885",
+    "stored_sha256": "290686912c04fc1b3044c1ea88d22679920f53513cd84fc6d0074e0a6c559885"
+  },
+  {
+    "file": "textual-light-80x24-catalog-refresh.svg",
+    "original_sha256": "e4f49640ae07411464dd8ef933101e21b419e0a3306d68aea0d33936c22437f9",
+    "stored_sha256": "3efe194e2698ab76a76ea20ef9154aecfbf787f194c5876ea6d04d8fa0062367"
+  },
+  {
+    "file": "textual-light-80x24-catalog-refresh.txt",
+    "original_sha256": "a87e013ee0cc9d2130aa51aa111fa4c830177c2aaa319768799abdbfb17d3a81",
+    "stored_sha256": "a87e013ee0cc9d2130aa51aa111fa4c830177c2aaa319768799abdbfb17d3a81"
+  },
+  {
+    "file": "textual-light-80x24-empty-focus.svg",
+    "original_sha256": "cdae0620d5eb46755a0ba4f6331092a6a13c187f0336b32a2de55784103db9bd",
+    "stored_sha256": "89f3a9b89874489bf29f8acb29a40bb657b790fd7639a526dd8324cf012dd20d"
+  },
+  {
+    "file": "textual-light-80x24-empty-focus.txt",
+    "original_sha256": "43a8143fa1236b9a125529cc8685f61c203345b7102e0b1e94f151ddcdb1c9ea",
+    "stored_sha256": "43a8143fa1236b9a125529cc8685f61c203345b7102e0b1e94f151ddcdb1c9ea"
+  },
+  {
+    "file": "textual-light-80x24-open-refresh.svg",
+    "original_sha256": "deaf78e61f2778840dec11d37e615eec8d184ac3b55362e548a15215d40ea8c8",
+    "stored_sha256": "dae570ac5d3886669a53cf45e314b32c11a4f9ec66d8d89d8fe7a1e49e533935"
+  },
+  {
+    "file": "textual-light-80x24-open-refresh.txt",
+    "original_sha256": "32a1abd3d9aa1eaa914061501f01c9e05eb1cafd71b4f5cc800bcbb4f0d51cac",
+    "stored_sha256": "32a1abd3d9aa1eaa914061501f01c9e05eb1cafd71b4f5cc800bcbb4f0d51cac"
+  },
+  {
+    "file": "textual-light-80x24-recovery-action.svg",
+    "original_sha256": "a40e68b6c07ae183fcc1e313915ce1fa191b10513a0b8a7389007b38e05f05b0",
+    "stored_sha256": "d5a1e746f2506b24a313ed4fef2eba58f445f944250ad49c500f57948e404a63"
+  },
+  {
+    "file": "textual-light-80x24-recovery-action.txt",
+    "original_sha256": "377ff7bb7ed50bd61f3ce28eec5381ea22e3d3d16507f969c29e6332eed7adf9",
+    "stored_sha256": "377ff7bb7ed50bd61f3ce28eec5381ea22e3d3d16507f969c29e6332eed7adf9"
+  },
+  {
+    "file": "textual-light-80x24-restored-focus.svg",
+    "original_sha256": "eb808d589b15a9fca578b53f6a4d2f6cd95dab932f95a025ee42644046e86820",
+    "stored_sha256": "05ea00c1e325f047000fb7c2f17ce5abc86a82779df25832605beb44d7f36e4e"
+  },
+  {
+    "file": "textual-light-80x24-restored-focus.txt",
+    "original_sha256": "242c1903594d53e08cef03bc7ccd15083cfcaf49e4e7a7c601365bb5d1655b4a",
+    "stored_sha256": "242c1903594d53e08cef03bc7ccd15083cfcaf49e4e7a7c601365bb5d1655b4a"
+  }
+]

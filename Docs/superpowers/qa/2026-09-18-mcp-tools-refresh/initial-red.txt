@@ -1,0 +1,104 @@
+FFFFFFFFFFF.F                                                            [100%]
+=================================== FAILURES ===================================
+_ test_refresh_retains_open_filter_and_uncommitted_highlight[textual-dark-size0-False] _
+Tests/UI/test_mcp_tools_mode.py:1141: in test_refresh_retains_open_filter_and_uncommitted_highlight
+    assert select.is_attached and select.expanded
+E   AssertionError: assert (False)
+E    +  where False = Select(id='mcp-tools-filter-server', classes='-expanded').is_attached
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 08:41:42.829 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-18 08:41:42.862 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8bdsdt1t/config/config.toml
+2026-09-18 08:41:42.862 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6158 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8bdsdt1t/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-18 08:41:42.863 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6167 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8bdsdt1t/config/config.toml
+2026-09-18 08:41:42.863 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6234 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-18 08:41:42.864 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-18 08:41:42.869 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 08:41:42.869 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 08:41:42.870 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 08:41:42.870 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 08:41:42.890 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8bdsdt1t/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 08:41:42.890 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 08:41:42.890 | INFO     | tldw_chatbook.config:<module>:9748 - Default API Endpoint (from config.py global scope): openai
+2026-09-18 08:41:42.891 | DEBUG    | tldw_chatbook.config:<module>:9771 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-18 08:41:42.969 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 08:41:42.993 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 08:41:43.058 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 08:41:43.107 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 08:41:43.107 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 08:41:43.108 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 08:41:43.212 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 08:41:43.496 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+_ test_refresh_retains_open_filter_and_uncommitted_highlight[textual-dark-size0-True] _
+Tests/UI/test_mcp_tools_mode.py:1141: in test_refresh_retains_open_filter_and_uncommitted_highlight
+    assert select.is_attached and select.expanded
+E   AssertionError: assert (False)
+E    +  where False = Select(id='mcp-tools-filter-server', classes='-expanded').is_attached
+_ test_refresh_retains_open_filter_and_uncommitted_highlight[textual-light-size1-False] _
+Tests/UI/test_mcp_tools_mode.py:1141: in test_refresh_retains_open_filter_and_uncommitted_highlight
+    assert select.is_attached and select.expanded
+E   AssertionError: assert (False)
+E    +  where False = Select(id='mcp-tools-filter-server', classes='-expanded').is_attached
+_ test_refresh_retains_open_filter_and_uncommitted_highlight[textual-light-size1-True] _
+Tests/UI/test_mcp_tools_mode.py:1141: in test_refresh_retains_open_filter_and_uncommitted_highlight
+    assert select.is_attached and select.expanded
+E   AssertionError: assert (False)
+E    +  where False = Select(id='mcp-tools-filter-server', classes='-expanded').is_attached
+_ test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[same] __
+Tests/UI/test_mcp_tools_mode.py:1168: in test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event
+    assert len(held) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+_ test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[remove] _
+Tests/UI/test_mcp_tools_mode.py:1168: in test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event
+    assert len(held) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+_ test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[rename] _
+Tests/UI/test_mcp_tools_mode.py:1168: in test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event
+    assert len(held) == 1
+E   assert 0 == 1
+E    +  where 0 = len([])
+____________ test_filter_ignores_detached_control_with_matching_id _____________
+Tests/UI/test_mcp_tools_mode.py:1201: in test_filter_ignores_detached_control_with_matching_id
+    assert canvas.query_one(DataTable).row_count == 3
+E   AssertionError: assert 1 == 3
+E    +  where 1 = MCPToolsTable(id='mcp-tools-table').row_count
+E    +    where MCPToolsTable(id='mcp-tools-table') = query_one(DataTable)
+E    +      where query_one = MCPToolsMode(id='mcp-mode-canvas-tools').query_one
+___ test_catalog_visibility_keeps_focus_on_a_reachable_control[table_empty] ____
+Tests/UI/test_mcp_tools_mode.py:1223: in test_catalog_visibility_keeps_focus_on_a_reachable_control
+    assert app.focused is (owner if transition == 'other_owner' else field)
+E   AssertionError: assert None is Input(id='mcp-tools-filter-text')
+E    +  where None = ToolsModeBundledCSSApp(title='ToolsModeBundledCSSApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'}).focused
+_ test_catalog_visibility_keeps_focus_on_a_reachable_control[action_populated] _
+Tests/UI/test_mcp_tools_mode.py:1223: in test_catalog_visibility_keeps_focus_on_a_reachable_control
+    assert app.focused is (owner if transition == 'other_owner' else field)
+E   AssertionError: assert None is Input(id='mcp-tools-filter-text')
+E    +  where None = ToolsModeBundledCSSApp(title='ToolsModeBundledCSSApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'}).focused
+__ test_catalog_visibility_keeps_focus_on_a_reachable_control[action_hidden] ___
+Tests/UI/test_mcp_tools_mode.py:1223: in test_catalog_visibility_keeps_focus_on_a_reachable_control
+    assert app.focused is (owner if transition == 'other_owner' else field)
+E   AssertionError: assert None is Input(id='mcp-tools-filter-text')
+E    +  where None = ToolsModeBundledCSSApp(title='ToolsModeBundledCSSApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'}).focused
+________ test_closed_filter_text_draft_and_row_identity_survive_refresh ________
+Tests/UI/test_mcp_tools_mode.py:1250: in test_closed_filter_text_draft_and_row_identity_survive_refresh
+    assert app.focused is select
+E   AssertionError: assert Input(id='mcp-tools-filter-text', classes='-valid') is Select(id='mcp-tools-filter-server')
+E    +  where Input(id='mcp-tools-filter-text', classes='-valid') = ToolsModeBundledCSSApp(title='ToolsModeBundledCSSApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'}).focused
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_tools_mode.py::test_refresh_retains_open_filter_and_uncommitted_highlight[textual-dark-size0-False]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_refresh_retains_open_filter_and_uncommitted_highlight[textual-dark-size0-True]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_refresh_retains_open_filter_and_uncommitted_highlight[textual-light-size1-False]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_refresh_retains_open_filter_and_uncommitted_highlight[textual-light-size1-True]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[same]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[remove]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event[rename]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_filter_ignores_detached_control_with_matching_id
+FAILED Tests/UI/test_mcp_tools_mode.py::test_catalog_visibility_keeps_focus_on_a_reachable_control[table_empty]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_catalog_visibility_keeps_focus_on_a_reachable_control[action_populated]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_catalog_visibility_keeps_focus_on_a_reachable_control[action_hidden]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_closed_filter_text_draft_and_row_identity_survive_refresh
+12 failed, 1 passed, 36 deselected in 5.33s

@@ -19,9 +19,10 @@ from typing import Any
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.events import DescendantFocus, Resize
+from textual.events import Click, DescendantFocus, Resize
 from textual.message import Message
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, OptionList, Select, Static
+from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
@@ -64,20 +65,6 @@ _EMPTY_ACTION_TOOLTIPS: dict[str, str] = {
     "connect": "Go to Servers mode to connect or refresh its tools.",
     "refresh": "Go to Servers mode to connect or refresh its tools.",
 }
-
-# One-shot mount-echo consumption sentinel -- mirrors mcp_rail.py's
-# `_ECHO_CONSUMED`. Textual 8.2.7 posts a `Select.Changed` for a freshly
-# mounted Select's own constructor value as part of mounting it; the filter
-# Select is rebuilt (remove + mount, not `set_options()`) every
-# `update_tools()` call, so this echo would otherwise re-trigger
-# `_apply_filter()` on every background resync even when the user never
-# touched the control. `on_select_changed()` compares the incoming event
-# against the value the Select was actually (re)mounted with
-# (`_displayed_server_value`) to swallow exactly that one echo -- once
-# consumed, the sentinel flips to this unique object so a later REAL user
-# selection landing back on the same value is never mistaken for a second
-# echo.
-_ECHO_CONSUMED = object()
 
 # task-32286: the master control's title text, reused by the toggle Button's
 # label (see `_local_tools_toggle_label()`) so the two never drift apart.
@@ -126,6 +113,47 @@ def _ellipsize(text: str, budget: int) -> str:
     # version -- read .plain back off the object.
     rendered.truncate(budget, overflow="ellipsis", pad=False)
     return rendered.plain
+
+
+class _MCPToolsServerOverlay(SelectOverlay):
+    """Commit menu activation before queued indices can outlive the options."""
+
+    def post_message(self, message: Message) -> bool:
+        if isinstance(message, Click):
+            index = message.style.meta.get("option")
+            if isinstance(index, int):
+                # Pointer style metadata also carries an index. Apply the
+                # stock click action at admission, before it can queue across
+                # an option replacement (including removal of the last row).
+                if (
+                    0 <= index < len(self._options)
+                    and not self._options[index].disabled
+                ):
+                    self.highlighted = index
+                    self.action_select()
+                return True
+        if (
+            isinstance(message, OptionList.OptionSelected)
+            and message.option_list is self
+        ):
+            select = self.parent
+            if isinstance(select, MCPToolsServerSelect) and self.is_attached:
+                # Textual normally queues OptionSelected, then UpdateSelection.
+                # Both carry indices. Admit this real gesture synchronously so
+                # set_options cannot reinterpret it between either queue stage.
+                select._update_selection(self.UpdateSelection(message.option_index))
+            return True
+        return super().post_message(message)
+
+
+class MCPToolsServerSelect(Select):
+    """A catalog filter whose committed choice survives background refresh."""
+
+    def compose(self) -> ComposeResult:
+        yield SelectCurrent(self.prompt)
+        yield _MCPToolsServerOverlay(type_to_search=self._type_to_search).data_bind(
+            compact=Select.compact
+        )
 
 
 class MCPToolsTable(DataTable):
@@ -267,8 +295,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         # text/server filter narrows the visible rows to a tagless subset.
         self._has_tags: bool = False
         self._tool_column_width: int | None = None
-        # Mount-echo guard state for the filter Select -- see _ECHO_CONSUMED.
-        self._displayed_server_value: Any = Select.NULL
+        self._server_filter_options: list[tuple[str, str]] = []
         # task-32286: the last `enabled` value `update_local_config()` was
         # given -- the toggle Button posts the OPPOSITE of this on press
         # (mirrors `mcp_servers_mode._tool_gates_by_id`'s same read-not-
@@ -337,11 +364,10 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             )
         with Horizontal(id="mcp-tools-filter-bar", classes="ds-toolbar"):
             yield Input(placeholder="Filter tools…", id="mcp-tools-filter-text")
-            # The filter Select is mounted dynamically (see
-            # `_rebuild_server_select()`) -- its option list depends on the
-            # servers actually present in the last `update_tools()` call,
-            # which compose() (run once, at construction time) can't know.
-            yield Vertical(id="mcp-tools-filter-server-slot")
+            with Vertical(id="mcp-tools-filter-server-slot"):
+                yield MCPToolsServerSelect(
+                    [], id="mcp-tools-filter-server", prompt="All servers"
+                )
         table = MCPToolsTable(id="mcp-tools-table")
         table.cursor_type = "row"
         yield table
@@ -357,7 +383,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-tools-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
-        await self._rebuild_server_select()
+        await self._sync_server_select()
         self._apply_filter()
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
@@ -420,10 +446,27 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         focused = self.app.focused
         if focused is not None and self in focused.ancestors:
             focused.scroll_visible(animate=False, immediate=True)
+            if focused.id == "mcp-tools-empty-action":
+                # The recovery callout has nested padding/borders. Measure the
+                # action in this scroll viewport: ancestor-relative scrolling
+                # can leave it just below the compact canvas's bottom edge.
+                self.scroll_to_region(
+                    focused.region.translate(
+                        self.scroll_offset - self.content_region.offset
+                    ),
+                    animate=False,
+                    immediate=True,
+                )
             if isinstance(focused, DataTable) and focused.row_count:
                 focused._scroll_cursor_into_view(animate=False)
 
     # -- data ---------------------------------------------------------------
+
+    def _read_filter_controls(self) -> None:
+        """Read drafts that may be newer than their queued Changed messages."""
+        self._filter_text = self.query_one("#mcp-tools-filter-text", Input).value
+        value = self.query_one("#mcp-tools-filter-server", Select).value
+        self._filter_server_key = None if value is Select.NULL else str(value)
 
     async def update_tools(
         self,
@@ -457,12 +500,13 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                 server. Its group is ordered first (see `_apply_filter()`);
                 `None` ("All servers") keeps the plain label order.
         """
+        self._read_filter_controls()
         self._tools = list(tools)
         self._states = dict(states) if states else {}
         self._selected_server_key = selected_server_key
         self._empty_diagnosis = empty_diagnosis
         self._has_tags = any(tool.tags for tool in self._tools)
-        await self._rebuild_server_select()
+        await self._sync_server_select()
         self._apply_filter()
 
     async def focus_server(self, server_key: str | None) -> None:
@@ -472,14 +516,14 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         lands here, so the tools of the server the user drilled from are
         the whole visible table rather than a screenful of some other
         server's. A `server_key` with no tools in the current catalog falls
-        back to "All servers" (`_rebuild_server_select()`'s own dangling-
+        back to "All servers" (`_sync_server_select()`'s own dangling-
         filter guard).
 
         Args:
             server_key: The server to scope to, or `None` for all servers.
         """
         self._filter_server_key = server_key
-        await self._rebuild_server_select()
+        await self._sync_server_select()
         self._apply_filter()
 
     def update_local_config(
@@ -637,8 +681,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         that. This narrow setter lets those handlers hand that SAME dict to
         this widget too, so its State column reflects the mutation without
         the caller needing a second `effective_tool_states()` call, a
-        governance fetch, or a full `update_tools()` rebuild (which would
-        also remount the filter Select).
+        governance fetch, or a full `update_tools()` catalog refresh.
         """
         self._states = dict(states) if states else {}
         self._apply_filter()
@@ -659,6 +702,8 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         """
         if not any(tool.tool_id == tool_id for tool in self._tools):
             return False
+        self._read_filter_controls()
+        self._apply_filter()
         table = self.query_one("#mcp-tools-table", DataTable)
         try:
             table.get_row_index(tool_id)
@@ -696,50 +741,35 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             key=lambda pair: pair[0],
         )
 
-    async def _rebuild_server_select(self) -> None:
-        """Remount `#mcp-tools-filter-server` with the current server list.
-
-        Remove + mount (not `Select.set_options()`) into a dedicated slot
-        container, mirroring the awaited remove-then-mount discipline used
-        throughout this canvas family (`MCPServersMode._rebuild_detail_
-        toolbar()`, `MCPRail`'s per-compose() scope selects) -- simpler to
-        reason about here than `set_options()`'s own selection-reset
-        semantics, and it reuses the exact mount-echo guard pattern
-        `MCPRail` already established for this Textual version.
-        """
+    async def _sync_server_select(self) -> None:
+        """Reconcile options without replacing the live filter or its open menu."""
         options = self._server_options()
         valid_keys = {key for _, key in options}
         if self._filter_server_key not in valid_keys:
-            # The previously filtered server is no longer in the catalog
-            # (disconnected, deleted) -- fall back to "All servers" rather
-            # than keep a dangling filter that would raise
-            # InvalidSelectValueError when the Select is constructed below.
             self._filter_server_key = None
-        value: Any = (
-            self._filter_server_key
-            if self._filter_server_key is not None
+        value = self._filter_server_key or Select.NULL
+        select = self.query_one("#mcp-tools-filter-server", Select)
+        overlay = select.query_one(SelectOverlay)
+        old_values = [Select.NULL, *(key for _, key in self._server_filter_options)]
+        highlighted = overlay.highlighted
+        highlighted_value = (
+            old_values[highlighted]
+            if highlighted is not None and 0 <= highlighted < len(old_values)
             else Select.NULL
         )
-        # Select's `value` is a `var` with `init=False` -- mounting it only
-        # actually FIRES a `Changed` echo when the constructor value differs
-        # from the var's own default (`Select.NULL`); constructing with
-        # `Select.NULL` itself (the common "All servers" case) is a no-op
-        # assignment that never echoes at all. Arming the one-shot guard
-        # with `Select.NULL` in that case would leave it loaded forever,
-        # ready to wrongly swallow the next REAL user selection back to "All
-        # servers" (there is no second, later mount to re-arm it) -- so only
-        # arm the guard when an echo is actually coming; otherwise mark it
-        # pre-consumed.
-        self._displayed_server_value = (
-            value if value is not Select.NULL else _ECHO_CONSUMED
-        )
-        slot = self.query_one("#mcp-tools-filter-server-slot", Vertical)
-        await slot.remove_children()
-        await slot.mount(
-            Select(
-                options, id="mcp-tools-filter-server", prompt="All servers", value=value
+        options_changed = options != self._server_filter_options
+        with select.prevent(Select.Changed):
+            if options_changed:
+                select.set_options(options)
+                self._server_filter_options = options
+            select.value = value
+        if options_changed and select.expanded:
+            # Labels can reorder while the user has highlighted (but has not
+            # committed) a choice. Preserve identity, not the old row number.
+            values = [Select.NULL, *(key for _, key in options)]
+            overlay.select(
+                values.index(highlighted_value) if highlighted_value in values else 0
             )
-        )
 
     def _apply_filter(self) -> None:
         """Re-render the DataTable from `self._tools` under the current
@@ -840,11 +870,19 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             else:
                 table.move_cursor(row=cursor_row)
         has_any_tools = bool(self._tools)
+        if not has_any_tools and self.app.focused is table:
+            self.screen.set_focus(self.query_one("#mcp-tools-filter-text", Input))
         table.display = has_any_tools
         self._update_empty_state(show=not has_any_tools)
 
     def _update_empty_state(self, *, show: bool) -> None:
         container = self.query_one("#mcp-tools-empty", Vertical)
+        button = self.query_one("#mcp-tools-empty-action", Button)
+        has_action = self._empty_diagnosis is not None and bool(
+            self._empty_diagnosis[1]
+        )
+        if self.app.focused is button and (not show or not has_action):
+            self.screen.set_focus(self.query_one("#mcp-tools-filter-text", Input))
         container.display = show
         if not show:
             return
@@ -854,7 +892,6 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             message, action_key = "No tools available.", None
         self._empty_action_key = action_key
         self.query_one("#mcp-tools-empty-message", Static).update(message)
-        button = self.query_one("#mcp-tools-empty-action", Button)
         if action_key is None:
             button.display = False
             # Hidden (no action to take), but still audited by
@@ -882,6 +919,9 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         if event.input.id != "mcp-tools-filter-text":
             return
         event.stop()
+        current = self.query_one("#mcp-tools-filter-text", Input)
+        if event.input is not current or event.value != current.value:
+            return
         self._filter_text = event.value
         self._apply_filter()
 
@@ -889,11 +929,12 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         if event.select.id != "mcp-tools-filter-server":
             return
         event.stop()
-        if (
-            event.value == self._displayed_server_value
-            and self._displayed_server_value is not _ECHO_CONSUMED
-        ):
-            self._displayed_server_value = _ECHO_CONSUMED
+        current = self.query_one("#mcp-tools-filter-server", Select)
+        if event.select is not current or event.value != current.value:
+            return
+        if event.value is not Select.NULL and event.value not in {
+            key for _, key in self._server_filter_options
+        }:
             return
         self._filter_server_key = (
             None if event.value is Select.NULL else str(event.value)

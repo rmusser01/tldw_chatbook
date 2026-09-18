@@ -15893,3 +15893,18 @@ requested Off. The same poll refreshed root input before Input.Changed and erase
 its newest edit. Synchronous canvas admission, activation-time target/config
 capture, and master-only projection fixed both mounted reproductions. Queue
 ownership starts after admission; test the event boundary before it as well.
+
+
+## A retained Select still has queued index-based activation stages
+
+**TASK-32794, 2026-09-18.** Keeping MCP Tools' server Select mounted repaired
+focus loss but exposed three earlier queues: pointer Click, OptionSelected, and
+SelectOverlay.UpdateSelection each carried an index from older options. A held
+real B activation followed by label reorder selected A; removing C instead raised
+IndexError. Guarding the final Changed message could not prevent either failure.
+The local overlay now admits pointer/keyboard activation synchronously before
+those indices can queue across option replacement. Tests delay actual message
+queues and retain native inputs; bypassing the production post_message boundary
+would bypass the fix and test a different path. The same task's native compact
+run found a focused recovery button below a padded callout; full-app compositor
+paint assertions caught what focus identity alone missed.

@@ -13,14 +13,18 @@ Token migration alone does not qualify a complete workflow.
 | Tools name/state readability and identity | TASK-32790, [88 final targeted cases and native gallery](../qa/2026-09-18-mcp-tools-readability/README.md) | Complete names and State together, metadata reachable, identity retained through resize/filter/refresh, independent Enter and short/long scrollbar transitions; no tool execution |
 | Root drafts, ordered saves and truthful scope | TASK-32791, [targeted checks and ten native captures](../qa/2026-09-18-mcp-root-settings/README.md) | Exact draft ownership, app lifetime/shutdown, cache warnings and later config/external-file supersession; original Permissions resize failure retained and repaired below |
 | Permissions final viewport and selected-row continuity | TASK-32792, [targeted checks and twelve native captures](../qa/2026-09-18-mcp-permission-reflow/README.md) | Child width/height reflow, full Tool/State paint, selected row/focus/filter retention and fresh-context Enter; no policy changes or tool execution |
-
 | Shared local-tools master controls | TASK-32793, [177 distinct targeted cases and sixteen native captures](../qa/2026-09-18-mcp-master-settings/README.md) | Ordered saves across both entry points, activation/config identity, pending refresh/recreation, truthful partial receipts and shutdown; no runtime authority changes |
+
+| Tools filter and focus continuity | TASK-32794, [127 distinct targeted cases and native gallery](../qa/2026-09-18-mcp-tools-refresh/README.md) | Open menu/highlight, real pointer/keyboard admission, delayed filter/drill ordering, empty/recovery focus; controlled empty projection, no connected-server or execution qualification |
 
 ## Remaining review
 
-- **Tools refresh and execution:** retained selection/filter drafts across
-  background refresh, diagnostic empty-state actions, disconnected/stale tools,
-  schema forms/raw arguments, test execution and inspector recovery.
+- **MCP startup/lifetime CI:** b46319eb17 PR Fast Lane failed the Workbench
+  initial-rail-row test, then teardown hit NoMatches in the master-save status
+  timer. [Run](https://github.com/rmusser01/tldw_chatbook/actions/runs/35363152779).
+- **Inspector refresh and execution:** selected tool definition/currentness,
+  argument drafts across background refresh, diagnostic empty-state action routing,
+  disconnected/stale tools, schema/raw arguments, execution and inspector recovery.
 - **Servers:** source transitions, add/edit/remove and connection lifecycles,
   built-in enable/expose controls, errors and recovery. Compact non-master gate
   labels still clip (visible in TASK-32793 captures).
