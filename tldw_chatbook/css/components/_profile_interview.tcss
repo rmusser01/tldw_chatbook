@@ -81,6 +81,17 @@ PersonalContextLinkModal {
     padding: $ds-space-0 $ds-space-1;
 }
 
+/* Keep the current question beside the focused answer at 80x24. These
+   disclosures remain visible without spending a blank row after each one. */
+#profile-interview-shell .profile-interview-disclosure,
+#profile-interview-shell .profile-interview-state,
+#profile-interview-shell .profile-interview-progress,
+#profile-interview-question,
+#profile-interview-answer,
+#profile-interview-error {
+    margin-bottom: $ds-space-0;
+}
+
 #profile-interview-body,
 #personal-context-review-list,
 #personal-context-link-review-list {
@@ -137,6 +148,17 @@ PersonalContextLinkModal {
     border-left: thick $accent;
     background: $accent 10%;
     text-style: bold;
+}
+
+/* The global outline paints over the first input row, where Input renders
+   its value. Use the token focus surface and side edge without covering it. */
+#profile-interview-answer:focus,
+PersonalContextReviewModal .personal-context-review-row Input:focus {
+    outline: none;
+    border: none;
+    border-left: solid $ds-input-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
 }
 
 .profile-interview-actions {
