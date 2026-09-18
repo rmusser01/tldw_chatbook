@@ -812,6 +812,12 @@ Button.settings-category-group-toggle:focus {
     height: auto;
 }
 
+/* Workspace rows share the detail pane scroll owner; keep every row inside
+   the list's bounds so keyboard focus can reveal it beside a tall card. */
+#settings-workspaces-list {
+    height: auto;
+}
+
 .settings-workbench-compact #settings-overview-primary .settings-action-row {
     layout: vertical;
     height: auto;

@@ -1,0 +1,310 @@
+F
+=================================== FAILURES ===================================
+__ test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark] __
+
+self = <Coroutine test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]>...ns_keep_feedb0'), 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x111b1e0f0>, 'theme': 'textual-dark', ...}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1648/test_folder_actions_keep_feedb0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __ test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark] __
+E
+E           request = <FixtureRequest for <Coroutine test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1648/test_folder_actions_keep_feedb0/private-profile-process/pytest/test_folder_actions_keep_feedb0')
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111b223f0>
+E           theme = 'textual-dark', size = (80, 24)
+E
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+E               @pytest.mark.timeout(180)
+E               @private_profile_test
+E               async def test_folder_actions_keep_feedback_and_recovery_visible(
+E                   request, tmp_path, monkeypatch, theme, size
+E               ):
+E                   app = _build_test_app()
+E                   registry = app.workspace_registry_service
+E                   registry.create_workspace(workspace_id="ws-folders", name="Research project")
+E                   registry.create_workspace(workspace_id="ws-other", name="Other project")
+E                   folder = tmp_path / "project"
+E                   folder.mkdir()
+E                   host = _StyledDestinationHarness(app, "settings")
+E                   host.theme = theme
+E
+E                   async def focus(selector):
+E                       widget = host.screen.query_one(selector)
+E                       widget.focus()
+E                       # focus() is queued on the app; let it admit scrolling before waiting.
+E                       await pilot.pause()
+E                       await _settle(host, pilot)
+E                       _assert_painted(host.screen, widget)
+E                       return widget
+E
+E                   async def press(selector):
+E                       control = await focus(selector)
+E                       if isinstance(control, Button):
+E                           assert str(control.label) in _painted(host, control)
+E                       await pilot.press("enter")
+E                       await _settle(host, pilot)
+E
+E                   async def path(value):
+E                       field = await focus("#settings-workspace-folder-path")
+E                       await pilot.press("home", "shift+end", "backspace", *value)
+E                       await _settle(host, pilot)
+E                       assert field.value == value
+E                       await pilot.press("tab")
+E                       await _settle(host, pilot)
+E                       assert host.focused.id == "settings-workspace-folder-add"
+E                       await pilot.press("enter")
+E                       await _settle(host, pilot)
+E
+E                   async def feedback(needle):
+E                       for _ in range(100):
+E                           await pilot.pause(0.03)
+E                           if not host.screen._category_pane_swap_pending and any(
+E                               needle in str(item.renderable) for item in host.screen.query(Static)
+E                           ):
+E                               break
+E                       await _settle(host, pilot)
+E                       results = [
+E                           item for item in host.screen.query(Static) if needle in str(item.renderable)
+E                       ]
+E                       assert len(results) == 1
+E                       result = results[0]
+E                       _assert_painted(host.screen, result)
+E                       assert " ".join(str(result.renderable).split()) in " ".join(
+E                           _painted(host, result).split()
+E                       )
+E                       _assert_painted(host.screen, host.focused)
+E
+E                   async with host.run_test(size=size) as pilot:
+E                       await _category(host, pilot, "Workspaces")
+E                       await press("#settings-workspace-row-ws-folders")
+E                       assert not host.screen.query("#settings-save-category")
+E                       await path("/missing-workspace-folder")
+E                       await feedback("not a directory")
+E                       assert (
+E                           host.screen.query_one("#settings-workspace-folder-path", Input).value
+E                           == "/missing-workspace-folder"
+E                       )
+E                       assert registry.list_folder_bindings("ws-folders") == ()
+E
+E                       original_add = registry.add_folder_binding
+E                       with monkeypatch.context() as patch:
+E
+E                           def refuse(*args, **kwargs):
+E                               raise WorkspaceRegistryServiceError(
+E                                   "Folder add refused. Retry Add folder."
+E                               )
+E
+E                           patch.setattr(registry, "add_folder_binding", refuse)
+E                           await path(str(folder))
+E                           await feedback("Folder add refused")
+E                           assert host.screen.query_one(
+E                               "#settings-workspace-folder-path", Input
+E                           ).value == str(folder)
+E                           assert registry.list_folder_bindings("ws-folders") == ()
+E                       assert registry.add_folder_binding == original_add
+E                       await press("#settings-workspace-folder-add")
+E                       assert host.focused.id == "settings-workspace-folder-add"
+E                       await feedback("Folder added (read-only).")
+E                       (binding,) = registry.list_folder_bindings("ws-folders")
+E                       assert binding.locator == str(folder.resolve())
+E                       assert binding.metadata["access"] == "ro"
+E                       assert host.focused.id == "settings-workspace-folder-add"
+E                       toggle = f"#settings-workspace-folder-toggle-{binding.binding_id}"
+E
+E                       with monkeypatch.context() as patch:
+E
+E                           def refuse(*args, **kwargs):
+E                               raise WorkspaceRegistryServiceError("Access change refused. Retry.")
+E
+E                           patch.setattr(registry, "set_folder_binding_access", refuse)
+E                           await press(toggle)
+E                           await feedback("Access change refused")
+E                           assert (
+E                               registry.list_folder_bindings("ws-folders")[0].metadata["access"]
+E                               == "ro"
+E                           )
+E                       await press(toggle)
+E                       await feedback("Folder access: read-write.")
+E                       assert registry.list_folder_bindings("ws-folders")[0].metadata["access"] == "rw"
+E                       assert host.focused.id == toggle[1:]
+E                       await press(toggle)
+E                       await feedback("Folder access: read-only.")
+E                       assert registry.list_folder_bindings("ws-folders")[0].metadata["access"] == "ro"
+E
+E           >           await press("#settings-workspace-row-ws-other")
+E
+E           Tests/UI/test_settings_workspace_folder_journeys.py:134:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           Tests/UI/test_settings_workspace_folder_journeys.py:41: in press
+E               control = await focus(selector)
+E                         ^^^^^^^^^^^^^^^^^^^^^
+E           Tests/UI/test_settings_workspace_folder_journeys.py:37: in focus
+E               _assert_painted(host.screen, widget)
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           screen = SettingsScreen(classes='shell-header-compact')
+E           widget = Button(id='settings-workspace-row-ws-other', classes='settings-workspace-row -style-default -textual-compact')
+E
+E               def _assert_painted(screen, widget):
+E                   """Require the whole control inside its compositor clip, not just the DOM."""
+E                   geometry = screen._compositor.visible_widgets.get(widget)
+E           >       assert geometry is not None, (widget.id, widget.region)
+E           E       AssertionError: ('settings-workspace-row-ws-other', Region(x=39, y=3, width=27, height=1))
+E           E       assert None is not None
+E
+E           Tests/UI/test_library_rag_result_focus.py:25: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-17 21:20:21.917 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-17 21:20:21.922 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-17 21:20:21.923 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-17 21:20:21.923 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-17 21:20:22.005 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-17 21:20:22.028 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-17 21:20:22.028 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-17 21:20:22.029 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-17 21:20:22.029 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-17 21:20:22.099 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1648/test_folder_actions_keep_feedb0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 21:20:22.161 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jcz8k2_y/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 21:20:22.331 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jcz8k2_y/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 21:20:22.346 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 21:20:22.346 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jcz8k2_y/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 21:20:22.347 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jcz8k2_y/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-17 21:20:22.482 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-17 21:20:22.518 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-17 21:20:22.558 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-17 21:20:22.600 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-17 21:20:22.640 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-17 21:20:22.676 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-17 21:20:22.676 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jcz8k2_y/scheduled_tasks.sqlite [Client: default]
+E           2026-09-17 21:20:22.725 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-17 21:20:22.725 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-17 21:20:22.734 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-17 21:20:22.814 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-17 21:20:22.815 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1648/test_folder_actions_keep_feedb0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-17 21:20:22.815 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-17 21:20:22.885 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-17 21:20:22.885 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E           2026-09-17 21:20:22.886 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E           2026-09-17 21:20:22.886 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.953 seconds
+E           2026-09-17 21:20:22.886 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.093s (9.8%)
+E           2026-09-17 21:20:22.887 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E           2026-09-17 21:20:22.887 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.001s (0.1%)
+E           2026-09-17 21:20:22.887 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-17 21:20:22.887 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-17 21:20:22.888 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-17 21:20:22.888 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-17 21:20:22.888 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E           2026-09-17 21:20:23.123 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-17 21:20:23.225 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-17 21:20:44.336 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           22.41s call     Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]
+E           1 failed in 24.22s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 21:20:20.132 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 21:20:20.137 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 21:20:20.138 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 21:20:20.138 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+25.11s call     Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 27.00s

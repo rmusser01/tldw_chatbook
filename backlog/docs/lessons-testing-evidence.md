@@ -15698,3 +15698,16 @@ and hid the messages. Compositor assertions with the production ancestor now
 check both message glyphs and particles in unused space. Preserve a populated
 fixture and inspect actual output when qualifying decoration; lifecycle state
 alone can pass while the intended visual is absent or hides useful content.
+
+## Restore focus on the replacement after a pane rebuild
+
+**TASK-32768, 2026-09-17.** Folder-removal matrix tests initially passed after
+calling the old Add button's `focus()` before rebuilding Settings. Native run002
+painted the replacement button while `app.focused` still referred to the old one;
+Ctrl+Q did not route until a mouse click focused a live control. Textual queues
+focus through the app, and a request admitted during pruning can outlive its
+widget. Querying and focusing Add after pane replacement repaired the race.
+The regression delays an old-control focus request until after replacement and
+checks current widget identity, attachment, paint and real Tab traversal. Native
+run003 then completed all four size/theme cells and quit normally. A matching
+control ID alone is not proof that focus belongs to the mounted control.

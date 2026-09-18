@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │ │ Research projec      Rename      │  │
+│     Privacy & Security       │  │  │ │    Set active                      │▄ │
+│     Network                  │  │  │ │     Archive                        │  │
+│     My Profile               │  │  │ │                                    │  │
+│  Troubleshooting           ▇ │  │  │ │  Folders (agent file-tool access)  │  │
+│     Diagnostics (view)       │  │  │ │ │ rkspace-folder     Add folder    │  │
+│     About (view)             │  │  │ │  Folder does not exist or is not   │  │
+│     Agents                   │  │  │ │  a directory:                      │  │
+│  Expert                      │  │  │ │  /missing-workspace-folder         │  │
+│     Internal Prompts         │  │  │ │                                    │  │
+│     Advanced Config          │  │  │ │  Change review (post-run diffs)    │  │
+│   Domain Defaults ▸ (11)     │  │  │ │  Change Review stores shadow Git   │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
