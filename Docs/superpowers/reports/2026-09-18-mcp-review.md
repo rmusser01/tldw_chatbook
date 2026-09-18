@@ -14,14 +14,16 @@ Token migration alone does not qualify a complete workflow.
 | Root drafts, ordered saves and truthful scope | TASK-32791, [targeted checks and ten native captures](../qa/2026-09-18-mcp-root-settings/README.md) | Exact draft ownership, app lifetime/shutdown, cache warnings and later config/external-file supersession; original Permissions resize failure retained and repaired below |
 | Permissions final viewport and selected-row continuity | TASK-32792, [targeted checks and twelve native captures](../qa/2026-09-18-mcp-permission-reflow/README.md) | Child width/height reflow, full Tool/State paint, selected row/focus/filter retention and fresh-context Enter; no policy changes or tool execution |
 | Shared local-tools master controls | TASK-32793, [177 distinct targeted cases and sixteen native captures](../qa/2026-09-18-mcp-master-settings/README.md) | Ordered saves across both entry points, activation/config identity, pending refresh/recreation, truthful partial receipts and shutdown; no runtime authority changes |
-
 | Tools filter and focus continuity | TASK-32794, [127 distinct targeted cases and native gallery](../qa/2026-09-18-mcp-tools-refresh/README.md) | Open menu/highlight, real pointer/keyboard admission, delayed filter/drill ordering, empty/recovery focus; controlled empty projection, no connected-server or execution qualification |
+| Workbench status lifetime | TASK-32795, [79 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-workbench-lifetime/README.md) | Pre-compose/prune polling, receipt replay across canvas/Workbench replacement, actual loading boundary; native navigation and saved receipts, no generic Select shutdown claim |
 
 ## Remaining review
 
-- **MCP startup/lifetime CI:** b46319eb17 PR Fast Lane failed the Workbench
-  initial-rail-row test, then teardown hit NoMatches in the master-save status
-  timer. [Run](https://github.com/rmusser01/tldw_chatbook/actions/runs/35363152779).
+- **Inspector CI:** a66d462f56 Fast Lane failed selected-server tool-detail
+  clearing and rail-server finding-detail clearing; both reproduce locally.
+  [Run](https://github.com/rmusser01/tldw_chatbook/actions/runs/35366444746).
+  Its third failure, startup status polling, is repaired by TASK-32795; new-head
+  remote verification remains pending.
 - **Inspector refresh and execution:** selected tool definition/currentness,
   argument drafts across background refresh, diagnostic empty-state action routing,
   disconnected/stale tools, schema/raw arguments, execution and inspector recovery.

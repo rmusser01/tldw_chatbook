@@ -2112,6 +2112,19 @@ after the fact** over raising inside code that catches broadly.
 
 ## Mount dispatch can be attached before it is mounted
 
+**TASK-32795, 2026-09-18.** MCP save-status polling found a deferred Tools
+canvas in the DOM before its controls existed, and found that same parent while
+its controls were being pruned. Both boundaries reproduced `NoMatches` for root
+and master receipts. Direct control projection needs a fully mounted, attached,
+non-pruning canvas and owner; attachment alone is only enough for scheduling.
+Deferral must not consume a receipt. A second regression found that a retained
+Workbench stamp skipped an unchanged receipt after replacing just its Tools
+canvas: the projection stamp must include the identity of the canvas that
+actually displayed it. The before/during receipt matrix covers both canvas-only
+and whole-Workbench removal. The CI startup test also waited on an empty worker
+manager before the after-refresh load had been dispatched; it now waits on the
+synchronously claimed loading state before asserting actual rail rows.
+
 **TASK-15459, 2026-08-13.** A deterministic `asyncio.Event` barrier released
 the Library source worker while `LibraryScreen.on_mount()` was still awaiting.
 The fresh snapshot reached the screen and advanced its state generation, but

@@ -117,6 +117,9 @@ async def test_pending_master_choice_survives_read_only_refresh(request, monkeyp
         finally:
             release.set()
             await app.workers.wait_for_complete()
+            # The observer schedules rail recomposition. Worker completion
+            # precedes its child mounts; finish that render before teardown.
+            await _settle(pilot)
 
 
 @private_profile_test
