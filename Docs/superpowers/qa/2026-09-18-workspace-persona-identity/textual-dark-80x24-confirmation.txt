@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎re ▾
+──────▊                                                                  ▎──────
+ Setti▊   Workspace default Persona                                      ▎cal
+ Mode:▊                                                                  ▎
+┌─────▊  Default Persona · future new conversations                      ▎─────┐
+│  Fil▊  Writer [none]                                               ▼   ▎     │
+│     ▊                                                                  ▎me   │
+│   > ▊                                                                  ▎     │
+│     ▊                                                                  ▎     │
+│     ▊  Existing, copied and moved conversations keep their Persona.    ▎   ▅ │
+│     ▊  Persona memory                                                  ▎     │
+│     ▊  Read and write                                              ▼   ▎     │
+│  Tro▊                                                                  ▎     │
+│     ▊                                                                  ▎     │
+│     ▊                                                                  ▎     │
+│     ▊  ▐X▌ Confirm this Persona may write memory across sessions       ▎     │
+│  Exp▊  Confirm read and write memory before applying this default.     ▎     │
+│     ▊                                     Cancel          Apply        ▎     │
+│     ▊                                                                  ▎     │
+│   Do▊                                                                  ▎     │
+└─────▊                                                                  ▎─────┘
+      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

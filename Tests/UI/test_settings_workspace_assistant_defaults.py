@@ -741,7 +741,9 @@ async def test_read_write_acknowledgement_remains_separate_from_first_bind_revie
         )
 
         screen.query_one("#settings-workspace-memory-toggle", Button).press()
-        await pilot.pause(0.3)
+        async with asyncio.timeout(5):
+            while not isinstance(host.screen, ToolProfileFirstBindReviewModal):
+                await pilot.pause(0.03)
         assert isinstance(host.screen, ToolProfileFirstBindReviewModal)
         assert (
             registry.get_workspace("ws-bind-rw").assistant_defaults.persona_memory_mode
@@ -776,7 +778,9 @@ async def test_read_write_acknowledgement_remains_separate_from_first_bind_revie
             assert str(toggle.label) == "Confirm read_write?"
             assert len(app.tool_pack_service.reviews) == 1
             toggle.press()
-            await pilot.pause(0.3)
+            async with asyncio.timeout(5):
+                while not isinstance(host.screen, ToolProfileFirstBindReviewModal):
+                    await pilot.pause(0.03)
             assert isinstance(host.screen, ToolProfileFirstBindReviewModal)
             assert len(app.tool_pack_service.reviews) == 2
 

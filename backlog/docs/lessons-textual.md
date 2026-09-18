@@ -1135,3 +1135,14 @@ nor doing it *before* the snapshot landed.
 - **Corollary:** a focus fallback that names one branch's control is a latent
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
+
+## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
+
+The real Persona service accepts `none` and `auto` as IDs. The workspace Select
+used those same strings for its None and automatic-create controls: no-edit Apply
+cleared a saved `none` Persona, and Create replaced a saved `auto` Persona with a
+new identity. Plain Enum control values fixed both without rejecting legitimate
+stored IDs. Preserve those values through form snapshots and recomposition;
+calling `str(Select.value)` erases that distinction and breaks control dispatch.
+Real-service regressions
+and four native cells verified exact saved IDs, labels and memory confirmation.

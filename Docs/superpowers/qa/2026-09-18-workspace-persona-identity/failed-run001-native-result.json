@@ -1,0 +1,39 @@
+{
+  "pid": 73412,
+  "cells": [],
+  "runner_sha256": "3fa651d04c0f928cba4509ebb88fb207460473de1374f04a7110b7539502e66d",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "1558f51f4d1ff71563bcf9cc14a35a14f1e3373257f4748cf4d4688a824b57bc",
+    "tldw_chatbook/Widgets/workspace_persona_default.py": "c9a4b209bb39342146c1c815199c9df36c1f4c20ca7e77b86962df708f43d81b",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "88f5758d4e7fe6207646f89832dcb9a7b9739d5271c88ccb39ce3891234cdc98",
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": "d81263d1dc5e7ef0f9796dd2034ae5ec5273b547fa9e27ca86e8d28de40d157c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a8a6cb6f6899c774eb9844a06d81ab227ec5e1af5ab33feb5f3b656f06b0b6fa",
+    "tldw_chatbook/css/features/_settings.tcss": "60aa5ed477b868d548a68ed199a620b09a5b1e8ae791bc22ce1e9136e1445a99",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "4a790234fa12836d4dd4121f685cca7fbd9edec0c759ca38afa3a5c39cf3e43d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "5c33e3ccdfa2458257347bb2cbd95653c2e29b90a14e423114753b5ef544029f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "d83fc0a40e6b23c8481a9e0ee687746fefa9a6001977363428d24a836d0166d2",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "1889f679e60b75e715493ec7ff5084bcb97298c068bf11f51b478a62e743bd6e",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Folder added",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real Persona service and registry, 103 saved identities. Tool Profiles initialized first. Creation and assistant changes enter through Settings; production default modal mounted directly to isolate its choices (Console entry covered by targeted test). No provider requests.",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-workspace-persona-identity/native_check.py\", line 260, in journey\n    await wait_for(lambda: bool(app.screen._folders), \"Folder added\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-18-workspace-persona-identity/native_check.py\", line 102, in wait_for\n    raise AssertionError(label)\nAssertionError: Folder added\n",
+  "focused_id": "workspace-create-folder-add",
+  "focused_region": "Region(x=101, y=32, width=16, height=1)",
+  "app_run_returned": true
+}
