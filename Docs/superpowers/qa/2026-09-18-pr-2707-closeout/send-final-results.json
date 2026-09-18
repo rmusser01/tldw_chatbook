@@ -1,0 +1,282 @@
+[
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/001",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/002",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/003",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/004",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/005",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/006",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/007",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/008",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/009",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-send-green-001/010",
+    "classes": [],
+    "mismatches": 0
+  }
+]

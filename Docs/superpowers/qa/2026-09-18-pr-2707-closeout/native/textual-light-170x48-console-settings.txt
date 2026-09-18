@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.            │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │ │ │  message's worst case is about 3x it. 0 = unlimited. Loop detection stops           │ │  │  │  │                              │
+│  category search             │  │  │ │ │  identical repeated calls and 3 consecutive failures from the same tool;            │ │  │  │  │ Selected category: Console   │
+│                              │  │  │ │ │  successful calls with changing arguments can still loop.                           │ │  │  │  │ Behavior                     │
+│  Core                        │  │  │ │ │ Wall-clock (seconds)    │ 86400.0                                                   │ │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │ │  = 1d. How long ONE run may take end to end. Stop works throughout. Sub-agents are  │ │  │  │  │  Guided edits: change a      │
+│     Providers & Models       │  │  │ │ │  bounded separately by  child_max_wall_seconds, so raising this does not extend     │ │  │  │  │  field first.                │
+│     Web Search               │  │  │ │ │  them.                                                                              │ │  │  │  │  Save (s) — no changes       │
+│     Speech & TTS             │  │  │ │ │ Per-tool-call (seconds) │ 3600.0                                                    │ │  │  │  │  Revert (r) — no changes     │
+│  Interface                   │  │  │ │ │  = 1h. Ceiling on a SINGLE tool call - the real limit on long crawls, ingests, and  │ │  │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │ │  builds, which a large wall-clock budget alone will not save. 0 = no ceiling (Stop  │ │  │  │  │ config file.                 │
+│     Theme                    │  │  │ │ │  still works: it is polled every 0.5s while a tool runs). A call reported as timed  │ │  │  │  │  Purpose: Focus a Console    │
+│     Splash Screen            │  │  │ │ │  out may still finish later on its own thread, so lowering this below ~186s can     │ │  │  │  │  Behavior field for          │
+│   > Console Behavior         │  │  │ │ │  double-execute an MCP tool.                                                        │ │  │  │  │  setting-specific            │
+│  Data & Privacy              │  │  │ │ │ Model turns (backstop)  │ 2000                                                      │ │▁ │  │  │  guidance.                   │
+│     Storage                  │  │  │ │ │  Tool-calling rounds per message. A backstop, not the usual limiter - at the        │ │  │  │  │                              │
+│     Workspaces               │  │  │ │ │  default token budget a run stops on spend first, long before this.                 │ │  │  │  │  Consequences: No            │
+│     Tool Profiles            │  │  │ │ │ Steps (backstop)        █ 25000                                                     │ │  │  │  │  field-specific guidance     │
+│     Privacy & Security       │  │  │ │ │  Individual loop steps. One tool round costs 3 (think, call, result) and the        │ │  │  │  │  is active right now.        │
+│     Network                  │  │  │ │ │  closing reply costs 1, so N turns need 3*(N-1)+1 steps. Set below that and this,   │ │  │  │  │                              │
+│     My Profile               │  │  │ │ │  not the turn count, becomes your limiter. Maximum supported: 199,999 steps.        │ │▄ │  │  │  Saved as: varies by field   │
+│  Troubleshooting             │  │  │ │ │                                                                                     │ │  │  │  │                              │
+│     Diagnostics (view)       │  │  │ │ │                                                                                     │ │  │  │  │  Applies: varies by field    │
+│     About (view)             │  │  │ │ │  Agent tool-result display cap                                                      │ │  │  │  │                              │
+│     Agents                   │  │  │ │ │ Display cap (chars)     │ 160                                                       │ │  │  │  │ Override rules               │
+│  Expert                      │  │  │ │ │  How much of an agent tool result the Console shows you here -- distinct from       │ │  │  │  │  Priority: active Console  ▆ │
+│     Internal Prompts         │  │  │ │ │  max_tool_result_chars, which caps what the model itself saw. Open a run's "View    │ │  │  │  │  session, then               │
+│     Advanced Config          │  │  │ │ │  full log" (Agent rail) to read everything beyond this cap.                         │ │  │  │  │  provider+model profile,     │
+│   Domain Defaults ▸ (11)     │  │  │ │ │ ┌─────────────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  then these global           │
+│                              │  │  │ │ │ │                                                                                 │ │ │  │  │  │  fallbacks                   │
+│                              │  │  │ │ │ │  Permission summaries                                                           │ │ │  │  │  │                              │
+│                              │  │  │ │ │ │  applies immediately - no Save needed                                           │ │ │  │  │  │  Scope:  response            │
+│                              │  │  │ │ │ │  When enabled, a fast LLM you designate receives a bounded excerpt of this      │ │ │  │  │  │  fallbacks and  paste        │
+│                              │  │  │ │ │ │  conversation (your messages and the assistant's, only) to write the approval   │ │ │  │  │  │  display settings            │
+│                              │  │  │ │ │ │  summary.                                                                       │ │ │  │  │  │                              │
+│                              │  │  │ │ │ │                         ┌─────────────────────────────────────────────────────┐ │ │ │  │  │  │  Save: staged - press s to ▆ │
+│                              │  │  │ │ │ │ Summary mode            │ Off                                               ▼ │ │ │ │  │  │  │ ▼ more — scroll the          │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -18,6 +18,22 @@ ADR required: no. Existing ADR-150/161 define the language and migration;
 ADR-031 governs interaction and ADR-097 governs startup budgets. This document
 records evidence and remaining review work, without changing those boundaries.
 
+## PR #2707 scope boundary — 2026-09-18
+
+The owner approved closing the current PR before reviewing additional screens.
+The remaining eleven destinations, Settings categories and Console subflows below
+are follow-up work, not blockers for this PR. TASK-32824 records current-dev
+integration and the final visual/conflict packet; merge still requires the owner
+to approve that concrete result.
+
+TASK-32823 inspector refresh is preserved separately on
+`codex/mcp-inspector-refresh-followup` at `135f226888` and is excluded from PR #2707.
+It remains incomplete: delayed preview minting must be invalidated synchronously
+before retiring its panel, followed by a deterministic regression and native checks.
+After merge is confirmed, resume in this task on a fresh branch from merged `dev`,
+beginning with MCP server lifecycle/inspector work and reusing that investigation.
+The separately configured backup heartbeat must not duplicate active work.
+
 ## Original migration requirements
 
 Source of requirements: the approved

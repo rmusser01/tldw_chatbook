@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ │ usual limiter - at the default │ │  │
+│     Web Search               │  │  │ │ │ token budget a run stops on    │ │  │
+│     Speech & TTS             │  │  │ │ │ spend first, long before this. │ │  │
+│  Interface                   │  │  │ │ │Steps (backstop)                │ │  │
+│     Appearance               │  │  │ │ │█ 25000                         │ │▃ │
+│     Theme                  ▁ │  │  │ │ │                                │ │▃ │
+│     Splash Screen            │  │  │ │ │ Individual loop steps. One     │ │  │
+│   > Console Behavior         │  │  │ │ │ tool round costs 3 (think,     │ │  │
+│  Data & Privacy              │  │  │ │ │ call, result) and the closing  │ │  │
+│     Storage                  │  │  │ │ │ reply costs 1, so N turns need │ │  │
+│     Workspaces               │  │  │ │ │ 3*(N-1)+1 steps. Set below     │ │  │
+│     Tool Profiles            │  │  │ │ │ that and this, not the turn    │ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q

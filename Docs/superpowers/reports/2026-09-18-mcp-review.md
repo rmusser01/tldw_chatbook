@@ -20,6 +20,15 @@ Token migration alone does not qualify a complete workflow.
 | Compact rail navigation | TASK-32812, [119 targeted cases and eight native captures](../qa/2026-09-18-mcp-rail-navigation/README.md) | Full All servers/Source paint, literal Unicode names/counts, ordinary-refresh/resize focus, exact row identity and scrollbars; structural catalog replacement focus is not qualified |
 | Complete tool-switch labels | TASK-32822, [37 targeted cases and eight native captures](../qa/2026-09-18-mcp-gate-labels/README.md) | All eleven gate labels, focus/scroll reveal, disabled dependencies and real private Deep research save/reversal; no broader save concurrency or execution qualification |
 
+## PR #2707 closeout boundary
+
+The owner approved moving remaining MCP reviews to follow-up PRs. TASK-32823
+is preserved on `codex/mcp-inspector-refresh-followup` at `135f226888`, outside
+PR #2707. Its inspector refresh prototype has an unresolved delayed-preview
+ownership race; it is not qualified or complete. Resume MCP lifecycle/inspector
+work from merged `dev` after the current PR receives final visual approval and
+its merge is confirmed.
+
 ## Remaining review
 
 - **Remote verification:** Fast Lane, CSS, latency, backlog and all platform GGUF

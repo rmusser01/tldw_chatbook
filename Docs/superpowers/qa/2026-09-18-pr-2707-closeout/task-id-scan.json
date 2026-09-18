@@ -1,0 +1,11 @@
+{
+  "refs": 278,
+  "worktrees": 32,
+  "largest": 32824,
+  "matches": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "path": "backlog/tasks/task-32824 - Close-PR2707-with-current-dev-integration-and-final-visual-review.md"
+    }
+  ]
+}
