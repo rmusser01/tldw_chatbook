@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ │and Full view the same trace;   │ │  │
+│     Web Search               │  │  │ │ │credentials stay blocked in     │ │▄ │
+│     Speech & TTS             │  │  │ │ │both, and older trace formats   │ │▄ │
+│  Interface                   │  │  │ │ │remain readable.                │ │  │
+│     Appearance               │  │  │ │ │ Apply exchange capture         │ │  │
+│     Theme                  ▁ │  │  │ │ │ Failed — settings not saved.   │ │  │
+│     Splash Screen            │  │  │ │ │ Apply again to retry.          │ │  │
+│   > Console Behavior         │  │  │ │ │                                │ │  │
+│  Data & Privacy              │  │  │ │ │ Rail presentation              │ │  │
+│     Storage                  │  │  │ │ │Rail layout scope               │ │  │
+│     Workspaces               │  │  │ │ │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │  │
+│     Tool Profiles            │  │  │ │ │▊  Global                   ▼  ▎│ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

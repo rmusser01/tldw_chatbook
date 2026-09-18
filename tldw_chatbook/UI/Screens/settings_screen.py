@@ -17417,6 +17417,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _render_console_behavior_card(self, *, compact: bool = False) -> ComposeResult:
+        # Keep the displayed choices and the apply baseline on the same policy.
+        self._console_capture_policy = runtime_capture_policy()
         with Vertical(
             id="settings-console-behavior-card", classes="settings-secondary-card"
         ):
@@ -25309,72 +25311,83 @@ class SettingsScreen(BaseAppScreen):
         self._submit_category_search(event.value)
 
     @on(Button.Pressed, "#settings-console-exchange-capture-apply")
-    async def handle_console_exchange_capture_apply(
-        self, event: Button.Pressed
-    ) -> None:
-        """Apply the canonical global capture policy with shared warnings."""
+    def handle_console_exchange_capture_apply(self, event: Button.Pressed) -> None:
+        """Admit one explicit capture-settings apply, including its disclosure."""
         event.stop()
         if self._console_capture_applying:
             return
-        enabled = self.query_one(
-            "#settings-console-exchange-capture-enabled", Checkbox
-        ).value
-        raw_detail = self.query_one(
-            "#settings-console-exchange-capture-detail", Select
-        ).value
-        pii_redaction_enabled = self.query_one(
-            "#settings-console-trace-pii-redaction", Checkbox
-        ).value
-        viewer_profile = str(
-            self.query_one("#settings-console-trace-viewer-profile", Select).value
-        )
-        try:
-            detail = CaptureDetail(str(raw_detail))
-        except ValueError:
-            self._set_console_capture_status("Failed — choose Safe or Full")
-            return
-        current = self._console_capture_policy
-        console_runtime = getattr(self.app_instance, "console_runtime", None)
-        controller = getattr(console_runtime, "chat_controller", None)
-        session_id = (
-            getattr(getattr(controller, "store", None), "active_session_id", None)
-            if controller is not None
-            else None
-        )
-        live_snapshot = (
-            controller.capture_policy_snapshot(session_id)
-            if controller is not None and session_id is not None
-            else None
-        )
-        needs_viewer_ack = viewer_profile == "full" and getattr(
-            current,
-            "viewer_profile",
-            "safe",
-        ) != "full"
-        if needs_viewer_ack:
-            confirmed = await self.app.push_screen_wait(
-                ConfirmationDialog(
-                    title="Switch the Trace viewer to Full?",
-                    message=(
-                        "Full may reveal persisted prompts, tool arguments/results, "
-                        "automatic instructions, local paths, and sensitive prose "
-                        "that PII detectors missed. Credentials and frozen masks "
-                        "remain blocked."
-                    ),
-                    confirm_label="View Full",
-                    cancel_label="Keep Safe",
-                )
-            )
-            if not confirmed:
-                self._set_console_capture_status("Full viewer change cancelled")
-                return
         self._console_capture_applying = True
-        event.button.disabled = True
-        self._set_console_capture_status("Applying")
+        # Keep Apply focusable for the modal's return; the guard rejects duplicates.
+        self.run_worker(
+            self._apply_console_exchange_capture(),
+            group="settings-console-capture",
+            exclusive=True,
+        )
+
+    async def _apply_console_exchange_capture(self) -> None:
+        """Confirm and save from a worker so the modal can receive user input."""
         try:
+            enabled = self.query_one(
+                "#settings-console-exchange-capture-enabled", Checkbox
+            ).value
+            raw_detail = self.query_one(
+                "#settings-console-exchange-capture-detail", Select
+            ).value
+            pii_redaction_enabled = self.query_one(
+                "#settings-console-trace-pii-redaction", Checkbox
+            ).value
+            viewer_profile = str(
+                self.query_one("#settings-console-trace-viewer-profile", Select).value
+            )
+            try:
+                detail = CaptureDetail(str(raw_detail))
+            except ValueError:
+                self._set_console_capture_status("Failed — choose Safe or Full")
+                return
+            current = self._console_capture_policy
+            console_runtime = getattr(self.app_instance, "console_runtime", None)
+            controller = getattr(console_runtime, "chat_controller", None)
+            session_id = (
+                getattr(getattr(controller, "store", None), "active_session_id", None)
+                if controller is not None
+                else None
+            )
+            live_snapshot = (
+                controller.capture_policy_snapshot(session_id)
+                if controller is not None and session_id is not None
+                else None
+            )
+            needs_viewer_ack = (
+                viewer_profile == "full"
+                and getattr(
+                    current,
+                    "viewer_profile",
+                    "safe",
+                )
+                != "full"
+            )
+            if needs_viewer_ack:
+                confirmed = await self.app.push_screen_wait(
+                    ConfirmationDialog(
+                        title="Switch the Trace viewer to Full?",
+                        message=(
+                            "Full may reveal persisted prompts, tool arguments/results, "
+                            "automatic instructions, local paths, and sensitive prose "
+                            "that PII detectors missed. Credentials and frozen masks "
+                            "remain blocked."
+                        ),
+                        confirm_label="View Full",
+                        cancel_label="Keep Safe",
+                    )
+                )
+                if get_current_worker().is_cancelled or not self.is_attached:
+                    return
+                if confirmed is not True:
+                    self._set_console_capture_status("Full viewer change cancelled")
+                    return
+            self._set_console_capture_status("Applying")
             if live_snapshot is not None:
-                mutation = await asyncio.to_thread(
-                    controller.apply_global_capture_settings,
+                mutation = await controller.apply_global_capture_settings_async(
                     enabled=bool(enabled),
                     detail=detail,
                     expected_config_generation=live_snapshot.config_generation,
@@ -25389,7 +25402,7 @@ class SettingsScreen(BaseAppScreen):
                     return
                 if mutation.status is CapturePolicyMutationStatus.FAILED:
                     self._set_console_capture_status(
-                        "Failed — Full capture was not activated"
+                        "Failed — settings not saved. Apply again to retry."
                     )
                     return
                 if mutation.status is CapturePolicyMutationStatus.SAFE_SESSION_ONLY:
@@ -25436,14 +25449,12 @@ class SettingsScreen(BaseAppScreen):
                 )
             else:
                 self._set_console_capture_status(
-                    "Failed — Full capture was not activated"
+                    "Failed — settings not saved. Apply again to retry."
                 )
         except Exception:
             self._set_console_capture_status("Failed — capture settings were not saved")
         finally:
             self._console_capture_applying = False
-            if event.button.is_mounted:
-                event.button.disabled = False
 
     def _set_console_capture_status(self, message: str) -> None:
         self._console_capture_status = message

@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## A mocked coordinator can hide an owner-thread violation
+
+**TASK-32764, 2026-09-17.** Settings capture tests mocked both the disclosure
+and coordinator. A real keyboard journey first crashed with `NoActiveWorker`;
+after moving consent to a worker, native saves still failed because the entire
+controller ran off-thread and its prompt-queue snapshot raised
+`QueueThreadViolation`. Keep modal admission and controller ownership real in
+at least one mounted journey. Offload the file write, not the owner-thread
+coordinator, and hold its reservation until actual write settlement even when
+the observer is cancelled. A passing mock and a visible dialog proved neither.
+
 ## A saved config section may still be absent from the runtime view
 
 **TASK-32762, 2026-09-17.** Permission-summary helper tests supplied a

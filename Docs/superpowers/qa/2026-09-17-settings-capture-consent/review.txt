@@ -1,0 +1,6 @@
+Read-only independent review by capture_consent_review.
+Initial review identified the Diagnostics t reload path; a real keyboard test reproduced it before the central compose refresh.
+Native review exposed off-thread prompt-queue access; real-controller tests reproduced it.
+Coordinator review required reservation retention through actual writer settlement, truthful committed-save reporting after opener-session closure, and cancellation precedence over a late writer error.
+Final scoped review: no remaining actionable findings. The reviewer did not run tests; parent-run evidence is stored separately.
+Self-review also corrected obsolete Full capture failure wording to settings-not-saved with retry guidance.

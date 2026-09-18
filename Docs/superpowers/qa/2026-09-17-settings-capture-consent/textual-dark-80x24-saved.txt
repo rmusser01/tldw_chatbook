@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ │▐X▌ Capture future exchanges    │ │  │
+│     Web Search               │  │  │ │ │▐X▌ Mask PII in future traces   │ │▇ │
+│     Speech & TTS             │  │  │ │ │Trace viewer                    │ │▇ │
+│  Interface                   │  │  │ │ │┌──────────────────────────────┐│ │  │
+│     Appearance               │  │  │ ╭─────────────────────────────────────╮ │
+│     Theme                  ▁ │  │  │ │                                     │ │
+│     Splash Screen            │  │  │ │ Context rail collapsed — the        │ │
+│   > Console Behavior         │  │  │ │ terminal is too narrow for it.      │ │
+│  Data & Privacy              │  │  │ │ Reopen it from the Context handle   │ │
+│     Storage                  │  │  │ │ (or widen the terminal).            │ │
+│     Workspaces               │  │  │ │                                     │ │
+│     Tool Profiles            │  │  │ ╰─────────────────────────────────────╯ │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

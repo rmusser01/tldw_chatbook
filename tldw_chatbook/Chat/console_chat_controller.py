@@ -5175,6 +5175,105 @@ class ConsoleChatController:
         pii_redaction_enabled: bool | None = None,
         viewer_profile: str | None = None,
     ) -> CapturePolicyMutationResult:
+        prepared = self._prepare_global_capture_settings(expected_policy_revision)
+        if isinstance(prepared, CapturePolicyMutationResult):
+            return prepared
+        before, reservation = prepared
+        try:
+            config_result = apply_console_capture_settings(
+                enabled=enabled,
+                detail=detail,
+                expected_generation=expected_config_generation,
+                pii_redaction_enabled=pii_redaction_enabled,
+                viewer_profile=viewer_profile,
+            )
+        except BaseException:
+            self.store.abandon_capture_policy_mutation(reservation)
+            raise
+        return self._finish_global_capture_settings(
+            before,
+            reservation,
+            config_result,
+            enabled=enabled,
+            detail=detail,
+            pii_redaction_enabled=pii_redaction_enabled,
+            viewer_profile=viewer_profile,
+        )
+
+    async def apply_global_capture_settings_async(
+        self,
+        *,
+        enabled: bool,
+        detail: CaptureDetail,
+        expected_config_generation: int,
+        expected_policy_revision: int,
+        pii_redaction_enabled: bool | None = None,
+        viewer_profile: str | None = None,
+    ) -> CapturePolicyMutationResult:
+        """Save off-thread while reserving and publishing policy on its owner loop.
+
+        Cancellation is deferred until the admitted write settles and releases
+        its reservation. The synchronous entry remains for existing callers.
+        """
+        prepared = self._prepare_global_capture_settings(expected_policy_revision)
+        if isinstance(prepared, CapturePolicyMutationResult):
+            return prepared
+        before, reservation = prepared
+        settled = asyncio.Event()
+        results: list[ConfigMutationResult] = []
+        errors: list[BaseException] = []
+        loop = asyncio.get_running_loop()
+
+        def write_config() -> None:
+            try:
+                results.append(
+                    apply_console_capture_settings(
+                        enabled=enabled,
+                        detail=detail,
+                        expected_generation=expected_config_generation,
+                        pii_redaction_enabled=pii_redaction_enabled,
+                        viewer_profile=viewer_profile,
+                    )
+                )
+            except BaseException as exc:  # noqa: BLE001 - transport worker failure to its owner
+                errors.append(exc)
+            finally:
+                loop.call_soon_threadsafe(settled.set)
+
+        cancelled = False
+        try:
+            threading.Thread(
+                target=write_config, name="console-global-capture-write"
+            ).start()
+            while not settled.is_set():
+                try:
+                    await settled.wait()
+                except asyncio.CancelledError:
+                    cancelled = True
+            if errors:
+                raise errors[0]
+            config_result = results[0]
+        except BaseException:
+            self.store.abandon_capture_policy_mutation(reservation)
+            if cancelled:
+                raise asyncio.CancelledError from None
+            raise
+        result = self._finish_global_capture_settings(
+            before,
+            reservation,
+            config_result,
+            enabled=enabled,
+            detail=detail,
+            pii_redaction_enabled=pii_redaction_enabled,
+            viewer_profile=viewer_profile,
+        )
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    def _prepare_global_capture_settings(
+        self, expected_policy_revision: int
+    ) -> tuple[CapturePolicySnapshot, object] | CapturePolicyMutationResult:
         session_id = self.store.active_session_id
         if session_id is None:
             raise KeyError("No active Console session")
@@ -5197,17 +5296,19 @@ class ConsoleChatController:
                 True,
                 "stale_policy_revision",
             )
-        try:
-            config_result = apply_console_capture_settings(
-                enabled=enabled,
-                detail=detail,
-                expected_generation=expected_config_generation,
-                pii_redaction_enabled=pii_redaction_enabled,
-                viewer_profile=viewer_profile,
-            )
-        except BaseException:
-            self.store.abandon_capture_policy_mutation(reservation)
-            raise
+        return before, reservation
+
+    def _finish_global_capture_settings(
+        self,
+        before: CapturePolicySnapshot,
+        reservation: object,
+        config_result: ConfigMutationResult,
+        *,
+        enabled: bool,
+        detail: CaptureDetail,
+        pii_redaction_enabled: bool | None,
+        viewer_profile: str | None,
+    ) -> CapturePolicyMutationResult:
         if config_result.conflict:
             self.store.abandon_capture_policy_mutation(reservation)
             return CapturePolicyMutationResult(
@@ -5245,11 +5346,16 @@ class ConsoleChatController:
             reservation,
             disarm_next=not enabled,
         )
+        # A global save remains committed if its opening session was closed.
+        try:
+            snapshot = self.capture_policy_snapshot(before.session_id)
+        except KeyError:
+            snapshot = before
         return CapturePolicyMutationResult(
             CapturePolicyMutationStatus.SAFE_SESSION_ONLY
             if config_result.failure_phase == "before_replace"
             else CapturePolicyMutationStatus.APPLIED,
-            self.capture_policy_snapshot(session_id),
+            snapshot,
             config_result.failure_phase == "before_replace",
             "save_failed"
             if config_result.failure_phase == "before_replace"

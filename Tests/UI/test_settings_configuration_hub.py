@@ -155,8 +155,9 @@ PERSISTED_PROVIDER_ALIASES = (
         ),
     ],
 )
+@private_profile_test
 async def test_console_capture_settings_reports_structured_mutation_outcomes(
-    monkeypatch, mutation_result, expected_status
+    request, monkeypatch, mutation_result, expected_status
 ):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -185,15 +186,20 @@ async def test_console_capture_settings_reports_structured_mutation_outcomes(
         button = screen.query_one(
             "#settings-console-exchange-capture-apply", Button
         )
-        await screen.handle_console_exchange_capture_apply(
+        screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
 
         assert screen._console_capture_status == expected_status
 
 
 @pytest.mark.asyncio
-async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch):
+@private_profile_test
+async def test_console_trace_viewer_full_uses_explicit_confirmation(
+    request, monkeypatch
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(80, 24)) as pilot:
@@ -234,9 +240,11 @@ async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch)
         button = screen.query_one(
             "#settings-console-exchange-capture-apply", Button
         )
-        await screen.handle_console_exchange_capture_apply(
+        screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
 
         modal = confirmation.await_args.args[0]
         assert "PII detectors missed" in modal.message
@@ -245,7 +253,9 @@ async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -279,7 +289,7 @@ async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
         controller = SimpleNamespace(
             store=SimpleNamespace(active_session_id="session-a"),
             capture_policy_snapshot=lambda _session: snapshot,
-            apply_global_capture_settings=coordinator,
+            apply_global_capture_settings_async=AsyncMock(side_effect=coordinator),
         )
         app.console_runtime = SimpleNamespace(chat_controller=controller)
         screen._console_capture_policy = SimpleNamespace(
@@ -304,9 +314,11 @@ async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
             "#settings-console-exchange-capture-apply", Button
         )
 
-        await screen.handle_console_exchange_capture_apply(
+        screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
 
         confirmation.assert_not_awaited()
         coordinator.assert_called_once_with(

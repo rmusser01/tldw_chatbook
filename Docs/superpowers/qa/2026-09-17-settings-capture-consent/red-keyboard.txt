@@ -1,0 +1,183 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_full_trace_view_requires_real_keyboard_confirmation ___________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/capture-consent-red-001/test_full_trace_view_requires_0/private-profile-process/pytest.log
+E   ached:3425 - Ensured chat dictionaries folder exists: /private/tmp/capture-consent-red-001/test_full_trace_view_requires_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:54:04.640 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:54:04.641 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:54:04.737 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:54:04.762 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:54:04.762 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:54:04.764 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:54:04.764 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:54:04.873 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/capture-consent-red-001/test_full_trace_view_requires_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:54:04.967 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-xy2gf1n0/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:54:05.193 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-xy2gf1n0/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:54:05.212 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:54:05.213 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-xy2gf1n0/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:54:05.213 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-xy2gf1n0/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:54:05.414 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:54:05.471 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:54:05.534 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:54:05.587 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:54:05.639 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:54:05.696 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:54:05.696 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-xy2gf1n0/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:54:05.758 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:54:05.758 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:54:05.771 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:54:05.875 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:54:05.878 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/capture-consent-red-001/test_full_trace_view_requires_0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:54:05.878 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:54:05.954 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:54:05.954 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:54:05.955 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:54:05.956 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 1.303 seconds
+E   2026-09-17 17:54:05.956 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.106s (8.2%)
+E   2026-09-17 17:54:05.956 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:54:05.957 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.003s (0.3%)
+E   2026-09-17 17:54:05.957 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:54:05.957 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:54:05.958 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:54:05.958 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:54:05.958 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:54:06.239 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:54:06.360 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:54:11.077 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+E   │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E   │ rn-library/tldw_chatbook/UI/Screens/settings_screen.py:25355 in              │
+E   │ handle_console_exchange_capture_apply                                        │
+E   │                                                                              │
+E   │   25352 │   │   │   "safe",                                                  │
+E   │   25353 │   │   ) != "full"                                                  │
+E   │   25354 │   │   if needs_viewer_ack:                                         │
+E   │ ❱ 25355 │   │   │   confirmed = await self.app.push_screen_wait(             │
+E   │   25356 │   │   │   │   ConfirmationDialog(                                  │
+E   │   25357 │   │   │   │   │   title="Switch the Trace viewer to Full?",        │
+E   │   25358 │   │   │   │   │   message=(                                        │
+E   │                                                                              │
+E   │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+E   │ │       console_runtime = <tldw_chatbook.Chat.console_runtime.ConsoleRunt… │ │
+E   │ │                         object at 0x116142780>                           │ │
+E   │ │            controller = None                                             │ │
+E   │ │               current = RuntimeCapturePolicy(                            │ │
+E   │ │                         │   enabled=True,                                │ │
+E   │ │                         │   detail=<CaptureDetail.SAFE: 'safe'>,         │ │
+E   │ │                         │   generation=2,                                │ │
+E   │ │                         │   pii_redaction_enabled=False,                 │ │
+E   │ │                         │   viewer_profile='safe',                       │ │
+E   │ │                         │   normalized_writes_enabled=True,              │ │
+E   │ │                         │   normalized_reads_enabled=True,               │ │
+E   │ │                         │   legacy_writes_enabled=False                  │ │
+E   │ │                         )                                                │ │
+E   │ │                detail = <CaptureDetail.SAFE: 'safe'>                     │ │
+E   │ │               enabled = True                                             │ │
+E   │ │                 event = Pressed()                                        │ │
+E   │ │         live_snapshot = None                                             │ │
+E   │ │      needs_viewer_ack = True                                             │ │
+E   │ │ pii_redaction_enabled = False                                            │ │
+E   │ │            raw_detail = 'safe'                                           │ │
+E   │ │                  self = SettingsScreen(classes='shell-header-compact')   │ │
+E   │ │            session_id = None                                             │ │
+E   │ │        viewer_profile = 'full'                                           │ │
+E   │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E   │                                                                              │
+E   │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E   │ rn-library/.venv/lib/python3.12/site-packages/textual/app.py:2998 in         │
+E   │ push_screen_wait                                                             │
+E   │                                                                              │
+E   │   2995 │   │   await self._flush_next_callbacks()                            │
+E   │   2996 │   │   # The shield prevents the cancellation of the current task fr │
+E   │   2997 │   │   return await asyncio.shield(                                  │
+E   │ ❱ 2998 │   │   │   self.push_screen(screen, wait_for_dismiss=True, mode=mode │
+E   │   2999 │   │   )                                                             │
+E   │   3000 │                                                                     │
+E   │   3001 │   def switch_screen(self, screen: Screen | str) -> AwaitComplete:   │
+E   │                                                                              │
+E   │ ╭───────────────────────── locals ─────────────────────────╮                 │
+E   │ │   mode = None                                            │                 │
+E   │ │ screen = ConfirmationDialog()                            │                 │
+E   │ │   self = _StyledDestinationHarness(                      │                 │
+E   │ │          │   title='_StyledDestinationHarness',          │                 │
+E   │ │          │   classes={'-dark-mode'},                     │                 │
+E   │ │          │   pseudo_classes={                            │                 │
+E   │ │          │   │   'dark',                                 │                 │
+E   │ │          │   │   'focus',                                │                 │
+E   │ │          │   │   'nocolor'                               │                 │
+E   │ │          │   }                                           │                 │
+E   │ │          )                                               │                 │
+E   │ ╰──────────────────────────────────────────────────────────╯                 │
+E   │                                                                              │
+E   │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E   │ rn-library/.venv/lib/python3.12/site-packages/textual/app.py:2962 in         │
+E   │ push_screen                                                                  │
+E   │                                                                              │
+E   │   2959 │   │   │   try:                                                      │
+E   │   2960 │   │   │   │   get_current_worker()                                  │
+E   │   2961 │   │   │   except NoActiveWorker:                                    │
+E   │ ❱ 2962 │   │   │   │   raise NoActiveWorker(                                 │
+E   │   2963 │   │   │   │   │   "push_screen must be run from a worker when `wait │
+E   │   2964 │   │   │   │   ) from None                                           │
+E   │   2965 │   │   │   return future                                             │
+E   │                                                                              │
+E   │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+E   │ │      await_mount = AwaitMount(                                           │ │
+E   │ │                    │   parent=ConfirmationDialog(),                      │ │
+E   │ │                    │   widgets=[ConfirmationDialog()]                    │ │
+E   │ │                    )                                                     │ │
+E   │ │         callback = None                                                  │ │
+E   │ │           future = <Future pending>                                      │ │
+E   │ │             loop = <_UnixSelectorEventLoop running=True closed=False     │ │
+E   │ │                    debug=False>                                          │ │
+E   │ │     message_pump = SettingsScreen(classes='shell-header-compact')        │ │
+E   │ │             mode = '_default'                                            │ │
+E   │ │      mode_screen = SettingsScreen(classes='shell-header-compact')        │ │
+E   │ │      next_screen = ConfirmationDialog()                                  │ │
+E   │ │           screen = ConfirmationDialog()                                  │ │
+E   │ │     screen_stack = [                                                     │ │
+E   │ │                    │   Screen(id='_default'),                            │ │
+E   │ │                    │   SettingsScreen(classes='shell-header-compact'),   │ │
+E   │ │                    │   ConfirmationDialog()                              │ │
+E   │ │                    ]                                                     │ │
+E   │ │             self = _StyledDestinationHarness(                            │ │
+E   │ │                    │   title='_StyledDestinationHarness',                │ │
+E   │ │                    │   classes={'-dark-mode'},                           │ │
+E   │ │                    │   pseudo_classes={'dark', 'focus', 'nocolor'}       │ │
+E   │ │                    )                                                     │ │
+E   │ │ wait_for_dismiss = True                                                  │ │
+E   │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E   ╰──────────────────────────────────────────────────────────────────────────────╯
+E   NoActiveWorker: push_screen must be run from a worker when `wait_for_dismiss` is
+E   True
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   6.65s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation
+E   1 failed in 9.80s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 17:54:01.697 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 17:54:01.708 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 17:54:01.709 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 17:54:01.710 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation
+1 failed in 14.50s
