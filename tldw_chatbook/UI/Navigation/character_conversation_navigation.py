@@ -290,7 +290,6 @@ class RoleplayDraftRecoveryDialog(ModalScreen[str | None]):
     """Recover a partial aggregate save without losing the pending navigation."""
 
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "stay", "Stay", show=False)]
-    # The former NavigationDialog CSS alias matched no RecoveryDialog nodes.
 
     def __init__(self, failed_domains: tuple[str, ...]) -> None:
         super().__init__()
@@ -298,12 +297,14 @@ class RoleplayDraftRecoveryDialog(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Container(id="roleplay-draft-recovery-dialog"):
-            yield Static("Some Roleplay drafts could not be saved")
+            yield Static(
+                "Some Roleplay drafts could not be saved", classes="dialog-title"
+            )
             yield Static(
                 "Failed: " + ", ".join(self.failed_domains),
                 id="roleplay-draft-recovery-domains",
             )
-            with Vertical():
+            with Container(classes="dialog-buttons button-group button-group-right"):
                 yield Button("Retry", id="roleplay-draft-retry")
                 yield Button("Stay", id="roleplay-draft-recovery-stay")
 

@@ -2265,6 +2265,35 @@ FileSave.-compact InputBar Input {
 }
 
 
+RoleplayDraftRecoveryDialog {
+    align: center middle;
+}
+
+#roleplay-draft-recovery-dialog {
+    width: $ds-size-64;
+    max-width: $ds-percent-96;
+    height: auto;
+    max-height: $ds-height-full;
+    border: tall $ds-control-edge;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#roleplay-draft-recovery-dialog .dialog-title {
+    color: $ds-text-primary;
+}
+
+#roleplay-draft-recovery-domains {
+    color: $ds-text-primary;
+    margin-bottom: $ds-space-stack;
+}
+
+#roleplay-draft-recovery-dialog .dialog-buttons {
+    align-horizontal: right;
+}
+
+
 SkillTrustPassphraseModal,
 SkillTrustBootstrapModal {
     align: center middle;
