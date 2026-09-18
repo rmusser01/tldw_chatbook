@@ -60,6 +60,8 @@ from tldw_chatbook.Widgets.Settings_Widgets.tool_profiles_panel import (
     ToolProfilesPanel,
 )
 
+from Tests.private_profile import private_profile_test
+
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
@@ -489,7 +491,10 @@ async def test_panel_can_apply_one_fresh_immutable_listing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_canonical_settings_category_loads_app_owned_listing_off_thread() -> None:
+@private_profile_test
+async def test_canonical_settings_category_loads_app_owned_listing_off_thread(
+    request,
+) -> None:
     listing = ToolProfileListing(
         profiles=(_profile("research", origin="imported", binding_state="unbound"),)
     )
@@ -512,7 +517,10 @@ async def test_canonical_settings_category_loads_app_owned_listing_off_thread() 
 
 
 @pytest.mark.asyncio
-async def test_tool_profiles_category_retries_failed_service_composition_once() -> None:
+@private_profile_test
+async def test_tool_profiles_category_retries_failed_service_composition_once(
+    request,
+) -> None:
     app = _build_test_app()
     app.tool_pack_service = None
     app.tool_pack_service_unavailable_reason = "composition_unavailable"
@@ -534,7 +542,8 @@ async def test_tool_profiles_category_retries_failed_service_composition_once() 
 
 
 @pytest.mark.asyncio
-async def test_tool_profiles_first_use_refreshes_after_composition() -> None:
+@private_profile_test
+async def test_tool_profiles_first_use_refreshes_after_composition(request) -> None:
     listing = ToolProfileListing(
         profiles=(_profile("research", origin="imported", binding_state="unbound"),)
     )
@@ -563,7 +572,10 @@ async def test_tool_profiles_first_use_refreshes_after_composition() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_profiles_refresh_when_settings_resumes_after_policy_edit() -> None:
+@private_profile_test
+async def test_tool_profiles_refresh_when_settings_resumes_after_policy_edit(
+    request,
+) -> None:
     service = _WorkflowService(
         ToolProfileListing(
             profiles=(_profile("research", origin="imported", binding_state="unbound"),)
@@ -600,7 +612,10 @@ async def test_tool_profiles_refresh_when_settings_resumes_after_policy_edit() -
 
 
 @pytest.mark.asyncio
-async def test_listing_worker_does_not_surface_private_exception_categories() -> None:
+@private_profile_test
+async def test_listing_worker_does_not_surface_private_exception_categories(
+    request,
+) -> None:
     class SensitiveFailure(RuntimeError):
         category = "/private/path/API_KEY=secret"
 
@@ -626,7 +641,9 @@ async def test_listing_worker_does_not_surface_private_exception_categories() ->
         assert "secret" not in visible.casefold()
 
 
-def test_tool_profiles_category_is_searchable_by_user_vocabulary() -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_tool_profiles_category_is_searchable_by_user_vocabulary(request) -> None:
     screen = SettingsScreen(_build_test_app())
     matches = screen._filtered_category_summaries("portable tool permission")
 
@@ -635,7 +652,8 @@ def test_tool_profiles_category_is_searchable_by_user_vocabulary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_profile_actions_remain_focusable_at_narrow_size() -> None:
+@private_profile_test
+async def test_tool_profile_actions_remain_focusable_at_narrow_size(request) -> None:
     listing = ToolProfileListing(
         profiles=(_profile("research", origin="imported", binding_state="unbound"),)
     )
@@ -659,7 +677,8 @@ async def test_tool_profile_actions_remain_focusable_at_narrow_size() -> None:
 
 
 @pytest.mark.asyncio
-async def test_edit_policy_deep_link_captures_exact_profile_authority() -> None:
+@private_profile_test
+async def test_edit_policy_deep_link_captures_exact_profile_authority(request) -> None:
     listing = ToolProfileListing(
         profiles=(_profile("research", origin="imported", binding_state="unbound"),)
     )
@@ -672,6 +691,10 @@ async def test_edit_policy_deep_link_captures_exact_profile_authority() -> None:
     async with host.run_test(size=(120, 35)) as pilot:
         await _open_settings_category(pilot, "#settings-category-tool-profiles")
         await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        host.screen.query_one("#tool-profile-edit-0", Button).scroll_visible(
+            animate=False
+        )
         await pilot.pause()
         await pilot.click("#tool-profile-edit-0")
         await pilot.pause()
@@ -897,7 +920,9 @@ def test_management_operations_are_exclusive_workers() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_import_worker_reinspects_revised_options_then_imports_unbound(
+    request,
     tmp_path: Path,
 ) -> None:
     listing = ToolProfileListing(
@@ -949,7 +974,9 @@ async def test_import_worker_reinspects_revised_options_then_imports_unbound(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_export_worker_uses_exact_profile_context_and_captured_destination(
+    request,
     tmp_path: Path,
 ) -> None:
     listing = ToolProfileListing(
@@ -973,6 +1000,8 @@ async def test_export_worker_uses_exact_profile_context_and_captured_destination
         await _open_settings_category(pilot, "#settings-category-tool-profiles")
         await pilot.app.workers.wait_for_complete()
         host.push_screen_wait = AsyncMock(side_effect=choose)
+        screen.query_one("#tool-profile-export-0", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#tool-profile-export-0")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -994,7 +1023,8 @@ async def test_export_worker_uses_exact_profile_context_and_captured_destination
 
 
 @pytest.mark.asyncio
-async def test_removal_worker_confirms_and_uses_the_rendered_revision() -> None:
+@private_profile_test
+async def test_removal_worker_confirms_and_uses_the_rendered_revision(request) -> None:
     listing = ToolProfileListing(
         profiles=(_profile("research", origin="imported", binding_state="unbound"),)
     )
@@ -1021,7 +1051,9 @@ async def test_removal_worker_confirms_and_uses_the_rendered_revision() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_removal_worker_rechecks_cancellation_after_confirmation(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     listing = ToolProfileListing(
@@ -1055,7 +1087,10 @@ async def test_removal_worker_rechecks_cancellation_after_confirmation(
 
 
 @pytest.mark.asyncio
-async def test_removal_confirmation_does_not_interpolate_the_profile_id() -> None:
+@private_profile_test
+async def test_removal_confirmation_does_not_interpolate_the_profile_id(
+    request,
+) -> None:
     profile_id = "[bold]local-profile[/bold]"
     listing = ToolProfileListing(
         profiles=(_profile(profile_id, origin="imported", binding_state="unbound"),)
@@ -1085,9 +1120,10 @@ async def test_removal_confirmation_does_not_interpolate_the_profile_id() -> Non
 
 
 @pytest.mark.asyncio
-async def test_bind_request_stages_profile_in_active_workspace_without_binding() -> (
-    None
-):
+@private_profile_test
+async def test_bind_request_stages_profile_in_active_workspace_without_binding(
+    request,
+) -> None:
     listing = ToolProfileListing(
         profiles=(_profile("research", origin="imported", binding_state="unbound"),)
     )
@@ -1119,9 +1155,10 @@ async def test_bind_request_stages_profile_in_active_workspace_without_binding()
 
 
 @pytest.mark.asyncio
-async def test_bind_request_without_explicit_workspace_shows_recovery_guidance() -> (
-    None
-):
+@private_profile_test
+async def test_bind_request_without_explicit_workspace_shows_recovery_guidance(
+    request,
+) -> None:
     listing = ToolProfileListing(
         profiles=(_profile("research", origin="imported", binding_state="unbound"),)
     )

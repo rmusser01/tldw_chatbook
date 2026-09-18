@@ -1,5 +1,14 @@
 # Lessons: what counts as evidence a change works
 
+## A reused widget ID cannot identify the action that was pressed
+
+**TASK-32778, 2026-09-18.** Holding a real Tool Profiles button event across
+row recomposition made Export, Edit, Bind and Remove target the replacement
+profile or revision. The handler resolved the old event through a new map
+keyed by the same row-index ID. Key captured action context by the originating
+control and reject detached origins. Exercise event delivery after refresh;
+an immediate click cannot expose this identity substitution.
+
 ## App tokens do not cross consolidated widget stylesheet scopes
 
 **TASK-32773, 2026-09-17.** Native light-theme review exposed a black
@@ -145,6 +154,12 @@ collection-to-fixture profile change while checking cold provisioning. Four
 raised `raw_source_selection_changed`; the composition case swallowed it and
 reported an empty call list. Giving each the existing private-profile process
 wrapper restored all five original assertions without changing recovery admission.
+
+**TASK-32778, 2026-09-18.** Fifteen existing Tool Profiles workflow cases hit
+the same profile-selection guard. The existing process wrapper restored their
+original setup and assertions. Two then reached real viewport failures: their
+click targets were at row 37 in a 35-row viewport. Scroll the actual target
+into view before the click; do not replace the workflow with direct service calls.
 
 ## Range comparisons do not prove finite input
 

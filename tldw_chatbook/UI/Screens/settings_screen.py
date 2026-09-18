@@ -4464,10 +4464,16 @@ class SettingsScreen(BaseAppScreen):
     @work(group="settings-tool-pack-composition-wait", exclusive=True)
     async def _await_tool_pack_composition(self, composition_worker: object) -> None:
         """Refresh the listing once first-use service composition settles."""
-        try:
-            await composition_worker.wait()  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 - the listing exposes stable failure state
-            pass
+
+        async def wait_for_shared_composition() -> None:
+            try:
+                await composition_worker.wait()  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - the listing exposes stable failure state
+                pass
+
+        # Settings observes app-owned initialization. Refresh/unmount may cancel
+        # this observer, but must not cancel the shared worker or leak its error.
+        await asyncio.shield(wait_for_shared_composition())
         self._tool_profiles_listing_generation += 1
         self._load_tool_profiles_worker(self._tool_profiles_listing_generation)
 
