@@ -530,18 +530,22 @@ class ConsolePromptQueueUIController:
             await self._handle_turn_recovery_intent(session_id, action)
             return
         if action in {"retry_response", "retry_anyway", "discard"}:
-            controller = self._chat_controller_accessor()
-            result = (
-                await controller.discard_dispatch_recovery(session_id)
-                if action == "discard"
-                else await controller.retry_dispatch_recovery(session_id)
-            )
-            if not result.accepted:
-                self._notify(
-                    result.visible_copy or "That recovery action is unavailable.",
-                    "warning",
+            try:
+                controller = self._chat_controller_accessor()
+                result = (
+                    await controller.discard_dispatch_recovery(session_id)
+                    if action == "discard"
+                    else await controller.retry_dispatch_recovery(session_id)
                 )
-            await self._sync_ui()
+                if not result.accepted:
+                    self._notify(
+                        result.visible_copy or "That recovery action is unavailable.",
+                        "warning",
+                    )
+            finally:
+                # Controller cleanup releases the model-owned action claim,
+                # including cancellation. Reconcile the view on every exit.
+                await self._sync_ui()
             return
         if action == "toggle-pause":
             await self.handle_pause_intent(

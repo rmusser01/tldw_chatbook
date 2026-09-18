@@ -145,6 +145,9 @@ class ConsoleDispatchRecoveryRegion(Widget):
         assistant_message_id = (
             recovery.assistant_message_id if recovery is not None else ""
         )
+        # A failed action can return to the same projection before we ever
+        # paint its in-flight state. Reconcile the intent latch even then.
+        self._intent_in_flight = recovery.in_flight if recovery is not None else False
         if (
             session_id == self._session_id
             and assistant_message_id == self._assistant_message_id
@@ -154,7 +157,6 @@ class ConsoleDispatchRecoveryRegion(Widget):
         self._session_id = session_id
         self._assistant_message_id = assistant_message_id
         self._presentation = updated
-        self._intent_in_flight = recovery.in_flight if recovery is not None else False
         self.set_class(updated.visible, "-visible")
         if self.is_mounted:
             self.refresh(recompose=True, layout=True)

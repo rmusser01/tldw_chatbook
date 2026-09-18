@@ -11,6 +11,20 @@ bring the incident.
 
 ---
 
+## An unchanged recovery projection can still need its click latch released
+
+**TASK-32568, GitHub #2708, 2026-09-18.** A failed recovery returned the store to
+the same actionable state before the UI painted its in-flight projection.
+`sync_recovery()` skipped identical display state before clearing the widget's
+local click latch, leaving Retry and Discard enabled-looking but inert. A mounted
+restored-conversation test with a real SQLite settlement failure reproduced it;
+after the database failure was removed, another Discard still did nothing.
+
+Reconcile interaction state before display deduplication, and refresh after
+exceptional or cancelled actions as well as successful returns. Test a failed
+attempt followed by a second click through the real dispatcher; store-only
+assertions that actions are enabled cannot detect a stranded widget latch.
+
 ## A `console_view_hooks()` entry with no declared slot is silently inert
 
 **TASK-32482 (tasks 6 and 7), 2026-09-11.** The chat-fork feature wired two
