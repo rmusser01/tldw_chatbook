@@ -1,0 +1,29 @@
+........................................................................ [ 93%]
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+20.42s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-dark]
+19.93s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-light]
+19.25s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+18.51s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-light]
+18.39s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-dark]
+18.29s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+6.17s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]
+5.61s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[False]
+5.39s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+5.29s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default
+5.10s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]
+4.95s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]
+4.88s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only
+4.81s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses
+4.68s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default
+4.50s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+4.41s call     Tests/UI/test_settings_tool_profiles.py::test_bind_request_without_explicit_workspace_shows_recovery_guidance
+4.39s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog
+4.38s call     Tests/UI/test_settings_tool_profiles.py::test_export_worker_uses_exact_profile_context_and_captured_destination
+4.37s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker
+4.37s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers
+4.36s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy
+4.36s call     Tests/UI/test_settings_tool_profiles.py::test_edit_policy_deep_link_captures_exact_profile_authority
+4.33s call     Tests/UI/test_settings_tool_profiles.py::test_canonical_settings_category_loads_app_owned_listing_off_thread
+4.32s call     Tests/UI/test_settings_tool_profiles.py::test_tool_profiles_refresh_when_settings_resumes_after_policy_edit
+77 passed in 291.73s (0:04:51)

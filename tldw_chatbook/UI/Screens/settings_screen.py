@@ -5014,30 +5014,99 @@ class SettingsScreen(BaseAppScreen):
         except WorkspaceRegistryServiceError:
             active = None
 
-        self._select_category(SettingsCategoryId.WORKSPACES.value)
+        # Keep an attached focus owner while the outgoing Bind button is removed.
+        # A newer user focus or navigation cancels the deferred continuation.
+        anchor = self.query_one("#settings-category-search", Input)
+        anchor.focus(scroll_visible=False)
+        self._discard_workspace_memory_confirmation()
         if active is None or active.workspace_id == DEFAULT_WORKSPACE_ID:
             self._settings_selected_workspace_id = None
             self._settings_workspace_assistant_pending = None
-            self._settings_workspace_memory_armed = None
+            self._settings_workspace_assistant_result = None
             self._settings_workspaces_result = (
-                "Choose a non-default workspace, then stage the Tool Profile in "
-                "Default assistant."
+                "Choose a non-default workspace or create one, make it active, "
+                "then return to Tool Profiles and choose Bind."
             )
-            return
-
-        defaults = active.assistant_defaults
-        self._settings_selected_workspace_id = active.workspace_id
-        self._settings_workspace_assistant_pending = {
-            "workspace_id": active.workspace_id,
-            "persona_id": getattr(defaults, "assistant_id", None),
-            "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
-            "profile_id": event.profile_id,
-        }
-        self._settings_workspace_memory_armed = None
-        self._settings_workspaces_result = (
-            "Tool Profile staged — choose a persona and apply."
+            control_id = "settings-workspace-create"
+        else:
+            defaults = active.assistant_defaults
+            self._settings_selected_workspace_id = active.workspace_id
+            pending = self._settings_workspace_assistant_pending
+            if pending is None or pending.get("workspace_id") != active.workspace_id:
+                pending = {
+                    "workspace_id": active.workspace_id,
+                    "persona_id": getattr(defaults, "assistant_id", None),
+                    "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
+                }
+            self._settings_workspace_assistant_pending = {
+                **pending,
+                "profile_id": event.profile_id,
+            }
+            control_id = (
+                "settings-workspace-memory-toggle"
+                if pending.get("persona_id")
+                else "settings-workspace-persona-picker"
+            )
+            self._settings_workspaces_result = ""
+            self._set_workspace_assistant_result(
+                active.workspace_id,
+                "Tool Profile staged — press Apply to review and save."
+                if pending.get("persona_id")
+                else "Tool Profile staged — choose a persona and apply.",
+                control_id=control_id,
+            )
+        self._select_category(SettingsCategoryId.WORKSPACES.value)
+        self._after_category_panes(
+            self.call_after_refresh,
+            self._finish_tool_profile_bind_handoff,
+            self._category_swap_revision,
+            self._settings_selected_workspace_id,
+            anchor,
+            control_id,
         )
-        self.call_after_refresh(self._refresh_settings_workspaces_pane)
+
+    def _finish_tool_profile_bind_handoff(
+        self,
+        revision: int,
+        workspace_id: str | None,
+        anchor: Input | Button,
+        control_id: str,
+    ) -> None:
+        """Reveal the current Bind continuation after its category panes settle."""
+        if (
+            not self.is_attached
+            or self.app.screen is not self
+            or self.active_category != SettingsCategoryId.WORKSPACES.value
+            or self._category_swap_revision != revision
+            or self._settings_selected_workspace_id != workspace_id
+            or self.app.focused is not anchor
+        ):
+            return
+        try:
+            control = self.query_one(f"#{control_id}")
+        except QueryError:
+            return
+        self.set_focus(control, scroll_visible=False)
+        if workspace_id is not None:
+            result = self._settings_workspace_assistant_result
+            if result is not None:
+                self._reveal_workspace_assistant_result(result)
+            return
+        receipt = self.query_one("#settings-workspaces-result")
+        parent = receipt.parent
+        if parent is not None and parent is control.parent:
+            siblings = list(parent.children)
+            if siblings.index(receipt) != siblings.index(control) + 1:
+                parent.move_child(receipt, after=control)
+                self.call_after_refresh(
+                    self._finish_tool_profile_bind_handoff,
+                    revision,
+                    workspace_id,
+                    control,
+                    control_id,
+                )
+                return
+        receipt.scroll_visible(animate=False, immediate=True)
 
     def _category_groups(
         self,

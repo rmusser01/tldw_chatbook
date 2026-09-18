@@ -1156,7 +1156,7 @@ async def test_bind_request_stages_profile_in_active_workspace_without_binding(
             "profile_id": "research",
         }
         assert registry.get_workspace("ws-active").assistant_defaults is None
-        assert "staged" in screen._settings_workspaces_result.casefold()
+        assert "staged" in screen._settings_workspace_assistant_result[2].casefold()
 
 
 @pytest.mark.asyncio

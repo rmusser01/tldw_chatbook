@@ -119,9 +119,29 @@ explicitly confirm removal. All twelve captures show readable feedback and
 keyboard continuation. Exact-source/private-profile lifecycle checks pass.
 [Evidence and gallery](../qa/2026-09-18-tool-profile-removal/README.md).
 
+## Bind handoff — TASK-32783
+
+Bind no longer discards a same-workspace Persona/memory draft. It stages only the
+selected profile, then reveals Persona or Apply with adjacent guidance after
+category panes settle. Default receives a visible recovery continuation. Newer
+focus/navigation wins; Bind never saves defaults automatically.
+
+91 distinct targeted cases pass. Four final native cells and sixteen rendered,
+inspected captures verify default recovery, staged Persona, roundtrip draft
+retention, first-bind cancel and exact confirmed persistence. Independent review
+caught queued focus masking a delayed valid callback; synchronous focus and a
+precise regression fix it. Earlier fixture/source attempts are separated from
+final evidence. [QA and gallery](../qa/2026-09-18-tool-profile-bind/README.md).
+
 ## Remaining scope
 
-MCP Edit and Workspaces Bind handoffs, plus remaining concurrent-workflow
-behavior, still need review. The qualified import/export/removal journeys and
-error boundaries above do not complete every Tool Profiles interaction or the
-broader component workstream.
+The MCP Edit handoff selects the exact profile, including return visits, but
+real routed probes show a geometry gap: focused permission rows are below the
+canvas clip at 80×24, and Ctrl+End reaches a clipped row at 140×40. Standalone
+profile selection tests pass but do not cover this routed layout. Repair and
+native qualification remain open. Concurrent-workflow review also remains open.
+
+PR2707's existing compact Tool Profiles action rule adds one ancestor-scoped
+bare-type selector (275 versus the 274 ratchet). This is a structural guard
+failure, not measured runtime latency; a separate bounded repair is next.
+These bounded management reviews do not complete the broader component workstream.
