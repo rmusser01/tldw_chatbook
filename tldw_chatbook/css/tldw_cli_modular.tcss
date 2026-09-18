@@ -3440,6 +3440,24 @@ Button.mcp-callout {
 }
 
 
+#mcp-tools-local-enabled {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    text-wrap: wrap;
+}
+
+
+.mcp-compact #mcp-tools-filter-bar {
+    layout: vertical;
+}
+
+.mcp-compact #mcp-tools-filter-text,
+.mcp-compact #mcp-tools-filter-server-slot,
+.mcp-compact #mcp-tools-filter-server {
+    width: $ds-width-full;
+}
+
+
 #mcp-perm-table {
     height: auto;
     max-height: $ds-agentic-mcp-table-cap;

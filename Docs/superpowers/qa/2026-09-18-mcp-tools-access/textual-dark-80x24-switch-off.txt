@@ -1,0 +1,24 @@
+                  ╭────────╮
+ ‹   ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││        Local workspace, web, and         ││                  │
+│ Source       ││         Watchlists tools: off ▸          ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  Available by default. Calls still       ││  ◦ Off (opt-in)  │
+│ ▊ Local  ▼ ▎ ││  follow Ask, Allow, or Off               ││  tldw_chatbook   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  permissions.                            ││  (built-in)      │
+│              ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││  Why · Off —     │
+│ Servers      ││  ▊  Workspace root   ▎                 ▁ ││  enable it to    │
+│  ◦ off · ⌂   ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││  let MCP         │
+│  built-in    ││  Disabled. The next Console agent run    ││  clients use     │
+│     All      ││  will use this setting; calls still      ││  chatbook's      │
+│   ◦ ⌂ tld... ││  follow Ask, Allow, or Off               ││  tools.          │
+│              ││  permissions.                            ││  Add server      │
+│              ││                                          ││    Advanced…     │
+│              ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

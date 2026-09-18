@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││                  │
+│ Source       ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  ▊  All servers                   ▼  ▎   ││  Why · Off —     │
+│ ▊ Local  ▼ ▎ ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  enable it to    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││                                          ││  let MCP         │
+│              ││  Tool                                    ││  clients use     │
+│ Servers      ││  git_branches                            ││  chatbook's      │
+│  ◦ off · ⌂   ││  git_diff                              ▇ ││  tools.          │
+│  built-in    ││  git_log                                 ││  Add server      │
+│     All      ││  git_status                              ││  stat — Virtual  │
+│   ◦ ⌂ tld... ││  grep                                    ││  CLI             │
+│              ││  ls                                      ││  (read-only)     │
+│              ││  stat                                    ││  Read-only       │
+│              ││                ▋                         ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

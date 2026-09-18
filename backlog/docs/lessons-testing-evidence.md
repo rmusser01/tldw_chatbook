@@ -11218,6 +11218,14 @@ Budgeting against `table.styles.scrollbar_size_vertical` before wrapping fixed
 the reproduced case. Qualify both scrollbar states and actual painted Tool/State
 regions after resizing; a pre-layout width measurement alone is insufficient.
 
+**TASK-32789, 2026-09-18 follow-up.** The MCP Tools canvas could reveal its
+DataTable while leaving the selected last row below the table's own viewport
+after shrink. Tests that pressed Ctrl+Home/End after every resize passed because
+those keys repaired the scroll. Independent review seeded sixty rows and resized
+with row 59 selected and no further navigation; both themes failed. Reveal the
+focused table's cursor after layout as well as the outer widget, and test resize
+without a later action that could repair the geometry being asserted.
+
 ## A clean rebase can orphan an import, and only a full-suite A/B sees it
 
 **TASK-22500, 2026-08-27.** The branch stopped importing `VerticalScroll` in

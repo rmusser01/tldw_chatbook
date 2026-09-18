@@ -1,0 +1,878 @@
+[
+  {
+    "size": [
+      80,
+      24
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 12
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Server",
+        "width": 6,
+        "content_width": 24
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      },
+      {
+        "label": "Schema",
+        "width": 6,
+        "content_width": 6
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        80,
+        2
+      ],
+      "content": [
+        1,
+        4,
+        78,
+        2
+      ],
+      "clip": [
+        0,
+        3,
+        80,
+        20
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        7,
+        16,
+        16
+      ],
+      "content": [
+        2,
+        8,
+        12,
+        14
+      ],
+      "clip": [
+        0,
+        7,
+        80,
+        16
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        16,
+        7,
+        44,
+        16
+      ],
+      "content": [
+        18,
+        8,
+        40,
+        14
+      ],
+      "clip": [
+        0,
+        7,
+        80,
+        16
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        60,
+        7,
+        20,
+        16
+      ],
+      "content": [
+        62,
+        9,
+        16,
+        12
+      ],
+      "clip": [
+        0,
+        7,
+        80,
+        16
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        10,
+        12,
+        3
+      ],
+      "content": [
+        2,
+        10,
+        12,
+        3
+      ],
+      "clip": [
+        2,
+        8,
+        12,
+        14
+      ]
+    },
+    "#mcp-tools-local-enabled": {
+      "region": [
+        19,
+        8,
+        50,
+        1
+      ],
+      "content": [
+        19,
+        8,
+        50,
+        1
+      ],
+      "clip": [
+        19,
+        8,
+        38,
+        8
+      ]
+    },
+    "#mcp-tools-filter-text": {
+      "region": [
+        19,
+        17,
+        10,
+        3
+      ],
+      "content": [
+        22,
+        18,
+        4,
+        1
+      ],
+      "clip": [
+        19,
+        17,
+        38,
+        4
+      ]
+    },
+    "#mcp-tools-filter-server": {
+      "region": [
+        29,
+        17,
+        28,
+        3
+      ],
+      "content": [
+        29,
+        17,
+        28,
+        3
+      ],
+      "clip": [
+        29,
+        17,
+        28,
+        4
+      ]
+    },
+    "#mcp-tools-table": {
+      "region": [
+        18,
+        21,
+        40,
+        9
+      ],
+      "content": [
+        18,
+        21,
+        40,
+        9
+      ],
+      "clip": [
+        18,
+        8,
+        40,
+        14
+      ]
+    },
+    "tool_rows": 14,
+    "source_lines": [
+      "          ",
+      "          ",
+      "          "
+    ]
+  },
+  {
+    "size": [
+      100,
+      30
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 12
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Server",
+        "width": 6,
+        "content_width": 24
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      },
+      {
+        "label": "Schema",
+        "width": 6,
+        "content_width": 6
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        100,
+        2
+      ],
+      "content": [
+        1,
+        4,
+        98,
+        2
+      ],
+      "clip": [
+        0,
+        3,
+        100,
+        26
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        7,
+        17,
+        22
+      ],
+      "content": [
+        2,
+        8,
+        13,
+        20
+      ],
+      "clip": [
+        0,
+        7,
+        100,
+        22
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        17,
+        7,
+        63,
+        22
+      ],
+      "content": [
+        19,
+        8,
+        59,
+        20
+      ],
+      "clip": [
+        0,
+        7,
+        100,
+        22
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        80,
+        7,
+        20,
+        22
+      ],
+      "content": [
+        82,
+        9,
+        16,
+        18
+      ],
+      "clip": [
+        0,
+        7,
+        100,
+        22
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        10,
+        13,
+        3
+      ],
+      "content": [
+        2,
+        10,
+        13,
+        3
+      ],
+      "clip": [
+        2,
+        8,
+        13,
+        20
+      ]
+    },
+    "#mcp-tools-local-enabled": {
+      "region": [
+        20,
+        8,
+        50,
+        1
+      ],
+      "content": [
+        20,
+        8,
+        50,
+        1
+      ],
+      "clip": [
+        20,
+        8,
+        57,
+        7
+      ]
+    },
+    "#mcp-tools-filter-text": {
+      "region": [
+        20,
+        16,
+        29,
+        3
+      ],
+      "content": [
+        23,
+        17,
+        23,
+        1
+      ],
+      "clip": [
+        20,
+        16,
+        57,
+        4
+      ]
+    },
+    "#mcp-tools-filter-server": {
+      "region": [
+        49,
+        16,
+        28,
+        3
+      ],
+      "content": [
+        49,
+        16,
+        28,
+        3
+      ],
+      "clip": [
+        49,
+        16,
+        28,
+        4
+      ]
+    },
+    "#mcp-tools-table": {
+      "region": [
+        19,
+        20,
+        59,
+        14
+      ],
+      "content": [
+        19,
+        20,
+        59,
+        14
+      ],
+      "clip": [
+        19,
+        8,
+        59,
+        20
+      ]
+    },
+    "tool_rows": 14,
+    "source_lines": [
+      "           ",
+      "           ",
+      "           "
+    ]
+  },
+  {
+    "size": [
+      120,
+      40
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 12
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Server",
+        "width": 6,
+        "content_width": 24
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      },
+      {
+        "label": "Schema",
+        "width": 6,
+        "content_width": 6
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        120,
+        1
+      ],
+      "content": [
+        1,
+        4,
+        118,
+        1
+      ],
+      "clip": [
+        0,
+        3,
+        120,
+        36
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        6,
+        32,
+        33
+      ],
+      "content": [
+        2,
+        7,
+        28,
+        31
+      ],
+      "clip": [
+        0,
+        6,
+        120,
+        33
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        32,
+        6,
+        55,
+        33
+      ],
+      "content": [
+        34,
+        7,
+        51,
+        31
+      ],
+      "clip": [
+        0,
+        6,
+        120,
+        33
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        87,
+        6,
+        33,
+        33
+      ],
+      "content": [
+        89,
+        8,
+        29,
+        29
+      ],
+      "clip": [
+        0,
+        6,
+        120,
+        33
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        9,
+        28,
+        3
+      ],
+      "content": [
+        2,
+        9,
+        28,
+        3
+      ],
+      "clip": [
+        2,
+        7,
+        28,
+        31
+      ]
+    },
+    "#mcp-tools-local-enabled": {
+      "region": [
+        35,
+        7,
+        50,
+        1
+      ],
+      "content": [
+        35,
+        7,
+        50,
+        1
+      ],
+      "clip": [
+        35,
+        7,
+        49,
+        7
+      ]
+    },
+    "#mcp-tools-filter-text": {
+      "region": [
+        35,
+        15,
+        21,
+        3
+      ],
+      "content": [
+        38,
+        16,
+        15,
+        1
+      ],
+      "clip": [
+        35,
+        15,
+        49,
+        4
+      ]
+    },
+    "#mcp-tools-filter-server": {
+      "region": [
+        56,
+        15,
+        28,
+        3
+      ],
+      "content": [
+        56,
+        15,
+        28,
+        3
+      ],
+      "clip": [
+        56,
+        15,
+        28,
+        4
+      ]
+    },
+    "#mcp-tools-table": {
+      "region": [
+        34,
+        19,
+        51,
+        16
+      ],
+      "content": [
+        34,
+        19,
+        51,
+        16
+      ],
+      "clip": [
+        34,
+        7,
+        51,
+        31
+      ]
+    },
+    "tool_rows": 14,
+    "source_lines": [
+      "                          ",
+      "                          ",
+      "                          "
+    ]
+  },
+  {
+    "size": [
+      170,
+      48
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 12
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Server",
+        "width": 6,
+        "content_width": 24
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      },
+      {
+        "label": "Schema",
+        "width": 6,
+        "content_width": 6
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        170,
+        1
+      ],
+      "content": [
+        1,
+        4,
+        168,
+        1
+      ],
+      "clip": [
+        0,
+        3,
+        170,
+        44
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        6,
+        46,
+        41
+      ],
+      "content": [
+        2,
+        7,
+        42,
+        39
+      ],
+      "clip": [
+        0,
+        6,
+        170,
+        41
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        46,
+        6,
+        77,
+        41
+      ],
+      "content": [
+        48,
+        7,
+        73,
+        39
+      ],
+      "clip": [
+        0,
+        6,
+        170,
+        41
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        123,
+        6,
+        47,
+        41
+      ],
+      "content": [
+        125,
+        8,
+        43,
+        37
+      ],
+      "clip": [
+        0,
+        6,
+        170,
+        41
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        9,
+        42,
+        3
+      ],
+      "content": [
+        2,
+        9,
+        42,
+        3
+      ],
+      "clip": [
+        2,
+        7,
+        42,
+        39
+      ]
+    },
+    "#mcp-tools-local-enabled": {
+      "region": [
+        49,
+        7,
+        50,
+        1
+      ],
+      "content": [
+        49,
+        7,
+        50,
+        1
+      ],
+      "clip": [
+        49,
+        7,
+        71,
+        7
+      ]
+    },
+    "#mcp-tools-filter-text": {
+      "region": [
+        49,
+        15,
+        43,
+        3
+      ],
+      "content": [
+        52,
+        16,
+        37,
+        1
+      ],
+      "clip": [
+        49,
+        15,
+        71,
+        4
+      ]
+    },
+    "#mcp-tools-filter-server": {
+      "region": [
+        92,
+        15,
+        28,
+        3
+      ],
+      "content": [
+        92,
+        15,
+        28,
+        3
+      ],
+      "clip": [
+        92,
+        15,
+        28,
+        4
+      ]
+    },
+    "#mcp-tools-table": {
+      "region": [
+        48,
+        19,
+        73,
+        15
+      ],
+      "content": [
+        48,
+        19,
+        73,
+        15
+      ],
+      "clip": [
+        48,
+        7,
+        73,
+        39
+      ]
+    },
+    "tool_rows": 14,
+    "source_lines": [
+      "                                        ",
+      "                                        ",
+      "                                        "
+    ]
+  }
+]
