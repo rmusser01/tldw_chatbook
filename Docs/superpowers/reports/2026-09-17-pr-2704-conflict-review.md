@@ -81,11 +81,19 @@ The numerous Interface screenshots, test outputs, lifecycle manifests, QA receip
 
 ## Current branch visual review
 
+The latest [refreshed gallery](../qa/2026-09-17-notes-authority-layout/README.md)
+shows Console and Notes after TASK-32765, including a before/after comparison
+of the compact Notes introductory text repair. Eight native captures cover
+dark/light at 80×24 and 170×48; all were inspected and the successful run's
+normal shutdown and profile isolation were verified. This follow-up changes
+no conflict selection and does not authorize merging.
+
 The [fresh eight-capture gallery](../qa/2026-09-17-pr-2704-visual-review/README.md)
 shows Console and Library Notes at source commit `7c28855825`, after the recorded
 merges and subsequent Settings repairs. It covers dark/light at 80×24 and 170×48
 with real terminal rendering, inspected captures and verified shutdown. The
-gallery explicitly flags compact Notes introductory text truncation and bounds
+earlier gallery flags compact Notes introductory text truncation (now repaired
+by TASK-32765) and bounds
 its claims to the captured navigation/rendering states. These are current-result
 images, not parent-side before/after comparisons.
 

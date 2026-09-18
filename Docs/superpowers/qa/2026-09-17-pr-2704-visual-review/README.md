@@ -1,5 +1,10 @@
 # PR #2704 — current branch visual review
 
+The later [refreshed gallery](../2026-09-17-notes-authority-layout/README.md)
+includes the TASK-32765 repair for the compact Notes clipping recorded below,
+with a before/after comparison and eight newer Console/Notes captures.
+This earlier gallery is retained as historical evidence.
+
 These eight captures show source commit
 `7c28855825491047515675c06bb71ff15e59e7eb`, after all four recorded dev integrations
 and the subsequent Settings repairs. They are fresh captures of the resolved

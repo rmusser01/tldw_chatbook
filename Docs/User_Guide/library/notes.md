@@ -431,6 +431,9 @@ prefix, since the source strip above it already says which notes these
 are, and the toolbar moves the action that does not fit onto a row of its
 own. Nothing is ever painted as half a word.
 
+At other compact widths, the list's introductory status wraps to the height
+it needs: at 80 columns, the complete next action occupies three rows.
+
 This rule holds for every toolbar row at every width, not only the browse
 actions on a narrow terminal (task-32544, task-32557). Any group of
 actions wider than the pane it is in wraps onto as many rows as it needs,

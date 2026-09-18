@@ -1096,13 +1096,21 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-shell-grid.library-notes-compact #library-notes-authority,
 #library-shell-grid.library-notes-compact #library-note-work-authority {
-    height: $ds-size-2;
+    height: $ds-height-auto;
     min-height: $ds-size-2;
-    max-height: $ds-size-2;
+    max-height: $ds-height-full;
     margin: $ds-space-0;
     padding: $ds-space-0 $ds-space-1;
     text-wrap: wrap;
     overflow: hidden hidden;
+}
+
+/* The list's next-step sentence needs three rows in an 80-column terminal.
+   Its full-height maximum above overrides the screen default's two-row cap;
+   the separate editor authority keeps its existing budget. */
+#library-shell-grid.library-notes-compact #library-note-work-authority {
+    height: $ds-size-2;
+    max-height: $ds-size-2;
 }
 
 #library-shell-grid.library-notes-compact #library-notes-header {
