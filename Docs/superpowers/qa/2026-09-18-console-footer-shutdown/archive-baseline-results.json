@@ -1,0 +1,62 @@
+{
+  "baseline": "2cc702b85caf72e718803abc03a5d8283d84be33",
+  "cases": [
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+      "returncode": 1,
+      "qualified": false,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+          "phase": "call",
+          "outcome": "failed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-baseline-003/001",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+      "returncode": 1,
+      "qualified": false,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+          "phase": "call",
+          "outcome": "failed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-baseline-003/002",
+      "classes": [],
+      "mismatches": 0
+    }
+  ],
+  "scope": "Only pending production change restored to saved HEAD during serial baseline run; fixed source restored in finally."
+}

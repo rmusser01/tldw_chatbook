@@ -23,7 +23,7 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
-from textual.app import ComposeResult
+from textual.app import ComposeResult, ScreenStackError
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -5200,7 +5200,11 @@ class ChatScreen(BaseAppScreen):
         """Return whether live focus is inside either mounted rail (TASK-32322)."""
         from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 
-        focused = self.app.focused
+        try:
+            focused = self.app.focused
+        except ScreenStackError:
+            # A late setup refresh can rebuild hints after the last screen pops.
+            return False
         if not isinstance(focused, Widget):
             return False
         for rail_id in ("console-left-rail", "console-right-rail"):
@@ -5219,7 +5223,10 @@ class ChatScreen(BaseAppScreen):
             rail = self.query_one("#console-right-rail", ConsoleInspectorRail)
         except (NoMatches, QueryError):
             return False
-        focused = self.app.focused
+        try:
+            focused = self.app.focused
+        except ScreenStackError:
+            return False
         return isinstance(focused, Widget) and rail.inspector_active(focused)
 
     def _apply_focus_chrome(self) -> None:

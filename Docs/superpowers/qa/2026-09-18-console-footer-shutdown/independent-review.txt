@@ -1,0 +1,10 @@
+Independent read-only review by footer_shutdown_review against 2cc702b85c.
+
+No actionable findings. Both guards catch only ScreenStackError around
+App.focused, preserving normal focus behavior. Three mounted regressions cover
+both helpers, the recorded _apply_console_setup_block(False) failure path and
+restored rail/composer hints. Stack restoration is protected by finally, with
+no asynchronous yield while empty. Reviewer ran no tests/apps.
+
+Broader shutdown paths, including _apply_console_setup_block(True), remain
+outside this task's scope.
