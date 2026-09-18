@@ -1,0 +1,403 @@
+{
+  "selected": 14,
+  "passed": 12,
+  "baseline_failures": 2,
+  "cases": [
+    {
+      "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/001",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/002",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/003",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_screen_footer_hints.py::test_console_registration_updates_the_screens_own_footer",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_screen_footer_hints.py::test_console_registration_updates_the_screens_own_footer",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_screen_footer_hints.py::test_console_registration_updates_the_screens_own_footer",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_screen_footer_hints.py::test_console_registration_updates_the_screens_own_footer",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/004",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_screen_footer_hints.py::test_registration_survives_screen_recompose",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_screen_footer_hints.py::test_registration_survives_screen_recompose",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_screen_footer_hints.py::test_registration_survives_screen_recompose",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_screen_footer_hints.py::test_registration_survives_screen_recompose",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/005",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_drops_the_send_hint",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_drops_the_send_hint",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_drops_the_send_hint",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_drops_the_send_hint",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/006",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_names_the_way_back",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_names_the_way_back",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_names_the_way_back",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_names_the_way_back",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/007",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_keeps_the_rest_of_the_vocabulary",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_keeps_the_rest_of_the_vocabulary",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_keeps_the_rest_of_the_vocabulary",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_task_25835_collapsed_composer_footer.py::test_collapsed_variant_keeps_the_rest_of_the_vocabulary",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/008",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/009",
+      "classes": [
+        "WorkspaceArchiveReceiptModal"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/010",
+      "classes": [
+        "WorkspaceArchiveReceiptModal"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+      "returncode": 1,
+      "qualified": false,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+          "phase": "call",
+          "outcome": "failed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/011",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+      "returncode": 1,
+      "qualified": false,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+          "phase": "call",
+          "outcome": "failed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/012",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_is_a_no_op_once_the_screen_stack_is_empty",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_is_a_no_op_once_the_screen_stack_is_empty",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_is_a_no_op_once_the_screen_stack_is_empty",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_is_a_no_op_once_the_screen_stack_is_empty",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/013",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_survives_app_teardown_through_the_real_screen",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_survives_app_teardown_through_the_real_screen",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_survives_app_teardown_through_the_real_screen",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_console_environment_wiring.py::test_environment_poll_tick_survives_app_teardown_through_the_real_screen",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32815-green-002/014",
+      "classes": [],
+      "mismatches": 0
+    }
+  ]
+}

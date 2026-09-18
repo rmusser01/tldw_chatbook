@@ -193,3 +193,12 @@ The same qualification discovered an intermittent Console shutdown focus query
 recovery's existing unstyled layout also remains component-review debt. The
 native report records these limits rather than treating CSS parity as usable UI.
 PR2707 remains draft, unmerged, and subject to its own visual review and approval.
+
+
+TASK-32815 repairs the specific Console footer shutdown error found during CSS
+qualification. [Three deterministic regressions and 12 passing targeted checks](../qa/2026-09-18-console-footer-shutdown/README.md)
+cover both focus helpers, the observed late setup callback and ordinary rail/
+composer hints. Two additional archive send tests fail before composer mount
+on both saved and modified source because their fake gateway lacks the current
+context-window method; TASK-32817 tracks that separate test contract. This
+nonvisual fix does not claim all shutdown paths or a new native gallery.

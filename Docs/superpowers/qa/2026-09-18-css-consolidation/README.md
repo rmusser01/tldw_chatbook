@@ -138,3 +138,9 @@ are separate from the local qualification above.
 
 ADR required: no. Existing ADR-150, ADR-161 and ADR-097 govern this mechanical
 consolidation, compatibility registration and unchanged performance boundaries.
+
+
+Follow-up: TASK-32815 now repairs the recorded empty-stack footer queries with
+[deterministic red/green checks](../2026-09-18-console-footer-shutdown/README.md).
+The original incident above remains unchanged. Appearance and Roleplay visual
+limits are still open; later nonvisual fixes do not extend these capture claims.
