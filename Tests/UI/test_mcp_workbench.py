@@ -5745,12 +5745,20 @@ async def test_test_tool_active_watcher_never_updates_stale_panel(leave_by: str)
         await _wait_for_test_button_label(app, pilot, "Running…")
 
         if leave_by == "switch":
-            await _select_tools_mode_row(app, pilot, 1)
+            # The panel's deferred focus can consume Enter in its JSON editor.
+            # Exercise the selection event independently of keyboard focus.
+            table = app.query_one("#mcp-tools-table", DataTable)
+            table.move_cursor(row=1)
+            table.action_select_cursor()
+            await pilot.pause()
+            inspector = app.query_one(MCPInspector)
+            assert inspector.current_tool is not None
+            assert inspector.current_tool.name == "search"
         else:
             await workbench.remove()
         app.unified_mcp_service._active_tests.discard(key)
-        for _ in range(20):
-            await pilot.pause()
+        # UI idleness does not join the watcher or its off-loop nonce cleanup.
+        await app.workers.wait_for_complete()
 
         assert app.unified_mcp_service._previews == {}
         if leave_by == "switch":

@@ -98,7 +98,7 @@ class ConsoleDispatchRecoveryRegion(Widget):
         recovery: ConsoleDispatchRecoveryState | None = None,
         *,
         session_id: str = "",
-        on_action: Callable[[str, str, str], None] | None = None,
+        on_action: Callable[[str, str, str, Callable[[], None]], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -108,7 +108,8 @@ class ConsoleDispatchRecoveryRegion(Widget):
         self._assistant_message_id = (
             recovery.assistant_message_id if recovery is not None else ""
         )
-        self._intent_in_flight = recovery.in_flight if recovery is not None else False
+        self._model_in_flight = recovery.in_flight if recovery is not None else False
+        self._pending_intent: object | None = None
         self.set_class(self._presentation.visible, "-visible")
 
     def compose(self) -> ComposeResult:
@@ -146,6 +147,12 @@ class ConsoleDispatchRecoveryRegion(Widget):
             recovery.assistant_message_id if recovery is not None else ""
         )
         if (
+            session_id != self._session_id
+            or assistant_message_id != self._assistant_message_id
+        ):
+            self._pending_intent = None
+        self._model_in_flight = recovery.in_flight if recovery is not None else False
+        if (
             session_id == self._session_id
             and assistant_message_id == self._assistant_message_id
             and updated == self._presentation
@@ -154,7 +161,6 @@ class ConsoleDispatchRecoveryRegion(Widget):
         self._session_id = session_id
         self._assistant_message_id = assistant_message_id
         self._presentation = updated
-        self._intent_in_flight = recovery.in_flight if recovery is not None else False
         self.set_class(updated.visible, "-visible")
         if self.is_mounted:
             self.refresh(recompose=True, layout=True)
@@ -165,7 +171,11 @@ class ConsoleDispatchRecoveryRegion(Widget):
 
         prefix = "console-dispatch-recovery-"
         button_id = event.button.id or ""
-        if self._intent_in_flight or not button_id.startswith(prefix):
+        if (
+            self._model_in_flight
+            or self._pending_intent is not None
+            or not button_id.startswith(prefix)
+        ):
             return
         action_id = button_id.removeprefix(prefix)
         action = next(
@@ -179,13 +189,24 @@ class ConsoleDispatchRecoveryRegion(Widget):
         if action is None:
             return
         event.stop()
-        self._intent_in_flight = True
         if self._on_action is not None:
-            self._on_action(
-                self._session_id,
-                self._assistant_message_id,
-                action_id,
-            )
+            token = self._pending_intent = object()
+
+            def complete() -> None:
+                # A stale worker must not release a newer owner's/click's claim.
+                if self._pending_intent is token:
+                    self._pending_intent = None
+
+            try:
+                self._on_action(
+                    self._session_id,
+                    self._assistant_message_id,
+                    action_id,
+                    complete,
+                )
+            except Exception:
+                complete()
+                raise
 
 
 __all__ = [
