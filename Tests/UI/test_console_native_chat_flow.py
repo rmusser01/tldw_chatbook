@@ -2726,6 +2726,12 @@ class _ReadyResolutionGateway:
     rather than hand-built, so the double cannot silently drift from it again.
     """
 
+    def cached_context_window(self, settings):
+        """Provide the real gateway's offline metadata fallback to mounted UI."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
         resolution = SimpleNamespace(
             provider=selection.provider,

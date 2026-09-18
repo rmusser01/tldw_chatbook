@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, Thread
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.Chat.console_chat_models as recovery_models
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
@@ -23,7 +25,6 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleDispatchSettlementError,
 )
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleAssistantSettlement,
     ConsoleDispatchCheckpoint,
@@ -43,22 +44,22 @@ from tldw_chatbook.Chat.console_dispatch_repository import (
     ConsoleDispatchCheckpointValidationError,
     ConsoleDispatchRepository,
 )
-from tldw_chatbook.Chat.conversation_local_marks_service import (
-    ConversationLocalMarksService,
-)
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
-from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
-
 
 UNRECONSTRUCTABLE_REASON = (
     "Retry response is unavailable because one-shot prefill or transient evidence "
@@ -159,6 +160,23 @@ def _database(path: Path) -> tuple[CharactersRAGDB, str, ConsoleDispatchReposito
             (conversation_id,),
         )
     return db, conversation_id, ConsoleDispatchRepository(db)
+
+
+@pytest.fixture(autouse=True)
+def close_recovery_databases(monkeypatch):
+    """Retire each test's SQLite handles even when a fault assertion fails."""
+    create_database = _database
+    databases = []
+
+    def tracked_database(path):
+        result = create_database(path)
+        databases.append(result[0])
+        return result
+
+    monkeypatch.setattr(sys.modules[__name__], "_database", tracked_database)
+    yield
+    for database in reversed(databases):
+        database.close()
 
 
 def _raw_semantic_corruption(
@@ -818,7 +836,9 @@ def _assert_terminal_fault_retained(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_accepted_retry_cas_precedes_provider_and_reuses_exact_owners(
+    request,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1851,7 +1871,9 @@ async def test_discard_delete_failure_rolls_back_terminal_and_restores_actions(
 
 @pytest.mark.parametrize("provider_outcome", ["success", "failure"])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_retry_terminal_delete_failure_retains_exact_preterminal_owner(
+    request,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider_outcome: str,
@@ -1886,7 +1908,9 @@ async def test_retry_terminal_delete_failure_retains_exact_preterminal_owner(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_retry_cancel_settlement_failure_retains_exact_preterminal_owner(
+    request,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

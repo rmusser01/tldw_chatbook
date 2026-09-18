@@ -6,21 +6,20 @@ from typing import Any
 
 import pytest
 from textual.app import ComposeResult
+from textual.widgets import Button, TextArea
+
+from Tests.private_profile import private_profile_test
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button
-from textual.widgets import TextArea
-
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
-
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_chat_models import ConsoleControllerActivity
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_prompt_queue import (
-    ConsolePromptQueueRegistry,
     MAX_CONSOLE_QUEUE_ENTRIES,
+    ConsolePromptQueueRegistry,
     PromptQueuePauseReason,
     QueueMutationStatus,
 )
@@ -34,12 +33,12 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptQueueUIController,
     derive_prompt_queue_presentation,
 )
-from tldw_chatbook.Widgets.Console.console_session_surface import (
-    ConsoleSessionSurface,
-)
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
+)
+from tldw_chatbook.Widgets.Console.console_session_surface import (
+    ConsoleSessionSurface,
 )
 
 
@@ -77,23 +76,17 @@ def test_presentation_uses_exact_send_queue_boundaries() -> None:
     registry = ConsolePromptQueueRegistry()
     empty = registry.snapshot("session-a")
 
-    preparing = derive_prompt_queue_presentation(
-        empty, _activity(preparing=True)
-    )
+    preparing = derive_prompt_queue_presentation(empty, _activity(preparing=True))
     assert preparing.send_label == "Preparing..."
     assert preparing.send_enabled is False
 
-    handoff = derive_prompt_queue_presentation(
-        empty, _activity(occupies=True)
-    )
+    handoff = derive_prompt_queue_presentation(empty, _activity(occupies=True))
     assert handoff.send_label == "Preparing..."
     assert handoff.send_enabled is False
 
     chain = _registry_with_chain()
     chained = chain.snapshot("session-a")
-    queue = derive_prompt_queue_presentation(
-        chained, _activity(accepted=True)
-    )
+    queue = derive_prompt_queue_presentation(chained, _activity(accepted=True))
     assert queue.send_label == "Queue"
     assert queue.send_enabled is True
 
@@ -238,7 +231,10 @@ async def test_recovery_shelf_buttons_pin_the_displayed_turn_id() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 40)])
-async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None:
+@private_profile_test
+async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
+    request, size
+) -> None:
     _app, host = _ready_host()
     async with host.run_test(size=size) as pilot:
         console = await _mounted_console(host, pilot)
@@ -259,12 +255,8 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        region = console.query_one(
-            "#console-prompt-queue", ConsolePromptQueueRegion
-        )
-        composer = console.query_one(
-            "#console-native-composer", ConsoleComposerBar
-        )
+        region = console.query_one("#console-prompt-queue", ConsolePromptQueueRegion)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         manage = region.query_one("#console-prompt-queue-manage", Button)
         pause = region.query_one("#console-prompt-queue-pause", Button)
         send = composer.query_one("#console-send-message", Button)
@@ -290,7 +282,10 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None
 
 
 @pytest.mark.asyncio
-async def test_navigation_confirmation_is_pure_and_preserves_manager_edit() -> None:
+@private_profile_test
+async def test_navigation_confirmation_is_pure_and_preserves_manager_edit(
+    request,
+) -> None:
     _app, host = _ready_host()
     async with host.run_test(size=(100, 30)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -334,7 +329,10 @@ async def test_navigation_confirmation_is_pure_and_preserves_manager_edit() -> N
 
 
 @pytest.mark.asyncio
-async def test_full_console_manager_mounts_entry_children_before_live_list_insert() -> None:
+@private_profile_test
+async def test_full_console_manager_mounts_entry_children_before_live_list_insert(
+    request,
+) -> None:
     """Opening Manage must not race child mounts against an unattached row."""
 
     _app, host = _ready_host()
@@ -370,7 +368,9 @@ async def test_full_console_manager_mounts_entry_children_before_live_list_inser
 
 class _FakeChatController:
     def __init__(self, *, accepted: bool, preparing: bool = False) -> None:
-        self.prompt_queue_registry = _registry_with_chain() if accepted else ConsolePromptQueueRegistry()
+        self.prompt_queue_registry = (
+            _registry_with_chain() if accepted else ConsolePromptQueueRegistry()
+        )
         self.store = SimpleNamespace(
             active_session_id="session-a",
             conversation_context_epoch=lambda _session_id: 8,
@@ -710,13 +710,14 @@ async def test_dispatch_admits_exact_text_behind_accepted_turn() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("admission", ("busy", "race", "edit"))
+@private_profile_test
 async def test_wired_queue_admission_freezes_view_source_filter(
-    monkeypatch, admission
+    request, monkeypatch, admission
 ) -> None:
-    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
     from Tests.Chat.test_console_turn_execution_context import _authority, _destination
     from Tests.Chat.test_console_turn_preparation import _preparation_values
     from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
     from tldw_chatbook.Chat.console_turn_preparation import (
         ConsoleTurnPreparation,
         ConsoleTurnPreparationState,
@@ -816,8 +817,9 @@ async def test_wired_queue_admission_freezes_view_source_filter(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("admission", ("busy", "race", "edit"))
+@private_profile_test
 async def test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation(
-    monkeypatch, admission
+    request, monkeypatch, admission
 ) -> None:
     _app, host = _ready_host()
     async with host.run_test(size=(100, 30)) as pilot:
@@ -917,7 +919,9 @@ async def test_runtime_custody_succeeds_before_composer_revision_is_committed() 
 
 
 @pytest.mark.asyncio
-async def test_dispatch_uses_explicit_owning_session_instead_of_active_session() -> None:
+async def test_dispatch_uses_explicit_owning_session_instead_of_active_session() -> (
+    None
+):
     fake = _FakeChatController(accepted=False)
     calls = _calls()
     controller = _ui_controller(fake, calls)
@@ -1065,7 +1069,8 @@ async def test_use_current_context_rejects_an_epoch_that_changed_after_review() 
 
 
 @pytest.mark.asyncio
-async def test_dirty_queue_edit_vetoes_navigation_and_preserves_text() -> None:
+@private_profile_test
+async def test_dirty_queue_edit_vetoes_navigation_and_preserves_text(request) -> None:
     """TASK-31701: the one lossy Console navigation is guarded again.
 
     A queue-manager edit whose text diverges from the queued entry vetoes
@@ -1146,9 +1151,7 @@ def _bare_modal_for_dirty_check(
     modal._queue_controller = SimpleNamespace(
         read_waiting_text=lambda *args, **kwargs: read_result
     )
-    modal.query_one = lambda selector, widget_type=None: SimpleNamespace(
-        text=edit_text
-    )
+    modal.query_one = lambda selector, widget_type=None: SimpleNamespace(text=edit_text)
     return modal
 
 

@@ -16,6 +16,7 @@ from Tests.Chat.test_console_dispatch_recovery import (
     _restored_store,
     _start,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_dispatch_recovery import _state
@@ -115,14 +116,16 @@ async def test_pending_recovery_still_ignores_duplicate_clicks():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("check_copy", [False, True])
 @pytest.mark.parametrize("first_attempt", ["discard_failure", "retry_cancel"])
+@private_profile_test
 async def test_restored_recovery_failed_discard_can_be_discarded_again(
-    tmp_path, check_copy, first_attempt, monkeypatch
+    request, tmp_path, check_copy, first_attempt, monkeypatch
 ):
     """Real SQLite rollback, store release, screen callback, and composer."""
     _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         db, conversation_id, repository = _database(tmp_path / "recovery.sqlite")
+        request.addfinalizer(db.close)
         checkpoint = _insert(db, repository, _acceptance(conversation_id))
         _start(repository, checkpoint)
         store, session_id = _restored_store(db, conversation_id)
@@ -132,7 +135,6 @@ async def test_restored_recovery_failed_discard_can_be_discarded_again(
         )
         runtime = console._console_runtime()
         runtime.set_chat_store(store)
-        runtime.set_provider_gateway(gateway)
         runtime.set_chat_controller(controller)
         runtime.attach_view(console)
         store.set_session_draft(session_id, "next prompt")

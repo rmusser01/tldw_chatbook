@@ -14,6 +14,12 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _disable_model_catalog_refresh():
+    """These pure projection/widget tests never start the full application."""
+    yield
+
+
 def _model_symbols():
     required = (
         "ConsoleDispatchRecoveryAction",

@@ -13,7 +13,7 @@ bring the incident.
 
 ## An unchanged recovery projection can still need its click latch released
 
-**TASK-32568, GitHub #2708, 2026-09-18.** A failed recovery returned the store to
+**TASK-32819, GitHub #2708, 2026-09-18.** A failed recovery returned the store to
 the same actionable state before the UI painted its in-flight projection.
 `sync_recovery()` skipped identical display state before clearing the widget's
 local click latch, leaving Retry and Discard enabled-looking but inert. A mounted
@@ -24,6 +24,13 @@ Reconcile interaction state before display deduplication, and refresh after
 exceptional or cancelled actions as well as successful returns. Test a failed
 attempt followed by a second click through the real dispatcher; store-only
 assertions that actions are enabled cannot detect a stranded widget latch.
+
+The dev rebase also exposed stale harness assumptions: full-app tests must use
+`private_profile_test` once config sources are lifetime-bound, and controller-only
+gateway doubles must not replace the runtime's UI metadata gateway. Wait for the
+actual Queue label rather than an already-disabled empty composer. Pure widget
+projection tests should override the full-app catalog fixture, as other isolated
+UI harnesses do, so running them alone does not import and bind the application.
 
 ## A `console_view_hooks()` entry with no declared slot is silently inert
 

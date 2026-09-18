@@ -1,15 +1,14 @@
 ---
-id: TASK-32568
+id: TASK-32819
 title: Restore Console recovery actions after failed attempts
 status: In Progress
-created_date: 2026-09-18 18:54
+created_date: 2026-09-18 20:09
 references:
 - https://github.com/rmusser01/tldw_chatbook/issues/2708
 - https://github.com/rmusser01/tldw_chatbook/pull/2709
 documentation:
 - backlog/decisions/079-console-library-conversation-authority.md
 - backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md
-updated_date: 2026-09-18 19:09
 modified_files:
 - tldw_chatbook/UI/Console_Modules/dispatch_recovery.py
 - tldw_chatbook/UI/Console_Modules/prompt_queue.py
@@ -19,6 +18,7 @@ modified_files:
 - Tests/UI/test_console_dispatch_recovery_repeated_actions.py
 - Docs/User_Guide/console/chat-basics.md
 - backlog/docs/lessons-console-wiring.md
+updated_date: 2026-09-18 20:19
 ---
 
 ## Description
@@ -29,10 +29,10 @@ Fix GitHub issue #2708: failed response recovery can leave Retry and Discard ine
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #5 Retry and Discard remain actionable after a refused or failed recovery even when the displayed model state is unchanged.
-- [x] #6 Pending recovery actions still reject duplicate intents; cancellation and exceptions allow subsequent recovery after completion.
-- [x] #7 The composer identifies unresolved response recovery instead of telling the user to wait for an active run, and clears the reason after settlement.
-- [ ] #8 All new mounted regressions pass; targeted existing tests introduce no failures relative to the recorded main baseline; touched code has no new lint or Bandit findings.
+- [x] #1 Retry and Discard remain actionable after refused, failed and cancelled attempts, with duplicate intents rejected while pending.
+- [x] #2 Composer identifies unresolved recovery and clears the reason after settlement.
+- [x] #3 All targeted recovery and composer tests pass on latest dev with no new lint or Bandit findings.
+- [ ] #4 CI and Qodo review are resolved and PR #2709 is merged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,6 +43,7 @@ ADR required: no new ADR.
 ADR paths: backlog/decisions/079-console-library-conversation-authority.md and backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md.
 Reason: routine bug fix preserving store-owned recovery, explicit actions, atomic settlement and app-runtime custody.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
@@ -51,11 +52,17 @@ RED: new regressions initially produced 5 expected failures (inert second click/
 Full-file Ruff format check also reports existing formatting debt in four touched legacy files. The new test and recovery widget are format-clean; touched snippets are checked against formatting changes to avoid unrelated whole-file rewrites.
 Final verification: 8 tests passed in Tests/UI/test_console_dispatch_recovery_repeated_actions.py, using the existing Chatbook .venv. Broader selection additionally included Tests/Chat/test_console_dispatch_recovery.py, Tests/UI/test_console_dispatch_recovery.py, fix_round1.py, fix_round2.py, test_console_send_disabled_state.py, test_console_prompt_queue.py and Tests/Chat/test_console_display_state.py (172 passed, baseline-only 3 failures). HEAD/current formatter comparison confirmed zero new formatting edits in all five production files. All six changed Python files parse. Security report: /tmp/bandit_chatbook_2708.json; baseline: /tmp/bandit_chatbook_2708_baseline.json. Full test log: /tmp/chatbook-2708-verification.txt. No external issue comments or publishing performed.
 PR preparation 2026-09-18: user requested base dev. Rebased the unpublished branch cleanly onto origin/dev e89f28d751bc8a5b4f4545b8894b87437252c657 (405 commits ahead of the original main base). Revalidation on dev of the new regression file, UI recovery tests and Chat recovery tests: 68 passed, 8 failed. Four new mounted tests fail before reaching the changed behavior while constructing _ready_host: Backup_Recovery.bootstrap.RecoveryRequired(raw_source_selection_changed). Four existing controller tests fail (accepted retry; terminal-delete recovery success/failure; cancellation settlement timeout). These dev failures have not been independently classified as baseline-only. Previous eight-pass regression result and broader 172-pass/3-known-baseline-failure result apply to the original main-based commit. Opening a draft PR against dev with these limits clearly disclosed; final validation criterion reopened. Log: /tmp/chatbook-2708-dev-pr-tests.txt.
+2026-09-18 follow-up authorized: repair all identified test harness failures and CI blockers, rebase on latest dev, address Qodo review and merge when required checks and human-written summary gate are satisfied. Root causes: test config-path lifetime mismatch, incomplete UI gateway doubles, stale/racy assertions, and task ID collision with older Library Notes task. Latest fetched dev is still e89f28d751. Plan: migrate mounted tests to private-profile subprocess harness, supply complete UI gateway behavior, repair assertions and database cleanup, renumber this younger task, rerun targeted tests/security/CI and review.
+
+## Renumbering provenance
+Formerly TASK-32568 (created 2026-09-18 18:54). The older Library Notes task retains that ID under TASK-19601. New ID 32819 is above max 32818 found by the all-ref, merge-inclusive history sweep. This record carries the recovery task history; the duplicate younger record must be removed.
+Instruction-scope correction: the tldw_server2 human-written summary/manual task-file approval policies do not govern this separate Chatbook repository. Chatbook AGENTS.md and TASK-19601 older-keeps-ID rule apply. The copied younger duplicate record is removed; the older Library Notes TASK-32568 remains unchanged. Latest-dev rebase reports branch already up to date.
+Follow-up validation complete: 80 recovery/composer cases passed in the first run; its sole remaining obsolete healthy-checkpoint Queue-label assertion was corrected to the store recovery fence and passed with all 38 queue cases (39 passed). The separate pure recovery/display/backlog selection passed 61 cases. Thus all 180 unique targeted cases are verified on current dev e89f28d751. Pure recovery tests also pass in isolation after using the repository's no-full-app catalog fixture override. Requests warning resolved by installing stable chardet 5.2.0 within the existing <6 dependency constraint in the local test venv. No file-descriptor growth warning remains in the recovery run after deterministic DB closure. Thirteen changed Python files parse; Ruff dev baseline284/current280/zero new; Bandit10 existing/zero new after normalizing snippet line numbers. Focused UI test formatting and lint, diff whitespace and backlog uniqueness pass. Two independent read-only review passes found no actionable findings. Logs: /tmp/chatbook2709-harness-tests.log, /tmp/chatbook2709-queue-tests.log, /tmp/chatbook2709-pure-fixed.log. Latest dev refreshed immediately before publication; still e89f28d751. Awaiting GitHub CI and Qodo review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implementation is available in draft PR #2709 against dev. The recovery latch and composer-copy fixes passed all eight new mounted regressions on the original main base, with no new lint/format/Bandit findings relative to that base. Rebased cleanly onto dev; current targeted verification is 68 passed and 8 failed (four mounted setup failures with raw_source_selection_changed, plus four existing controller-test failures). Validation remains open and the task is In Progress. PR documents these limits and the pending human-written Change summary merge gate.
+Recovery controls and composer copy fixed; dev-compatible private-profile harnesses, gateway doubles, assertions and database cleanup verified across 180 targeted cases. Recovery task renumbered to TASK-32819 to clear CI collision. Publishing updated PR #2709; CI/review/merge remain open.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
