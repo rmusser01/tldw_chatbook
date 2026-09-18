@@ -15832,3 +15832,17 @@ that identity-only checks would have passed. A scoped two-column action grid
 repaired the clipping; four native size/theme journeys then showed complete
 labels and the same focus continuation. Qualify the focused control's entire
 painted region, not just its identity or intersection with the viewport.
+
+## Exclusive UI cancellation does not prove an admitted thread stopped writing
+
+**TASK-32786, 2026-09-18.** A second Tool Profile Remove cancelled the first
+exclusive UI worker while its `asyncio.to_thread` call continued. The actual
+profile disappeared, but Settings retained the row and reported `Remove
+cancelled`. A real publication probe also completed a destination when the
+cancellation flag changed after the publisher's last pre-commit poll. Guarding
+same-operation dispatch during the admitted write preserved observation without
+changing shutdown cancellation. Mounted tests cover all three operations and
+terminal outcomes; a native real-service lock delay confirms exact-once removal.
+Test persisted state, observed outcome and refreshed UI together across this
+boundary. Swallowing cancellation to retain an observer would introduce a
+different lifecycle contract and needs separate design/qualification.

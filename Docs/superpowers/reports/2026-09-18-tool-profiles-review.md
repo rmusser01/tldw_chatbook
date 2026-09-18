@@ -156,13 +156,28 @@ checks pass. Older mode tests required the established process-isolation wrapper
 and one stale CSS assertion required its already-existing token. Independent
 review found no introduced blocker. [QA and gallery](../qa/2026-09-18-mcp-permission-handoff/README.md).
 
+## Admitted write overlap — TASK-32786
+
+Repeating Import, Export or Remove previously cancelled the observing UI worker
+while its admitted thread could complete a write. Same-operation dispatch now
+shows local progress until the write returns. Newer preparation, other reviews
+and explicit worker cancellation preserve their existing boundaries. Import
+uncertainty refreshes current facts and receives truthful recovery wording.
+
+173 targeted cases pass, including fifteen overlap cases and 52 real-service
+publication/removal checks. Independent review found no introduced blocker.
+Four real native size/theme cells held the existing service mutation lock,
+repeated Remove, then verified one revision increment, the tombstone and visible
+continuation. All twelve captures were rendered and inspected; exact-source and
+private lifecycle checks pass. [QA and gallery](../qa/2026-09-18-tool-profile-write-overlap/README.md).
+
 ## Remaining scope
 
-Concurrent-workflow review remains open. This Edit repair does not close the
-whole MCP destination: compact rail/header wrapping and simultaneous tool/state
-readability remain part of its broader layout review. State remains accessible
-with the existing horizontal keyboard scroll, now qualified natively.
+In-visit overlap is qualified above. Screen-destruction/app-shutdown outcome
+ownership remains a separate review boundary. The Edit repair does not close
+the whole MCP destination: compact rail/header wrapping and simultaneous
+tool/state readability remain part of its broader layout review. State remains
+accessible with existing horizontal keyboard scroll, now qualified natively.
 
-The TASK-32784 structural CSS guard passed remotely on head 1b16329e03; the new
-head still requires its own checks. These bounded management reviews do not
-complete the broader component workstream.
+New PR heads require their own remote checks. These bounded management reviews
+do not complete the broader component workstream.

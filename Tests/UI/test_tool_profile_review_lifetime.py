@@ -388,6 +388,12 @@ async def test_departure_suppresses_preparation_errors_but_keeps_admitted_outcom
             assert settings._tool_profiles_result == (
                 "Previous outcome"
                 if phase == "preparation"
+                else (
+                    "Import outcome uncertain. Check the current profile state before retrying."
+                    if operation == "import"
+                    else "Export outcome uncertain. Check the chosen destination before retrying."
+                )
+                if phase == "uncertain"
                 else f"{operation.title()} failed · {category}"
             )
         finally:

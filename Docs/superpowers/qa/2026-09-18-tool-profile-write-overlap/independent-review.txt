@@ -1,0 +1,8 @@
+Read-only review by agent_budget_review: no introduced blocker.
+All three guards execute before their exclusive worker wrapper; per-operation write flags clear in finally.
+Export destination_changed recovery releases its write phase before another picker.
+No shield or CancelledError swallowing; explicit cancellation remains immediate.
+Exact reviewed arguments and export cancellation probe remain unchanged.
+Uncertain import wording and refreshed listing preserve actual state.
+Controlled UI overlap cases are separate from native real-service qualification.
+Screen-destruction/shutdown outcome ownership remains outside this repair.
