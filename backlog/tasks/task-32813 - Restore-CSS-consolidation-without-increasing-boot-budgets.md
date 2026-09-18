@@ -1,11 +1,11 @@
 ---
 id: TASK-32813
 title: Restore CSS consolidation without increasing boot budgets
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-18 17:38'
-updated_date: '2026-09-18 19:01'
+updated_date: '2026-09-18 19:04'
 labels:
   - ui
   - design-system
@@ -25,7 +25,7 @@ Keep feature and modal styles within the existing stylesheet source and boot-cos
 - [x] #1 All currently ungoverned class-level CSS declarations are consolidated or proven redundant without adding allowlist exceptions.
 - [x] #2 Generated styles preserve the current cascade and rendered appearance for the affected controls, including focus, hover and disabled states.
 - [x] #3 Existing boot-byte, stylesheet-source and selector-cost ratchets pass without increases; the destination-tour check runs in an isolated profile and proves route coverage.
-- [ ] #4 Targeted consumer, governance, independent review and native visual evidence are recorded with explicit remaining limits and saved in the draft PR.
+- [x] #4 Targeted consumer, governance, independent review and native visual evidence are recorded with explicit remaining limits and saved in the draft PR.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,4 +42,6 @@ Consolidated 25 class declarations through the existing widget-default build str
 Evidence: Docs/superpowers/qa/2026-09-18-css-consolidation/README.md and GALLERY.md record 194 passing exact consumer cases, final serial guards, all 29 affected owners observed with zero computed-rule mismatches, and 28 inspected native captures. Bytes are 583097/608090; proven 15-route/modal source count is 46 with unchanged source limits. Native exit, lock, ten databases and default-state checks pass. Original failures remain visible; TASK-32815 tracks the intermittent empty-stack shutdown query and TASK-32816 tracks preserved compact Appearance clipping. Roleplay recovery's existing unstyled view remains component-review debt.
 
 Independent review and baseline-relative Ruff/changed-range formatting receipts are retained. No full suite or connected-provider qualification was run. ADR required: no; existing ADR-150, ADR-161 and ADR-097 apply. Lesson recorded in backlog/docs/lessons-testing-evidence.md. Product/test/generated sheets, QA artifacts and component/MCP ledgers are updated. Draft PR2707 remains unmerged and requires its own visual review. Save verification follows push.
+
+Saved to draft PR2707 at 0a4225b55466b041b5c082576e773a167eee1a5e; origin tracking ref verified equal. Local scope is complete; fresh remote checks and broader component review remain separate. No merge performed.
 <!-- SECTION:NOTES:END -->

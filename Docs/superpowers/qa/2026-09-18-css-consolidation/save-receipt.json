@@ -1,0 +1,9 @@
+{
+  "saved_source_commit": "0a4225b55466b041b5c082576e773a167eee1a5e",
+  "tracking_ref": "0a4225b55466b041b5c082576e773a167eee1a5e",
+  "pull_request": "https://github.com/rmusser01/tldw_chatbook/pull/2707",
+  "base": "dev",
+  "state": "draft, open, unmerged",
+  "ci": "fresh pushed-head verification pending",
+  "note": "Task closure below changes only documentation; source and capture hashes remain in native/result.json."
+}
