@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## A redraw highlight can arrive after the refresh callback that released its guard
+
+**TASK-32796, 2026-09-18.** MCP server navigation cleared tool/finding details,
+then the focused table's redraw reopened them. Nine regressions held real
+published table messages until after refresh callbacks and reproduced the
+selection. Suppress programmatic RowHighlighted/CellHighlighted at publication
+with Textual prevent(), across synchronous rebuild/cursor work only. Review
+also caught hidden Audit Findings clearing Executions' pending Enter gesture;
+include the originating table in dedup identity and reset only that table.
+External drill cursor moves need their own boundary after a rebuild ends.
+
 ## A pane resize does not report its child's final scrollbar geometry
 
 **TASK-32790, 2026-09-18.** MCP Tools wrapping passed 60-row resize checks,

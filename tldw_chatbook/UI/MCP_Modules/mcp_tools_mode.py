@@ -725,7 +725,8 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             index = table.get_row_index(tool_id)
         except RowDoesNotExist:
             return False
-        table.move_cursor(row=index)
+        with self.repopulating_table(table):
+            table.move_cursor(row=index)
         return True
 
     def _server_options(self) -> list[tuple[str, str]]:
@@ -810,65 +811,62 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         # Rebuilding the rows moves the cursor back to row 0, which emits the
         # same RowHighlighted a click does. Declaring the rebuild stops that
         # being read as a selection -- see DataTableClickSelectMixin.
-        self.repopulating_table()
-        # A retained key is still the same tool, but an activation after this
-        # redraw is a fresh gesture, not the Enter paired with an old highlight.
-        self._pending_activation_key = None
-        table.clear(columns=True)
-        self._tool_column_width = self._measured_tool_width(table)
-        table.add_column("Tool", width=self._tool_column_width)
-        table.add_columns(
-            *(_TABLE_COLUMNS[1:] if self._has_tags else _TABLE_COLUMNS_NO_TAGS[1:])
-        )
-        seen_keys: set[str] = set()
-        for tool in ordered:
-            if tool.tool_id in seen_keys:
-                # Defense in depth: hub_tool_catalog's derivation functions
-                # already dedupe by (server_key, name), but a row key
-                # collision here would raise Textual's `DuplicateKey` and
-                # crash every mount that renders this table -- skip rather
-                # than trust every current and future upstream caller to
-                # have deduped first.
-                continue
-            seen_keys.add(tool.tool_id)
-            tool_state = self._states.get((tool.server_key, tool.name))
-            # Task 1 (MCP Hub Phase 6): the State cell's word is colored by
-            # the resolved verdict it names -- a tool absent from `states`
-            # renders the plain "—" placeholder at the `muted` weight (no
-            # verdict to color), same visual tier as every other "not
-            # resolved yet" dash in this canvas family.
-            if tool_state is not None:
-                state_cell = state_text(
-                    format_tool_state_label(tool_state), tool_state_kind(tool_state)
-                )
-            else:
-                state_cell = state_text("—", "muted")
-            # Qodo #2620 #6: when the label alone consumes the budget, the
-            # "(stale)" suffix -- the only table-level signal that a
-            # discovered local tool is currently disconnected -- was being
-            # truncated away. Reserve its width up front so the marker
-            # always survives the ellipsis.
-            suffix = " (stale)" if tool.stale else ""
-            budget = _SERVER_CELL_BUDGET - len(suffix)
-            server_cell = _ellipsize(tool.server_label, budget) + suffix
-            schema_cell = (
-                "form" if parse_schema(tool.input_schema) is not None else "raw"
+        with self.repopulating_table(table):
+            table.clear(columns=True)
+            self._tool_column_width = self._measured_tool_width(table)
+            table.add_column("Tool", width=self._tool_column_width)
+            table.add_columns(
+                *(_TABLE_COLUMNS[1:] if self._has_tags else _TABLE_COLUMNS_NO_TAGS[1:])
             )
-            row_cells: list[Any] = [Text(tool.name), state_cell, Text(server_cell)]
-            if self._has_tags:
-                tags_cell = ", ".join(tool.tags) if tool.tags else "—"
-                row_cells.append(Text(tags_cell))
-            row_cells.append(Text(schema_cell))
-            table.add_row(*row_cells, key=tool.tool_id, height=None)
-        if cursor_key is not None:
-            try:
-                cursor_row = table.get_row_index(cursor_key)
-            except RowDoesNotExist:
-                # A removed or filtered-out tool leaves clear()'s first-row
-                # fallback. Resolve by key because duplicate IDs are skipped.
-                pass
-            else:
-                table.move_cursor(row=cursor_row)
+            seen_keys: set[str] = set()
+            for tool in ordered:
+                if tool.tool_id in seen_keys:
+                    # Defense in depth: hub_tool_catalog's derivation functions
+                    # already dedupe by (server_key, name), but a row key
+                    # collision here would raise Textual's `DuplicateKey` and
+                    # crash every mount that renders this table -- skip rather
+                    # than trust every current and future upstream caller to
+                    # have deduped first.
+                    continue
+                seen_keys.add(tool.tool_id)
+                tool_state = self._states.get((tool.server_key, tool.name))
+                # Task 1 (MCP Hub Phase 6): the State cell's word is colored by
+                # the resolved verdict it names -- a tool absent from `states`
+                # renders the plain "—" placeholder at the `muted` weight (no
+                # verdict to color), same visual tier as every other "not
+                # resolved yet" dash in this canvas family.
+                if tool_state is not None:
+                    state_cell = state_text(
+                        format_tool_state_label(tool_state), tool_state_kind(tool_state)
+                    )
+                else:
+                    state_cell = state_text("—", "muted")
+                # Qodo #2620 #6: when the label alone consumes the budget, the
+                # "(stale)" suffix -- the only table-level signal that a
+                # discovered local tool is currently disconnected -- was being
+                # truncated away. Reserve its width up front so the marker
+                # always survives the ellipsis.
+                suffix = " (stale)" if tool.stale else ""
+                budget = _SERVER_CELL_BUDGET - len(suffix)
+                server_cell = _ellipsize(tool.server_label, budget) + suffix
+                schema_cell = (
+                    "form" if parse_schema(tool.input_schema) is not None else "raw"
+                )
+                row_cells: list[Any] = [Text(tool.name), state_cell, Text(server_cell)]
+                if self._has_tags:
+                    tags_cell = ", ".join(tool.tags) if tool.tags else "—"
+                    row_cells.append(Text(tags_cell))
+                row_cells.append(Text(schema_cell))
+                table.add_row(*row_cells, key=tool.tool_id, height=None)
+            if cursor_key is not None:
+                try:
+                    cursor_row = table.get_row_index(cursor_key)
+                except RowDoesNotExist:
+                    # A removed or filtered-out tool leaves clear()'s first-row
+                    # fallback. Resolve by key because duplicate IDs are skipped.
+                    pass
+                else:
+                    table.move_cursor(row=cursor_row)
         has_any_tools = bool(self._tools)
         if not has_any_tools and self.app.focused is table:
             self.screen.set_focus(self.query_one("#mcp-tools-filter-text", Input))

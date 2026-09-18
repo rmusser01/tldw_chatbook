@@ -149,3 +149,15 @@ PR2707 remains draft/unmerged. All named applicable checks passed on saved head
 fb16c9087c, including Windows GGUF; the earlier 6c0e317ab7 missing SelectOverlay
 failure remains historical evidence requiring investigation, rather than a
 currently failing check. Neither component review nor integration is complete.
+
+
+TASK-32796 repairs both remaining inspector-clearing CI failures through the
+shared table highlight publication boundary (ADR-170). Table-specific gesture
+dedup and programmatic external drills preserve real selection behavior.
+[Evidence](../qa/2026-09-18-mcp-table-selection/README.md) records 275 distinct
+passing cases, eight inspected native captures, clean private shutdown and
+explicit remaining compact rail clipping. Four baseline Audit CSS assertions
+and two Speech profile-setup failures are recorded, not hidden by the passing
+subset. Saved head 20de195131 failed only the two repaired inspector cases in
+Fast Lane; new-head remote verification is pending. Draft PR2707 and the broader
+component review remain open.

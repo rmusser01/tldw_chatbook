@@ -1,0 +1,47 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Voice_Cloning_Window.py",
+    "line": 359,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
+    "line": 599,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
+    "line": 695,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py",
+    "line": 798,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py",
+    "line": 986,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py",
+    "line": 1012,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py",
+    "line": 1181,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py",
+    "line": 728,
+    "awaits": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py",
+    "line": 814,
+    "awaits": 0
+  }
+]

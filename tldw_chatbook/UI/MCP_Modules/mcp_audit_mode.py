@@ -596,37 +596,39 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
-        self.repopulating_table()
-        table.clear(columns=True)
-        table.add_columns(*_TABLE_COLUMNS)
-        restored_index: int | None = None
-        for index, entry in enumerate(self._entries):
-            if not self._matches(entry):
-                continue
-            key = str(index)
-            # Task 1 (MCP Hub Phase 6): Decision and Outcome are colored by
-            # their own semantic bucket -- separately, since a rug-pull
-            # "downgraded" decision (warning) and a hard "denied" one
-            # (error) both fall back to `_outcome_text()`'s own "Downgraded"/
-            # "Blocked" copy, which needs the identical color to stay
-            # visually consistent between the two columns for the same row.
-            decision_raw = str(entry.get("decision") or "—")
-            decision_value = _DECISION_LABELS.get(decision_raw, decision_raw)
-            outcome_value = _outcome_text(entry)
-            table.add_row(
-                Text(_format_when(entry.get("ts"))),
-                Text(f"{entry.get('server_key', '')}::{entry.get('tool_name', '')}"),
-                Text(str(entry.get("initiator") or "—")),
-                state_text(decision_value, _decision_kind(decision_raw)),
-                Text(format_duration_ms(int(entry.get("duration_ms") or 0))),
-                state_text(outcome_value, _outcome_kind(outcome_value)),
-                key=key,
-            )
-            if cursor_key is not None and key == cursor_key:
-                restored_index = table.row_count - 1
+        with self.repopulating_table(table):
+            table.clear(columns=True)
+            table.add_columns(*_TABLE_COLUMNS)
+            restored_index: int | None = None
+            for index, entry in enumerate(self._entries):
+                if not self._matches(entry):
+                    continue
+                key = str(index)
+                # Task 1 (MCP Hub Phase 6): Decision and Outcome are colored by
+                # their own semantic bucket -- separately, since a rug-pull
+                # "downgraded" decision (warning) and a hard "denied" one
+                # (error) both fall back to `_outcome_text()`'s own "Downgraded"/
+                # "Blocked" copy, which needs the identical color to stay
+                # visually consistent between the two columns for the same row.
+                decision_raw = str(entry.get("decision") or "—")
+                decision_value = _DECISION_LABELS.get(decision_raw, decision_raw)
+                outcome_value = _outcome_text(entry)
+                table.add_row(
+                    Text(_format_when(entry.get("ts"))),
+                    Text(
+                        f"{entry.get('server_key', '')}::{entry.get('tool_name', '')}"
+                    ),
+                    Text(str(entry.get("initiator") or "—")),
+                    state_text(decision_value, _decision_kind(decision_raw)),
+                    Text(format_duration_ms(int(entry.get("duration_ms") or 0))),
+                    state_text(outcome_value, _outcome_kind(outcome_value)),
+                    key=key,
+                )
+                if cursor_key is not None and key == cursor_key:
+                    restored_index = table.row_count - 1
 
-        if restored_index is not None:
-            table.move_cursor(row=restored_index)
+            if restored_index is not None:
+                table.move_cursor(row=restored_index)
 
         has_any = bool(self._entries)
         table.display = has_any
@@ -690,45 +692,46 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             if row_key is not None and row_key.value is not None:
                 cursor_key = str(row_key.value)
 
-        table.clear(columns=True)
-        table.add_columns(*_FINDINGS_TABLE_COLUMNS)
+        with self.repopulating_table(table):
+            table.clear(columns=True)
+            table.add_columns(*_FINDINGS_TABLE_COLUMNS)
 
-        if self._findings_source != "server":
-            table.display = False
-            empty.display = True
-            message.update(_FINDINGS_LOCAL_EMPTY_MESSAGE)
-            return
-        if self._findings is None:
-            table.display = False
-            empty.display = True
-            message.update(_FINDINGS_FETCH_FAILED_MESSAGE)
-            return
-        if not self._findings:
-            table.display = False
-            empty.display = True
-            message.update(_FINDINGS_NONE_FOUND_MESSAGE)
-            return
+            if self._findings_source != "server":
+                table.display = False
+                empty.display = True
+                message.update(_FINDINGS_LOCAL_EMPTY_MESSAGE)
+                return
+            if self._findings is None:
+                table.display = False
+                empty.display = True
+                message.update(_FINDINGS_FETCH_FAILED_MESSAGE)
+                return
+            if not self._findings:
+                table.display = False
+                empty.display = True
+                message.update(_FINDINGS_NONE_FOUND_MESSAGE)
+                return
 
-        restored_index: int | None = None
-        for index, finding in enumerate(self._findings):
-            if not isinstance(finding, Mapping):
-                # Defensive, mirrors `server_tools_from_inventory()`'s own
-                # "skip non-dict entries entirely" style for a raw,
-                # wire-derived list.
-                continue
-            key = str(index)
-            severity_value = _finding_field(finding, "severity")
-            table.add_row(
-                state_text(severity_value, _severity_kind(severity_value)),
-                Text(_finding_field(finding, "finding_type")),
-                Text(_finding_field(finding, "message")),
-                key=key,
-            )
-            if cursor_key is not None and key == cursor_key:
-                restored_index = table.row_count - 1
+            restored_index: int | None = None
+            for index, finding in enumerate(self._findings):
+                if not isinstance(finding, Mapping):
+                    # Defensive, mirrors `server_tools_from_inventory()`'s own
+                    # "skip non-dict entries entirely" style for a raw,
+                    # wire-derived list.
+                    continue
+                key = str(index)
+                severity_value = _finding_field(finding, "severity")
+                table.add_row(
+                    state_text(severity_value, _severity_kind(severity_value)),
+                    Text(_finding_field(finding, "finding_type")),
+                    Text(_finding_field(finding, "message")),
+                    key=key,
+                )
+                if cursor_key is not None and key == cursor_key:
+                    restored_index = table.row_count - 1
 
-        if restored_index is not None:
-            table.move_cursor(row=restored_index)
+            if restored_index is not None:
+                table.move_cursor(row=restored_index)
 
         table.display = True
         empty.display = False

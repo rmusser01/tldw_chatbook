@@ -1,0 +1,461 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_______ test_hidden_findings_refresh_preserves_active_execution_gesture ________
+
+self = <Coroutine test_hidden_findings_refresh_preserves_active_execution_gesture>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_hidden_findings_refresh_preserves_active_execution_gesture>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2014/test_hidden_findings_refresh_p0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______ test_hidden_findings_refresh_preserves_active_execution_gesture ________
+E
+E           request = <FixtureRequest for <Coroutine test_hidden_findings_refresh_preserves_active_execution_gesture>>
+E
+E               @private_profile_test
+E               async def test_hidden_findings_refresh_preserves_active_execution_gesture(request):
+E                   pane = MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       await pane.update_entries([
+E                           {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                           for name in ("alpha", "beta")
+E                       ])
+E                       await pilot.pause()
+E                       table = pane.query_one("#mcp-audit-table", DataTable)
+E                       table.focus()
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       await pilot.press("down")
+E                       await pilot.pause()
+E                       assert len([m for m in app.captured if type(m).__name__ == "EntrySelected"]) == 1
+E                       await pane.update_findings([
+E                           {"severity": "high", "finding_type": "test", "message": "finding"}
+E                       ], source="server")
+E                       await pilot.pause()
+E                       assert table.has_focus
+E                       await pilot.press("enter")
+E                       await pilot.pause()
+E           >           assert len([m for m in app.captured if type(m).__name__ == "EntrySelected"]) == 1
+E           E           assert 2 == 1
+E           E            +  where 2 = len([EntrySelected(), EntrySelected()])
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:105: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:44:52.262 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:44:52.269 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:44:52.325 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:44:52.386 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:44:52.386 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:44:52.387 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:44:52.483 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:44:52.703 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+E           1 failed in 1.37s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 09:44:51.507 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 09:44:51.514 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 09:44:51.589 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 09:44:51.633 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 09:44:51.633 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 09:44:51.633 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_______ test_focused_external_tool_drill_moves_without_selecting[tools] ________
+
+self = <Coroutine test_focused_external_tool_drill_moves_without_selecting[tools]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_focused_external_tool_drill_moves_without_selecting[tools]>>, 'view': 'tools'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2014/test_focused_external_tool_dri0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______ test_focused_external_tool_drill_moves_without_selecting[tools] ________
+E
+E           request = <FixtureRequest for <Coroutine test_focused_external_tool_drill_moves_without_selecting[tools]>>
+E           view = 'tools'
+E
+E               @pytest.mark.parametrize("view", ["tools", "permissions"])
+E               @private_profile_test
+E               async def test_focused_external_tool_drill_moves_without_selecting(request, view):
+E                   from Tests.UI.test_mcp_permissions_mode import _tool_row
+E                   from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
+E
+E                   pane = MCPToolsMode() if view == "tools" else MCPPermissionsMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       if view == "tools":
+E                           await pane.update_tools([
+E                               HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                       name=name, description=name, input_schema=None, tags=(),
+E                                       stale=False, executable=False)
+E                               for name in ("alpha", "beta")
+E                           ])
+E                       else:
+E                           await pane.update_matrix([
+E                               _tool_row(server_key="local:docs", server_label="docs", tool_name=name)
+E                               for name in ("alpha", "beta")
+E                           ], kill_switch=False, preview="")
+E                       await pilot.pause()
+E                       table = pane.query_one(DataTable)
+E                       table.focus()
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       if view == "tools":
+E                           assert await pane.select_tool_row("local:docs::beta")
+E                       else:
+E                           assert pane.select_tool_row("local:docs", "beta")
+E                       await pilot.pause()
+E                       assert table.cursor_row == 1 and table.has_focus
+E                       selected_type = "ToolSelected" if view == "tools" else "RowSelected"
+E           >           assert [m for m in app.captured if type(m).__name__ == selected_type] == []
+E           E           assert [ToolSelected()] == []
+E           E
+E           E             Left contains one more item: ToolSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:144: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:44:54.038 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:44:54.045 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:44:54.105 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:44:54.166 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:44:54.166 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:44:54.166 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:44:54.262 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:44:54.473 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+E           1 failed in 1.17s
+
+Tests/private_profile.py:84: Failed
+____ test_focused_external_tool_drill_moves_without_selecting[permissions] _____
+
+self = <Coroutine test_focused_external_tool_drill_moves_without_selecting[permissions]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_focused_external_tool_drill_moves_without_selecting[permissions]>>, 'view': 'permissions'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2014/test_focused_external_tool_dri1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_focused_external_tool_drill_moves_without_selecting[permissions] _____
+E
+E           request = <FixtureRequest for <Coroutine test_focused_external_tool_drill_moves_without_selecting[permissions]>>
+E           view = 'permissions'
+E
+E               @pytest.mark.parametrize("view", ["tools", "permissions"])
+E               @private_profile_test
+E               async def test_focused_external_tool_drill_moves_without_selecting(request, view):
+E                   from Tests.UI.test_mcp_permissions_mode import _tool_row
+E                   from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
+E
+E                   pane = MCPToolsMode() if view == "tools" else MCPPermissionsMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       if view == "tools":
+E                           await pane.update_tools([
+E                               HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                       name=name, description=name, input_schema=None, tags=(),
+E                                       stale=False, executable=False)
+E                               for name in ("alpha", "beta")
+E                           ])
+E                       else:
+E                           await pane.update_matrix([
+E                               _tool_row(server_key="local:docs", server_label="docs", tool_name=name)
+E                               for name in ("alpha", "beta")
+E                           ], kill_switch=False, preview="")
+E                       await pilot.pause()
+E                       table = pane.query_one(DataTable)
+E                       table.focus()
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       if view == "tools":
+E                           assert await pane.select_tool_row("local:docs::beta")
+E                       else:
+E                           assert pane.select_tool_row("local:docs", "beta")
+E                       await pilot.pause()
+E                       assert table.cursor_row == 1 and table.has_focus
+E                       selected_type = "ToolSelected" if view == "tools" else "RowSelected"
+E           >           assert [m for m in app.captured if type(m).__name__ == selected_type] == []
+E           E           assert [RowSelected()] == []
+E           E
+E           E             Left contains one more item: RowSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:144: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:44:55.614 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:44:55.621 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:44:55.678 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:44:55.742 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:44:55.742 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:44:55.742 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:44:55.843 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:44:56.052 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[permissions]
+E           1 failed in 1.17s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+1.74s call     Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+1.54s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[permissions]
+1.52s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[permissions]
+3 failed, 9 deselected in 5.55s

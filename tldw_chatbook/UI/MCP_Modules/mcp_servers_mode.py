@@ -795,56 +795,58 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
-        self.repopulating_table()
-        table.clear(columns=True)
-        columns = _fit_columns(
-            self._snapshots, show_scope=show_scope, available=table.region.width
-        )
-        table.add_columns(*columns)
-        seen_keys: set[str] = set()
-        self._row_key_to_server_key = {}
-        for snap in self._snapshots:
-            row_key = snap.server_key
-            if row_key in seen_keys:
-                # Two malformed records can both fall back to the same
-                # server_key (e.g. two local profiles missing profile_id
-                # both become "local:unknown" -- see
-                # local_profile_readiness()). DataTable.add_row(key=...)
-                # raises DuplicateKey for a repeat; de-dupe with a suffix
-                # instead of crashing the whole canvas over bad data.
-                suffix = 2
-                candidate = f"{row_key}#{suffix}"
-                while candidate in seen_keys:
-                    suffix += 1
-                    candidate = f"{row_key}#{suffix}"
-                row_key = candidate
-            seen_keys.add(row_key)
-            # The suffixed row_key is a table-internal de-dupe identifier,
-            # not a real server_key -- remember the canonical key so
-            # `on_data_table_row_selected()` can translate it back.
-            self._row_key_to_server_key[row_key] = snap.server_key
-            # label/auth_display/scope_display are user-controlled (local
-            # profile ids, server-reported names) and DataTable parses
-            # plain str cells as Rich markup -- wrap in Text so a value like
-            # "[/bold]docs" can't crash the app (MarkupError) and
-            # "[red]x[/red]" can't inject styling. Status cells now carry
-            # the readiness state's color too (Task 1, MCP Hub Phase 6,
-            # supersedes the old Task 11 "stays plain" decision above this
-            # comment used to describe) -- `state_text()` colors the WHOLE
-            # cell (glyph + word together, one string), mirroring
-            # `mcp_rail.py`'s row Buttons, which already color both the
-            # same way via `STATE_CSS_CLASSES`.
-            row_cells_by_name: dict[str, Any] = {
-                "Name": Text(snap.label),
-                "Connection": snap.transport,
-                "Status": state_text(snap.badge_text(), _readiness_kind(snap.state)),
-                "Tools": "—" if snap.tool_count is None else str(snap.tool_count),
-                "Auth": Text(snap.auth_display),
-                "Scope": Text(snap.scope_display),
-            }
-            table.add_row(
-                *(row_cells_by_name[column] for column in columns), key=row_key
+        with self.repopulating_table(table):
+            table.clear(columns=True)
+            columns = _fit_columns(
+                self._snapshots, show_scope=show_scope, available=table.region.width
             )
+            table.add_columns(*columns)
+            seen_keys: set[str] = set()
+            self._row_key_to_server_key = {}
+            for snap in self._snapshots:
+                row_key = snap.server_key
+                if row_key in seen_keys:
+                    # Two malformed records can both fall back to the same
+                    # server_key (e.g. two local profiles missing profile_id
+                    # both become "local:unknown" -- see
+                    # local_profile_readiness()). DataTable.add_row(key=...)
+                    # raises DuplicateKey for a repeat; de-dupe with a suffix
+                    # instead of crashing the whole canvas over bad data.
+                    suffix = 2
+                    candidate = f"{row_key}#{suffix}"
+                    while candidate in seen_keys:
+                        suffix += 1
+                        candidate = f"{row_key}#{suffix}"
+                    row_key = candidate
+                seen_keys.add(row_key)
+                # The suffixed row_key is a table-internal de-dupe identifier,
+                # not a real server_key -- remember the canonical key so
+                # `on_data_table_row_selected()` can translate it back.
+                self._row_key_to_server_key[row_key] = snap.server_key
+                # label/auth_display/scope_display are user-controlled (local
+                # profile ids, server-reported names) and DataTable parses
+                # plain str cells as Rich markup -- wrap in Text so a value like
+                # "[/bold]docs" can't crash the app (MarkupError) and
+                # "[red]x[/red]" can't inject styling. Status cells now carry
+                # the readiness state's color too (Task 1, MCP Hub Phase 6,
+                # supersedes the old Task 11 "stays plain" decision above this
+                # comment used to describe) -- `state_text()` colors the WHOLE
+                # cell (glyph + word together, one string), mirroring
+                # `mcp_rail.py`'s row Buttons, which already color both the
+                # same way via `STATE_CSS_CLASSES`.
+                row_cells_by_name: dict[str, Any] = {
+                    "Name": Text(snap.label),
+                    "Connection": snap.transport,
+                    "Status": state_text(
+                        snap.badge_text(), _readiness_kind(snap.state)
+                    ),
+                    "Tools": "—" if snap.tool_count is None else str(snap.tool_count),
+                    "Auth": Text(snap.auth_display),
+                    "Scope": Text(snap.scope_display),
+                }
+                table.add_row(
+                    *(row_cells_by_name[column] for column in columns), key=row_key
+                )
         callouts = self.query_one("#mcp-overview-callouts", Vertical)
         await callouts.remove_children()
         callout_widgets: list[Widget] = []
@@ -981,7 +983,8 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         table = self.query_one("#mcp-servers-table", DataTable)
         for index, snap in enumerate(self._snapshots):
             if snap.server_key == self._last_selected_key:
-                table.move_cursor(row=index)
+                with self.repopulating_table(table):
+                    table.move_cursor(row=index)
                 return
 
     def _detail_toolbar_widgets(self) -> list[Button]:
