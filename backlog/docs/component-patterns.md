@@ -383,7 +383,9 @@ class RenameDialog(SafeModalDismissMixin, ModalScreen[None]):
 - `dialog-buttons` — horizontal action row at height 3, `align: center
   middle`; each `Button` takes `$ds-space-inline` side margins and
   `min-width: 12`. Compose with `button-group button-group-right` for the
-  standard right-aligned layout.
+  standard right-aligned layout. Explicit `button-group-left` and
+  `button-group-right` modifiers override the centered default while keeping
+  vertical centering; plain rows and `button-group-center` stay centered.
 
 **States.** Per §2.7 — the dialog itself has no states; the buttons in
 the row follow the Button type contract (`$ds-hover-*` / `$ds-focus-*` /

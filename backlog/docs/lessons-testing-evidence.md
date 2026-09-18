@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## Large SVG failure diagnostics can hide a quick assertion result
+
+**TASK-32821, 2026-09-18.** Both gallery snapshots passed at the baseline.
+After an intended button alignment change, the first normal-mode snapshot
+comparison consumed a CPU core without a completed report; the owned runner
+and child were interrupted and recorded as unqualified. Rerunning the same
+assertions with pytest `--assert=plain` promptly reported both expected
+mismatches. A semantic SVG diff showed only the action row moved, and the
+reviewed updates then passed again in normal mode. When large string diagnostics
+stall a failure run, preserve that attempt and use concise assertion reporting
+for diagnosis; do not weaken equality, mask geometry or count an interrupted
+attempt as a test result.
+
 ## CSS consolidation must include standalone production hosts
 
 **TASK-32813, 2026-09-18.** Moving BackupRestoreScreen defaults into the main

@@ -1,0 +1,9 @@
+Read-only review of TASK-32821 against ea559adee77824548bc3499939ac1c9c48f38454 by dialog_alignment_review. No tests or app launches, no edits.
+
+No actionable findings. The compound selectors fix explicit left/right precedence while retaining vertical centering and the default centered layout. Only the gallery and Roleplay recovery currently compose these modifiers; removing the Roleplay override preserves its shared right-alignment contract. Source and generated CSS changes agree.
+
+Tests load application stylesheets and assert actual geometry, complete painted labels, focus traversal, and gallery dismissal. Baseline failures occur on intended edge geometry.
+
+Native scope: real palette entry and gallery navigation, plus direct Roleplay modal callbacks. This does not establish normal partial-save entry, save-worker behavior, or external process/log/lock/database cleanup by itself. Final readiness depends on green tests, reviewed snapshots and native/lifecycle receipts.
+
+Final evidence review: no actionable findings. All 11 recorded source hashes match current files. The 53 distinct qualified cases have passing phase receipts and corresponding passing logs. Native and lifecycle records agree on PID, successful completion, and four theme/size cells with eight captures. Independently normalized snapshot diffs change only the Cancel/Delete row horizontal positions and background spans. The added Toast-clearance wait preserves assertions and disclosed harness scope.
