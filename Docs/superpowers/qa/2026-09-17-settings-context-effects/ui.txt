@@ -1,0 +1,15 @@
+..........                                                               [100%]
+============================= slowest 25 durations =============================
+41.87s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_context_and_effects_keyboard_save_revert_retry[size0-textual-dark]
+40.61s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_context_and_effects_keyboard_save_revert_retry[size0-textual-light]
+39.15s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_context_and_effects_keyboard_save_revert_retry[size1-textual-light]
+38.97s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_context_and_effects_keyboard_save_revert_retry[size1-textual-dark]
+16.77s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_saved_background_reaches_existing_console_and_stops[False]
+16.27s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_saved_background_reaches_existing_console_and_stops[True]
+7.84s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_context_percentage_label_is_fully_painted
+3.17s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[nan]
+3.12s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[-inf]
+2.97s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_nonfinite_background_rate_keeps_configuration_loadable[inf]
+
+(15 durations < 1s hidden.)
+10 passed in 213.50s (0:03:33)

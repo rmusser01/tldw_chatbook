@@ -1858,19 +1858,15 @@
 
 /* ===== WIDGET: ConsoleTranscriptSurface (Widgets/Console/console_background_effect.py) ===== */
 
-    ConsoleTranscriptSurface {
-        layers: background content;
-    }
-
-    ConsoleTranscriptSurface > ConsoleBackgroundEffect {
-        layer: background;
+    ConsoleTranscriptSurface > ConsoleTranscript > ConsoleBackgroundEffect {
+        layer: console-background;
         dock: top;
         width: 100%;
         height: 100%;
     }
 
     ConsoleTranscriptSurface > ConsoleTranscript {
-        layer: content;
+        layers: console-background default;
         dock: top;
         width: 100%;
         height: 100%;

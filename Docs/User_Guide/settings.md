@@ -529,6 +529,7 @@ Most controls are drafted. Groups marked **applies immediately** save as you edi
 | **Agent tool-result display cap** | **Display cap (chars)** (20–2000): how much of a tool result Console shows *you*, which is not what the model saw. Open a run's "View full log" to read past it. |
 | **Permission summaries** | **Off** by default. **Fallback (no rationale)** or **Every approval** sends a bounded excerpt of user/assistant conversation text to your designated provider/model for an advisory summary. Mode, provider and model save immediately; summaries do not decide approvals. |
 | **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
+| **Conversation context & memory** | Automatic/custom context budget; Ask/Automatic/Off compaction; summary representation; **Compact at (%)** and **Reduce context to (%)**; summary token limit; failure behavior and carry-forward mode. **Edit summary prompt** opens the matching Internal Prompts entry. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
 
 The **Show model thinking** result stays beside its checkbox when you reopen
@@ -543,10 +544,16 @@ problem and choose **Retry**. The previously saved choice remains active until a
 write succeeds. If the file was saved but live settings could not refresh, restart
 Chatbook or reload the configuration before relying on the new choice.
 
-Two honest limits: fallbacks reach **new or default sessions**, not a
-conversation already open; and "Workbench (advanced)" under **Scope** is
-silently downgraded — "Workbench scope is not available in this build; using
-Transcript scope."
+Global sampling fallbacks reach **new or default sessions**, not a conversation
+already open. Context defaults follow the conversation's existing override
+precedence. The target percentage must stay at least 15 points below the trigger;
+invalid ratios and frame rates stay in the draft until corrected or reverted.
+
+Saved background effects apply to the existing Console when you return, including
+when a save finishes after leaving Settings. Disabling them stops the animation
+without changing transcript content. **Workbench (advanced)** scope falls back
+to **Transcript**, with an explanation beside the controls. Frame rates accept
+1–12; a non-finite value in a hand-edited configuration loads the default of 6.
 
 The current conversation's **Thinking history replay** control lives in its
 Console settings, because Auto/Include/Exclude is durable conversation state,

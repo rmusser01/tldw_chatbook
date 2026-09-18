@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ ││ High                       ▼ ││ │  │
+│     Web Search               │  │  │ │ │└──────────────────────────────┘│ │  │
+│     Speech & TTS             │  │  │ │ │                                │ │  │
+│  Interface                   │  │  │ │ │Frame rate                      │ │  │
+│     Appearance               │  │  │ │ │█ 9                             │ │  │
+│     Theme                  ▁ │  │  │ │ │                                │ │  │
+│     Splash Screen            │  │  │ │ │ Console behavior settings      │ │  │
+│   > Console Behavior         │  │  │ │ │ saved. Rail labels:            │ │  │
+│  Data & Privacy              │  │  │ │ │ Horizontal. Return to Console  │ │  │
+│     Storage                  │  │  │ │ │ to see the change.             │ │  │
+│     Workspaces               │  │  │ │ └────────────────────────────────┘ │▆ │
+│     Tool Profiles            │  │  │ │                                    │▆ │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Frame rate from 1 to 12 FPS.
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q

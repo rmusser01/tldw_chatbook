@@ -1,0 +1,227 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-dark] _
+
+theme = 'textual-dark'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    async def test_effect_is_painted_in_empty_transcript_space_without_changing_messages(
+        theme,
+    ):
+        from tldw_chatbook.Chat.console_chat_models import (
+            ConsoleChatMessage,
+            ConsoleMessageRole,
+        )
+
+        app = StyledSurfaceHarness()
+        app.theme = theme
+        async with app.run_test(size=(80, 30)) as pilot:
+            transcript = app.query_one(ConsoleTranscript)
+            transcript.set_messages(
+                [
+                    ConsoleChatMessage(
+                        id="paint-user",
+                        role=ConsoleMessageRole.USER,
+                        content="Sample question",
+                    ),
+                    ConsoleChatMessage(
+                        id="paint-assistant",
+                        role=ConsoleMessageRole.ASSISTANT,
+                        content="Sample answer",
+                    ),
+                ]
+            )
+            await transcript.refresh_messages()
+            await pilot.pause(0.2)
+            effect = app.query_one(ConsoleBackgroundEffect)
+            surface = app.query_one(ConsoleTranscriptSurface)
+            surface.update_settings(
+                ConsoleBackgroundEffectSettings(
+                    enabled=True, effect="matrix", intensity="high", fps=9
+                )
+            )
+            await pilot.pause(0.2)
+            row = transcript.query_one("#console-message-paint-user")
+            assert row.region.y > transcript.region.y + 2
+
+            def empty_space():
+                region = transcript.content_region
+                return "\n".join(
+                    strip.crop(region.x, region.right).text
+                    for strip in app.screen._compositor.render_strips()[
+                        region.y : row.region.y - 1
+                    ]
+                )
+
+            assert effect.is_effect_active
+            painted_transcript = "\n".join(
+                strip.text for strip in app.screen._compositor.render_strips()
+            )
+            assert "Sample question" in painted_transcript
+            assert "Sample answer" in painted_transcript
+            transcript.focus()
+            await pilot.press("down")
+            await pilot.pause(0.2)
+            selected = transcript.selected_message_id
+            assert selected == "paint-user"
+            before_scroll = transcript.scroll_offset
+            before_text = transcript.to_plain_text()
+            assert any(char.isalnum() for char in empty_space()), (
+                "Running effect is hidden by transcript paint"
+            )
+            surface.update_settings(ConsoleBackgroundEffectSettings())
+            await pilot.pause(0.2)
+            assert not empty_space().strip()
+            assert effect._timer is None
+            assert transcript.query_one("#console-message-paint-user") is row
+            assert transcript.scroll_offset == before_scroll
+            assert transcript.to_plain_text() == before_text
+            assert transcript.selected_message_id == selected
+            surface.update_settings(
+                ConsoleBackgroundEffectSettings(
+                    enabled=True, effect="matrix", intensity="high"
+                )
+            )
+            await transcript.recompose()
+            await pilot.pause(0.2)
+            row = transcript.query_one("#console-message-paint-user")
+            recreated = app.query_one(ConsoleBackgroundEffect)
+            assert recreated is not effect
+            assert effect._timer is None
+            assert recreated._timer is not None
+            assert any(char.isalnum() for char in empty_space())
+            assert transcript.to_plain_text() == before_text
+            for enabled in (True, False):
+                surface.update_settings(
+                    ConsoleBackgroundEffectSettings(enabled=enabled, effect="matrix")
+                )
+                transcript.focus()
+                if transcript.selected_message_id is None:
+                    await pilot.press("down")
+                await pilot.pause(0.2)
+                assert transcript.selected_message_id == "paint-user"
+                assert await pilot.click(recreated, offset=(3, 2))
+                await pilot.pause(0.2)
+>               assert transcript.selected_message_id is None
+E               AssertionError: assert 'paint-user' is None
+E                +  where 'paint-user' = ConsoleTranscript(id='console-native-transcript').selected_message_id
+
+Tests/UI/test_console_background_effects.py:418: AssertionError
+_ test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-light] _
+
+theme = 'textual-light'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    async def test_effect_is_painted_in_empty_transcript_space_without_changing_messages(
+        theme,
+    ):
+        from tldw_chatbook.Chat.console_chat_models import (
+            ConsoleChatMessage,
+            ConsoleMessageRole,
+        )
+
+        app = StyledSurfaceHarness()
+        app.theme = theme
+        async with app.run_test(size=(80, 30)) as pilot:
+            transcript = app.query_one(ConsoleTranscript)
+            transcript.set_messages(
+                [
+                    ConsoleChatMessage(
+                        id="paint-user",
+                        role=ConsoleMessageRole.USER,
+                        content="Sample question",
+                    ),
+                    ConsoleChatMessage(
+                        id="paint-assistant",
+                        role=ConsoleMessageRole.ASSISTANT,
+                        content="Sample answer",
+                    ),
+                ]
+            )
+            await transcript.refresh_messages()
+            await pilot.pause(0.2)
+            effect = app.query_one(ConsoleBackgroundEffect)
+            surface = app.query_one(ConsoleTranscriptSurface)
+            surface.update_settings(
+                ConsoleBackgroundEffectSettings(
+                    enabled=True, effect="matrix", intensity="high", fps=9
+                )
+            )
+            await pilot.pause(0.2)
+            row = transcript.query_one("#console-message-paint-user")
+            assert row.region.y > transcript.region.y + 2
+
+            def empty_space():
+                region = transcript.content_region
+                return "\n".join(
+                    strip.crop(region.x, region.right).text
+                    for strip in app.screen._compositor.render_strips()[
+                        region.y : row.region.y - 1
+                    ]
+                )
+
+            assert effect.is_effect_active
+            painted_transcript = "\n".join(
+                strip.text for strip in app.screen._compositor.render_strips()
+            )
+            assert "Sample question" in painted_transcript
+            assert "Sample answer" in painted_transcript
+            transcript.focus()
+            await pilot.press("down")
+            await pilot.pause(0.2)
+            selected = transcript.selected_message_id
+            assert selected == "paint-user"
+            before_scroll = transcript.scroll_offset
+            before_text = transcript.to_plain_text()
+            assert any(char.isalnum() for char in empty_space()), (
+                "Running effect is hidden by transcript paint"
+            )
+            surface.update_settings(ConsoleBackgroundEffectSettings())
+            await pilot.pause(0.2)
+            assert not empty_space().strip()
+            assert effect._timer is None
+            assert transcript.query_one("#console-message-paint-user") is row
+            assert transcript.scroll_offset == before_scroll
+            assert transcript.to_plain_text() == before_text
+            assert transcript.selected_message_id == selected
+            surface.update_settings(
+                ConsoleBackgroundEffectSettings(
+                    enabled=True, effect="matrix", intensity="high"
+                )
+            )
+            await transcript.recompose()
+            await pilot.pause(0.2)
+            row = transcript.query_one("#console-message-paint-user")
+            recreated = app.query_one(ConsoleBackgroundEffect)
+            assert recreated is not effect
+            assert effect._timer is None
+            assert recreated._timer is not None
+            assert any(char.isalnum() for char in empty_space())
+            assert transcript.to_plain_text() == before_text
+            for enabled in (True, False):
+                surface.update_settings(
+                    ConsoleBackgroundEffectSettings(enabled=enabled, effect="matrix")
+                )
+                transcript.focus()
+                if transcript.selected_message_id is None:
+                    await pilot.press("down")
+                await pilot.pause(0.2)
+                assert transcript.selected_message_id == "paint-user"
+                assert await pilot.click(recreated, offset=(3, 2))
+                await pilot.pause(0.2)
+>               assert transcript.selected_message_id is None
+E               AssertionError: assert 'paint-user' is None
+E                +  where 'paint-user' = ConsoleTranscript(id='console-native-transcript').selected_message_id
+
+Tests/UI/test_console_background_effects.py:418: AssertionError
+============================= slowest 25 durations =============================
+2.35s call     Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-light]
+2.18s call     Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-dark]
+
+(7 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-dark]
+FAILED Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-light]
+2 failed, 1 passed, 11 deselected in 9.44s

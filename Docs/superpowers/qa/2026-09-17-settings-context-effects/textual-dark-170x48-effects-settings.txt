@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.            │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │ │ │ Thinking                │ Provider default                                      ▼ │ │ │  │  │  │                              │
+│  category search             │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │ Selected category: Console   │
+│                              │  │  │ │ │ Think budget            │ optional tokens, min 1024                                 │ │  │  │  │ Behavior                     │
+│  Core                        │  │  │ │ │  chat_defaults.streaming is canonical; enable_streaming is read as fallback only.   │ │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │ │                                                                                     │ │  │  │  │  Guided edits: change a      │
+│     Providers & Models       │  │  │ │ │  Background effects                                                                 │ │  │  │  │  field first.                │
+│     Web Search               │  │  │ │ │ ▐X▌ Enable background effects                                                       │ │  │  │  │  Save (s) — no changes       │
+│     Speech & TTS             │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │  Revert (r) — no changes     │
+│  Interface                   │  │  │ │ │ Background effect       │ Matrix                                                ▼ │ │ │  │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │ config file.                 │
+│     Theme                    │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │  Purpose: Focus a Console    │
+│     Splash Screen            │  │  │ │ │ Scope                   │ Transcript (recommended)                              ▼ │ │ │  │  │  │  Behavior field for          │
+│   > Console Behavior         │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │  setting-specific            │
+│  Data & Privacy              │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │  guidance.                   │
+│     Storage                  │  │  │ │ │ Intensity               │ High                                                  ▼ │ │ │  │  │  │                              │
+│     Workspaces               │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │  Consequences: No            │
+│     Tool Profiles            │  │  │ │ │ Frame rate              █ 9                                                         │ │  │  │  │  field-specific guidance     │
+│     Privacy & Security       │  │  │ │ │  Console behavior settings saved. Rail labels: Horizontal. Return to Console to     │ │  │  │  │  is active right now.        │
+│     Network                  │  │  │ │ │  see the change.                                                                    │ │  │  │  │                              │
+│     My Profile               │  │  │ │ └─────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Saved as: varies by field   │
+│  Troubleshooting             │  │  │ │                                                                                         │  │  │  │                              │
+│     Diagnostics (view)       │  │  │ │  Composer behavior                                                                      │  │  │  │  Applies: varies by field    │
+│     About (view)             │  │  │ │  Paste collapse: pasted chunks over the threshold display as compact placeholders       │  │  │  │                              │
+│     Agents                   │  │  │ │  Threshold: 50 characters                                                               │  │  │  │ Override rules               │
+│  Expert                      │  │  │ │  Typing rule: normal typing remains literal and never auto-collapses                    │  │  │  │  Priority: active Console  ▆ │
+│     Internal Prompts         │  │  │ │  Current default: Enabled: collapse large pastes                                        │  │  │  │  session, then               │
+│     Advanced Config          │  │  │ │                                                                                         │  │  │  │  provider+model profile,     │
+│   Domain Defaults ▸ (11)     │  │  │ │  Global fallback defaults                                                               │  │  │  │  then these global           │
+│                              │  │  │ │  Fallback source: .streaming, temperature, top_p, max_tokens                            │  │  │  │  fallbacks                   │
+│                              │  │  │ │  Compatibility: streaming is canonical; enable_streaming is read only when streaming    │  │  │  │                              │
+│                              │  │  │ │  is absent                                                                              │▆ │  │  │  Scope:  response            │
+│                              │  │  │ │  Override order: active Console session, then provider+model profile, then global       │  │  │  │  fallbacks and  paste        │
+│                              │  │  │ │  fallback                                                                               │  │  │  │  display settings            │
+│                              │  │  │ │  Save targets:  paste settings and  global fallbacks                                    │  │  │  │                              │
+│                              │  │  │ │  Console impact: new/default sessions use these only when no narrower override applies  │  │  │  │  Save: staged - press s to ▆ │
+│                              │  │  │ └─────────────────────────────────────────────────────────────────────────────────────────┘▁ │  │  │ ▼ more — scroll the          │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+ Frame rate from 1 to 12 FPS.
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
