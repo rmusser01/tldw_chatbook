@@ -1,0 +1,182 @@
+[
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-green-002/001",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-green-002/002",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-green-002/003",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-green-002/004",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-green-002/005",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-green-002/006",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  }
+]

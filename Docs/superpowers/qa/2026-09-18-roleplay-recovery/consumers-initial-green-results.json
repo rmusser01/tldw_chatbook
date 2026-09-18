@@ -1,0 +1,573 @@
+[
+  {
+    "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/001",
+    "classes": [
+      "RoleplayDraftNavigationDialog",
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/002",
+    "classes": [
+      "RoleplayDraftNavigationDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/003",
+    "classes": [
+      "RoleplayDraftNavigationDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/004",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/005",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-notes]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-notes]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-notes]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-notes]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/006",
+    "classes": [
+      "NotesRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-skills]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-skills]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-skills]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-skills]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/007",
+    "classes": [
+      "SkillRecoveryReviewModal"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/008",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/009",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-notes]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-notes]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-notes]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-notes]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/010",
+    "classes": [
+      "NotesRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-skills]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-skills]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-skills]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-skills]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/011",
+    "classes": [
+      "SkillRecoveryReviewModal"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/012",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/013",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-notes]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-notes]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-notes]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-notes]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/014",
+    "classes": [
+      "NotesRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-skills]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-skills]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-skills]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-skills]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/015",
+    "classes": [
+      "SkillRecoveryReviewModal"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-markdown]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/016",
+    "classes": [
+      "ConsoleSaveMarkdownModal"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/017",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-notes]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-notes]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-notes]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-notes]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/018",
+    "classes": [
+      "NotesRecoveryDialog"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-skills]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-skills]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-skills]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-skills]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-consumers-003/019",
+    "classes": [
+      "SkillRecoveryReviewModal"
+    ],
+    "mismatches": 0
+  }
+]

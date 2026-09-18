@@ -1,0 +1,15 @@
+{
+  "distinct_targeted_cases": 31,
+  "native_cells_inspected": 6,
+  "native_source_hashes_match": 8,
+  "ruff": "all three touched Python files pass",
+  "format": "new files and changed production range pass",
+  "authored_whitespace": "pass",
+  "selector_candidates": 274,
+  "selector_limit": 274,
+  "boot_css_bytes": 584038,
+  "boot_css_limit": 608090,
+  "preflight": "six local guards pass in initial run, pinned Mermaid output check passes in network recheck",
+  "backlog_ids": "no duplicate across4155 files; fresh remote/worktree32820 allocation has no other owner",
+  "full_suite_run": false
+}

@@ -167,6 +167,36 @@ FileSave.-compact InputBar Input {
     min-width: $ds-size-12;
 }
 
+/* Roleplay partial-save recovery shares the modal title/action grammar.
+   Keep the failed-domain list and both choices visible at 52x20. */
+RoleplayDraftRecoveryDialog {
+    align: center middle;
+}
+
+#roleplay-draft-recovery-dialog {
+    width: $ds-size-64;
+    max-width: $ds-percent-96;
+    height: auto;
+    max-height: $ds-height-full;
+    border: tall $ds-control-edge;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#roleplay-draft-recovery-dialog .dialog-title {
+    color: $ds-text-primary;
+}
+
+#roleplay-draft-recovery-domains {
+    color: $ds-text-primary;
+    margin-bottom: $ds-space-stack;
+}
+
+#roleplay-draft-recovery-dialog .dialog-buttons {
+    align-horizontal: right;
+}
+
 /* TASK-32655: trust dialogs share the application surface and readable
    error palette. App-tier rules also override global Static colours. */
 SkillTrustPassphraseModal,

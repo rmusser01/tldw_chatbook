@@ -238,3 +238,23 @@ formatting. Independent review found no actionable issue. All applicable remote
 checks passed on saved efe900eb99; checks on the fixture commit remain separate.
 Roleplay recovery styling and the wider component review remain open. PR2707
 stays draft/unmerged and requires its own visual review and merge approval.
+
+
+TASK-32820 repairs the unstyled Roleplay partial-save recovery dialog recorded
+above. [Thirty-one distinct targeted cases and six inspected native captures](../qa/2026-09-18-roleplay-recovery/README.md)
+qualify a centered token-backed frame, complete failure-domain text and trailing
+Retry/Stay actions at 52×20, 80×24 and 170×48 in both themes. Original handlers,
+results and mounted partial-save draft retention remain intact. Native uses
+direct dialog fixtures; normal entry and save-worker scope stay explicit.
+Clean native shutdown, released lock, ten healthy private databases, unchanged
+defaults and eight matching source hashes are recorded. CSS bytes are
+584,038/608,090, selector candidates remain 274, and both source-count tours
+pass. The initial frame, alignment and selector-budget failures remain in the
+receipt. All applicable remote checks passed on saved f84a820d2d; new-head checks
+follow the Roleplay push. TASK-31243 and the wider destination review stay open.
+
+The shared modal action-row composition needs its own review: the later
+`.dialog-buttons` center rule overrides `.button-group-right` at equal
+specificity. TASK-32820 corrects its own measured consumer; other consumers and
+the catalog's general right-alignment promise remain unqualified. PR2707 stays
+draft/unmerged and requires its own visual review and merge approval.

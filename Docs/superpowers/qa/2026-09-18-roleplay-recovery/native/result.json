@@ -1,0 +1,145 @@
+{
+  "pid": 92455,
+  "base_commit": "f84a820d2d7003f21f1e356f1a69eb90895b40e3",
+  "source_hashes": {
+    "tldw_chatbook/UI/Navigation/character_conversation_navigation.py": "1ba26bfc0ceec15ceae4db0884b77f628e04a7c87be2f5e1ff14dd9a797962a5",
+    "tldw_chatbook/css/components/_dialogs.tcss": "bc16c6fb415942c6ba3c530c63e423261acae9e21935ae2b8af67bcdc774c814",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "4e55445715e7914405364bf3cdc59db559faad07980965af84caa0d686d18da4",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "2042e083a1d49186a2eb4022140eceff20d269d92ebd0b36f36f9b3d29a65fce",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "Docs/superpowers/qa/2026-09-18-roleplay-recovery/native_check.py": "1570cd9a16d396d192dbf645a167e5e69da1f95075970c4d8386bf651e0ed9e9",
+    "Tests/UI/test_roleplay_recovery_layout.py": "172f74f98902081a6c2b92091cada028b9e8457f8ac31dea28254e1642acaa67"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        52,
+        20
+      ],
+      "frame": [
+        1,
+        2,
+        49,
+        15
+      ],
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "frame": [
+        8,
+        4,
+        64,
+        15
+      ],
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "frame": [
+        53,
+        16,
+        64,
+        15
+      ],
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        52,
+        20
+      ],
+      "frame": [
+        1,
+        2,
+        49,
+        15
+      ],
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "frame": [
+        8,
+        4,
+        64,
+        15
+      ],
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "frame": [
+        53,
+        16,
+        64,
+        15
+      ],
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    }
+  ],
+  "fixture_scope": "Real TldwCli, directly opened recovery modal with all four failed domains. Retry/Stay/Escape results are observed by a local callback; no save worker or normal partial-save entry route is exercised.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notifications cleared",
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}
