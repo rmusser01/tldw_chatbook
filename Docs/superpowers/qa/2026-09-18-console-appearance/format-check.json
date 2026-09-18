@@ -1,0 +1,176 @@
+[
+  {
+    "file": "tldw_chatbook/css/build_css.py",
+    "range": "983-995",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/build_css.py",
+    "range": "1012-1016",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/build_css.py",
+    "range": "1020-1020",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/widget_css.py",
+    "range": "700-721",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/widget_css.py",
+    "range": "768-769",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/widget_css.py",
+    "range": "782-782",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/widget_css.py",
+    "range": "954-958",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/widget_css.py",
+    "range": "967-967",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/css/widget_css.py",
+    "range": "994-996",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "109-112",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "114-115",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "119-120",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "124-126",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "130-149",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "156-158",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "162-164",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "168-174",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "183-184",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "188-190",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "194-195",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "199-201",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "205-206",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "208-208",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "213-213",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "218-219",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py",
+    "range": "256-258",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "Tests/UI/test_widget_css_consolidation.py",
+    "range": "94-96",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "Tests/UI/test_widget_css_consolidation.py",
+    "range": "115-124",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  },
+  {
+    "file": "Tests/UI/test_widget_css_consolidation.py",
+    "range": "389-428",
+    "exit_code": 0,
+    "output": "1 file already formatted\n"
+  }
+]

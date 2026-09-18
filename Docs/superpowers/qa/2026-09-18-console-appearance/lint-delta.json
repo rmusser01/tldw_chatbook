@@ -1,0 +1,22 @@
+{
+  "tldw_chatbook/css/build_css.py": {
+    "baseline": 2,
+    "current": 2,
+    "new": []
+  },
+  "tldw_chatbook/css/widget_css.py": {
+    "baseline": 3,
+    "current": 3,
+    "new": []
+  },
+  "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py": {
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  "Tests/UI/test_widget_css_consolidation.py": {
+    "baseline": 1,
+    "current": 1,
+    "new": []
+  }
+}

@@ -23,13 +23,21 @@ DESTINATION_BODIES = {
 
 
 def build_css_tour_app():
-    """Disable startup overlays in the caller's private test profile."""
+    """Build a real app without startup overlays or host audio compilation."""
+    from tldw_chatbook.Audio.system_audio_tap import TapMode
     from tldw_chatbook.config import save_setting_to_cli_config
 
     save_setting_to_cli_config("splash_screen", "enabled", False)
     from Tests.UI.app_factory import _build_test_app
 
-    return _build_test_app()
+    app = _build_test_app()
+    # TASK-32818: Meetings preparation otherwise compiles the macOS tap helper
+    # in an executor that outlives run_test(). Keep the real owner and screen;
+    # stylesheet counts do not depend on host capture capabilities.
+    app.meeting_session_owner._tap_probe = lambda **kwargs: TapMode(
+        "unavailable", "Host audio probing disabled for CSS tour"
+    )
+    return app
 
 
 async def visit_all_shell_destinations(app, pilot):
