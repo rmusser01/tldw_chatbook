@@ -1,0 +1,172 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[rename-option] _
+Tests/UI/test_mcp_tools_mode.py:1313: in test_menu_activation_keeps_identity_when_delivery_waits_for_refresh
+    assert select.value == (Select.NULL if change == 'remove' else 'local:b')
+E   AssertionError: assert 'local:a' == 'local:b'
+E
+E     - local:b
+E     ?       ^
+E     + local:a
+E     ?       ^
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 08:47:24.584 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-18 08:47:24.615 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_rf0sp4eg/config/config.toml
+2026-09-18 08:47:24.615 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6158 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_rf0sp4eg/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-18 08:47:24.616 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6167 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_rf0sp4eg/config/config.toml
+2026-09-18 08:47:24.617 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6234 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-18 08:47:24.617 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-18 08:47:24.622 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 08:47:24.622 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 08:47:24.623 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 08:47:24.623 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 08:47:24.643 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_rf0sp4eg/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 08:47:24.643 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 08:47:24.643 | INFO     | tldw_chatbook.config:<module>:9748 - Default API Endpoint (from config.py global scope): openai
+2026-09-18 08:47:24.643 | DEBUG    | tldw_chatbook.config:<module>:9771 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-18 08:47:24.736 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 08:47:24.744 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 08:47:24.803 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 08:47:24.852 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 08:47:24.852 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 08:47:24.853 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 08:47:24.977 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 08:47:25.232 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+_ test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[rename-selection] _
+Tests/UI/test_mcp_tools_mode.py:1313: in test_menu_activation_keeps_identity_when_delivery_waits_for_refresh
+    assert select.value == (Select.NULL if change == 'remove' else 'local:b')
+E   AssertionError: assert 'local:a' == 'local:b'
+E
+E     - local:b
+E     ?       ^
+E     + local:a
+E     ?       ^
+_ test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[remove-option] _
+Tests/UI/test_mcp_tools_mode.py:1313: in test_menu_activation_keeps_identity_when_delivery_waits_for_refresh
+    assert select.value == (Select.NULL if change == 'remove' else 'local:b')
+E   AssertionError: assert 'local:a' == Select.NULL
+E    +  where 'local:a' = Select(id='mcp-tools-filter-server', classes='-expanded').value
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_mcp_tools_mode.py:1279: in test_menu_activation_keeps_identity_when_delivery_waits_for_refresh
+    async with app.run_test(size=(80, 24)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:671: in _update_selection
+    value = self._options[event.option_index][1]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:671 │
+│  in _update_selection                                                        │
+│                                                                              │
+│   668 │   def _update_selection(self, event: SelectOverlay.UpdateSelection)  │
+│   669 │   │   """Update the current selection."""                            │
+│   670 │   │   event.stop()                                                   │
+│ ❱ 671 │   │   value = self._options[event.option_index][1]                   │
+│   672 │   │   if value != self.value:                                        │
+│   673 │   │   │   self.value = value                                         │
+│   674                                                                        │
+│                                                                              │
+│ ╭───────────────────────────── locals ──────────────────────────────╮        │
+│ │ event = UpdateSelection()                                         │        │
+│ │  self = Select(id='mcp-tools-filter-server', classes='-expanded') │        │
+│ ╰───────────────────────────────────────────────────────────────────╯        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+IndexError: list index out of range
+_ test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[remove-selection] _
+Tests/UI/test_mcp_tools_mode.py:1313: in test_menu_activation_keeps_identity_when_delivery_waits_for_refresh
+    assert select.value == (Select.NULL if change == 'remove' else 'local:b')
+E   AssertionError: assert 'local:a' == Select.NULL
+E    +  where 'local:a' = Select(id='mcp-tools-filter-server', classes='-expanded').value
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_mcp_tools_mode.py:1279: in test_menu_activation_keeps_identity_when_delivery_waits_for_refresh
+    async with app.run_test(size=(80, 24)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_select.py:671: in _update_selection
+    value = self._options[event.option_index][1]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:671 │
+│  in _update_selection                                                        │
+│                                                                              │
+│   668 │   def _update_selection(self, event: SelectOverlay.UpdateSelection)  │
+│   669 │   │   """Update the current selection."""                            │
+│   670 │   │   event.stop()                                                   │
+│ ❱ 671 │   │   value = self._options[event.option_index][1]                   │
+│   672 │   │   if value != self.value:                                        │
+│   673 │   │   │   self.value = value                                         │
+│   674                                                                        │
+│                                                                              │
+│ ╭───────────────────────────── locals ──────────────────────────────╮        │
+│ │ event = UpdateSelection()                                         │        │
+│ │  self = Select(id='mcp-tools-filter-server', classes='-expanded') │        │
+│ ╰───────────────────────────────────────────────────────────────────╯        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+IndexError: list index out of range
+_______ test_explicit_tool_drill_supersedes_pending_filter_event[server] _______
+Tests/UI/test_mcp_tools_mode.py:1345: in test_explicit_tool_drill_supersedes_pending_filter_event
+    assert table.coordinate_to_cell_key((table.cursor_row, 0))[0].value == 'local:a::read_a'
+E   AssertionError: assert 'local:b::read_b' == 'local:a::read_a'
+E
+E     - local:a::read_a
+E     ?       ^       ^
+E     + local:b::read_b
+E     ?       ^       ^
+________ test_explicit_tool_drill_supersedes_pending_filter_event[text] ________
+Tests/UI/test_mcp_tools_mode.py:1345: in test_explicit_tool_drill_supersedes_pending_filter_event
+    assert table.coordinate_to_cell_key((table.cursor_row, 0))[0].value == 'local:a::read_a'
+E   AssertionError: assert 'local:b::read_b' == 'local:a::read_a'
+E
+E     - local:a::read_a
+E     ?       ^       ^
+E     + local:b::read_b
+E     ?       ^       ^
+============================= slowest 25 durations =============================
+
+(18 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_tools_mode.py::test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[rename-option]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[rename-selection]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[remove-option]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_menu_activation_keeps_identity_when_delivery_waits_for_refresh[remove-selection]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_explicit_tool_drill_supersedes_pending_filter_event[server]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_explicit_tool_drill_supersedes_pending_filter_event[text]
+6 failed, 49 deselected in 3.56s

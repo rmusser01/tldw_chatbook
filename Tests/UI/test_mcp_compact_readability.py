@@ -238,3 +238,36 @@ async def test_wrapped_unicode_rows_keep_filter_and_exact_action_context(request
         assert events[0].server_key == target.server_key
         assert events[0].tool_name == target.tool_name
         assert events[0].profile_context == context
+
+
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
+async def test_tools_empty_recovery_action_is_visible_when_focused(
+    request, tmp_path, theme
+):
+    from textual.widgets import Button
+
+    save_setting_to_cli_config("splash_screen", "enabled", False)
+    app = _build_test_app("home")
+    app.theme = theme
+    async with app.run_test(size=(80, 24)) as pilot:
+        workbench = await _open(pilot, tmp_path / "permissions.json")
+        workbench.set_mode("tools")
+        await _settle(pilot)
+        canvas = workbench.query_one("#mcp-mode-canvas-tools")
+        message = (
+            "No servers configured — add one to see its tools. 9 tool gate(s) "
+            "are off. Configure the workspace, web, and Watchlists master switch "
+            "in Tools mode; other registration gates are in Servers mode."
+        )
+        await canvas.update_tools([], empty_diagnosis=(message, "add_server"))
+        await _settle(pilot)
+        button = canvas.query_one("#mcp-tools-empty-action", Button)
+        button.focus()
+        await _settle(pilot)
+        assert app.focused is button
+        painted = app.screen._compositor.visible_widgets.get(button)
+        assert painted is not None
+        region, clip = painted
+        assert region.intersection(clip) == region
+        assert "Add server" in _paint(app.screen, region)

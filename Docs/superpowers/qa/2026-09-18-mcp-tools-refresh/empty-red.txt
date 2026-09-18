@@ -1,0 +1,262 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_tools_empty_recovery_action_is_visible_when_focused[textual-dark] ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti0/private-profile-process/pytest.log
+E   --- _setup_logging START (from Logging_Config.py) ---
+E   Loguru: All pre-existing sinks removed.
+E   Loguru: Configured to forward its messages to standard Python logging system.
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_tools_empty_recovery_action_is_visible_when_focused[textual-dark] ____
+E
+E   request = <FixtureRequest for <Coroutine test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti0/private-profile-process/pytest/test_tools_empty_recovery_acti0')
+E   theme = 'textual-dark'
+E
+E       @pytest.mark.parametrize('theme', ['textual-dark', 'textual-light'])
+E       @private_profile_test
+E       async def test_tools_empty_recovery_action_is_visible_when_focused(request, tmp_path, theme):
+E           from textual.widgets import Button
+E
+E           save_setting_to_cli_config('splash_screen', 'enabled', False)
+E           app = _build_test_app('home')
+E           app.theme = theme
+E           async with app.run_test(size=(80, 24)) as pilot:
+E               workbench = await _open(pilot, tmp_path / 'permissions.json')
+E               workbench.set_mode('tools')
+E               await _settle(pilot)
+E               canvas = workbench.query_one('#mcp-mode-canvas-tools')
+E               message = ('No servers configured — add one to see its tools. 9 tool gate(s) '
+E                          'are off. Configure the workspace, web, and Watchlists master switch '
+E                          'in Tools mode; other registration gates are in Servers mode.')
+E               await canvas.update_tools([], empty_diagnosis=(message, 'add_server'))
+E               await _settle(pilot)
+E               button = canvas.query_one('#mcp-tools-empty-action', Button)
+E               button.focus()
+E               await _settle(pilot)
+E               assert app.focused is button
+E               painted = app.screen._compositor.visible_widgets.get(button)
+E               geometry = [(str(w), str(w.region), str(w.virtual_size), w.scroll_y, w.max_scroll_y) for w in button.ancestors if hasattr(w, "region")]
+E   >           assert painted is not None, geometry
+E   E           AssertionError: [("Vertical(id='mcp-tools-empty', classes='ds-recovery-callout')", 'Region(x=18, y=14, width=39, height=11)', 'Size(wi...0, 0), ("Vertical(id='mcp-shell')", 'Region(x=0, y=3, width=80, height=20)', 'Size(width=80, height=20)', 0.0, 0), ...]
+E   E           assert None is not None
+E
+E   Tests/UI/test_mcp_compact_readability.py:267: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 08:57:25.803 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 08:57:25.808 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 08:57:25.809 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 08:57:25.809 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 08:57:25.810 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+E   2026-09-18 08:57:25.825 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+E   2026-09-18 08:57:25.835 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti0/private-profile-process/profile/config/config.toml
+E   2026-09-18 08:57:25.837 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-18 08:57:25.837 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-18 08:57:25.838 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-18 08:57:25.838 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-18 08:57:25.858 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-18 08:57:25.859 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-18 08:57:25.859 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E   2026-09-18 08:57:25.937 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-18 08:57:25.959 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-18 08:57:25.960 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-18 08:57:25.960 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-18 08:57:25.960 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-18 08:57:26.031 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:26.093 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-srp4qby2/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:26.251 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-srp4qby2/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:26.264 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:26.265 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-srp4qby2/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:26.265 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-srp4qby2/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:26.368 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-18 08:57:26.403 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-18 08:57:26.441 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-18 08:57:26.475 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-18 08:57:26.508 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-18 08:57:26.548 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-18 08:57:26.549 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-srp4qby2/scheduled_tasks.sqlite [Client: default]
+E   2026-09-18 08:57:26.594 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-18 08:57:26.594 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-18 08:57:26.602 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-18 08:57:26.675 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-18 08:57:26.675 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-18 08:57:26.675 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-18 08:57:26.742 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-18 08:57:26.742 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+E   2026-09-18 08:57:26.743 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+E   2026-09-18 08:57:26.743 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.875 seconds
+E   2026-09-18 08:57:26.743 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.090s (10.3%)
+E   2026-09-18 08:57:26.743 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+E   2026-09-18 08:57:26.744 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.002s (0.2%)
+E   2026-09-18 08:57:26.744 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-18 08:57:26.744 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-18 08:57:26.744 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-18 08:57:26.745 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-18 08:57:26.745 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: home
+E   WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     root:app.py:12312 Splash screen enabled: False
+E   INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E   INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E   INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E   INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E   INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E   ============================= slowest 25 durations =============================
+E   4.82s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]
+E   1 failed in 6.57s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 08:57:24.037 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 08:57:24.043 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 08:57:24.043 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 08:57:24.044 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+___ test_tools_empty_recovery_action_is_visible_when_focused[textual-light] ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti1/private-profile-process/pytest.log
+E   --- _setup_logging START (from Logging_Config.py) ---
+E   Loguru: All pre-existing sinks removed.
+E   Loguru: Configured to forward its messages to standard Python logging system.
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ___ test_tools_empty_recovery_action_is_visible_when_focused[textual-light] ____
+E
+E   request = <FixtureRequest for <Coroutine test_tools_empty_recovery_action_is_visible_when_focused[textual-light]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti1/private-profile-process/pytest/test_tools_empty_recovery_acti0')
+E   theme = 'textual-light'
+E
+E       @pytest.mark.parametrize('theme', ['textual-dark', 'textual-light'])
+E       @private_profile_test
+E       async def test_tools_empty_recovery_action_is_visible_when_focused(request, tmp_path, theme):
+E           from textual.widgets import Button
+E
+E           save_setting_to_cli_config('splash_screen', 'enabled', False)
+E           app = _build_test_app('home')
+E           app.theme = theme
+E           async with app.run_test(size=(80, 24)) as pilot:
+E               workbench = await _open(pilot, tmp_path / 'permissions.json')
+E               workbench.set_mode('tools')
+E               await _settle(pilot)
+E               canvas = workbench.query_one('#mcp-mode-canvas-tools')
+E               message = ('No servers configured — add one to see its tools. 9 tool gate(s) '
+E                          'are off. Configure the workspace, web, and Watchlists master switch '
+E                          'in Tools mode; other registration gates are in Servers mode.')
+E               await canvas.update_tools([], empty_diagnosis=(message, 'add_server'))
+E               await _settle(pilot)
+E               button = canvas.query_one('#mcp-tools-empty-action', Button)
+E               button.focus()
+E               await _settle(pilot)
+E               assert app.focused is button
+E               painted = app.screen._compositor.visible_widgets.get(button)
+E               geometry = [(str(w), str(w.region), str(w.virtual_size), w.scroll_y, w.max_scroll_y) for w in button.ancestors if hasattr(w, "region")]
+E   >           assert painted is not None, geometry
+E   E           AssertionError: [("Vertical(id='mcp-tools-empty', classes='ds-recovery-callout')", 'Region(x=18, y=14, width=39, height=11)', 'Size(wi...0, 0), ("Vertical(id='mcp-shell')", 'Region(x=0, y=3, width=80, height=20)', 'Size(width=80, height=20)', 0.0, 0), ...]
+E   E           assert None is not None
+E
+E   Tests/UI/test_mcp_compact_readability.py:267: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 08:57:33.172 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 08:57:33.177 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 08:57:33.178 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 08:57:33.178 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 08:57:33.179 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+E   2026-09-18 08:57:33.194 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+E   2026-09-18 08:57:33.204 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti1/private-profile-process/profile/config/config.toml
+E   2026-09-18 08:57:33.205 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-18 08:57:33.205 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-18 08:57:33.206 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-18 08:57:33.206 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-18 08:57:33.225 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-18 08:57:33.225 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-18 08:57:33.226 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E   2026-09-18 08:57:33.303 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-18 08:57:33.324 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-18 08:57:33.325 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-18 08:57:33.325 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-18 08:57:33.325 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-18 08:57:33.393 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:33.449 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nu5uv636/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:33.598 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nu5uv636/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:33.610 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:33.611 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nu5uv636/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:33.612 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nu5uv636/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 08:57:33.711 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-18 08:57:33.742 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-18 08:57:33.774 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-18 08:57:33.805 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-18 08:57:33.838 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-18 08:57:33.869 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-18 08:57:33.870 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nu5uv636/scheduled_tasks.sqlite [Client: default]
+E   2026-09-18 08:57:33.913 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-18 08:57:33.913 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-18 08:57:33.920 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-18 08:57:33.986 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-18 08:57:33.987 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1992/test_tools_empty_recovery_acti1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-18 08:57:33.987 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-18 08:57:34.050 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-18 08:57:34.050 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+E   2026-09-18 08:57:34.050 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+E   2026-09-18 08:57:34.051 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.816 seconds
+E   2026-09-18 08:57:34.051 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.088s (10.8%)
+E   2026-09-18 08:57:34.051 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+E   2026-09-18 08:57:34.051 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.001s (0.2%)
+E   2026-09-18 08:57:34.052 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-18 08:57:34.052 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-18 08:57:34.052 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-18 08:57:34.052 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-18 08:57:34.053 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: home
+E   WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     root:app.py:12312 Splash screen enabled: False
+E   INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E   INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E   INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E   INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E   INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E   ============================= slowest 25 durations =============================
+E   4.84s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-light]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-light]
+E   1 failed in 6.50s
+============================= slowest 25 durations =============================
+7.41s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-light]
+7.36s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]
+FAILED Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-light]
+2 failed, 6 deselected in 16.55s

@@ -1,0 +1,102 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_pointer_filter_choice_survives_queued_click_and_catalog_refresh[rename] _
+Tests/UI/test_mcp_tools_mode.py:1454: in test_pointer_filter_choice_survives_queued_click_and_catalog_refresh
+    assert select.value == (Select.NULL if change == 'remove' else 'local:b')
+E   AssertionError: assert 'local:a' == 'local:b'
+E
+E     - local:b
+E     ?       ^
+E     + local:a
+E     ?       ^
+_ test_pointer_filter_choice_survives_queued_click_and_catalog_refresh[remove] _
+Tests/UI/test_mcp_tools_mode.py:1454: in test_pointer_filter_choice_survives_queued_click_and_catalog_refresh
+    assert select.value == (Select.NULL if change == 'remove' else 'local:b')
+E   AssertionError: assert 'local:a' == Select.NULL
+E    +  where 'local:a' = MCPToolsServerSelect(id='mcp-tools-filter-server', classes='-expanded').value
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_mcp_tools_mode.py:1417: in test_pointer_filter_choice_survives_queued_click_and_catalog_refresh
+    async with app.run_test(size=(80, 24)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:58: in _invoke
+    result = await result
+             ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/widgets/_option_list.py:728: in _on_click
+    if clicked_option is not None and not self._options[clicked_option].disabled:
+                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: list index out of range
+----------------------------- Captured stderr call -----------------------------
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/widgets/_option_list.p │
+│ y:728 in _on_click                                                           │
+│                                                                              │
+│    725 │   │   │   event: The click event.                                   │
+│    726 │   │   """                                                           │
+│    727 │   │   clicked_option: int | None = event.style.meta.get("option")   │
+│ ❱  728 │   │   if clicked_option is not None and not self._options[clicked_o │
+│    729 │   │   │   self.highlighted = clicked_option                         │
+│    730 │   │   │   self.action_select()                                      │
+│    731                                                                       │
+│                                                                              │
+│ ╭────────────────────── locals ──────────────────────╮                       │
+│ │ clicked_option = 3                                 │                       │
+│ │          event = Click(                            │                       │
+│ │                  │   _MCPToolsServerOverlay(),     │                       │
+│ │                  │   x=2,                          │                       │
+│ │                  │   y=4,                          │                       │
+│ │                  │   pointer_x=2,                  │                       │
+│ │                  │   pointer_y=4,                  │                       │
+│ │                  │   screen_x=53,                  │                       │
+│ │                  │   screen_y=17,                  │                       │
+│ │                  │   button=1,                     │                       │
+│ │                  │   style=Style(                  │                       │
+│ │                  │   │   color=Color(              │                       │
+│ │                  │   │   │   '#e0e0e0',            │                       │
+│ │                  │   │   │   ColorType.TRUECOLOR,  │                       │
+│ │                  │   │   │   triplet=ColorTriplet( │                       │
+│ │                  │   │   │   │   red=224,          │                       │
+│ │                  │   │   │   │   green=224,        │                       │
+│ │                  │   │   │   │   blue=224          │                       │
+│ │                  │   │   │   )                     │                       │
+│ │                  │   │   ),                        │                       │
+│ │                  │   │   bgcolor=Color(            │                       │
+│ │                  │   │   │   '#272727',            │                       │
+│ │                  │   │   │   ColorType.TRUECOLOR,  │                       │
+│ │                  │   │   │   triplet=ColorTriplet( │                       │
+│ │                  │   │   │   │   red=39,           │                       │
+│ │                  │   │   │   │   green=39,         │                       │
+│ │                  │   │   │   │   blue=39           │                       │
+│ │                  │   │   │   )                     │                       │
+│ │                  │   │   ),                        │                       │
+│ │                  │   │   meta={'option': 3}        │                       │
+│ │                  │   ),                            │                       │
+│ │                  │   chain=1                       │                       │
+│ │                  )                                 │                       │
+│ │           self = _MCPToolsServerOverlay()          │                       │
+│ ╰────────────────────────────────────────────────────╯                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+IndexError: list index out of range
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_tools_mode.py::test_pointer_filter_choice_survives_queued_click_and_catalog_refresh[rename]
+FAILED Tests/UI/test_mcp_tools_mode.py::test_pointer_filter_choice_survives_queued_click_and_catalog_refresh[remove]
+2 failed, 1 passed, 55 deselected in 2.54s

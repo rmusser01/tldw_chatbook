@@ -1,0 +1,24 @@
+                  ╭────────╮
+ ‹   ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  ┌───────────────────────────────────┐   ││                  │
+│ Source       ││  │  fs_                              │   ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  └───────────────────────────────────┘   ││  Why · Off —     │
+│ ▊ Local  ▼ ▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  enable it to    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  ▊  All servers                   ▼  ▎   ││  let MCP         │
+│              ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  clients use     │
+│ Servers      ││                                        ▆ ││  chatbook's      │
+│  ◦ off · ⌂   ││ ╭─────────────────────────────────────╮  ││  tools.          │
+│  built-in    ││ │                                     │  ││  Add server      │
+│     All      ││ │  No servers configured — add one    │  ││  fs_edit —       │
+│   ◦ ⌂ tld... ││ │  to see its tools. 9 tool gate(s)   │  ││  Local           │
+│              ││ │  are off. Configure the workspace,  │▁ ││  workspace,      │
+│              ││ │  web, and Watchlists master switch  │  ││  web, and        │
+│              ││ │  in Tools mode; other registration  │  ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q
