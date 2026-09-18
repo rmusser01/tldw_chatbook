@@ -285,10 +285,12 @@ class HubLocalWorkbenchApp(WorkbenchApp):
 async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
+        # The initial after-refresh dispatch may not have created its worker
+        # yet. An empty worker manager is not evidence that loading finished.
+        async with asyncio.timeout(10):
+            while workbench.is_loading or workbench._reloading:
+                await pilot.pause(0.025)
         assert workbench.active_mode == "servers"
         # builtin + docs rows (+ "All servers")
         assert len(list(app.query("Button.mcp-rail-row"))) == 3

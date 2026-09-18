@@ -1,0 +1,11 @@
+All checks passed!
+2 files already formatted
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py no introduced Ruff findings; 65 existing findings
+_refresh_local_tools_controls formatted
+_local_config_canvas_ready formatted
+_sync_master_save_status formatted
+_sync_root_save_status formatted
+Tests/UI/test_mcp_workbench.py no introduced Ruff findings; 4 existing findings
+test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers formatted
+Tests/UI/test_mcp_master_settings.py no introduced Ruff findings; 0 existing findings
+test_pending_master_choice_survives_read_only_refresh formatted

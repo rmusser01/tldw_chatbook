@@ -20,6 +20,7 @@ from textual.containers import Container, Horizontal
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import ContentSwitcher, DataTable
 from textual.worker import Worker
 
@@ -1749,6 +1750,8 @@ class MCPWorkbench(Container):
         if not self.query(MCPToolsMode):
             return None
         canvas = self.query_one(MCPToolsMode)
+        if not self._local_config_canvas_ready(canvas):
+            return None
         enabled, workspace_root = self._local_tools_config_values()
         canvas.update_local_config(
             enabled=enabled,
@@ -4234,8 +4237,25 @@ class MCPWorkbench(Container):
             True,
         )
 
+    def _local_config_canvas_ready(self, canvas: Widget) -> bool:
+        """A queryable parent may still be composing or pruning its controls."""
+        return (
+            self.is_attached
+            and self.is_mounted
+            and not self._pruning
+            and canvas.is_attached
+            and canvas.is_mounted
+            and not canvas._pruning
+        )
+
     def _sync_master_save_status(self) -> None:
-        if not self.is_attached or not self.query(MCPToolsMode):
+        canvases = [
+            canvas
+            for canvas_type in (MCPToolsMode, MCPServersMode)
+            for canvas in self.query(canvas_type)
+            if self._local_config_canvas_ready(canvas)
+        ]
+        if not canvases:
             return
         enabled, text, error = self._master_save_projection()
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
@@ -4245,17 +4265,15 @@ class MCPWorkbench(Container):
             and state.result is None
             and state.request.config_path == get_cli_config_path()
         )
-        for canvas_type in (MCPToolsMode, MCPServersMode):
-            if self.query(canvas_type):
-                canvas = self.query_one(canvas_type)
-                canvas.submit_local_master = self._admit_local_master_save
-                canvas.project_local_master(
-                    enabled,
-                    text,
-                    error=error,
-                    config_path=get_cli_config_path(),
-                    pending=pending,
-                )
+        for canvas in canvases:
+            canvas.submit_local_master = self._admit_local_master_save
+            canvas.project_local_master(
+                enabled,
+                text,
+                error=error,
+                config_path=get_cli_config_path(),
+                pending=pending,
+            )
 
     def _sync_local_config_save_status(self) -> None:
         self._sync_root_save_status()
@@ -4326,11 +4344,15 @@ class MCPWorkbench(Container):
         """Project current-profile receipts, including after screen recreation."""
         if not self.is_attached or not self.query(MCPToolsMode):
             return
+        canvas = self.query_one(MCPToolsMode)
+        if not self._local_config_canvas_ready(canvas):
+            return
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         state = owner.state_for("workspace_root") if owner is not None else None
         if state is None:
             return
         stamp = (
+            canvas,
             state.revision,
             state.result is None,
             owner.completion_revision,
@@ -4340,13 +4362,14 @@ class MCPWorkbench(Container):
         if stamp == getattr(self, "_root_save_projection", None):
             return
         canvas = self._refresh_local_tools_controls()
+        if canvas is None:
+            return
         self._root_save_projection = stamp
-        if canvas is not None:
-            canvas.project_workspace_root_save(
-                state,
-                generation=current_config_identity()[0],
-                file_revision=config_file_revision(get_cli_config_path()),
-            )
+        canvas.project_workspace_root_save(
+            state,
+            generation=current_config_identity()[0],
+            file_revision=config_file_revision(get_cli_config_path()),
+        )
 
     async def _observe_workspace_root_save(self, task) -> None:
         """Publish persistence before best-effort catalog presentation refresh."""

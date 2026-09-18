@@ -1,0 +1,28 @@
+............................                                             [100%]
+============================= slowest 25 durations =============================
+4.01s call     Tests/UI/test_mcp_root_settings.py::test_root_save_survives_recreated_workbench[False]
+3.93s call     Tests/UI/test_mcp_root_settings.py::test_root_save_survives_recreated_workbench[True]
+3.81s call     Tests/UI/test_mcp_root_settings.py::test_failed_root_save_keeps_draft_for_retry
+3.58s call     Tests/UI/test_mcp_root_settings.py::test_explicit_root_saves_finish_in_submission_order
+3.58s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft[True]
+3.57s call     Tests/UI/test_mcp_root_settings.py::test_older_save_does_not_canonicalize_a_newer_aba_draft[False]
+3.46s call     Tests/UI/test_mcp_root_settings.py::test_read_only_refresh_preserves_root_draft_and_validation_receipt
+3.24s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[generation-saved]
+3.22s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[generation-cache_refresh]
+3.21s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[file-cache_refresh]
+3.19s call     Tests/UI/test_mcp_root_settings.py::test_newer_publication_cannot_be_hidden_by_old_save_receipt[file-saved]
+3.15s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[during-workbench-workspace_root]
+3.14s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[during-workbench-local_tools_enabled]
+3.14s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[before-workbench-workspace_root]
+3.09s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[before-workbench-local_tools_enabled]
+3.03s call     Tests/UI/test_mcp_root_settings.py::test_catalog_refresh_failure_does_not_report_save_failure
+2.98s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[during-canvas-workspace_root]
+2.96s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[during-canvas-local_tools_enabled]
+2.95s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[before-canvas-local_tools_enabled]
+2.95s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[before-canvas-workspace_root]
+2.82s call     Tests/UI/test_mcp_workbench_lifetime.py::test_deferred_initial_load_remains_pending_until_dispatched
+2.77s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[workspace_root]
+2.72s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[local_tools_enabled]
+2.24s call     Tests/UI/test_mcp_root_settings.py::test_local_config_shutdown_drains_and_fences_both_config_owners[workspace_root]
+2.21s call     Tests/UI/test_mcp_root_settings.py::test_local_config_shutdown_drains_and_fences_both_config_owners[local_tools_enabled]
+28 passed in 88.14s (0:01:28)
