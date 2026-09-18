@@ -603,6 +603,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self._kill_switch: bool = False
         self._profile_context: PermissionProfileContext | None = None
         self._profile_select_sync = False
+        self._tool_column_width: int | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -683,7 +684,40 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self.call_after_refresh(self.reveal_focused_control)
 
     def on_resize(self, event: Resize) -> None:
+        self.call_after_refresh(self._reflow_table)
         self.call_after_refresh(self.reveal_focused_control)
+
+    def _measured_tool_width(self, table: DataTable) -> int | None:
+        """Reserve readable State cells before allowing Tool labels to wrap."""
+        if table.content_region.width <= 0:
+            return None
+        state_width = max(
+            [Text("State").cell_len]
+            + [Text(row.state_label).cell_len for row in self._all_rows]
+        )
+        tool_width = max(
+            [Text("Tool").cell_len]
+            + [Text(_tool_column_text(row)).cell_len for row in self._all_rows]
+        )
+        # ds-runtime: available table cells minus measured State text, both
+        # columns' native padding and the scrollbar that wrapping may reveal.
+        budget = max(
+            1,
+            table.content_region.width
+            - table.styles.scrollbar_size_vertical
+            - state_width
+            - 4 * table.cell_padding,
+        )
+        return budget if tool_width > budget else None
+
+    def _reflow_table(self) -> None:
+        """Rebuild only when resize changes wrapping, retaining row authority."""
+        if not self.is_attached or not self._all_rows:
+            return
+        table = self.query_one("#mcp-perm-table", DataTable)
+        if self._measured_tool_width(table) != self._tool_column_width:
+            self._render_rows(self._visible_rows)
+            self.call_after_refresh(self.reveal_focused_control)
 
     def reveal_focused_control(self) -> None:
         """Reveal the current child after layout without overriding newer focus."""
@@ -958,7 +992,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         # being read as a selection (DataTableClickSelectMixin).
         self.repopulating_table()
         table.clear(columns=True)
-        table.add_columns(*(_TABLE_COLUMNS if show_tags else _TABLE_COLUMNS_NO_TAGS))
+        self._tool_column_width = self._measured_tool_width(table)
+        table.add_column("Tool", width=self._tool_column_width)
+        table.add_columns(
+            *(_TABLE_COLUMNS[1:] if show_tags else _TABLE_COLUMNS_NO_TAGS[1:])
+        )
         for row in rows:
             # Task 1 (MCP Hub Phase 6): the State cell's word is now colored
             # by the resolved verdict it names (`state_text()`) -- the
@@ -972,7 +1010,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
             ]
             if show_tags:
                 row_cells.append(Text(row.tags_label))
-            table.add_row(*row_cells, key=_row_key(row))
+            table.add_row(*row_cells, key=_row_key(row), height=None)
 
         if cursor_key is not None:
             for index, row in enumerate(rows):

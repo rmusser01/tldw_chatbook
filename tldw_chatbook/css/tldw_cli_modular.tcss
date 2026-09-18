@@ -3325,6 +3325,15 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 
+#mcp-purpose {
+    height: $ds-height-auto;
+}
+
+#mcp-hub-grid.mcp-compact #mcp-rail-source > SelectCurrent {
+    padding: $ds-space-0 $ds-space-1;
+}
+
+
 #mcp-hub-rail Button.mcp-rail-row.is-active {
     border: none;
     text-style: bold;

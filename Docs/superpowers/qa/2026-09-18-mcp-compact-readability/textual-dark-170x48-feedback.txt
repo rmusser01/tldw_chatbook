@@ -1,0 +1,48 @@
+                                                                                                         ╭────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││  some tools to Ask.                                                       ││                                             │
+│ Source                                     ││  Review restored MCP roots                                                ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Restored permissions stay inactive until reviewed. Review creates fresh   ││  ◦ Off (opt-in)  tldw_chatbook (built-in)   │
+│ ▊  Local                              ▼  ▎ ││ Ask/local defaults; connecting and granting tools remain separate         ││  Why · Off — enable it to let MCP clients   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││ actions.                                                                ▄ ││  use chatbook's tools.                      │
+│                                            ││  Block all tool calls in chat: Off ▸                                      ││  Add server                                 │
+│ Servers                                    ││  Also blocks the app's own built-in tools (calculator, date/time, file    ││    Advanced…                                │
+│  ◦ off (opt-in) · ⌂ built-in               ││  and note tools).                                                         ││                                             │
+│     All servers                            ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││                                             │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││ ▊  Filter tool or server…                                              ▎  ││                                             │
+│                                            ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││                                             │
+│                                            ││  Tool                                                   State    Tags     ││                                             │
+│                                            ││  Global default                                         Off      —        ││                                             │
+│                                            ││  Server default — tldw_chatbook                         Ask •    —        ││                                             │
+│                                            ││    chat_with_character                                  Ask      —        ││                                             │
+│                                            ││    chat_with_llm                                        Ask      —        ││                                             │
+│                                            ││    create_note                                          Ask      —        ││                                             │
+│                                            ││    export_conversation                                  Ask      —        ││                                             │
+│                                            ││    get_conversation_history                             Ask      —        ││                                             │
+│                                            ││    library_get_conversation                             Ask      —    ▂▂  ││                                             │
+│                                            ││    library_get_media                                    Ask      —        ││                                             │
+│                                            ││    library_get_media_chunk                              Ask      —        ││                                             │
+│                                            ││    library_get_media_structure                          Ask      —        ││                                             │
+│                                            ││    library_get_note                                     Ask      —        ││                                             │
+│                                            ││    library_get_prompt                                   Ask      —        ││                                             │
+│                                            ││    library_get_skill                                    Ask      —        ││                                             │
+│                                            ││    library_list_chunk_specs                             Ask      —        ││                                             │
+│                                            ││    library_list_conversations                           Ask      —        ││                                             │
+│                                            ││    library_list_media                                   Ask      —        ││                                             │
+│                                            ││    library_list_notes                                   Ask      —        ││                                             │
+│                                            ││    library_list_prompts                                 Ask      —        ││                                             │
+│                                            ││    library_list_skills                                  Ask      —        ││                                             │
+│                                            ││    library_rechunk_media                                Ask      —        ││                                             │
+│                                            ││    library_save_chunk_spec                              Ask      —        ││                                             │
+│                                            ││    library_save_note                                    Ask      —      ▅ ││                                             │
+│                                            ││    library_search_conversations                         Ask      —        ││                                             │
+│                                            ││    library_search_media                                 Ask      —        ││                                             │
+│                                            ││                                                                    ▏      ││                                             │
+│                                            ││ tldw_chatbook: 0 allow · 30 ask · 0 off — global default: off             ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

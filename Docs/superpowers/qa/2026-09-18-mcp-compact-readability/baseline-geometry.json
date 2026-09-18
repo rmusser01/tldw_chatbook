@@ -1,0 +1,595 @@
+[
+  {
+    "size": [
+      80,
+      24
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 44
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        80,
+        1
+      ],
+      "content": [
+        1,
+        4,
+        78,
+        1
+      ],
+      "clip": [
+        0,
+        3,
+        80,
+        20
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        6,
+        16,
+        17
+      ],
+      "content": [
+        2,
+        7,
+        12,
+        15
+      ],
+      "clip": [
+        0,
+        6,
+        80,
+        17
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        16,
+        6,
+        44,
+        17
+      ],
+      "content": [
+        18,
+        7,
+        40,
+        15
+      ],
+      "clip": [
+        0,
+        6,
+        80,
+        17
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        60,
+        6,
+        20,
+        17
+      ],
+      "content": [
+        62,
+        8,
+        16,
+        13
+      ],
+      "clip": [
+        0,
+        6,
+        80,
+        17
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        9,
+        12,
+        4
+      ],
+      "content": [
+        2,
+        9,
+        12,
+        4
+      ],
+      "clip": [
+        2,
+        7,
+        12,
+        15
+      ]
+    },
+    "#mcp-perm-table": {
+      "region": [
+        18,
+        7,
+        39,
+        10
+      ],
+      "content": [
+        18,
+        7,
+        39,
+        10
+      ],
+      "clip": [
+        18,
+        7,
+        39,
+        15
+      ]
+    },
+    "source_lines": [
+      "          ",
+      "          ",
+      "          ",
+      "          "
+    ]
+  },
+  {
+    "size": [
+      100,
+      30
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 44
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        100,
+        1
+      ],
+      "content": [
+        1,
+        4,
+        98,
+        1
+      ],
+      "clip": [
+        0,
+        3,
+        100,
+        26
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        6,
+        17,
+        23
+      ],
+      "content": [
+        2,
+        7,
+        13,
+        21
+      ],
+      "clip": [
+        0,
+        6,
+        100,
+        23
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        17,
+        6,
+        63,
+        23
+      ],
+      "content": [
+        19,
+        7,
+        59,
+        21
+      ],
+      "clip": [
+        0,
+        6,
+        100,
+        23
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        80,
+        6,
+        20,
+        23
+      ],
+      "content": [
+        82,
+        8,
+        16,
+        19
+      ],
+      "clip": [
+        0,
+        6,
+        100,
+        23
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        9,
+        13,
+        3
+      ],
+      "content": [
+        2,
+        9,
+        13,
+        3
+      ],
+      "clip": [
+        2,
+        7,
+        13,
+        21
+      ]
+    },
+    "#mcp-perm-table": {
+      "region": [
+        19,
+        7,
+        58,
+        14
+      ],
+      "content": [
+        19,
+        7,
+        58,
+        14
+      ],
+      "clip": [
+        19,
+        7,
+        58,
+        21
+      ]
+    },
+    "source_lines": [
+      "           ",
+      "           ",
+      "           "
+    ]
+  },
+  {
+    "size": [
+      120,
+      40
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 44
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        120,
+        1
+      ],
+      "content": [
+        1,
+        4,
+        118,
+        1
+      ],
+      "clip": [
+        0,
+        3,
+        120,
+        36
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        6,
+        32,
+        33
+      ],
+      "content": [
+        2,
+        7,
+        28,
+        31
+      ],
+      "clip": [
+        0,
+        6,
+        120,
+        33
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        32,
+        6,
+        55,
+        33
+      ],
+      "content": [
+        34,
+        7,
+        51,
+        31
+      ],
+      "clip": [
+        0,
+        6,
+        120,
+        33
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        87,
+        6,
+        33,
+        33
+      ],
+      "content": [
+        89,
+        8,
+        29,
+        29
+      ],
+      "clip": [
+        0,
+        6,
+        120,
+        33
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        9,
+        28,
+        3
+      ],
+      "content": [
+        2,
+        9,
+        28,
+        3
+      ],
+      "clip": [
+        2,
+        7,
+        28,
+        31
+      ]
+    },
+    "#mcp-perm-table": {
+      "region": [
+        34,
+        11,
+        50,
+        21
+      ],
+      "content": [
+        34,
+        11,
+        50,
+        21
+      ],
+      "clip": [
+        34,
+        7,
+        50,
+        31
+      ]
+    },
+    "source_lines": [
+      "                          ",
+      "                          ",
+      "                          "
+    ]
+  },
+  {
+    "size": [
+      170,
+      48
+    ],
+    "columns": [
+      {
+        "label": "Tool",
+        "width": 4,
+        "content_width": 44
+      },
+      {
+        "label": "State",
+        "width": 5,
+        "content_width": 5
+      },
+      {
+        "label": "Tags",
+        "width": 4,
+        "content_width": 7
+      }
+    ],
+    "#mcp-purpose": {
+      "region": [
+        0,
+        4,
+        170,
+        1
+      ],
+      "content": [
+        1,
+        4,
+        168,
+        1
+      ],
+      "clip": [
+        0,
+        3,
+        170,
+        44
+      ]
+    },
+    "#mcp-hub-rail": {
+      "region": [
+        0,
+        6,
+        46,
+        41
+      ],
+      "content": [
+        2,
+        7,
+        42,
+        39
+      ],
+      "clip": [
+        0,
+        6,
+        170,
+        41
+      ]
+    },
+    "#mcp-hub-canvas": {
+      "region": [
+        46,
+        6,
+        77,
+        41
+      ],
+      "content": [
+        48,
+        7,
+        73,
+        39
+      ],
+      "clip": [
+        0,
+        6,
+        170,
+        41
+      ]
+    },
+    "#mcp-hub-inspector": {
+      "region": [
+        123,
+        6,
+        47,
+        41
+      ],
+      "content": [
+        125,
+        8,
+        43,
+        37
+      ],
+      "clip": [
+        0,
+        6,
+        170,
+        41
+      ]
+    },
+    "#mcp-rail-source": {
+      "region": [
+        2,
+        9,
+        42,
+        3
+      ],
+      "content": [
+        2,
+        9,
+        42,
+        3
+      ],
+      "clip": [
+        2,
+        7,
+        42,
+        39
+      ]
+    },
+    "#mcp-perm-table": {
+      "region": [
+        48,
+        16,
+        72,
+        23
+      ],
+      "content": [
+        48,
+        16,
+        72,
+        23
+      ],
+      "clip": [
+        48,
+        7,
+        72,
+        39
+      ]
+    },
+    "source_lines": [
+      "                                        ",
+      "                                        ",
+      "                                        "
+    ]
+  }
+]
