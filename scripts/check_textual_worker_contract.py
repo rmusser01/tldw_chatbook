@@ -223,20 +223,32 @@ def collect_w002(tree: ast.Module, path: Path) -> list[str]:
                 cursor = parents.get(cursor)
             if guarded:
                 continue
-            sites.append(f"{_rel(path)}:{node.lineno}\t{func.name}")
+            # Keyed by enclosing function, NOT by line: an edit anywhere above
+            # a site shifts its line number, and a census that churns on every
+            # unrelated edit is one people re-pin without reading. The count
+            # still catches a NEW lookup added to an already-censused function.
+            sites.append(f"{_rel(path)}::{func.name}")
     return sites
 
 
-def _read_census() -> set[str]:
+def _read_census() -> dict[str, int]:
     if not CENSUS.exists():
-        return set()
-    rows = set()
+        return {}
+    rows: dict[str, int] = {}
     for line in CENSUS.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        rows.add(line.split("\t")[0])
+        key, _, count = line.partition("\t")
+        rows[key] = int(count) if count.strip().isdigit() else 1
     return rows
+
+
+def _tally(sites: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for site in sites:
+        counts[site] = counts.get(site, 0) + 1
+    return counts
 
 
 def _write_census(sites: list[str]) -> None:
@@ -255,9 +267,14 @@ def _write_census(sites: list[str]) -> None:
         "# guarding the lookup (`query()` + `first()`, or an enclosing `try`) or\n"
         "# re-checking that the widget is still mounted after the await.\n"
         "#\n"
-        "# site\tenclosing async def\n"
+        "# Rows are keyed by ENCLOSING FUNCTION, not by line number, so an edit\n"
+        "# elsewhere in the file does not churn the census.\n"
+        "#\n"
+        "# path::async def\tunguarded lookups in it\n"
     )
-    CENSUS.write_text(header + "\n".join(sorted(sites)) + "\n", encoding="utf-8")
+    counts = _tally(sites)
+    body = "\n".join(f"{key}\t{counts[key]}" for key in sorted(counts))
+    CENSUS.write_text(header + body + "\n", encoding="utf-8")
 
 
 def main() -> int:
@@ -313,8 +330,10 @@ def main() -> int:
         print()
 
     known = _read_census()
-    current = {row.split("\t")[0] for row in w002}
-    added = sorted(current - known)
+    current = _tally(w002)
+    added = sorted(
+        key for key, count in current.items() if count > known.get(key, 0)
+    )
     if added:
         failed = True
         print(f"::error::{len(added)} new post-await DOM lookup(s) with no guard.")
@@ -326,8 +345,8 @@ def main() -> int:
             "`first()`, or an enclosing `try`, or re-check the widget is still "
             "mounted after the await:"
         )
-        for site in added:
-            print(f"  {site}")
+        for key in added:
+            print(f"  {key}  ({known.get(key, 0)} in census, {current[key]} now)")
         print()
         print(
             "If the await genuinely cannot remove the subtree, re-pin the census "
@@ -338,11 +357,14 @@ def main() -> int:
     if failed:
         return 1
 
-    removed = len(known) - len(current & known)
-    note = f"; {removed} baseline site(s) resolved" if removed else ""
+    resolved = sum(
+        max(0, count - current.get(key, 0)) for key, count in known.items()
+    )
+    note = f"; {resolved} baseline lookup(s) resolved" if resolved else ""
     print(
         f"textual worker contract: no synchronous run_worker targets; "
-        f"{len(current)} post-await DOM lookup(s), all in the census{note}."
+        f"{sum(current.values())} post-await DOM lookup(s) in "
+        f"{len(current)} function(s), none new{note}."
     )
     return 0
 
