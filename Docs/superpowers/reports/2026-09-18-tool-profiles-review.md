@@ -98,11 +98,30 @@ removal with a permanent tombstone. All 24 captures were rendered and inspected;
 focus and default/private-profile lifecycle assertions passed. [Evidence and
 gallery](../qa/2026-09-18-tool-profile-focus/README.md).
 
+## Removal outcomes — TASK-32782
+
+Mounted checks reproduced definite-failure wording for an uncertain outcome,
+stale row facts after errors, and offscreen feedback. Removal now gives truthful
+recovery text, refreshes current facts after every terminal attempt, and keeps
+plain-text feedback beside the profile or Import continuation. Guarded reveal
+tracks focus and text reflow without taking over newer navigation. Mutation
+authority and automatic-retry behavior are unchanged (no automatic retry).
+
+167 targeted cases pass, including 18 new mounted outcome cases, prior lifecycle
+regressions, governance and 25 real-service removal boundary cases. Independent
+review found no introduced blocker, including an overlapping render/outcome
+probe. A fixture comparison initially sampled an ongoing focus animation;
+settling it repaired the test without changing production behavior.
+
+Four real native size/theme journeys hold an actual profile lease, verify a
+refusal with unchanged policy bytes, release it, reopen the category, and
+explicitly confirm removal. All twelve captures show readable feedback and
+keyboard continuation. Exact-source/private-profile lifecycle checks pass.
+[Evidence and gallery](../qa/2026-09-18-tool-profile-removal/README.md).
+
 ## Remaining scope
 
-Remaining removal boundaries and the MCP Edit/Bind handoffs still need review.
-The read-only stale-revision probe previously confirmed real removal rejects a
-changed revision without changing permission-store bytes; it does not qualify
-all mounted error and uncertain-outcome paths. The native journeys above close
-the import/removal happy/cancel/focus matrix, not every Tool Profiles boundary
-or the broader component workstream.
+MCP Edit and Workspaces Bind handoffs, plus remaining concurrent-workflow
+behavior, still need review. The qualified import/export/removal journeys and
+error boundaries above do not complete every Tool Profiles interaction or the
+broader component workstream.

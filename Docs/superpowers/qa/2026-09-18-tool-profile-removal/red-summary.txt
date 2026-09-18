@@ -1,0 +1,9 @@
+Six original mounted cases failed before repair: misleading refusal/uncertain copy, stale row facts, and offscreen outcome text.
+
+FAILED Tests/UI/test_tool_profile_removal_outcomes.py::test_removal_outcome_is_truthful_current_and_visible[copy-stale]
+FAILED Tests/UI/test_tool_profile_removal_outcomes.py::test_removal_outcome_is_truthful_current_and_visible[copy-outcome_uncertain]
+FAILED Tests/UI/test_tool_profile_removal_outcomes.py::test_removal_outcome_is_truthful_current_and_visible[facts-stale]
+FAILED Tests/UI/test_tool_profile_removal_outcomes.py::test_removal_outcome_is_truthful_current_and_visible[facts-outcome_uncertain]
+FAILED Tests/UI/test_tool_profile_removal_outcomes.py::test_removal_outcome_is_truthful_current_and_visible[paint-stale]
+FAILED Tests/UI/test_tool_profile_removal_outcomes.py::test_removal_outcome_is_truthful_current_and_visible[paint-outcome_uncertain]
+6 failed in 31.50s

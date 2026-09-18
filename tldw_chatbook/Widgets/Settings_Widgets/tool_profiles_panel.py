@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 if TYPE_CHECKING:
@@ -58,6 +59,18 @@ class ToolProfileRow:
     removal_blocker: str | None
     revision: int | None
     policy_digest: str | None
+
+
+class _ToolProfileResult(Static):
+    """Recheck outcome visibility after its text has wrapped."""
+
+    profile_id: str | None = None
+
+    def on_resize(self) -> None:
+        for ancestor in self.ancestors:
+            if isinstance(ancestor, ToolProfilesPanel):
+                ancestor._reveal_result()
+                break
 
 
 class ToolProfilesPanel(Vertical):
@@ -145,11 +158,14 @@ class ToolProfilesPanel(Vertical):
         listing: ToolProfileListing,
         *,
         result: str = "",
+        result_profile_id: str | None = None,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
         self._listing = listing
         self._result = result
+        self._result_profile_id = result_profile_id
+        self._result_anchor: Widget | None = None
         self._profiles = listing.profiles
         self._rows = {
             profile.profile_id: self._present(profile) for profile in self._profiles
@@ -190,6 +206,7 @@ class ToolProfilesPanel(Vertical):
                 return
             screen = self.screen
             focused = screen.focused
+            reveal_result = focused is not None and focused is self._result_anchor
             context = self._button_actions.get(focused)
             focus_key = (context[0], context[1].profile_id) if context else None
             if focused is self.query_one("#tool-profiles-import", Button):
@@ -229,6 +246,7 @@ class ToolProfilesPanel(Vertical):
                         None,
                     )
             screen.set_focus(target)
+            self._result_anchor = target if reveal_result else None
 
             def reveal() -> None:
                 if (
@@ -238,16 +256,71 @@ class ToolProfilesPanel(Vertical):
                     and screen.focused is target
                 ):
                     target.scroll_visible(animate=False, immediate=True)
+                    self._reveal_result()
 
             self.call_after_refresh(reveal)
 
-    def set_result(self, result: str) -> None:
-        """Show one bounded path-free workflow outcome."""
+    def set_result(self, result: str, *, profile_id: str | None = None) -> None:
+        """Keep removal feedback beside its profile, or the Import continuation."""
         self._result = result[:512]
-        try:
-            self.query_one("#tool-profiles-result", Static).update(self._result)
-        except Exception:
+        self._result_profile_id = profile_id
+        focused = self.screen.focused
+        context = self._button_actions.get(focused)
+        self._result_anchor = (
+            focused
+            if context and (context[0], context[1].profile_id) == ("remove", profile_id)
+            else None
+        )
+        self._sync_results()
+        self.call_after_refresh(self._reveal_result)
+
+    def _result_widget(self, profile_id: str | None, widget_id: str) -> Static:
+        text = self._result_for(profile_id)
+        widget = _ToolProfileResult(
+            text,
+            id=widget_id,
+            classes="settings-detail-row"
+            if profile_id is None
+            else "settings-status-row",
+            markup=False,
+        )
+        widget.profile_id = profile_id
+        widget.display = bool(text) or (
+            profile_id is None and self._result_profile_id is None
+        )
+        return widget
+
+    def _result_for(self, profile_id: str | None) -> str:
+        destination = (
+            self._result_profile_id if self._result_profile_id in self._rows else None
+        )
+        return self._result if profile_id == destination else ""
+
+    def _sync_results(self) -> None:
+        for widget in self.query(_ToolProfileResult):
+            text = self._result_for(widget.profile_id)
+            widget.update(text)
+            widget.display = bool(text) or (
+                widget.profile_id is None and self._result_profile_id is None
+            )
+
+    def _reveal_result(self) -> None:
+        """Reveal only while the originating action still owns visible focus."""
+        anchor = self._result_anchor
+        if (
+            not self.is_attached
+            or not self._result
+            or anchor is None
+            or not anchor.is_attached
+            or self.app.screen is not self.screen
+            or self.screen.focused is not anchor
+        ):
             return
+        for widget in self.query(_ToolProfileResult):
+            if widget.display and widget.size:
+                widget.scroll_visible(animate=False, immediate=True)
+                anchor.scroll_visible(animate=False, immediate=True)
+                break
 
     @staticmethod
     def _reference_label(counts: tuple[int, int]) -> str:
@@ -291,12 +364,7 @@ class ToolProfilesPanel(Vertical):
             "profile never installs tools or binds it to a workspace.",
             classes="settings-detail-row",
         )
-        yield Static(
-            self._result,
-            id="tool-profiles-result",
-            classes="settings-detail-row",
-            markup=False,
-        )
+        yield self._result_widget(None, "tool-profiles-result")
         with Horizontal(classes="tool-profiles-toolbar"):
             yield Button(
                 "Import Tool Pack",
@@ -374,6 +442,9 @@ class ToolProfilesPanel(Vertical):
                 yield Static(
                     self._posture_label(row.posture_counts),
                     classes="tool-profile-detail",
+                )
+                yield self._result_widget(
+                    profile.profile_id, f"tool-profile-result-{index}"
                 )
                 with Horizontal(classes="tool-profile-actions"):
                     invalid = not row.lifecycle_valid

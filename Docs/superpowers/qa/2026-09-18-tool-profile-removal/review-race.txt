@@ -1,0 +1,4 @@
+Independent mounted read-only probe with a held reordered render overlapping outcome delivery. Private-profile setup; no provider requests. Output below records correct replacement-control focus and full receipt visibility. Not counted as another pytest case.
+
+DURING {"focus": null, "anchor": "None", "text": "Removal outcome uncertain. Check the current profile state before retrying."}
+RESULT {"focus": {"id": "tool-profile-remove-3", "attached": true, "region": "Region(x=58, y=19, width=17, height=1)"}, "anchor": "None", "receipt_region": "Region(x=41, y=14, width=34, height=3)", "clip": "Region(x=41, y=10, width=34, height=10)", "fully_visible": true}
