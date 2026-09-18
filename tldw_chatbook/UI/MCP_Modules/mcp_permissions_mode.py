@@ -1009,39 +1009,37 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
-        self.repopulating_table()
-        # A later Enter belongs to the rebuilt row and its current profile.
-        self._pending_activation_key = None
-        table.clear(columns=True)
-        self._tool_column_width = self._measured_tool_width(table)
-        table.add_column("Tool", width=self._tool_column_width)
-        table.add_columns(
-            *(_TABLE_COLUMNS[1:] if show_tags else _TABLE_COLUMNS_NO_TAGS[1:])
-        )
-        for row in rows:
-            # Task 1 (MCP Hub Phase 6): the State cell's word is now colored
-            # by the resolved verdict it names (`state_text()`) -- the
-            # marker glyph baked into `state_label` (·/⚠/⚑) is rendered as
-            # part of that SAME string, unchanged, so it still reads even
-            # without color (the colorblind-safe channel `state_text()`'s
-            # own docstring describes).
-            row_cells: list[Any] = [
-                Text(_tool_column_text(row)),
-                state_text(row.state_label, _perm_row_kind(row.state_label)),
-            ]
-            if show_tags:
-                row_cells.append(Text(row.tags_label))
-            table.add_row(*row_cells, key=_row_key(row), height=None)
+        with self.repopulating_table(table):
+            table.clear(columns=True)
+            self._tool_column_width = self._measured_tool_width(table)
+            table.add_column("Tool", width=self._tool_column_width)
+            table.add_columns(
+                *(_TABLE_COLUMNS[1:] if show_tags else _TABLE_COLUMNS_NO_TAGS[1:])
+            )
+            for row in rows:
+                # Task 1 (MCP Hub Phase 6): the State cell's word is now colored
+                # by the resolved verdict it names (`state_text()`) -- the
+                # marker glyph baked into `state_label` (·/⚠/⚑) is rendered as
+                # part of that SAME string, unchanged, so it still reads even
+                # without color (the colorblind-safe channel `state_text()`'s
+                # own docstring describes).
+                row_cells: list[Any] = [
+                    Text(_tool_column_text(row)),
+                    state_text(row.state_label, _perm_row_kind(row.state_label)),
+                ]
+                if show_tags:
+                    row_cells.append(Text(row.tags_label))
+                table.add_row(*row_cells, key=_row_key(row), height=None)
 
-        if cursor_key is not None:
-            for index, row in enumerate(rows):
-                if _row_key(row) == cursor_key:
-                    table.move_cursor(row=index)
-                    break
-            # A key that no longer has a row (e.g. its tool/server vanished
-            # from this resync, or a filter now hides it) leaves the
-            # cursor at `clear()`'s own default -- row 0 -- the same
-            # graceful fallback `_restore_overview_cursor()` uses.
+            if cursor_key is not None:
+                for index, row in enumerate(rows):
+                    if _row_key(row) == cursor_key:
+                        table.move_cursor(row=index)
+                        break
+                # A key that no longer has a row (e.g. its tool/server vanished
+                # from this resync, or a filter now hides it) leaves the
+                # cursor at `clear()`'s own default -- row 0 -- the same
+                # graceful fallback `_restore_overview_cursor()` uses.
 
     async def update_server_profiles(
         self, profiles: list[Mapping[str, Any]] | None
@@ -1180,7 +1178,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
             self._apply_filter()
         for index, candidate in enumerate(self._visible_rows):
             if _row_key(candidate) == key:
-                table.move_cursor(row=index)
+                with self.repopulating_table(table):
+                    table.move_cursor(row=index)
                 return True
         return False
 

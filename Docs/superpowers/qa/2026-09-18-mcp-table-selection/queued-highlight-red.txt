@@ -1,0 +1,1643 @@
+FFFFFFFFF                                                                [100%]
+=================================== FAILURES ===================================
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10dfb3950>, 'view': 'tools', 'gesture': 'enter'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10840ea50>
+E           view = 'tools', gesture = 'enter'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [ToolSelected...oolSelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: ToolSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:15.567 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:15.574 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:15.631 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:15.692 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:15.693 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:15.693 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:15.792 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:16.008 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools]
+E           1 failed in 1.22s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 09:36:14.803 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 09:36:14.810 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 09:36:14.882 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 09:36:14.926 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 09:36:14.926 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 09:36:14.927 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-exe...s]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10b9f6120>, 'view': 'executions', 'gesture': 'enter'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109180380>
+E           view = 'executions', gesture = 'enter'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [EntrySelecte...trySelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: EntrySelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:17.198 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:17.205 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:17.261 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:17.321 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:17.322 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:17.322 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:17.416 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:17.628 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions]
+E           1 failed in 1.19s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10ebce810>, 'view': 'findings', 'gesture': 'enter'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ca1dac0>
+E           view = 'findings', gesture = 'enter'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [FindingSelec...ingSelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: FindingSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:18.791 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:18.798 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:18.858 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:18.918 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:18.918 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:18.918 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:19.014 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:19.229 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings]
+E           1 failed in 1.22s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10dfb3830>, 'view': 'tools', 'gesture': 'down'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights3/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bc8fd10>
+E           view = 'tools', gesture = 'down'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [ToolSelected...oolSelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: ToolSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:20.420 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:20.427 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:20.482 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:20.545 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:20.545 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:20.545 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:20.644 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:20.858 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools]
+E           1 failed in 1.21s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-exec...ns]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10ea91940>, 'view': 'executions', 'gesture': 'down'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights4/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c1be8a0>
+E           view = 'executions', gesture = 'down'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [EntrySelecte...trySelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: EntrySelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:22.020 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:22.027 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:22.084 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:22.148 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:22.149 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:22.149 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:22.246 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:22.462 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions]
+E           1 failed in 1.21s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10dfb3920>, 'view': 'findings', 'gesture': 'down'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights5/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a377e90>
+E           view = 'findings', gesture = 'down'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [FindingSelec...ingSelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: FindingSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:23.620 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:23.627 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:23.684 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:23.744 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:23.745 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:23.745 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:23.839 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:24.055 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings]
+E           1 failed in 1.21s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10ebce810>, 'view': 'tools', 'gesture': 'click'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights6/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b3ac7d0>
+E           view = 'tools', gesture = 'click'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [ToolSelected...oolSelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: ToolSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:25.243 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:25.251 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:25.307 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:25.368 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:25.368 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:25.368 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:25.462 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:25.699 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools]
+E           1 failed in 1.23s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-exe...s]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10dfb3920>, 'view': 'executions', 'gesture': 'click'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights7/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c0d1d60>
+E           view = 'executions', gesture = 'click'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [EntrySelecte...trySelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: EntrySelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:26.849 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:26.856 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:26.912 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:26.975 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:26.975 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:26.976 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:27.071 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:27.282 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions]
+E           1 failed in 1.18s
+
+Tests/private_profile.py:84: Failed
+_ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings] _
+
+self = <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10dfb3920>, 'view': 'findings', 'gesture': 'click'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2011/test_queued_refresh_highlights8/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings] _
+E
+E           request = <FixtureRequest for <Coroutine test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109d05040>
+E           view = 'findings', gesture = 'click'
+E
+E               @pytest.mark.parametrize("view", ["tools", "executions", "findings"])
+E               @pytest.mark.parametrize("gesture", ["enter", "down", "click"])
+E               @private_profile_test
+E               async def test_queued_refresh_highlights_are_quiet_and_next_gesture_selects(
+E                   request, monkeypatch, view, gesture
+E               ):
+E                   pane = MCPToolsMode() if view == "tools" else MCPAuditMode()
+E                   app = _Harness(pane)
+E                   async with app.run_test(size=(140, 40)) as pilot:
+E                       async def populate():
+E                           if view == "tools":
+E                               await pane.update_tools([
+E                                   HubTool(server_key="local:docs", server_label="docs", source="local",
+E                                           name=name, description=name, input_schema=None, tags=(),
+E                                           stale=False, executable=False)
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                           elif view == "findings":
+E                               await pane.update_findings([
+E                                   {"severity": "high", "finding_type": "test", "message": name}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ], source="server")
+E                               pane._sub_view = "findings"
+E                               pane._apply_subview_display()
+E                           else:
+E                               await pane.update_entries([
+E                                   {"server_key": "local:docs", "tool_name": name, "decision": "allow"}
+E                                   for name in ("alpha", "beta", "gamma")
+E                               ])
+E                       await populate()
+E                       await pilot.pause()
+E                       table = pane.query_one({"tools": "#mcp-tools-table", "executions": "#mcp-audit-table",
+E                                               "findings": "#mcp-audit-findings-table"}[view], DataTable)
+E                       table.focus()
+E                       table.move_cursor(row=1)
+E                       await pilot.pause()
+E                       app.captured.clear()
+E                       queued = []
+E                       original = DataTable._on_message
+E
+E                       async def hold_published_highlights(control, message):
+E                           if control is table and isinstance(message, DataTable.RowHighlighted):
+E                               queued.append(message)
+E                               return
+E                           await original(control, message)
+E
+E                       monkeypatch.setattr(DataTable, "_on_message", hold_published_highlights)
+E                       await populate()
+E                       await pilot.pause()
+E                       # Delivery can lag beyond all after-refresh callbacks. Only messages
+E                       # already published by the real table are held; prevent() still runs.
+E                       monkeypatch.setattr(DataTable, "_on_message", original)
+E                       for message in queued:
+E                           await original(table, message)
+E                       await pilot.pause()
+E                       selected_type = {"tools": "ToolSelected", "executions": "EntrySelected",
+E                                        "findings": "FindingSelected"}[view]
+E                       selected = lambda: [m for m in app.captured if type(m).__name__ == selected_type]
+E                       assert table.row_count == 3 and table.cursor_row == 1 and table.has_focus
+E           >           assert selected() == [], "redrawing a focused table must not select its rows"
+E           E           AssertionError: redrawing a focused table must not select its rows
+E           E           assert [FindingSelec...ingSelected()] == []
+E           E
+E           E             Left contains 2 more items, first extra item: FindingSelected()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_table_refresh_selection.py:72: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:36:28.451 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 09:36:28.458 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 09:36:28.514 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:36:28.573 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:36:28.574 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:36:28.574 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 09:36:28.668 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 09:36:28.879 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings]
+E           1 failed in 1.22s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+1.60s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools]
+1.59s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings]
+1.58s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools]
+1.58s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings]
+1.58s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings]
+1.57s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions]
+1.56s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools]
+1.55s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions]
+1.54s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions]
+FAILED Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings]
+9 failed in 15.19s

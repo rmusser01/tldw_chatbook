@@ -18,14 +18,17 @@ repopulates the table, which highlights row 0 again. A first draft of this mixin
 without the gate produced **157 selections from opening the Tools tab with no
 user input at all**, and buried a genuine click under the repeats.
 
-Focus separates the two cleanly, as measured on the real screen: a repopulating
-table is not focused, while a click focuses the table before the cursor moves
-and keyboard navigation requires focus by definition. So "the cursor moved on a
-focused table" means a person moved it.
+Focus is required for genuine click/arrow selection, but a focused table can
+also redraw itself. Wrap programmatic clear/add/cursor restoration in
+``with self.repopulating_table(table):`` so those highlights are suppressed at
+publication, before asynchronous delivery can outlive a refresh callback.
+The context is synchronous: never hold it across an await (ADR-170).
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from textual.widgets import DataTable
@@ -52,18 +55,15 @@ class DataTableClickSelectMixin:
     #: mixin off entirely; this exists so an opt-out is greppable.
     select_on_highlight: bool = True
 
-    #: Last row key forwarded, so a table that re-highlights the same row does
-    #: not re-post.
+    #: Table and row key last forwarded, so equal keys in different tables
+    #: remain distinct while repeated highlights within one table do not re-post.
     _last_forwarded_row_key: Any = None
-
-    #: Set while the pane is rebuilding its own rows. See `repopulating_table`.
-    _suppress_row_selection: bool = False
 
     #: True only while the mixin is invoking the pane's own handler, so the
     #: dedup wrapper can tell its own call from a native activation.
     _forwarding_highlight: bool = False
 
-    #: Row key a forwarded highlight just selected, consumed by the *next*
+    #: Table and row key a forwarded highlight selected, consumed by the *next*
     #: native activation and then cleared. One-shot on purpose: it must
     #: suppress the Enter that completes an arrow-then-Enter gesture, and must
     #: NOT suppress a later, genuine re-selection of the same row -- which is
@@ -98,7 +98,7 @@ class DataTableClickSelectMixin:
             value = getattr(row_key, "value", None)
             pending = self._pending_activation_key
             self._pending_activation_key = None
-            if value is not None and value == pending:
+            if value is not None and (event.data_table, value) == pending:
                 # The activation completing the gesture whose highlight already
                 # selected this row; swallow it rather than re-posting.
                 event.stop()
@@ -110,51 +110,45 @@ class DataTableClickSelectMixin:
         _deduped.__doc__ = handler.__doc__
         cls.on_data_table_row_selected = _deduped  # type: ignore[assignment]
 
-    def repopulating_table(self) -> None:
-        """Declare that this pane is about to rebuild a table's rows.
+    @contextmanager
+    def repopulating_table(self, table: DataTable) -> Iterator[None]:
+        """Suppress programmatic highlights before they enter message queues.
 
-        Call immediately before `clear()`/`add_row()`. Focus alone is not
-        enough: a pane can rebuild a table the user is currently sitting in --
-        switching the selected server repopulates the tools table while it
-        still has focus -- and the resulting row-0 highlight then re-selects a
-        tool, defeating the very clear that triggered the rebuild. An existing
-        workbench test (`test_switching_selected_server_clears_tool_detail`)
-        catches exactly that.
-
-        Suppression is released after the next refresh rather than at the end of
-        a `with` block, because Textual delivers the highlight messages a
-        rebuild produces *after* the code that produced them has returned.
+        Wrap synchronous clear/add/cursor-restore operations in this context.
+        Do not hold it across an await: real input must remain actionable as
+        soon as the rebuild finishes. A redraw retires only this table's gesture
+        dedup, so the next Enter can deliberately select its retained row without
+        changing a gesture in another table (ADR-170).
         """
-        self._suppress_row_selection = True
-        self._last_forwarded_row_key = None
-        call_after_refresh = getattr(self, "call_after_refresh", None)
-        if call_after_refresh is None:  # not mounted (unit-constructed pane)
-            self._suppress_row_selection = False
-            return
-        call_after_refresh(self._resume_row_selection)
-
-    def _resume_row_selection(self) -> None:
-        self._suppress_row_selection = False
+        if (
+            self._last_forwarded_row_key is not None
+            and self._last_forwarded_row_key[0] is table
+        ):
+            self._last_forwarded_row_key = None
+        if (
+            self._pending_activation_key is not None
+            and self._pending_activation_key[0] is table
+        ):
+            self._pending_activation_key = None
+        with table.prevent(DataTable.RowHighlighted, DataTable.CellHighlighted):
+            yield
 
     def _should_forward(self, table: DataTable | None, row_key: Any) -> bool:
         if not self.select_on_highlight:
             return False
-        if self._suppress_row_selection:
-            return False
         if row_key is None or getattr(row_key, "value", None) is None:
             return False
-        # A repopulating table is usually not focused; a clicked or arrowed one
-        # always is. `repopulating_table()` covers the case where it is.
+        # Programmatic rebuilds suppress their own highlights at publication.
+        # Remaining highlights only select while this table owns focus.
         if table is None or not table.has_focus:
             return False
-        if row_key.value == self._last_forwarded_row_key:
+        identity = (table, row_key.value)
+        if identity == self._last_forwarded_row_key:
             return False
-        self._last_forwarded_row_key = row_key.value
+        self._last_forwarded_row_key = identity
         return True
 
-    def on_data_table_row_highlighted(
-        self, event: DataTable.RowHighlighted
-    ) -> None:
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """A click, or an arrow key, landing on a row."""
         handler = getattr(self, "on_data_table_row_selected", None)
         if handler is None:
@@ -171,11 +165,9 @@ class DataTableClickSelectMixin:
             )
         finally:
             self._forwarding_highlight = False
-            self._pending_activation_key = row_key.value
+            self._pending_activation_key = (table, row_key.value)
 
-    def on_data_table_cell_highlighted(
-        self, event: DataTable.CellHighlighted
-    ) -> None:
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         """The same, for a table whose cursor is cell-shaped rather than row-shaped."""
         table = getattr(event, "data_table", None)
         row_key = getattr(getattr(event, "cell_key", None), "row_key", None)

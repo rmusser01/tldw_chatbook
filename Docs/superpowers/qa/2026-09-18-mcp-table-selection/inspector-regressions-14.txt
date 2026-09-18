@@ -1,0 +1,19 @@
+..............                                                           [100%]
+============================= slowest 25 durations =============================
+4.49s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[permissions]
+2.19s call     Tests/UI/test_mcp_workbench.py::test_switching_selected_server_clears_tool_detail
+1.78s call     Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+1.67s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-findings]
+1.67s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-tools]
+1.66s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+1.65s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[click-executions]
+1.65s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-findings]
+1.65s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-findings]
+1.64s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-executions]
+1.62s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[down-tools]
+1.60s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-tools]
+1.58s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[enter-executions]
+1.06s setup    Tests/UI/test_mcp_workbench.py::test_switching_selected_server_clears_tool_detail
+
+(11 durations < 1s hidden.)
+14 passed in 28.14s

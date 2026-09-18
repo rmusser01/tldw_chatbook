@@ -17,19 +17,23 @@ Token migration alone does not qualify a complete workflow.
 | Tools filter and focus continuity | TASK-32794, [127 distinct targeted cases and native gallery](../qa/2026-09-18-mcp-tools-refresh/README.md) | Open menu/highlight, real pointer/keyboard admission, delayed filter/drill ordering, empty/recovery focus; controlled empty projection, no connected-server or execution qualification |
 | Workbench status lifetime | TASK-32795, [79 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-workbench-lifetime/README.md) | Pre-compose/prune polling, receipt replay across canvas/Workbench replacement, actual loading boundary; native navigation and saved receipts, no generic Select shutdown claim |
 
+| Quiet table redraw and inspector clearing | TASK-32796, [275 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-table-selection/README.md) | Publication-time row/cell suppression, table-scoped gesture dedup and quiet external drills; real keyboard refresh/navigation, no schema/execution qualification |
+
 ## Remaining review
 
-- **Inspector CI:** a66d462f56 Fast Lane failed selected-server tool-detail
-  clearing and rail-server finding-detail clearing; both reproduce locally.
-  [Run](https://github.com/rmusser01/tldw_chatbook/actions/runs/35366444746).
-  Its third failure, startup status polling, is repaired by TASK-32795; new-head
-  remote verification remains pending.
+- **Remote verification:** saved head 20de195131 Fast Lane failed only the two
+  inspector-clearing cases; TASK-32796 repairs both locally. New-head checks are
+  pending. [Evidence](../qa/2026-09-18-mcp-table-selection/README.md).
+- **Existing test debt:** four Audit CSS literal assertions fail against unchanged
+  token-based CSS; two Speech harness cases failed during profile setup before UI
+  creation. Both boundaries are recorded in TASK-32796 evidence.
 - **Inspector refresh and execution:** selected tool definition/currentness,
   argument drafts across background refresh, diagnostic empty-state action routing,
   disconnected/stale tools, schema/raw arguments, execution and inspector recovery.
 - **Servers:** source transitions, add/edit/remove and connection lifecycles,
   built-in enable/expose controls, errors and recovery. Compact non-master gate
-  labels still clip (visible in TASK-32793 captures).
+  labels still clip (visible in TASK-32793 captures). The All servers rail button
+  also clips at 80×24, explicitly recorded in TASK-32796 captures.
 - **Audit and remaining permissions:** filtering, exact tool/event drilldown,
   restored roots, bulk actions, review/approval and connected-runtime journeys.
 
