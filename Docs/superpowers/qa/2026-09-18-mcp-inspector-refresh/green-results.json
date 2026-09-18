@@ -1,0 +1,118 @@
+[
+  {
+    "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32823-green-001/001",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-001.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32823-green-001/002",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-002.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32823-green-001/003",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-003.txt"
+  },
+  {
+    "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32823-green-001/004",
+    "classes": [],
+    "mismatches": 0,
+    "log": "green-004.txt"
+  }
+]

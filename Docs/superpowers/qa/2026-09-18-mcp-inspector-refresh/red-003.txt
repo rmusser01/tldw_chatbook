@@ -1,0 +1,76 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema] ___
+
+request = <FixtureRequest for <Coroutine test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x115e8b980>
+change = 'schema'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("change", ["unchanged", "description", "schema", "removed"])
+    @private_profile_test
+    async def test_catalog_refresh_reconciles_selected_tool_without_reselecting(
+        request, monkeypatch, change
+    ):
+        app = WorkbenchAppWithBundledCSS()
+        app.unified_mcp_service = ToolTestHubService()
+        async with app.run_test(size=(170, 48)) as pilot:
+            workbench, canvas = await _open(pilot)
+            original = next(t for t in workbench._last_hub_tools if t.name == "search")
+            await canvas.select_tool_row(original.tool_id)
+            canvas.query_one(DataTable).focus()
+            await pilot.press("enter")
+            await _settle(pilot)
+            inspector = app.query_one(MCPInspector)
+            assert inspector.current_tool == original
+            inspector.query_one("#mcp-inspector-test-tool", Button).focus()
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await _settle(pilot)
+            field = inspector.query_one("#mcp-schema-field-0", Input)
+            field.focus()
+            await pilot.press(*"keep me")
+            await _settle(pilot)
+            assert field.value == "keep me"
+            nonce = inspector._test_preview.nonce
+    
+            fresh = replace(original)
+            if change == "description":
+                fresh = replace(original, description="Search the current catalog.")
+            elif change == "schema":
+                fresh = replace(original, input_schema={"oneOf": [{"type": "object"}]})
+            tools = [
+                fresh if tool.tool_id == original.tool_id else tool
+                for tool in workbench._last_hub_tools
+                if change != "removed" or tool.tool_id != original.tool_id
+            ]
+            monkeypatch.setattr(workbench, "_collect_hub_tools", lambda: tools)
+            await workbench._sync_children()
+            await app.workers.wait_for_complete()
+            await _settle(pilot)
+    
+            if change == "unchanged":
+                assert inspector.query_one("#mcp-schema-field-0", Input) is field
+                assert field.value == "keep me" and field.has_focus
+                assert inspector._test_preview.nonce == nonce
+            else:
+>               assert not inspector.query("#mcp-inspector-test-panel")
+E               AssertionError: assert not <DOMQuery query='#mcp-inspector-test-panel'>
+E                +  where <DOMQuery query='#mcp-inspector-test-panel'> = query('#mcp-inspector-test-panel')
+E                +    where query = MCPInspector(id='mcp-hub-inspector', classes='destination-workbench-pane ds-inspector').query
+
+Tests/UI/test_mcp_inspector_catalog_refresh.py:66: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 14:48:08.413 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 14:48:08.419 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 14:48:08.419 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 14:48:08.419 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 14:48:08.955 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+2026-09-18 14:48:09.128 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+2026-09-18 14:48:10.494 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+============================= slowest 25 durations =============================
+2.17s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]
+
+(2 durations < 1s hidden.)
+1 failed in 3.95s

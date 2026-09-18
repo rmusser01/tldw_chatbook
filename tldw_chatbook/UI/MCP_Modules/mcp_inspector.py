@@ -1942,6 +1942,7 @@ class MCPInspector(Vertical):
         profile_context: PermissionProfileContext | None = None,
         arg_rules: Sequence[Mapping[str, Any]] = (),
         session_approvals: Sequence[tuple[str, str]] = (),
+        refresh_from: HubTool | None = None,
     ) -> None:
         """Rebuild `#mcp-inspector-tool` for the given tool, or hide it.
 
@@ -1965,6 +1966,24 @@ class MCPInspector(Vertical):
         previous tool's permission facts on screen.
         """
         async with self._refresh_lock:
+            # Catalog refresh may wait behind a newer selection. Reconcile only
+            # the captured view; equal definitions keep the live form and focus.
+            if refresh_from is not None:
+                if self._current_tool is not refresh_from:
+                    return
+                if (
+                    tool == refresh_from
+                    and profile_context == self._current_tool_profile_context
+                ):
+                    return
+            container = self.query_one("#mcp-inspector-tool", Vertical)
+            had_test_panel = bool(container.query("#mcp-inspector-test-panel"))
+            focused = self.app.focused
+            restore_focus = bool(
+                refresh_from is not None
+                and focused is not None
+                and container in focused.ancestors
+            )
             self._current_tool = tool
             self._current_tool_profile_context = (
                 profile_context if tool is not None else None
@@ -1975,7 +1994,6 @@ class MCPInspector(Vertical):
             old_nonce = self.clear_test_preview()
             if old_nonce:
                 self.post_message(self.ToolTestPreviewRevocationRequested(old_nonce))
-            container = self.query_one("#mcp-inspector-tool", Vertical)
             await container.remove_children()
             # RAG-50 / task-2270: the empty-state badge's DISPLAY is owned
             # by `_sync_state_badge_display()` (badge shows exactly when NO
@@ -1992,6 +2010,8 @@ class MCPInspector(Vertical):
             if tool is None:
                 container.display = False
                 await self._render_permission_container(None, None)
+                if refresh_from is not None:
+                    self.app.notify("The selected tool is no longer available.")
                 return
             container.display = True
             widgets: list[Any] = [
@@ -2027,6 +2047,16 @@ class MCPInspector(Vertical):
                     Static(
                         "Stale — not currently connected.",
                         id="mcp-inspector-tool-stale",
+                        classes="ds-field-row",
+                        markup=False,
+                    )
+                )
+            if refresh_from is not None and had_test_panel:
+                widgets.append(
+                    Static(
+                        "Tool details changed. Reopen Test Tool to review the "
+                        "current parameters and permissions.",
+                        id="mcp-inspector-tool-refresh-note",
                         classes="ds-field-row",
                         markup=False,
                     )
@@ -2077,6 +2107,8 @@ class MCPInspector(Vertical):
                 arg_rules=arg_rules,
                 session_approvals=session_approvals,
             )
+            if restore_focus and tool.executable:
+                self.query_one("#mcp-inspector-test-tool", Button).focus()
 
     async def _render_permission_container(
         self,
