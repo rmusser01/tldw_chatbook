@@ -968,6 +968,15 @@ PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
 # catalog module (imported at the top) so Settings and Console match.
 
 
+@dataclass(frozen=True)
+class _SettingsWorkspaceMemoryConfirmation:
+    """The saved and intended defaults reviewed by the first memory press."""
+
+    workspace_id: str
+    saved_defaults: WorkspaceAssistantDefaults | None
+    intended_defaults: WorkspaceAssistantDefaults
+
+
 class _SettingsWorkspaceAssistantResult(Static):
     """Recheck visibility when wrapping changes the receipt's measured height."""
 
@@ -3285,10 +3294,11 @@ class SettingsScreen(BaseAppScreen):
         #: recomposes for a different workspace.
         self._settings_workspace_assistant_pending: dict | None = None
         self._settings_workspace_assistant_result: tuple[str, str, str] | None = None
-        #: Task 10: the workspace id whose read_write memory press is
-        #: awaiting the second (confirming) press. Any selection change
-        #: or pane refresh disarms it.
-        self._settings_workspace_memory_armed: str | None = None
+        #: A read_write acknowledgement belongs to these exact defaults.
+        #: Selection changes and screen suspension discard the review.
+        self._settings_workspace_memory_armed: (
+            _SettingsWorkspaceMemoryConfirmation | None
+        ) = None
         self._advanced_config_settings: AdvancedConfigSettings | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
         # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
@@ -20116,7 +20126,8 @@ class SettingsScreen(BaseAppScreen):
                 break
         yield persona_picker
 
-        armed = self._settings_workspace_memory_armed == workspace_id
+        confirmation = self._settings_workspace_memory_armed
+        armed = confirmation is not None and confirmation.workspace_id == workspace_id
         if armed:
             memory_label = "Confirm read_write?"
         elif pending is not None:
@@ -20394,6 +20405,11 @@ class SettingsScreen(BaseAppScreen):
     def _set_settings_workspaces_result(self, text: str) -> None:
         self._settings_workspaces_result = text
         self._set_static_text("#settings-workspaces-result", text)
+
+    def _discard_workspace_memory_confirmation(self) -> None:
+        if self._settings_workspace_memory_armed is not None:
+            self._settings_workspace_memory_armed = None
+            self._settings_workspace_assistant_result = None
 
     def _refresh_settings_workspaces_pane(self) -> None:
         """Re-render the Workspaces category via the screen's existing
@@ -23393,6 +23409,7 @@ class SettingsScreen(BaseAppScreen):
             # (re)composed card at a workspace id a later visit's list may
             # not even show (e.g. after an archive elsewhere).
             self._settings_selected_workspace_id = None
+            self._discard_workspace_memory_confirmation()
         if (
             self.active_category == SettingsCategoryId.THEME.value
             and category_value != SettingsCategoryId.THEME.value
@@ -24544,6 +24561,7 @@ class SettingsScreen(BaseAppScreen):
         workspace_id = button_id.removeprefix(prefix)
         if not workspace_id:
             return
+        self._discard_workspace_memory_confirmation()
         self._settings_selected_workspace_id = workspace_id
         self._settings_workspaces_result = ""
         self._settings_workspace_assistant_result = None
@@ -25340,7 +25358,12 @@ class SettingsScreen(BaseAppScreen):
         )
         if pending is not None and pending_matches:
             self._settings_workspace_assistant_pending = None
-        if pending_matches and self._settings_workspace_memory_armed == workspace_id:
+        confirmation = self._settings_workspace_memory_armed
+        if (
+            pending_matches
+            and confirmation is not None
+            and confirmation.workspace_id == workspace_id
+        ):
             self._settings_workspace_memory_armed = None
         if self._settings_selected_workspace_id != workspace_id or not pending_matches:
             return
@@ -25388,32 +25411,53 @@ class SettingsScreen(BaseAppScreen):
         if pending is not None and pending.get("workspace_id") != workspace_id:
             pending = None
 
-        if self._settings_workspace_memory_armed == workspace_id:
-            persona_id = str(
-                (pending or {}).get("persona_id")
-                or getattr(defaults, "assistant_id", "")
-                or ""
+        persona_id = str(
+            (pending or {}).get("persona_id")
+            or getattr(defaults, "assistant_id", "")
+            or ""
+        )
+        intended = (
+            WorkspaceAssistantDefaults(
+                assistant_id=persona_id,
+                persona_memory_mode="read_write",
+                tool_policy_profile_id=(
+                    pending.get("profile_id")
+                    if pending is not None and pending.get("persona_id")
+                    else getattr(defaults, "tool_policy_profile_id", None)
+                ) or None,
             )
-            if not persona_id:
+            if persona_id else None
+        )
+        confirmation = self._settings_workspace_memory_armed
+        if confirmation is not None:
+            if (
+                confirmation.workspace_id != workspace_id
+                or confirmation.saved_defaults != defaults
+                or confirmation.intended_defaults != intended
+            ):
                 self._settings_workspace_memory_armed = None
                 self._set_workspace_assistant_result(
-                    workspace_id, "Select a persona first."
+                    workspace_id,
+                    "Assistant defaults changed. Review the current selection "
+                    "and press again to start a new confirmation.",
                 )
                 self._refresh_settings_workspaces_pane()
                 return
             self._settings_workspace_apply_assistant_default(
                 registry,
                 workspace_id,
-                persona_id,
+                confirmation.intended_defaults.assistant_id,
                 "read_write",
-                (pending or {}).get("profile_id")
-                or getattr(defaults, "tool_policy_profile_id", None),
+                confirmation.intended_defaults.tool_policy_profile_id,
             )
             return
 
         if pending is not None and pending.get("persona_id"):
             if str(pending.get("memory_mode", "read_only")) == "read_write":
-                self._settings_workspace_memory_armed = workspace_id
+                assert intended is not None
+                self._settings_workspace_memory_armed = _SettingsWorkspaceMemoryConfirmation(
+                    workspace_id, defaults, intended
+                )
                 event.button.label = "Confirm read_write?"
                 self._set_workspace_assistant_result(
                     workspace_id,
@@ -25443,7 +25487,10 @@ class SettingsScreen(BaseAppScreen):
                     getattr(defaults, "tool_policy_profile_id", None),
                 )
             else:
-                self._settings_workspace_memory_armed = workspace_id
+                assert intended is not None
+                self._settings_workspace_memory_armed = _SettingsWorkspaceMemoryConfirmation(
+                    workspace_id, defaults, intended
+                )
                 event.button.label = "Confirm read_write?"
                 self._set_workspace_assistant_result(
                     workspace_id,
@@ -26878,6 +26925,7 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
 
     def on_screen_suspend(self) -> None:
+        self._discard_workspace_memory_confirmation()
         if not self._openai_reconnect_prompt_open:
             self._discard_openai_reconnect_review()
         if not self._local_model_review_prompt_open:
