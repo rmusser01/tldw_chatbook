@@ -1,0 +1,25 @@
+{
+  "task": "TASK-32780",
+  "base_commit": "76c9e89d53ef0f2d7e365ee9e9fd18f040eed014",
+  "scope": "Mounted production-CSS lifecycle qualification; no new native capture claim",
+  "tests": {
+    "lifetime": 23,
+    "existing_workflow_and_loading": 42,
+    "export_recovery_and_outcomes": 9,
+    "distinct_total": 74
+  },
+  "lifetime_run_provenance": "20 initially passed; one unsupported fixture category corrected; both uncertainty cases and two added same-type replacement cases then passed. Overlap excluded.",
+  "ruff": {
+    "before": 114,
+    "after": 114,
+    "introduced": []
+  },
+  "new_test_ruff_and_format": "pass",
+  "changed_workflow_method_format": "pass",
+  "backlog_guard": "4131 unique tasks; Windows-compatible paths",
+  "independent_review": "No introduced blocker after admission flag correction. Identical mounted probe preserves publication uncertainty.",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "a65a353c1fdd266b5017fb12024a48701dc34e98918598fac30d0c45553dbb6d",
+    "Tests/UI/test_tool_profile_review_lifetime.py": "83b414cafb2c9f879c1ed06a08b88f852dc215d741d59719768f1df493bd06f6"
+  }
+}

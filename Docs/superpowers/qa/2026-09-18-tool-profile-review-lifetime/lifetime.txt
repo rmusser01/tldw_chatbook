@@ -1,0 +1,211 @@
+...................F.                                                    [100%]
+=================================== FAILURES ===================================
+_ test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1833/test_departure_suppresses_prep4/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import] _
+E
+E   request = <FixtureRequest for <Coroutine test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import]>>
+E   tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1833/test_departure_suppresses_prep4/private-profile-process/pytest/test_departure_suppresses_prep0')
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x113604860>
+E   operation = 'import', phase = 'uncertain'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("operation", ["import", "export"])
+E       @pytest.mark.parametrize("phase", ["preparation", "mutation", "uncertain"])
+E       @private_profile_test
+E       async def test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes(
+E           request, tmp_path, monkeypatch, operation, phase
+E       ):
+E           from tldw_chatbook.Tool_Packs.contracts import ToolPackError
+E           from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
+E
+E           entered, release = threading.Event(), threading.Event()
+E           category = (
+E               ("archive_invalid" if operation == "import" else "profile_invalid")
+E               if phase == "preparation"
+E               else ("activation_failed" if operation == "import" else "publication_failed")
+E               if phase == "mutation"
+E               else ("outcome_uncertain" if operation == "import" else "durability_uncertain")
+E           )
+E
+E           def fail_after_release(*args, **kwargs):
+E               entered.set()
+E               assert release.wait(20)
+E               raise ToolPackError(operation, category)
+E
+E           service = _WorkflowService(ToolProfileListing(profiles=(_profile("research"),)))
+E           method = (
+E               ("inspect_import" if operation == "import" else "capture_export")
+E               if phase == "preparation"
+E               else ("import_unbound" if operation == "import" else "publish_export")
+E           )
+E           monkeypatch.setattr(service, method, fail_after_release)
+E           app = _build_test_app()
+E           app.tool_pack_service = service
+E           host = StyledSettingsDestinationHarness(app, "settings")
+E           push = host.push_screen_wait
+E
+E           async def choose_file(screen):
+E               if isinstance(screen, (EnhancedFileOpen, EnhancedFileSave)):
+E                   return tmp_path / "audit.tldw-tool-pack"
+E               return await push(screen)
+E
+E           monkeypatch.setattr(host, "push_screen_wait", choose_file)
+E           async with host.run_test(size=(80, 24)) as pilot:
+E               await _open_settings_category(pilot, "#settings-category-tool-profiles")
+E               await host.workers.wait_for_complete()
+E               settings = host.screen
+E               settings._set_tool_profiles_result("Previous outcome")
+E               try:
+E                   await _activate(
+E                       pilot,
+E                       "#tool-profiles-import"
+E                       if operation == "import"
+E                       else "#tool-profile-export-0",
+E                   )
+E                   if operation == "import":
+E                       await _wait(
+E                           pilot, lambda: isinstance(host.screen, ToolPackImportOptionsModal)
+E                       )
+E                       await _activate(pilot, "#tool-pack-import-options-review")
+E                   if phase != "preparation":
+E                       review_type = (
+E                           ToolPackImportReviewModal
+E                           if operation == "import"
+E                           else ToolPackExportReviewModal
+E                       )
+E                       await _wait(pilot, lambda: isinstance(host.screen, review_type))
+E                       await _activate(
+E                           pilot,
+E                           "#tool-pack-import-unbound"
+E                           if operation == "import"
+E                           else "#tool-pack-export-continue",
+E                       )
+E                   await _wait(pilot, entered.is_set)
+E                   await _activate(pilot, "#settings-category-theme")
+E                   await _wait(
+E                       pilot,
+E                       lambda: (
+E                           settings.active_category == "theme"
+E                           and not settings._category_pane_swap_pending
+E                       ),
+E                   )
+E                   await _activate(pilot, "#settings-category-tool-profiles")
+E                   await _wait(
+E                       pilot,
+E                       lambda: (
+E                           settings.active_category == "tool-profiles"
+E                           and not settings._category_pane_swap_pending
+E                       ),
+E                   )
+E                   release.set()
+E                   await host.workers.wait_for_complete()
+E                   assert host.screen is settings
+E   >               assert settings._tool_profiles_result == (
+E                       "Previous outcome"
+E                       if phase == "preparation"
+E                       else f"{operation.title()} failed · {category}"
+E                   )
+E   E               AssertionError: assert 'Import faile...yload_invalid' == 'Import faile...ome_uncertain'
+E   E
+E   E                 - Import failed · outcome_uncertain
+E   E                 + Import failed · payload_invalid
+E
+E   Tests/UI/test_tool_profile_review_lifetime.py:381: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-18 02:54:28.777 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-18 02:54:28.783 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-18 02:54:28.784 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-18 02:54:28.784 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-18 02:54:28.861 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-18 02:54:28.884 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-18 02:54:28.884 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-18 02:54:28.885 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-18 02:54:28.885 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-18 02:54:28.956 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1833/test_departure_suppresses_prep4/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 02:54:29.016 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-t039t54v/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 02:54:29.170 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-t039t54v/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 02:54:29.183 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 02:54:29.184 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-t039t54v/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 02:54:29.184 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-t039t54v/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-18 02:54:29.286 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-18 02:54:29.320 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-18 02:54:29.355 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-18 02:54:29.390 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-18 02:54:29.423 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-18 02:54:29.457 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-18 02:54:29.457 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-t039t54v/scheduled_tasks.sqlite [Client: default]
+E   2026-09-18 02:54:29.501 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-18 02:54:29.501 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-18 02:54:29.509 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-18 02:54:29.578 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-18 02:54:29.579 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1833/test_departure_suppresses_prep4/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-18 02:54:29.579 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-18 02:54:29.645 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-18 02:54:29.646 | INFO     | tldw_chatbook.app:_init_worker_handlers:12117 - Worker handler registry initialized with all handlers
+E   2026-09-18 02:54:29.646 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-18 02:54:29.646 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.853 seconds
+E   2026-09-18 02:54:29.647 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.089s (10.4%)
+E   2026-09-18 02:54:29.647 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-18 02:54:29.647 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.001s (0.2%)
+E   2026-09-18 02:54:29.647 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-18 02:54:29.648 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-18 02:54:29.648 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-18 02:54:29.648 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-18 02:54:29.648 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-18 02:54:29.823 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-18 02:54:29.913 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-18 02:54:31.960 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   3.18s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import]
+E   1 failed in 4.90s
+============================= slowest 25 durations =============================
+5.91s call     Tests/UI/test_tool_profile_review_lifetime.py::test_owned_import_dialogs_preserve_current_review_flow[revise]
+5.85s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[mutation-import]
+5.75s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import]
+5.72s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[return-import]
+5.68s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[mutation-export]
+5.53s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[category-import]
+5.50s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[newer-import]
+5.49s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[return-export]
+5.47s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[modal-import]
+5.41s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[modal-export]
+5.40s call     Tests/UI/test_tool_profile_review_lifetime.py::test_owned_import_dialogs_preserve_current_review_flow[accept]
+5.38s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[preparation-import]
+5.37s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-export]
+5.33s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[category-export]
+5.22s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[newer-export]
+5.21s call     Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[preparation-export]
+5.18s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_destination_capture_cannot_publish_after_departure[True]
+5.17s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_destination_capture_cannot_publish_after_departure[False]
+5.16s call     Tests/UI/test_tool_profile_review_lifetime.py::test_owned_import_dialogs_preserve_current_review_flow[cancel]
+4.82s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[remove-import]
+4.71s call     Tests/UI/test_tool_profile_review_lifetime.py::test_delayed_review_cannot_outlive_its_initiating_visit[remove-export]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_tool_profile_review_lifetime.py::test_departure_suppresses_preparation_errors_but_keeps_admitted_outcomes[uncertain-import]
+1 failed, 20 passed in 116.13s (0:01:56)
