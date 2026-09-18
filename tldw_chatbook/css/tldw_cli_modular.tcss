@@ -2259,6 +2259,15 @@ FileSave.-compact InputBar Input {
     align: center middle;
 }
 
+
+.dialog-buttons.button-group-left {
+    align-horizontal: left;
+}
+
+.dialog-buttons.button-group-right {
+    align-horizontal: right;
+}
+
 .dialog-buttons Button {
     margin: $ds-space-0 $ds-space-inline;
     min-width: $ds-size-12;
@@ -2287,10 +2296,6 @@ RoleplayDraftRecoveryDialog {
 #roleplay-draft-recovery-domains {
     color: $ds-text-primary;
     margin-bottom: $ds-space-stack;
-}
-
-#roleplay-draft-recovery-dialog .dialog-buttons {
-    align-horizontal: right;
 }
 
 

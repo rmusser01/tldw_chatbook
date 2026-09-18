@@ -258,3 +258,18 @@ The shared modal action-row composition needs its own review: the later
 specificity. TASK-32820 corrects its own measured consumer; other consumers and
 the catalog's general right-alignment promise remain unqualified. PR2707 stays
 draft/unmerged and requires its own visual review and merge approval.
+
+
+TASK-32821 completes that bounded shared action-row repair. Explicit left/right
+modifiers now override the centered dialog default; plain/center rows retain
+centering. Roleplay uses the shared rule and no longer needs a local override.
+[Fifty-three distinct targeted cases and eight inspected native captures](../qa/2026-09-18-dialog-action-alignment/README.md)
+cover the four alignment modes, actual gallery consumer, palette entry and
+Roleplay recovery continuity. Both deliberately reviewed gallery snapshots move
+only the two actions and their background row. CSS bytes 584,093/608,090 and
+selector candidates 274/274 remain below unchanged limits; preflight passes.
+Initial geometry failures, snapshot comparison interruption and transient-toast
+capture are retained with their exact evidence limits. Final native exit, lock,
+ten private databases, unchanged defaults and source hashes pass independently.
+The broader destination review remains open; PR2707 stays draft/unmerged and
+requires its own visual review and merge approval.
