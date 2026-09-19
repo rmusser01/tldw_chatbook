@@ -1,0 +1,51 @@
+{
+  "distinct_passed": 34,
+  "runs": [
+    {
+      "source": "/private/tmp/32829-green-final/results.xml",
+      "passed": 21,
+      "test_ids": [
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_cancel_reserves_server_until_cleanup_then_permits_retry",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_retired_cancel_cannot_stop_a_replacement_operation[other-button]",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_retired_cancel_cannot_stop_a_replacement_operation[other-message]",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_cancel_before_start_does_not_create_service_coroutine",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_success_keeps_admission_until_final_projection_is_collected",
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_cancel_render_keeps_original_operation_across_detail_await",
+        "Tests.UI.test_mcp_workbench::test_detail_disconnect_button_routes_through_start_lifecycle",
+        "Tests.UI.test_mcp_workbench::test_connect_action_runs_lifecycle_and_notifies",
+        "Tests.UI.test_mcp_workbench::test_in_flight_shows_checking_and_cancel_then_completes",
+        "Tests.UI.test_mcp_workbench::test_in_flight_checking_message_includes_time_bound",
+        "Tests.UI.test_mcp_workbench::test_in_flight_checking_message_time_bound_honors_config_override",
+        "Tests.UI.test_mcp_workbench::test_in_flight_checking_message_time_bound_survives_malformed_config",
+        "Tests.UI.test_mcp_workbench::test_cancel_requested_cancels_worker",
+        "Tests.UI.test_mcp_workbench::test_validate_action_runs_test_lifecycle_and_notifies_int_tool_count",
+        "Tests.UI.test_mcp_workbench::test_refresh_lifecycle_dispatches_refresh_method",
+        "Tests.UI.test_mcp_workbench::test_cancel_after_natural_completion_does_not_toast_cancelled",
+        "Tests.UI.test_mcp_workbench::test_save_and_connect_runs_lifecycle_after_save"
+      ]
+    },
+    {
+      "source": "/private/tmp/32829-css/results.xml",
+      "passed": 13,
+      "test_ids": [
+        "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+        "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+        "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+        "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+        "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+        "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+        "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+        "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+        "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_ignores_the_generated_timestamp",
+        "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_names_the_changed_module",
+        "Tests.UI.test_css_bundle_sync_guard::test_committed_bundle_reproduces_from_sources",
+        "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+        "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_end_with_one_newline"
+      ]
+    }
+  ]
+}
