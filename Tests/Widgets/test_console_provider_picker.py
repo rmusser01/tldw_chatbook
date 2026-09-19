@@ -278,3 +278,58 @@ async def test_picker_caps_visible_providers_at_thirty() -> None:
         app.query_one(ConsoleProviderPicker).focus_input()
         await pilot.pause()
         assert len(app.query_one(ConsoleProviderPicker).visible_provider_ids()) == 30
+
+
+@pytest.mark.asyncio
+async def test_set_options_keeps_still_known_selection_and_lists_new_entry() -> None:
+    """CE-006 (qodo PR-2736 finding 2): refreshing the option snapshot must
+    keep a committed provider that survives the refresh, take in newly
+    introduced ids, and surface them in the dropdown without remounting."""
+    app = ProviderPickerApp(OPTIONS, current_provider="openai")
+
+    async with app.run_test() as pilot:
+        picker = app.query_one(ConsoleProviderPicker)
+        refreshed = OPTIONS + (
+            ConsoleSettingsOption("custom-ep:gpu-box", "custom-ep:gpu-box"),
+        )
+        picker.set_options(refreshed)
+        await pilot.pause()
+
+        assert picker.value == "openai"
+        assert "custom-ep:gpu-box" in picker._known_provider_ids
+        assert picker._display_names["custom-ep:gpu-box"] == "custom-ep:gpu-box"
+
+        # The dropdown lists the new entry from the refreshed snapshot.
+        app.set_focus(None)
+        await pilot.pause()
+        picker.focus_input()
+        await pilot.pause()
+        visible = picker.visible_provider_ids()
+        assert "custom-ep:gpu-box" in visible
+        assert "openai" in visible
+
+
+@pytest.mark.asyncio
+async def test_set_options_clears_selection_dropped_from_refreshed_options() -> None:
+    """CE-006 (qodo PR-2736 finding 2): a committed provider that the
+    refresh drops must not linger as a phantom selection -- the picker
+    resets to its uncommitted copy exactly like the state adapter."""
+    app = ProviderPickerApp(OPTIONS, current_provider="openai")
+
+    async with app.run_test() as pilot:
+        picker = app.query_one(ConsoleProviderPicker)
+        picker.set_provider("custom_2")
+        assert picker.value == "custom_2"
+
+        reduced = tuple(
+            option for option in OPTIONS if option.value != "custom_2"
+        )
+        picker.set_options(reduced)
+        await pilot.pause()
+
+        assert picker.value is None
+        assert "custom_2" not in picker._known_provider_ids
+        search = app.query_one("#console-settings-provider-picker-input", Input)
+        status = app.query_one("#console-settings-provider-picker-status", Static)
+        assert search.value == ""
+        assert str(status.renderable) == "Choose a provider."

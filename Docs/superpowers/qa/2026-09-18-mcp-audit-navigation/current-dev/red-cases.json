@@ -1,0 +1,62 @@
+[
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-open-tool-AuditOpenToolRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[invisible-mcp-audit-open-tool-AuditOpenToolRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[invisible-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[disabled-mcp-audit-open-tool-AuditOpenToolRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[disabled-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-audit-open-tool-AuditOpenToolRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-open-tool-AuditOpenToolRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[covered-mcp-audit-open-tool-AuditOpenToolRequested]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_navigation_ignores_an_unavailable_owning_view[covered-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+    "outcome": "failed"
+  }
+]

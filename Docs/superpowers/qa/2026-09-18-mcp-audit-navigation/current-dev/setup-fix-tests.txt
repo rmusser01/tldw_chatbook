@@ -1,0 +1,15 @@
+...                                                                      [100%]
+- generated xml file: /private/tmp/tldw-32837-followup-setup-fix-001/results.xml -
+============================= slowest 25 durations =============================
+1.94s call     Tests/UI/test_mcp_inspector.py::test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+1.90s call     Tests/UI/test_mcp_inspector.py::test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]
+1.69s call     Tests/UI/test_mcp_inspector.py::test_profile_scoped_inspector_requests_preserve_captured_context
+
+(6 durations < 1s hidden.)
+3 passed, 291 deselected in 6.27s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-2254da10-5186-44a6-be28-f56fc54c768e/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-2254da10-5186-44a6-be28-f56fc54c768e/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-2254da10-5186-44a6-be28-f56fc54c768e
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-2254da10-5186-44a6-be28-f56fc54c768e'
+  warnings.warn(
