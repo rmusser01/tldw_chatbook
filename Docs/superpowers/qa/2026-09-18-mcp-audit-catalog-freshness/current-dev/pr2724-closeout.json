@@ -1,0 +1,22 @@
+{
+  "head": "75c688ea55ceb8c168e3296c9ba776e4c6d996bc",
+  "tree": "180ccb69c0f15c295940495c9a0d6202e77d7eb0",
+  "base": "e3ea3b42fbe55d3fead27b9a194d97c8750c913e",
+  "targeted_passes": 147,
+  "native_captures_matching_approved": 24,
+  "owner_visual_approval": true,
+  "qodo_current_head_findings": 0,
+  "accumulated_qodo_threads_resolved": 5,
+  "manifest_verified": true,
+  "source_hashes_verified": true,
+  "ci_pending": null,
+  "merged_at": "2026-09-19T20:02:32Z",
+  "merge_commit": "cccf0acdad8e939a55cb003588ff1406cef5d1f4",
+  "merged_tree": "2f03062df0114bc9f6c22ced6e5142c0f6f92732",
+  "actual_merge_base": "e3ea3b42fbe55d3fead27b9a194d97c8750c913e",
+  "concurrent_dev_change": "PR2742 wide-modal rollout; 16 files differ from reviewed head, MCP modules unchanged",
+  "merged_audit_cases_passed": 32,
+  "merged_native_captures_matching_approved": 24,
+  "merged_native_root": "/private/tmp/tldw-32837-native-merged-001",
+  "all_required_gates_passed": true
+}

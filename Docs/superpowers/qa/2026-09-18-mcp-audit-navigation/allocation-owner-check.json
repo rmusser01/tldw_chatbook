@@ -1,0 +1,12 @@
+{
+  "refs": 349,
+  "worktrees": 35,
+  "history": [],
+  "owners": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "path": "backlog/tasks/task-32837 - Keep-Audit-navigation-bound-to-its-displayed-record-and-current-destination.md"
+    }
+  ],
+  "unique": true
+}

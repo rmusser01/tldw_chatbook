@@ -1,0 +1,365 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_audit_waits_for_new_tool_rows_during_catalog_publication[tools] _____
+
+self = <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'destination': 'tools', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x113c0f2f0>, 'request': <FixtureRequest for <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]>>}
+request = <FixtureRequest for <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]>>
+work = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_0/private-profile-process')
+profile = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 120.0
+report = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_0/private-profile-process/pytest.xml')
+log = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _____ test_audit_waits_for_new_tool_rows_during_catalog_publication[tools] _____
+E
+E           request = <FixtureRequest for <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111c331a0>
+E           destination = 'tools'
+E
+E               @pytest.mark.parametrize("destination", ["tools", "permissions"])
+E               @private_profile_test
+E               async def test_audit_waits_for_new_tool_rows_during_catalog_publication(
+E                   request, monkeypatch, destination
+E               ):
+E                   app = ToolTestApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       inspector = app.query_one(MCPInspector)
+E                       notices = _capture_notifications(app)
+E                       entered, release = asyncio.Event(), asyncio.Event()
+E                       original = workbench._sync_tools_mode
+E
+E                       async def pause_before_rows(tools, states):
+E                           entered.set()
+E                           await release.wait()
+E                           await original(tools, states)
+E
+E                       monkeypatch.setattr(workbench, "_sync_tools_mode", pause_before_rows)
+E                       record = deepcopy(workbench._catalog_records["docs"])
+E                       record["discovery_snapshot"]["tools"].append(
+E                           {
+E                               "name": "newly_published",
+E                               "description": "New catalog tool",
+E                               "inputSchema": {},
+E                           }
+E                       )
+E                       workbench._catalog_records["docs"] = record
+E                       publication = asyncio.create_task(workbench._sync_children())
+E                       navigation = None
+E                       try:
+E                           await asyncio.wait_for(entered.wait(), 5)
+E                           tool = workbench._tool_for("local:docs", "newly_published")
+E                           assert tool is not None
+E                           context = workbench._tool_policy_profile_context
+E                           navigate = (
+E                               workbench._open_audit_tool
+E                               if destination == "tools"
+E                               else workbench._open_audit_permission
+E                           )
+E                           navigation = asyncio.create_task(navigate(tool, context))
+E                           await pilot.pause()
+E           >               assert not navigation.done(), (
+E                               "Navigation used rows before publication finished"
+E                           )
+E           E               AssertionError: Navigation used rows before publication finished
+E           E               assert not True
+E           E                +  where True = <built-in method done of _asyncio.Task object at 0x108379cc0>()
+E           E                +    where <built-in method done of _asyncio.Task object at 0x108379cc0> = <Task finished name='Task-418' coro=<MCPWorkbench._open_audit_tool() done, defined at /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4851> result=None>.done
+E
+E           Tests/UI/test_mcp_audit_navigation.py:346: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 12:36:44.196 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-19 12:36:44.226 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 12:36:44.233 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-19 12:36:44.237 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-19 12:36:44.751 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           2026-09-19 12:36:45.193 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]
+E           1 failed in 3.02s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-19 12:36:42.089 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-19 12:36:42.145 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-19 12:36:42.160 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-19 12:36:42.169 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+__ test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions] __
+
+self = <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'destination': 'permissions', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a25c230>, 'request': <FixtureRequest for <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]>>}
+request = <FixtureRequest for <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]>>
+work = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_1/private-profile-process')
+profile = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_1/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 120.0
+report = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_1/private-profile-process/pytest.xml')
+log = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __ test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions] __
+E
+E           request = <FixtureRequest for <Coroutine test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1133b43b0>
+E           destination = 'permissions'
+E
+E               @pytest.mark.parametrize("destination", ["tools", "permissions"])
+E               @private_profile_test
+E               async def test_audit_waits_for_new_tool_rows_during_catalog_publication(
+E                   request, monkeypatch, destination
+E               ):
+E                   app = ToolTestApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       inspector = app.query_one(MCPInspector)
+E                       notices = _capture_notifications(app)
+E                       entered, release = asyncio.Event(), asyncio.Event()
+E                       original = workbench._sync_tools_mode
+E
+E                       async def pause_before_rows(tools, states):
+E                           entered.set()
+E                           await release.wait()
+E                           await original(tools, states)
+E
+E                       monkeypatch.setattr(workbench, "_sync_tools_mode", pause_before_rows)
+E                       record = deepcopy(workbench._catalog_records["docs"])
+E                       record["discovery_snapshot"]["tools"].append(
+E                           {
+E                               "name": "newly_published",
+E                               "description": "New catalog tool",
+E                               "inputSchema": {},
+E                           }
+E                       )
+E                       workbench._catalog_records["docs"] = record
+E                       publication = asyncio.create_task(workbench._sync_children())
+E                       navigation = None
+E                       try:
+E                           await asyncio.wait_for(entered.wait(), 5)
+E                           tool = workbench._tool_for("local:docs", "newly_published")
+E                           assert tool is not None
+E                           context = workbench._tool_policy_profile_context
+E                           navigate = (
+E                               workbench._open_audit_tool
+E                               if destination == "tools"
+E                               else workbench._open_audit_permission
+E                           )
+E                           navigation = asyncio.create_task(navigate(tool, context))
+E                           await pilot.pause()
+E           >               assert not navigation.done(), (
+E                               "Navigation used rows before publication finished"
+E                           )
+E           E               AssertionError: Navigation used rows before publication finished
+E           E               assert not True
+E           E                +  where True = <built-in method done of _asyncio.Task object at 0x109987a00>()
+E           E                +    where <built-in method done of _asyncio.Task object at 0x109987a00> = <Task finished name='Task-418' coro=<MCPWorkbench._open_audit_permission() done, defined at /Users/macbook-dev/Documen.../tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4957> result=None>.done
+E
+E           Tests/UI/test_mcp_audit_navigation.py:346: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 12:36:48.401 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-19 12:36:48.430 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 12:36:48.438 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-19 12:36:48.441 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-19 12:36:48.921 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           2026-09-19 12:36:49.334 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-220/test_audit_waits_for_new_tool_1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]
+E           1 failed in 2.96s
+
+Tests/private_profile.py:84: Failed
+----- generated xml file: /private/tmp/tldw-32837-qodo-red-001/results.xml -----
+============================= slowest 25 durations =============================
+4.01s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]
+3.93s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]
+2 failed, 30 deselected in 10.50s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-52f34201-a31e-4560-a2d2-866f8268830e/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-52f34201-a31e-4560-a2d2-866f8268830e/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-52f34201-a31e-4560-a2d2-866f8268830e
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-52f34201-a31e-4560-a2d2-866f8268830e'
+  warnings.warn(

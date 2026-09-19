@@ -1,0 +1,5 @@
+Read-only independent review by /root/mcp_server_action_review.
+
+No concrete blockers found. Each button captures immutable tool/profile identity, and bindings are cleared before pruning yields. Both missing-row branches leave tool and permission detail cleared and report the unavailable destination.
+
+Tests cover replacement, same-record re-render, clear, mutable-entry changes, disappearing rows, and filtered navigation. Reviewer did not run tests or apps.
