@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import subprocess
 import threading
 from collections.abc import Mapping
@@ -479,12 +480,54 @@ async def stop_server_process(
     return stopped
 
 
+def _signal_server_process_group(process: Any, *, hard: bool) -> None:
+    """Signal the whole group a local server was spawned into.
+
+    TASK-32806.5: these servers fork workers. Signalling only the direct
+    child left the worker running and holding the port while the app
+    cleared the handle and reported "stopped" -- measured with a parent
+    that forks one grandchild: ``terminate_process_bounded`` returned True
+    and the grandchild was still alive a second later.
+
+    ``run_server_subprocess`` starts them with ``start_new_session`` so the
+    child is a session leader and its pid IS the group id. A process that
+    did not get that treatment (an injected double, or Windows) resolves to
+    OUR group, and signalling that would take the app down with it -- hence
+    the guard, which is the same one ``skill_script_runner._kill_group``
+    uses.
+    """
+    if os.name != "posix":
+        return
+    # Resolved HERE, not at the call site: Windows has no SIGKILL, and an
+    # argument is evaluated before the call, so naming it in the caller
+    # raised AttributeError on Windows before this guard could run.
+    sig = signal.SIGKILL if hard else signal.SIGTERM
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+    if pgid <= 0 or pgid == os.getpgrp():
+        return
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 def terminate_process_bounded(process: Any, timeout: float = 5.0) -> bool:
-    """Terminate, then kill and reap if needed; never wait without a bound."""
+    """Terminate, then kill and reap if needed; never wait without a bound.
+
+    The group is signalled alongside the direct child so a forked worker
+    cannot outlive the server it belongs to (TASK-32806.5).
+    """
 
     if not process_is_running(process):
         return True
     try:
+        _signal_server_process_group(process, hard=False)
         process.terminate()
         try:
             process.wait(timeout=timeout)
@@ -494,11 +537,52 @@ def terminate_process_bounded(process: Any, timeout: float = 5.0) -> bool:
         pass
     if process_is_running(process):
         try:
+            _signal_server_process_group(process, hard=True)
             process.kill()
             process.wait(timeout=timeout)
         except Exception:
             pass
+    else:
+        # The leader is gone; its workers must not outlive it.
+        _signal_server_process_group(process, hard=True)
     return not process_is_running(process)
+
+
+def stop_all_server_processes(app: Any, timeout: float = 5.0) -> list[str]:
+    """Stop every local LLM server this app still holds a handle for.
+
+    TASK-32806.5: nothing in unmount stopped these, so quitting the app
+    orphaned every running server -- each one still holding its port, so
+    the next launch failed to bind. Called from ``TldwCli.on_unmount``
+    inside the exit watchdog's deadline, and deliberately forgiving: a
+    handle that is already dead, or an app double without the attribute,
+    is skipped rather than raising during teardown.
+
+    Args:
+        app: The application holding the per-provider process attributes.
+        timeout: Per-server bound handed to ``terminate_process_bounded``.
+
+    Returns:
+        The providers whose server was running and is now stopped.
+    """
+    stopped: list[str] = []
+    for provider, attribute in SERVER_PROCESS_ATTRS.items():
+        process = getattr(app, attribute, None)
+        if process is None or not process_is_running(process):
+            continue
+        try:
+            if terminate_process_bounded(process, timeout=timeout):
+                stopped.append(provider)
+        except Exception:
+            logger.warning(
+                "Stopping %s during shutdown failed; continuing teardown.",
+                provider,
+            )
+        try:
+            setattr(app, attribute, None)
+        except Exception:
+            pass
+    return stopped
 
 
 def run_server_subprocess(
@@ -560,6 +644,11 @@ def run_server_subprocess(
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
             "text": True,
+            # TASK-32806.5: makes the child a session leader, so stopping
+            # the server can signal its whole group and a forked worker
+            # cannot survive holding the port. Nine other subprocess sites
+            # in this repo already do this.
+            "start_new_session": os.name == "posix",
         }
         if cwd is not None:
             kwargs["cwd"] = cwd

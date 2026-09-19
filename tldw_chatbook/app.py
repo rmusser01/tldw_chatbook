@@ -19357,6 +19357,28 @@ class TldwCli(
         # monotonic: a signal-armed watchdog already holds a tighter
         # deadline and this call leaves it alone.
         arm_exit_watchdog(reason="app unmount")
+        # TASK-32806.5: nothing stopped local LLM servers on the way out, so
+        # quitting orphaned every one of them with its port still held and
+        # the next launch unable to bind. Inside the watchdog's deadline,
+        # and off the loop because each stop waits on a subprocess.
+        try:
+            from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+                stop_all_server_processes,
+            )
+
+            stopped_servers = await asyncio.to_thread(
+                stop_all_server_processes, self
+            )
+            if stopped_servers:
+                logging.info(
+                    "Stopped local LLM servers on shutdown: %s",
+                    ", ".join(sorted(stopped_servers)),
+                )
+        except Exception as error:
+            self.loguru_logger.warning(
+                "Stopping local LLM servers on shutdown failed type={}",
+                type(error).__name__,
+            )
         try:
             await self._stop_served_canvas_control()
         except Exception as error:

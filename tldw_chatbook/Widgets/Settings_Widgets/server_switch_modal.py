@@ -13,6 +13,12 @@ from typing import Any, Optional
 import httpx
 from urllib.parse import urlsplit
 
+from tldw_chatbook.Utils.egress import (
+    check_url_or_raise_async,
+    origin_of,
+    origin_set,
+)
+
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -206,7 +212,21 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
     @work(exclusive=True, group="server-switch-test")
     async def _run_connection_test(self, url: str, token: str) -> None:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            # TASK-32806.7: this sends the user's API token to a
+            # user-entered URL, so it must clear the same egress policy the
+            # sibling endpoint probe uses -- a shape-valid URL can still be
+            # 169.254.169.254 or an internal host. Redirects are disabled so
+            # a 30x cannot bounce the token to an origin the check cleared.
+            try:
+                await check_url_or_raise_async(
+                    url, trusted_origins=origin_set(origin_of(url))
+                )
+            except Exception as exc:  # noqa: BLE001 - policy detail stays out of UI
+                self._set_status(f"Blocked by network policy: {type(exc).__name__}")
+                return
+            async with httpx.AsyncClient(
+                timeout=5.0, follow_redirects=False
+            ) as client:
                 reach = await client.get(f"{url}/docs")
                 auth_state = "not checked (no token entered)"
                 if token:

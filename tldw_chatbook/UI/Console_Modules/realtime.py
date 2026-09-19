@@ -42,6 +42,7 @@ from tldw_chatbook.Utils.persistent_diagnostics import (
     safe_metadata_token,
 )
 from tldw_chatbook.config import get_api_key
+from tldw_chatbook.config import resolve_provider_api_key
 
 
 CONSOLE_REALTIME_SUPPORTED_PROVIDER = "openai"
@@ -608,12 +609,22 @@ class ConsoleRealtimeController:
         return OpenAIRealtimeSession(config, callbacks)
 
     def _console_realtime_api_key(self) -> str:
-        """The configured API key for the realtime provider, or `""`.
+        """A USABLE API key for the realtime provider, or `""`.
 
         Never raises and never logs the key itself.
+
+        TASK-32806.1: the pre-connect gate below tests this for truthiness,
+        so anything non-empty passed -- and the same value is then put on
+        the wire in `RealtimeSessionConfig(api_key=...)`. A configured
+        placeholder therefore defeated the gate and was handed verbatim to
+        the provider session, which is exactly what the gate's own comment
+        exists to prevent. Screening through the shared validity rule makes
+        the gate's truthiness test mean what it reads as.
         """
         try:
-            return str(get_api_key(CONSOLE_REALTIME_SUPPORTED_PROVIDER) or "")
+            return resolve_provider_api_key(
+                get_api_key(CONSOLE_REALTIME_SUPPORTED_PROVIDER)
+            ) or ""
         except Exception:  # noqa: BLE001 - config trouble is a connect failure
             logger.opt(exception=True).debug(
                 "Console realtime: could not resolve the provider API key"
