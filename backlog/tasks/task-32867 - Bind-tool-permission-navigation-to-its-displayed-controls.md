@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 17:04'
-updated_date: '2026-09-19 17:16'
+updated_date: '2026-09-19 18:46'
 labels: []
 dependencies: []
 ---
@@ -42,4 +42,6 @@ Implemented captured button ownership for the two Tools/Test Tool permission jum
 Verification: 75 targeted cases pass (23 new navigation cases, 37 write/revoke cases, 15 existing routing/panel cases); seven preflight guards pass. Independent review findings were reproduced and fixed. New files pass Ruff; existing inspector diagnostics unchanged at 13, edited lines formatted. Twelve inspected native dark/light captures at 120x40/170x48 verify eight real keyboard routes with unchanged permissions, no connection/execution and clean private-profile shutdown. No full suite ran.
 
 Evidence: Docs/superpowers/qa/2026-09-19-mcp-permission-navigation/README.md and GALLERY.md. Existing ADR-150/ADR-161 apply; no new ADR. Implementation is complete; draft PR current-head CI/review and owner visual approval remain merge gates.
+
+Owner approved the visual gallery. Rebased conflict-free onto dev030fd9935d; all 75 targeted cases pass again. Addressed both Qodo findings in QA only: separated the validated bootstrap from grouped journey imports and documented SystemExit. 35 argument/path cases pass; fresh eight-route native replay has twelve captures identical to the approved gallery. Evidence: Docs/superpowers/qa/2026-09-19-mcp-permission-navigation/qodo-followup/README.md. Current-head CI/review remains required before merge.
 <!-- SECTION:NOTES:END -->

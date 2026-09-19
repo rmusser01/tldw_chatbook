@@ -66,3 +66,6 @@ Prepare an unused profile beneath canonical `/tmp` with `home/`, `config/`,
 
 The shared argument parser validates private paths and output ownership before
 startup. The runner's docstring describes outputs and exit codes.
+
+[Approved closeout and Qodo follow-up](qodo-followup/README.md) records the
+conflict-free current-dev rebase, both QA-script findings and fresh native replay.
