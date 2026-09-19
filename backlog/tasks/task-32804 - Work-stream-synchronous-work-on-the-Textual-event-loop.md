@@ -4,7 +4,7 @@ title: 'Work stream: synchronous work on the Textual event loop'
 status: In Progress
 assignee: []
 created_date: '2026-09-18 16:46'
-updated_date: '2026-09-19 21:47'
+updated_date: '2026-09-19 23:23'
 labels:
   - core-review
   - review-loop
@@ -23,5 +23,5 @@ This is a work-stream parent from the core-runtime code review of 2026-09-17 (`q
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-.1 done; .10 + .5 done (PR #2739). .3/.8 substantially resolved by .1's warm-read fastpath (per-tick admission cost eliminated); their revision-gate/snapshot ACs are further optimizations. .2/.4/.6/.7/.9/.11/.12 remain (real per-surface memoize/offload work).
+PR #2739. Done: .1 (config fastpath), .4 (review-set snapshot memoize), .5 (folder-import non-copy), .8 splash (.1-section read), .9 (semantic query offload + attach memoize), .10 (prompt-search subquery + reconcile batch-hydrate off-compose). .3/.8-Speech: cost resolved by .1, structural ACs are follow-ups. Remaining: .2 (RAG settings 24-handler re-derive), .6 (Console per-row/tick sqlite), .7 (MCP permission/workbench), .11 (Library widget small fixes), .12 (P2 grab-bag).
 <!-- SECTION:NOTES:END -->
