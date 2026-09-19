@@ -281,9 +281,27 @@ async def test_changed_entry_discards_pending_result_and_restores_retry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("display_name", "provider_id", "base_url", "model_id"),
+    [
+        (
+            "New live endpoint",
+            "custom-ep:new-live-endpoint",
+            "http://127.0.0.1:9999",
+            "live-served-model",
+        ),
+        pytest.param(
+            "Llama local 2",
+            "custom-ep:llama-local-2",
+            "http://127.0.0.1:9090",
+            r"E:\LLM-Models\Huihui-Qwen3.8-27B-abliterated-Q4_K.gguf",
+            id="reported-windows-crashes",
+        ),
+    ],
+)
 @private_profile_test
 async def test_create_endpoint_with_live_controller_rebase_settles(
-    request, monkeypatch
+    request, monkeypatch, display_name, provider_id, base_url, model_id
 ):
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
@@ -291,6 +309,7 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 
     calls = []
 
@@ -300,10 +319,12 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         calls.append(
             (
                 identity.custom_endpoint_id,
-                entry_for(app_config, "custom-ep:new-live-endpoint") is not None,
+                entry_for(app_config, provider_id) is not None,
             )
         )
-        return ProviderProbeResult("reachable", ("live-served-model",))
+        assert identity.provider_key == "llama_cpp"
+        assert identity.connection_identity == ("llama_cpp", base_url)
+        return ProviderProbeResult("reachable", (model_id,))
 
     monkeypatch.setattr(
         ChatScreen, "_test_console_connection", staticmethod(connection)
@@ -319,10 +340,8 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         modal.query_one("#console-settings-endpoint-new", Button).press()
         await pilot.pause()
         template = harness.screen
-        template.query_one("#endpoint-template-name", Input).value = "New live endpoint"
-        template.query_one(
-            "#endpoint-template-url", Input
-        ).value = "http://127.0.0.1:9999"
+        template.query_one("#endpoint-template-name", Input).value = display_name
+        template.query_one("#endpoint-template-url", Input).value = base_url
         await pilot.pause()
         template.query_one("#endpoint-template-create", Button).press()
         for _ in range(30):
@@ -332,13 +351,42 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         assert harness.screen is modal
         evidence = await _settled(modal, pilot)
         assert evidence.endpoint == "reachable"
-        assert evidence.model_ids == ("live-served-model",)
-        assert calls == [("custom-ep:new-live-endpoint", True)]
-        assert modal._current_model_value() == "live-served-model"
-        assert (
-            modal._current_draft_discovery_identity().provider_key
-            == "custom-ep:new-live-endpoint"
-        )
+        assert evidence.model_ids == (model_id,)
+        assert calls == [(provider_id, True)]
+        assert modal._current_model_value() == model_id
+        assert modal._current_draft_discovery_identity().provider_key == provider_id
+
+        # Creation persists the entry, but Cancel leaves the conversation on
+        # its original provider. Selecting the new entry must run the real
+        # quick-picker rebase before Apply commits the exact registry ID.
+        modal.query_one("#console-settings-cancel", Button).press()
+        await pilot.pause()
+        assert harness.screen is console
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert store.session_settings(session_id).provider == "llama_cpp"
+        await console.action_open_console_model_popover()
+        await pilot.pause()
+        quick = harness.screen
+        assert isinstance(quick, ConsoleModelPopover)
+        provider_select = quick.query_one("#console-popover-provider", Select)
+        provider_select.value = provider_id
+        await pilot.pause()
+        assert provider_select.value == provider_id
+        assert quick._draft.settings.provider == provider_id
+        picker = quick.query_one("#console-popover-model-search")
+        picker.set_model_value(model_id)
+        picker.post_message(picker.ModelSelected(model_id))
+        await pilot.pause()
+        apply = quick.query_one("#console-popover-apply", Button)
+        assert not apply.disabled
+        apply.press()
+        await pilot.pause()
+        assert harness.screen is console
+        settings = store.session_settings(session_id)
+        assert settings.provider == provider_id
+        assert settings.model == model_id
+        assert settings.base_url == base_url
 
 
 @pytest.mark.asyncio
