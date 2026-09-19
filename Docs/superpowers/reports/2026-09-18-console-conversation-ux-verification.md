@@ -141,3 +141,10 @@ bindings and their dialog also load only when invoked. The startup module census
 receipt service, affected controller binding, and Inspector loader checks passed:
 **38 passed**. The other boot guard tests passed (**19 passed**); the module-census
 failure from the earlier intermediate run is covered by this successful rerun.
+
+Diagnostic inventory review: the Inspector redesign removed two old
+`exchanges_loader` error statements (one per former turn view). Statement-level
+comparison against inventory pin `149acda36be` confirmed exactly two removals,
+zero additions, and no sink-topology change. Regenerated
+`Docs/security/production-diagnostic-inventory.json` to reflect those removals.
+The profile-owned path inventory also passes unchanged.
