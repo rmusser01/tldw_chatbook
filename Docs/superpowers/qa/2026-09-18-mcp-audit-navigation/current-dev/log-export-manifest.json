@@ -1,0 +1,25 @@
+{
+  "normalization": "Trailing whitespace and final blank lines only. Original logs retained in private run roots.",
+  "files": [
+    {
+      "path": "red-tests.txt",
+      "original_sha256": "ee6b85fb2172b54996c98523b04daa4f9b07347ffd91d6271295df164d6366fa",
+      "export_sha256": "e2d92355404cd45f52c3ab855458117dd0e2ce4dc8eebd23a45b9c391c47b2fe"
+    },
+    {
+      "path": "green-tests.txt",
+      "original_sha256": "70d80b897773848242de569b7590fb404acf079cf90484939d4986acd6ef876a",
+      "export_sha256": "70d80b897773848242de569b7590fb404acf079cf90484939d4986acd6ef876a"
+    },
+    {
+      "path": "adjacent-tests.txt",
+      "original_sha256": "f2bcd1038e9e4475e47c8e8a4b8faa65be0c545f722630fa78c8c6cfbf50f403",
+      "export_sha256": "995efcec1fbffc1b22e869842584e90efaa27319a67af0a024d8bd1080f3e67e"
+    },
+    {
+      "path": "setup-fix-tests.txt",
+      "original_sha256": "611fe19b1eeb1a137a9fe722a1480ecbd88e47e26b9205108bb2dbf99fef51c8",
+      "export_sha256": "611fe19b1eeb1a137a9fe722a1480ecbd88e47e26b9205108bb2dbf99fef51c8"
+    }
+  ]
+}

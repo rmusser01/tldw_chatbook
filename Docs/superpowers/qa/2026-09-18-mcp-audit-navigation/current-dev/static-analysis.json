@@ -1,0 +1,17 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": {
+    "baseline_count": 13,
+    "current_count": 13,
+    "same_diagnostics": true
+  },
+  "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+    "baseline_count": 65,
+    "current_count": 65,
+    "same_diagnostics": true
+  },
+  "Tests/UI/test_mcp_inspector.py": {
+    "baseline_count": 9,
+    "current_count": 9,
+    "same_diagnostics": true
+  }
+}

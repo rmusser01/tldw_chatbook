@@ -1,0 +1,263 @@
+{
+  "normalization": "UTF-8 text exports strip trailing line whitespace and end with one newline. Originals remain in the private profile.",
+  "files": [
+    {
+      "source": "/private/tmp/tldw-32837-red-001/pytest.log",
+      "export": "tests/red-001.txt",
+      "source_sha256": "4ea1bf6427dc2b8f7371a82e4c7e21f933e38fe04d2a21c7c5da6c552be04f22",
+      "export_sha256": "9931b7898c64fd1e6b158215f8a7e0252a885e8665f6191773dec3ecb967c1b5"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-green-001/pytest.log",
+      "export": "tests/green-001.txt",
+      "source_sha256": "936b2a08a643a1e82409b4f9d45e75a2d85fd3636bb73f9aa3a0a244c5ffe675",
+      "export_sha256": "936b2a08a643a1e82409b4f9d45e75a2d85fd3636bb73f9aa3a0a244c5ffe675"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-final-001/pytest.log",
+      "export": "tests/final-001.txt",
+      "source_sha256": "3fdab2944a1e94bd9b702e756a0752b87f9d117803a605dd9f7b3e41ae59d290",
+      "export_sha256": "3fdab2944a1e94bd9b702e756a0752b87f9d117803a605dd9f7b3e41ae59d290"
+    },
+    {
+      "source": "/private/tmp/32837-format.txt",
+      "export": "formatting.txt",
+      "source_sha256": "1b203e631681d3d3ceb28cf42958d750a2cda9606d69b6308799711d799606dd",
+      "export_sha256": "1b203e631681d3d3ceb28cf42958d750a2cda9606d69b6308799711d799606dd"
+    },
+    {
+      "source": "/private/tmp/mcp-audit-navigation-precommit-census.json",
+      "export": "precommit-census.json",
+      "source_sha256": "b9bc34ba22214cdd7d7c7ce806311ca879e7ebbbb696471aed27c59d7e5afc4c",
+      "export_sha256": "b9bc34ba22214cdd7d7c7ce806311ca879e7ebbbb696471aed27c59d7e5afc4c"
+    },
+    {
+      "source": "/private/tmp/32837-preflight.txt",
+      "export": "preflight.txt",
+      "source_sha256": "858244b7a87f3623cc4de540ccf48a66efd1b163e11d4b5c83af95ba7dadb608",
+      "export_sha256": "858244b7a87f3623cc4de540ccf48a66efd1b163e11d4b5c83af95ba7dadb608"
+    },
+    {
+      "source": "/private/tmp/32837-static.json",
+      "export": "static-analysis.json",
+      "source_sha256": "8db8fe35db673ab57a627085f18ca3c1b4cab05add6a1e3824998e547c1e33b8",
+      "export_sha256": "8db8fe35db673ab57a627085f18ca3c1b4cab05add6a1e3824998e547c1e33b8"
+    },
+    {
+      "source": "/private/tmp/32837-selected.txt",
+      "export": "selected-cases.txt",
+      "source_sha256": "e410bac0bee3851c548a4869e925d49def9892d5780a19543cf2f5bc510930e1",
+      "export_sha256": "e410bac0bee3851c548a4869e925d49def9892d5780a19543cf2f5bc510930e1"
+    },
+    {
+      "source": "/private/tmp/mcp-audit-navigation-allocation.json",
+      "export": "allocation-census.json",
+      "source_sha256": "d7f28d01752884899e747000eece8b4ddf709c2884b0513ce5b132f8912b3f9b",
+      "export_sha256": "d7f28d01752884899e747000eece8b4ddf709c2884b0513ce5b132f8912b3f9b"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/result.json",
+      "export": "native/result.json",
+      "source_sha256": "9e90176f538ee8f5254cd6f14036eea0744807093ca5bcba5fc01a82ffae500b",
+      "export_sha256": "9e90176f538ee8f5254cd6f14036eea0744807093ca5bcba5fc01a82ffae500b"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-missing-permissions.svg",
+      "export": "native/textual-dark-120x40-missing-permissions.svg",
+      "source_sha256": "95a70fbeec8805f39b4f11558086d6ff3a33ea63e259a0c47f25df7b78800c9c",
+      "export_sha256": "2a2d9d374614eb69118b5edee06de146483fdf62adf3a3417a8874ec9d963913"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-missing-permissions.txt",
+      "export": "native/textual-dark-120x40-missing-permissions.txt",
+      "source_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82",
+      "export_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-missing-tools.svg",
+      "export": "native/textual-dark-120x40-missing-tools.svg",
+      "source_sha256": "adaa64f4aeb9eecb71306fd681f980ca51a5bc246bcf33d8b5c90a59feb7f63a",
+      "export_sha256": "a20b77ea9d252b48f58bd7f6d292a44fa71ff9988f6d12c29e6306c3eab953e0"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-missing-tools.txt",
+      "export": "native/textual-dark-120x40-missing-tools.txt",
+      "source_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82",
+      "export_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-permissions.svg",
+      "export": "native/textual-dark-120x40-permissions.svg",
+      "source_sha256": "2bcdda410e6b7cc1c1404f2d5b8dab0c80d745fd87944fdc516f4aa80d7c8571",
+      "export_sha256": "179cf57b0700ed82a5837fa5a6c2d1fab955f4f32180d88aa9653b34bb41ee21"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-permissions.txt",
+      "export": "native/textual-dark-120x40-permissions.txt",
+      "source_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19",
+      "export_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-tools.svg",
+      "export": "native/textual-dark-120x40-tools.svg",
+      "source_sha256": "476534c33f762dedf0f6d8bb05d8809171a98b65562329dc8369d01809f68b94",
+      "export_sha256": "a02a328fc875c0be36e3c0858a805720cc2fccde5d47d2a3fd015862a4f72167"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-120x40-tools.txt",
+      "export": "native/textual-dark-120x40-tools.txt",
+      "source_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6",
+      "export_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-missing-permissions.svg",
+      "export": "native/textual-dark-170x48-missing-permissions.svg",
+      "source_sha256": "d2212a06eb13097649bcd6d9d568245fd15c28600fb78969210d858ef3ab6c2a",
+      "export_sha256": "dd85e58b5334723542803923d38b3d7b31c7bbf1bb23b7a18183f29dd17a8aa4"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-missing-permissions.txt",
+      "export": "native/textual-dark-170x48-missing-permissions.txt",
+      "source_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5",
+      "export_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-missing-tools.svg",
+      "export": "native/textual-dark-170x48-missing-tools.svg",
+      "source_sha256": "70e2733e79ff4bb77c4a44663181abd7999d0cad1a3408cd43e190ce55116466",
+      "export_sha256": "39519d95e0460c98aa6fa881b18a89b661cd1d5b3f436564aa26fdfe0259a9d3"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-missing-tools.txt",
+      "export": "native/textual-dark-170x48-missing-tools.txt",
+      "source_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5",
+      "export_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-permissions.svg",
+      "export": "native/textual-dark-170x48-permissions.svg",
+      "source_sha256": "9fbef6a37cbf74b7bac85e46c894e80aa333f05acd5e69bb3a34d6976d81eb89",
+      "export_sha256": "106fc4d2b478ed212ed997c3c6e887d98b59816ee7c21af453e89e301227d39f"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-permissions.txt",
+      "export": "native/textual-dark-170x48-permissions.txt",
+      "source_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f",
+      "export_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-tools.svg",
+      "export": "native/textual-dark-170x48-tools.svg",
+      "source_sha256": "365105296833b2313c9e4b4500e98a496f8f6924f6b9c03ebd7e7c07261490c0",
+      "export_sha256": "0862f8587f993bd7c12f989055d76aa71f4a0abc1cdddf429a00dda4175342b4"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-dark-170x48-tools.txt",
+      "export": "native/textual-dark-170x48-tools.txt",
+      "source_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55",
+      "export_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-missing-permissions.svg",
+      "export": "native/textual-light-120x40-missing-permissions.svg",
+      "source_sha256": "2a5079b07db68b71639479dadafe6a472939643809dc398550b478a1afa9f616",
+      "export_sha256": "dff0179e3f7ec33d4b59944db6297c5448e93ce5142c1ce6bb8645641e964441"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-missing-permissions.txt",
+      "export": "native/textual-light-120x40-missing-permissions.txt",
+      "source_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82",
+      "export_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-missing-tools.svg",
+      "export": "native/textual-light-120x40-missing-tools.svg",
+      "source_sha256": "57f6976aa97fc18d4184ea0c6ba282a3a8ac93365ae5097041fde4e41c34238b",
+      "export_sha256": "a6a12d496f2f0f2259dddfb41f8ab5215fbb4a50790baec529d9f58f4eda0e9c"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-missing-tools.txt",
+      "export": "native/textual-light-120x40-missing-tools.txt",
+      "source_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82",
+      "export_sha256": "49baba474599102bcd2e472f5f476f49e28a1d681726f27e35cb0196840bbd82"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-permissions.svg",
+      "export": "native/textual-light-120x40-permissions.svg",
+      "source_sha256": "b244d43fa365e643d371eb93bbeb625c79f890c35f9e7233bf25f5d50bd69ff4",
+      "export_sha256": "f5cd20e599f03850b0642fd530d41436575564c4b79eb8ea56856fba7d9f2724"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-permissions.txt",
+      "export": "native/textual-light-120x40-permissions.txt",
+      "source_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19",
+      "export_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-tools.svg",
+      "export": "native/textual-light-120x40-tools.svg",
+      "source_sha256": "989550fdc507d5441552372bdbb5c0654a8bebc58eddcc50f9928b1ce5185c1c",
+      "export_sha256": "54e013580f561d2e511f39281ec8055dfe488e4aa2869e2ee70f2e98f6efb37b"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-120x40-tools.txt",
+      "export": "native/textual-light-120x40-tools.txt",
+      "source_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6",
+      "export_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-missing-permissions.svg",
+      "export": "native/textual-light-170x48-missing-permissions.svg",
+      "source_sha256": "acd368bc63fd5fd015cc87779fd3ca594ecd12e58492fb5eae6e112ea0c94532",
+      "export_sha256": "c0c2469c920ef070af3309f2835484634c22dced49a65e6701a214342891b552"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-missing-permissions.txt",
+      "export": "native/textual-light-170x48-missing-permissions.txt",
+      "source_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5",
+      "export_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-missing-tools.svg",
+      "export": "native/textual-light-170x48-missing-tools.svg",
+      "source_sha256": "7c127f4c5bc5b739e79f37fecb2414d84a81cd8b639cb2cc3a076dd0bb1318d6",
+      "export_sha256": "402e9e159465308522ff7d567d8b6e5480143be5330055e2f68308bc4fd31040"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-missing-tools.txt",
+      "export": "native/textual-light-170x48-missing-tools.txt",
+      "source_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5",
+      "export_sha256": "01e991f72c27572d24f5987a963e7a2c3004d4842b8bde00dec46f5d760748a5"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-permissions.svg",
+      "export": "native/textual-light-170x48-permissions.svg",
+      "source_sha256": "ed19620b17f9a69c66512d314ef1c81d8d658b2e94498a9fb6d76b4d2c16b539",
+      "export_sha256": "d9e9b37040425578ab28e98a1ded29c2861419dfbc620a143c08edabac60bada"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-permissions.txt",
+      "export": "native/textual-light-170x48-permissions.txt",
+      "source_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f",
+      "export_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-tools.svg",
+      "export": "native/textual-light-170x48-tools.svg",
+      "source_sha256": "d1d2960e9680e4c90cbca70c5f4da75280dba9abcfbe51bc374a32672eb37f7f",
+      "export_sha256": "637b9b1c360066d8bc32ee33d2b64e78dba667c3cc92e0bf0c7c3816f5f5d3d8"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/evidence/textual-light-170x48-tools.txt",
+      "export": "native/textual-light-170x48-tools.txt",
+      "source_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55",
+      "export_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55"
+    },
+    {
+      "source": "/private/tmp/tldw-32837-native-001/lifecycle.json",
+      "export": "lifecycle.json",
+      "source_sha256": "0eb37fdcc2635fd120bd6f554b059b84aad8547b5aa4bd63d75e8727608044c1",
+      "export_sha256": "0eb37fdcc2635fd120bd6f554b059b84aad8547b5aa4bd63d75e8727608044c1"
+    }
+  ]
+}

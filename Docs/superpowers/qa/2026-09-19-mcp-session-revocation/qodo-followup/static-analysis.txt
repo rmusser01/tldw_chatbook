@@ -1,0 +1,3 @@
+ruff check: all checks passed (native_runner_args.py, native_check.py, test_mcp_native_qa_args.py).
+ruff format --check: 3 files already formatted.
+git diff --check: passed.

@@ -9,12 +9,12 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
+from Tests.private_profile import private_profile_test
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
-
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
@@ -38,7 +38,8 @@ from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import PermissionProfileContext
 
 
-def test_profile_scoped_inspector_requests_preserve_captured_context():
+@private_profile_test
+def test_profile_scoped_inspector_requests_preserve_captured_context(request):
     context = PermissionProfileContext("research", 7, "b" * 64, 3)
 
     preview_request = MCPInspector.ToolTestPreviewRequested(
@@ -4977,7 +4978,10 @@ def _audit_entry() -> dict[str, Any]:
         ("mcp-audit-adjust-permission", MCPInspector.AuditAdjustPermissionRequested),
     ],
 )
-async def test_audit_actions_preserve_captured_profile_context(button_id, event_type):
+@private_profile_test
+async def test_audit_actions_preserve_captured_profile_context(
+    request, button_id, event_type
+):
     app = InspectorApp()
     context = PermissionProfileContext("research", 7, "b" * 64, 3)
     async with app.run_test(size=(100, 60)) as pilot:

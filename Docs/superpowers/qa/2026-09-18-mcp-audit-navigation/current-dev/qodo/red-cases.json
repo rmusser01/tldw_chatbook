@@ -1,0 +1,12 @@
+[
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]",
+    "outcome": "failed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_audit_navigation",
+    "name": "test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]",
+    "outcome": "failed"
+  }
+]

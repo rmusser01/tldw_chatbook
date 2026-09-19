@@ -1,0 +1,6 @@
+Internal requesting-code-review: /root/mcp_server_action_review
+Base: 6de5273903b11557022147d392e67e487d6dc959. Reviewed bounded uncommitted TASK-32866 diff.
+
+Round 1: P2 retry rebuilt the rendered fingerprint from mutable schema. Reproduced for failed retry and session-list refresh (red-004, two failures); preserve original hash through cached rebuilds.
+Round 2: the same issue existed after successful Remove completed its delayed matrix sync. Reproduced (red-005, one failure); guarded show_permission now preserves the fingerprint after its locked view check.
+Final review: No remaining concrete blockers. Retry, session refresh and guarded successful completion preserve the original fingerprint; fresh selections capture a new one. Regression covers all three refresh paths. Read-only reviewer; no tests/apps run by reviewer.

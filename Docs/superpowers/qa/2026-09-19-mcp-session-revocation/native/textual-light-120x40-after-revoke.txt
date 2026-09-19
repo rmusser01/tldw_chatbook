@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││  Block all tool calls in chat: Off ▸                ││                               │
+│ Source                       ││  Also blocks the app's own built-in tools           ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  (calculator, date/time, file and note tools).      ││  Why · Off — enable it to     │
+│ ▊  Local                ▼  ▎ ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││  let MCP clients use          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││ ▊  Filter tool or server…                        ▎  ││  chatbook's tools.            │
+│                              ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││  Add server                   │
+│ Servers                      ││  Tool                           State             ▄ ││  calculator — Built-in        │
+│  ◦ off · ⌂ built-in          ││  n_sources                                          ││  (agent runtime)              │
+│    All servers               ││    web_crawl                    Ask                 ││  Permission: Ask              │
+│  ◦ ⌂ tldw_chatbook (bu…      ││    web_fetch                    Ask                 ││                               │
+│                              ││    web_search                   Ask                 ││  From this tool's override.   │
+│                              ││  Server default — Virtual CLI   Ask                 ││                               │
+│                              ││  (read-only)                                        ││  Session approvals            │
+│                              ││    cat                          Ask                 ││                               │
+│                              ││    find                         Ask                 ││  agent:builtin ·              │
+│                              ││    git_blame                    Ask                 ││  get_current_datetime         │
+│                              ││    git_branches                 Ask                 ││      Revoke                   │
+│                              ││    git_diff                     Ask                 ││    Advanced…                  │
+│                              ││    git_log                      Ask                 ││                               │
+│                              ││    git_status                   Ask                 ││                               │
+│                              ││    grep                         Ask                 ││                               │
+│                              ││    ls                           Ask             ▆▆  ││                               │
+│                              ││    stat                         Ask                 ││                               │
+│                              ││  Server default — Built-in      Allow               ││                               │
+│                              ││  (agent runtime)                                    ││                               │
+│                              ││    calculator                   Ask •           ▂▂  ││                               │
+│                              ││                                         ▌           ││                               │
+│                              ││ tldw_chatbook: 0 allow · 30 ask · 0 off — global    ││                               │
+│                              ││ default: ask                                        ││                               │
+│                              ││ • override · ⚠ definition changed · ⚑ high-risk     ││                               │
+│                              ││ floor · ≡ exact-input allows · (session) approved   ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 · F6 · Ctrl+P · Ctrl+Q

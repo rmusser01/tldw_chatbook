@@ -285,6 +285,11 @@ $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
+/* Modal wide-tier caps (2026-09-19 rollout): the 150/170 rungs of the
+   cap ladder in the repo-wide tier block in
+   components/_agentic_terminal.tcss (120 already on the scale). */
+$ds-size-150: 150;
+$ds-size-170: 170;
 $ds-percent-34: 34%;
 /* task 11 (ADR-161 §3.10): 25%/30%/40%/50% join the scale -- cross-sheet
    recurring fills/caps (coding/embeddings/ingest, conversations/sidebars/
