@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││             Local workspace, web, and Watchlists tools: on ▸              ││                                             │
+│ Source                                     ││  Available by default. Calls still follow Ask, Allow, or Off              ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  permissions.                                                             ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root      ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊  Workspace root (blank uses the app folder)         ▎                  ││  Add server                                 │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                  ││  watchlists_update_collection_sources —     │
+│ Servers                                    ││  Changes apply to the next Console agent run.                             ││  Local workspace, web, and Watchlists       │
+│  ◦ off (opt-in) · ⌂ built-in               ││                                                                           ││  Atomically add or remove up to 100         │
+│     All servers                            ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││  canonical source memberships from one      │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││  ▊  Filter tools…                          ▎▊  All servers          ▼  ▎  ││  local Watchlists collection.               │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││  Tags: mutates                              │
+│                                            ││                                                                           ││                                             │
+│                                            ││  Tool                                  State  Server                      ││  Parameters: form                           │
+│                                            ││  fs_glob                               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  fs_grep                               Ask    Local workspace, web, a…    ││  Tool testing is unavailable from this      │
+│                                            ││  fs_list                               Ask    Local workspace, web, a…    ││  policy view.                               │
+│                                            ││  fs_patch                              Ask    Local workspace, web, a…    ││  watchlists_update_collection_sources —     │
+│                                            ││  fs_read                               Ask    Local workspace, web, a…    ││  Local workspace, web, and Watchlists       │
+│                                            ││  fs_write                              Ask    Local workspace, web, a…    ││  Permission: Ask                            │
+│                                            ││  git_blame                             Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  git_branches                          Ask    Local workspace, web, a…    ││  Inherited from the global default.         │
+│                                            ││  git_diff                              Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  git_log                               Ask    Local workspace, web, a…    ││  Change in Permissions                      │
+│                                            ││  git_status                            Ask    Local workspace, web, a… ▆▆ ││    Advanced…                                │
+│                                            ││  watchlists_check_sources              Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_create_collection          Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_create_sources             Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_generate_briefing          Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_get_briefing               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_get_item                   Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_get_operation_status       Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_get_operations_status      Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_list_briefings             Ask    Local workspace, web, a… ▁▁ ││                                             │
+│                                            ││  watchlists_list_collections           Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_list_sources               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_search_items               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_set_briefing_schedule      Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_update_collection_sources  Ask    Local workspace, web, a…    ││                                             │
+│                                            ││                                                          ▍                ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

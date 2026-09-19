@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+19.51s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_saved_background_reaches_existing_console_and_stops[False]
+18.32s call     Tests/UI/test_settings_console_context_effects_journeys.py::test_saved_background_reaches_existing_console_and_stops[True]
+
+(4 durations < 1s hidden.)
+2 passed, 11 deselected in 39.78s

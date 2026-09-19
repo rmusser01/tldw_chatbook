@@ -1,0 +1,28 @@
+Before focus repair: 16 failed, 3 passed.
+
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-import]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-export]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-edit]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-bind]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-remove]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-import]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-export]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-edit]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-bind]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-remove]
+FAILED Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[missing]
+FAILED Tests/UI/test_tool_profile_focus.py::test_disappearing_action_has_a_safe_visible_continuation[disabled]
+FAILED Tests/UI/test_tool_profile_focus.py::test_overlapping_renders_finish_teardown_and_keep_latest_listing
+FAILED Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[import]
+FAILED Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[export]
+FAILED Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[remove]
+16 failed, 3 passed in 89.71s (0:01:29)
+
+After focus repair, before compact layout repair: 3 failed, 28 passed.
+All three failures were full-visibility assertions for Remove (width 10, clipped to 8).
+The 12 pre-existing action/loading lifecycle cases passed in this run.
+
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[same-remove]
+FAILED Tests/UI/test_tool_profile_focus.py::test_profile_refresh_keeps_the_same_action_identity[reorder-remove]
+FAILED Tests/UI/test_tool_profile_focus.py::test_cancel_returns_to_the_invoking_profile_action[remove]
+3 failed, 28 passed in 107.60s (0:01:47)

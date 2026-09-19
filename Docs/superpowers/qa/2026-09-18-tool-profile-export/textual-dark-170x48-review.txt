@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Tool Profiles
+┌──────────────────────────────┐  │  ┌─▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎─┐  │  ┌──────────────────────────────┐
+│                              │  │  │ ▊                                                                                          ▎ │  │  │                              │
+│  Filter categories (/)       │  │  │ ▊                                                                                          ▎ │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │ ▊  Review Tool Pack export                                                                 ▎ │  │  │                              │
+│  category search             │  │  │ ▊                                                                                          ▎ │  │  │ Selected category: Tool      │
+│                              │  │  │ ▊  Identity                                                                                ▎ │  │  │ Profiles                     │
+│  Core                        │  │  │ ▊  Profile: native-export · revision local snapshot                                        ▎ │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ ▊  Policy digest: 08163ece4308a41131ea5e70dc9c47beb7ed36653c128dab8386cb598102e4ea         ▎ │  │  │  Reviewed actions: imports   │
+│     Providers & Models       │  │  │ ▊  Name: native-export                                                                     ▎ │  │  │  stay unbound, exports       │
+│     Web Search               │  │  │ ▊  Suggested id: native-export                                                             ▎ │  │  │  publish an exact snapshot,  │
+│     Speech & TTS             │  │  │ ▊  Producer: tldw_chatbook 1                                                               ▎ │  │  │  and policy editing opens    │
+│  Interface                   │  │  │ ▊  Content digest: b027ed1c2861bf2958e19905add290a8f4940131c8952740178178583ecf21b1        ▎ │  │  │  MCP Permissions.            │
+│     Appearance               │  │  │ ▊                                                                                          ▎ │  │  │ Local-only: saves write your │
+│     Theme                    │  │  │ ▊  Portable policy                                                                         ▎ │  │  │ config file.                 │
+│     Splash Screen            │  │  │ ▊  Fallback · builtin/agent:builtin: Ask                                                   ▎ │  │  │ Impact and boundaries        │
+│     Console Behavior         │  │  │ ▊  Fallback · mcp/*: Ask                                                                   ▎ │  │  │ Import, export, review,      │
+│  Data & Privacy              │  │  │ ▊  Fallback · mcp/builtin:tldw_chatbook: Ask                                               ▎ │  │  │ bind, and remove portable    │
+│     Storage                  │  │  │ ▊  Fallback · mcp/local:__local__: Ask                                                     ▎ │  │  │ tool permission profiles.    │
+│     Workspaces               │  │  │ ▊  Fallback · mcp/local:__virtual_cli__: Ask                                               ▎ │  │  │  Runtime owner:              │
+│   > Tool Profiles            │  │  │ ▊  Allow 2 · Ask 82 · Deny 0                                                               ▎ │  │  │  ToolPackService             │
+│     Privacy & Security       │  │  │ ▊  Omitted Ask/Allow: 0                                                                    ▎ │  │  │  (immediate reviewed         │
+│     Network                  │  │  │ ▊  Pending Denies: 0                                                                       ▎ │  │  │  actions)                    │
+│     My Profile               │  │  │ ▊  Inventory digest: c25130bae4b93edc0cb1c881fb2d3ffa32d0cccd1e82f557fe3285e5bce4f5f9      ▎ │  │  │                              │
+│  Troubleshooting             │  │  │ ▊                                                                                          ▎ │  │  │  Writes allowed: Yes         │
+│     Diagnostics (view)       │  │  │ ▊  Excluded                                                                                ▎ │  │  │                              │
+│     About (view)             │  │  │ ▊  display_only_server_source: 0                                                           ▎ │  │  │  Owns: MCP                   │
+│     Agents                   │  │  │ ▊  library_capability: 0                                                                   ▎ │  │  │  permission-store Tool       │
+│  Expert                      │  │  │ ▊  managed_skill_approval: 0                                                               ▎ │  │  │  profiles                    │
+│     Internal Prompts         │  │  │ ▊  runtime_orchestration: 0                                                                ▎ │  │  │  portable Tool Pack import   │
+│     Advanced Config          │  │  │ ▊  skills: 0                                                                               ▎ │  │  │  receipts                    │
+│   Domain Defaults ▸ (11)     │  │  │ ▊                                                                                          ▎ │  │  │                              │
+│                              │  │  │ ▊  Export boundary                                                                         ▎ │  │  │  Affected data: local Tool   │
+│                              │  │  │ ▊  This archive contains permission policy only. It does not include or install tools,  ▇  ▎ │  │  │  policy profiles and         │
+│                              │  │  │ ▊                                                                                          ▎ │  │  │  portable Tool Pack          │
+│                              │  │  │ ▊                                                          Cancel     Choose destination   ▎ │  │  │  receipts                    │
+│                              │  │  │ ▊                                                                                          ▎ │  │  │                              │
+│                              │  │  │ ▊                                                                                          ▎ │  │  │  Recovery: re-inspect        │
+│                              │  │  │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  imports, keep profiles      │
+│                              │  │  │                                                                                              │  │  │ ▼ more — scroll the          │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+ Review and export this profile without tool binaries.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

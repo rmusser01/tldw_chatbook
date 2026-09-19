@@ -162,9 +162,44 @@ FileSave.-compact InputBar Input {
     align: center middle;
 }
 
+/* Explicit button-group alignment wins over the dialog's centered default. */
+.dialog-buttons.button-group-left {
+    align-horizontal: left;
+}
+
+.dialog-buttons.button-group-right {
+    align-horizontal: right;
+}
+
 .dialog-buttons Button {
     margin: $ds-space-0 $ds-space-inline;
     min-width: $ds-size-12;
+}
+
+/* Roleplay partial-save recovery shares the modal title/action grammar.
+   Keep the failed-domain list and both choices visible at 52x20. */
+RoleplayDraftRecoveryDialog {
+    align: center middle;
+}
+
+#roleplay-draft-recovery-dialog {
+    width: $ds-size-64;
+    max-width: $ds-percent-96;
+    height: auto;
+    max-height: $ds-height-full;
+    border: tall $ds-control-edge;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#roleplay-draft-recovery-dialog .dialog-title {
+    color: $ds-text-primary;
+}
+
+#roleplay-draft-recovery-domains {
+    color: $ds-text-primary;
+    margin-bottom: $ds-space-stack;
 }
 
 /* TASK-32655: trust dialogs share the application surface and readable
@@ -229,4 +264,17 @@ Button#skill-trust-bootstrap-submit {
     min-width: $ds-size-10;
     height: $ds-control-height;
     min-height: $ds-control-height;
+}
+
+/* TASK-32773: shared creation dialog follows the current theme. Keep token
+   rules in the app sheet: the consolidated widget-defaults source has its
+   own variable scope. Python retains the matching standalone fallback. */
+WorkspaceCreateModal #workspace-create-modal {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: tall $ds-control-edge;
+}
+
+WorkspaceCreateModal #workspace-create-error {
+    color: $ds-status-error-readable;
 }

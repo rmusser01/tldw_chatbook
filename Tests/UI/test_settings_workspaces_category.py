@@ -4,15 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.Workspaces import (
-    ChangeReviewCapability,
-    ChangeReviewConsent,
-    ChangeReviewState,
-    ChangeReviewStatus,
-    RootReadiness,
-    RootReadinessState,
-)
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
@@ -21,6 +13,15 @@ from Tests.UI.test_settings_configuration_hub import (
     _settle_settings_mount_storm,
     _visible_text,
     _wait_for_selector,
+)
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Workspaces import (
+    ChangeReviewCapability,
+    ChangeReviewConsent,
+    ChangeReviewState,
+    ChangeReviewStatus,
+    RootReadiness,
+    RootReadinessState,
 )
 
 
@@ -39,7 +40,8 @@ async def _wait_for_settings_screen(app, pilot) -> SettingsScreen:
 
 
 @pytest.mark.asyncio
-async def test_workspaces_category_registered_and_immediate() -> None:
+@private_profile_test
+async def test_workspaces_category_registered_and_immediate(request) -> None:
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -55,7 +57,8 @@ async def test_workspaces_category_registered_and_immediate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_rename_archive_unarchive_flow() -> None:
+@private_profile_test
+async def test_create_rename_archive_unarchive_flow(request) -> None:
     from unittest.mock import patch
 
     from textual.widgets import Button, Checkbox, Input
@@ -128,12 +131,16 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                     break
                 await pilot.pause(0.01)
             else:
-                pytest.fail("Renamed workspace card did not mount a replacement rename input")
+                pytest.fail(
+                    "Renamed workspace card did not mount a replacement rename input"
+                )
             assert candidates[0] is not rename_input
             assert registry.get_workspace(workspace_id).name == "Client Y"
 
             # Duplicate rename surfaces inline, not as a crash.
-            screen.query_one("#settings-workspace-rename-input", Input).value = "Default"
+            screen.query_one(
+                "#settings-workspace-rename-input", Input
+            ).value = "Default"
             screen.query_one("#settings-workspace-rename-apply", Button).press()
             for _ in range(200):
                 if "already exists" in _visible_text(screen):
@@ -184,7 +191,9 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                 await pilot.pause(0.01)
             else:
                 pytest.fail("Archived workspace remained in the active workspace list")
-            screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
+            screen.query_one(
+                "#settings-workspaces-show-archived", Checkbox
+            ).value = True
             await _wait_for_selector(
                 screen,
                 pilot,
@@ -207,7 +216,10 @@ async def test_create_rename_archive_unarchive_flow() -> None:
 
 
 @pytest.mark.asyncio
-async def test_activation_failure_surfaces_inline_but_creates_workspace() -> None:
+@private_profile_test
+async def test_activation_failure_surfaces_inline_but_creates_workspace(
+    request,
+) -> None:
     """TASK-17962: ``set_active_workspace`` raising after a successful
     create on the Settings surface must not crash the handler -- the
     failure shows up inline (``#settings-workspaces-result``) while the
@@ -269,7 +281,8 @@ async def test_activation_failure_surfaces_inline_but_creates_workspace() -> Non
 
 
 @pytest.mark.asyncio
-async def test_compact_overview_keeps_a_painted_recovery_action() -> None:
+@private_profile_test
+async def test_compact_overview_keeps_a_painted_recovery_action(request) -> None:
     """The full Settings app keeps one real action above the compact fold."""
     from unittest.mock import patch
 
@@ -285,19 +298,25 @@ async def test_compact_overview_keeps_a_painted_recovery_action() -> None:
             await _wait_for_selector(
                 screen,
                 pilot,
-                "#settings-open-appearance",
+                "#settings-overview-open-providers-models",
             )
-            action = screen.query_one("#settings-open-appearance", Button)
+            # The compact inspector (including Theme) is intentionally hidden;
+            # the Overview's own recovery action remains keyboard reachable.
+            action = screen.query_one(
+                "#settings-overview-open-providers-models", Button
+            )
+            await pilot.pause()
             assert 0 <= action.region.y < action.region.bottom <= 32
             painted_row = "".join(
                 segment.text
                 for segment in screen._compositor.render_strips()[action.region.y]
             )
-            assert "Theme" in painted_row
+            assert "Open Providers & Models" in painted_row
 
 
 @pytest.mark.asyncio
-async def test_default_workspace_card_is_protected() -> None:
+@private_profile_test
+async def test_default_workspace_card_is_protected(request) -> None:
     from textual.widgets import Button
 
     app = _build_test_app()
@@ -318,7 +337,8 @@ async def test_default_workspace_card_is_protected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_archived_workspace_card_offers_only_unarchive() -> None:
+@private_profile_test
+async def test_archived_workspace_card_offers_only_unarchive(request) -> None:
     """Finding 3: an archived workspace's card must not offer controls that
 
     fail with a bare-id error against an archived (currently invisible)
@@ -349,12 +369,16 @@ async def test_archived_workspace_card_offers_only_unarchive() -> None:
         assert not screen.query("#settings-workspace-folder-add")
         assert screen.query_one("#settings-workspace-unarchive", Button)
         assert (
-            "Archived workspace. Restore to list it again; your active workspace stays unchanged." in _visible_text(screen)
+            "Archived workspace. Restore to list it again; your active workspace stays unchanged."
+            in _visible_text(screen)
         )
 
 
 @pytest.mark.asyncio
-async def test_folder_bindings_add_toggle_remove_and_inline_errors(tmp_path) -> None:
+@private_profile_test
+async def test_folder_bindings_add_toggle_remove_and_inline_errors(
+    request, tmp_path
+) -> None:
     from textual.widgets import Button, Input
 
     app = _build_test_app()
@@ -378,6 +402,10 @@ async def test_folder_bindings_add_toggle_remove_and_inline_errors(tmp_path) -> 
         assert len(bindings) == 1
         binding = bindings[0]
         assert binding.metadata["access"] == "ro"
+        # The committed registry value can precede the replacement card.
+        await _wait_for_selector(
+            screen, pilot, f"#settings-workspace-folder-{binding.binding_id}"
+        )
         assert "[ro]" in _visible_text(screen)
 
         # Toggle to rw.
@@ -404,7 +432,8 @@ async def test_folder_bindings_add_toggle_remove_and_inline_errors(tmp_path) -> 
 
 
 @pytest.mark.asyncio
-async def test_pane_refreshes_after_external_registry_change() -> None:
+@private_profile_test
+async def test_pane_refreshes_after_external_registry_change(request) -> None:
     from textual.widgets import Button
 
     app = _build_test_app()
@@ -423,14 +452,19 @@ async def test_pane_refreshes_after_external_registry_change() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_refreshes_workspaces_pane_only_when_active(monkeypatch) -> None:
+@private_profile_test
+async def test_resume_refreshes_workspaces_pane_only_when_active(
+    request, monkeypatch
+) -> None:
     refresh_calls = 0
 
     def fake_refresh(self):
         nonlocal refresh_calls
         refresh_calls += 1
 
-    monkeypatch.setattr(SettingsScreen, "_refresh_settings_workspaces_pane", fake_refresh)
+    monkeypatch.setattr(
+        SettingsScreen, "_refresh_settings_workspaces_pane", fake_refresh
+    )
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -451,7 +485,8 @@ async def test_resume_refreshes_workspaces_pane_only_when_active(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_scope_inspector_shows_immediate_actions_not_read_only() -> None:
+@private_profile_test
+async def test_scope_inspector_shows_immediate_actions_not_read_only(request) -> None:
     """Finding 1: Workspaces is an immediate-apply category, not read-only.
 
     The Scope Inspector impact pane (and the ``s`` Save-shortcut toast, both
@@ -475,7 +510,8 @@ async def test_scope_inspector_shows_immediate_actions_not_read_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_overview_pins_workspaces_recovery_copy() -> None:
+@private_profile_test
+async def test_overview_pins_workspaces_recovery_copy(request) -> None:
     """Finding 2 (spec §6): Overview must point users at Settings > Workspaces.
 
     Cross-surface copy pin -- Settings Overview's "Where changes happen"
@@ -498,7 +534,8 @@ async def test_overview_pins_workspaces_recovery_copy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
+@private_profile_test
+async def test_change_review_toggle_flips_and_persists(request, tmp_path) -> None:
     """A new workspace is opt-in and discloses retained file contents."""
     from textual.widgets import Button
 
@@ -521,21 +558,20 @@ async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
         assert "file contents" in text
         assert "30 days" in text
         assert "does not erase existing history" in text
-        screen.query_one(
-            "#settings-workspace-change-review-toggle", Button
-        ).press()
+        screen.query_one("#settings-workspace-change-review-toggle", Button).press()
         await pilot.pause(0.3)
         assert registry.change_review_enabled("ws-cr") is True
         assert "Tracking enabled" in _visible_text(screen)
-        screen.query_one(
-            "#settings-workspace-change-review-toggle", Button
-        ).press()
+        screen.query_one("#settings-workspace-change-review-toggle", Button).press()
         await pilot.pause(0.3)
         assert registry.change_review_enabled("ws-cr") is False
 
 
 @pytest.mark.asyncio
-async def test_change_review_stale_toggle_reports_conflict_and_refreshes() -> None:
+@private_profile_test
+async def test_change_review_stale_toggle_reports_conflict_and_refreshes(
+    request,
+) -> None:
     """A stale rendered intent never inverts a newer external decision."""
     from textual.widgets import Button
 
@@ -564,7 +600,8 @@ async def test_change_review_stale_toggle_reports_conflict_and_refreshes() -> No
 
 
 @pytest.mark.asyncio
-async def test_change_review_unavailable_consent_has_no_toggle() -> None:
+@private_profile_test
+async def test_change_review_unavailable_consent_has_no_toggle(request) -> None:
     """An unreadable registry state fails off with honest copy."""
     from textual.widgets import Button
 
@@ -585,17 +622,18 @@ async def test_change_review_unavailable_consent_has_no_toggle() -> None:
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
-        screen.query_one(
-            "#settings-workspace-row-ws-unavailable", Button
-        ).press()
+        screen.query_one("#settings-workspace-row-ws-unavailable", Button).press()
         await pilot.pause(0.2)
 
         assert "state could not be read" in _visible_text(screen)
-        assert not screen.query("#settings-workspace-change-review-toggle")
+        assert not screen.query_one("#settings-workspace-change-review-toggle").display
 
 
 @pytest.mark.asyncio
-async def test_change_review_failed_root_offers_one_retry_without_paths() -> None:
+@private_profile_test
+async def test_change_review_failed_root_offers_one_retry_without_paths(
+    request,
+) -> None:
     """Failed preparation stays non-blocking and exposes a bounded retry."""
     from textual.widgets import Button
 
@@ -641,7 +679,8 @@ async def test_change_review_failed_root_offers_one_retry_without_paths() -> Non
 
 
 @pytest.mark.asyncio
-async def test_change_review_preparing_is_explicitly_non_blocking() -> None:
+@private_profile_test
+async def test_change_review_preparing_is_explicitly_non_blocking(request) -> None:
     """Preparation copy never implies that chat is waiting for the scan."""
     from textual.widgets import Button
 
@@ -675,11 +714,12 @@ async def test_change_review_preparing_is_explicitly_non_blocking() -> None:
         text = _visible_text(screen)
         assert "Preparing change history" in text
         assert "background; chat and tools continue" in text
-        assert not screen.query("#settings-workspace-change-review-retry")
+        assert not screen.query_one("#settings-workspace-change-review-retry").display
 
 
 @pytest.mark.asyncio
-async def test_change_review_git_absent_shows_honest_copy(monkeypatch) -> None:
+@private_profile_test
+async def test_change_review_git_absent_shows_honest_copy(request, monkeypatch) -> None:
     """TASK-1979 AC#2: no git — the row states the reason, no dead toggle."""
     from textual.widgets import Button
 
@@ -687,9 +727,7 @@ async def test_change_review_git_absent_shows_honest_copy(monkeypatch) -> None:
 
     # Narrow seam: shutil is a shared module object — patching its `which`
     # breaks unrelated services (file-notes git calls it with path=).
-    monkeypatch.setattr(
-        ct.ShadowRepoService, "available", property(lambda self: False)
-    )
+    monkeypatch.setattr(ct.ShadowRepoService, "available", property(lambda self: False))
     app = _build_test_app()
     registry = app.workspace_registry_service
     registry.create_workspace(workspace_id="ws-nogit", name="NoGit WS")
@@ -701,15 +739,16 @@ async def test_change_review_git_absent_shows_honest_copy(monkeypatch) -> None:
         screen.query_one("#settings-workspace-row-ws-nogit", Button).press()
         await pilot.pause(0.2)
 
-        assert (
-            "Change review needs git — install git to enable."
-            in _visible_text(screen)
+        assert "Change review needs git — install git to enable." in _visible_text(
+            screen
         )
-        assert not screen.query("#settings-workspace-change-review-toggle")
+        assert not screen.query_one("#settings-workspace-change-review-toggle").display
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_change_review_global_kill_disclosed_in_settings(
+    request,
     monkeypatch,
 ) -> None:
     """Qodo #1264: with the global knob off, the card must say so instead
@@ -731,13 +770,14 @@ async def test_change_review_global_kill_disclosed_in_settings(
         text = _visible_text(screen)
         assert "disabled globally" in text, text
         assert "Tracking enabled" not in text
-        assert not screen.query("#settings-workspace-change-review-toggle")
+        assert not screen.query_one("#settings-workspace-change-review-toggle").display
 
 
 @pytest.mark.asyncio
-async def test_settings_archived_label_and_restore_name_preserve_active_workspace() -> (
-    None
-):
+@private_profile_test
+async def test_settings_archived_label_and_restore_name_preserve_active_workspace(
+    request,
+) -> None:
     from textual.widgets import Button, Checkbox, Input
 
     app = _build_test_app()
@@ -779,7 +819,8 @@ async def test_settings_archived_label_and_restore_name_preserve_active_workspac
 
 
 @pytest.mark.asyncio
-async def test_settings_archive_receipt_undo_without_switching() -> None:
+@private_profile_test
+async def test_settings_archive_receipt_undo_without_switching(request) -> None:
     from textual.widgets import Button
 
     app = _build_test_app()

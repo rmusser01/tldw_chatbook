@@ -16,8 +16,7 @@ def _disable_model_catalog_refresh():
 
 @asynccontextmanager
 async def mounted(tmp_path, *, size=(90, 32)):
-    from textual.app import App
-
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 

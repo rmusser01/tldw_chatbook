@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││  Available by default. Calls still follow Ask, Allow, or Off            ▁ ││                                             │
+│ Source                                     ││  permissions.                                                             ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││  ▊  Workspace root (blank uses the app folder)        ▎                   ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││  Add server                                 │
+│                                            ││  Enabled. The next Console agent run will use this setting; calls still   ││  stat — Virtual CLI (read-only)             │
+│ Servers                                    ││  follow Ask, Allow, or Off permissions.                                   ││                                             │
+│  ◦ off (opt-in) · ⌂ built-in               ││                                                                           ││  Read-only virtual command: stat PATH. No   │
+│     All servers                            ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  host shell is invoked. Permission is       │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││  ▊  Filter tools…                         ▎▊  All servers          ▼  ▎   ││  independent from equivalent filesystem     │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  and Git tools.                             │
+│                                            ││                                                                           ││  Tags: —                                    │
+│                                            ││  Tool                                  State  Server                      ││                                             │
+│                                            ││  watchlists_generate_briefing          Ask    Local workspace, web, a…    ││  Parameters: form                           │
+│                                            ││  watchlists_get_briefing               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_get_item                   Ask    Local workspace, web, a…    ││  Tool testing is unavailable from this      │
+│                                            ││  watchlists_get_operation_status       Ask    Local workspace, web, a…    ││  policy view.                               │
+│                                            ││  watchlists_get_operations_status      Ask    Local workspace, web, a…    ││  stat — Virtual CLI (read-only)             │
+│                                            ││  watchlists_list_briefings             Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_list_collections           Ask    Local workspace, web, a…    ││  Permission: Ask                            │
+│                                            ││  watchlists_list_sources               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_search_items               Ask    Local workspace, web, a…    ││  Inherited from the global default.         │
+│                                            ││  watchlists_set_briefing_schedule      Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_update_collection_sources  Ask    Local workspace, web, a…    ││  Change in Permissions                      │
+│                                            ││  web_crawl                             Ask    Local workspace, web, a…    ││    Advanced…                                │
+│                                            ││  web_fetch                             Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  web_search                            Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  shell_exec                            Ask    Raw CLI (unsafe host sh…    ││                                             │
+│                                            ││  cat                                   Ask    Virtual CLI (read-only) ▅▅  ││                                             │
+│                                            ││  find                                  Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_blame                             Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_branches                          Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_diff                              Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_log                               Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  git_status                            Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  grep                                  Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  ls                                    Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  stat                                  Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││                                                        ▊                  ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

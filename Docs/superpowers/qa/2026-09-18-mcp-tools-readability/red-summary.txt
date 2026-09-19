@@ -1,0 +1,15 @@
+Initial four tests failed on clipped Tool cell geometry (32790-red.log).
+The first repair passed both full-app themes but clipped State by one cell in
+standalone Unicode cases (32790-green.log: 2 failed, 2 passed).
+A post-layout retry resolved those cells but exposed swallowed Enter after
+redraw (32790-green2.log: 2 failed, 2 passed). Clearing the stale activation
+boundary gave 46 passing Tools/access/readability cases.
+Independent review then reproduced the five-row scrollbar transition; the
+new short/long catalog matrix failed before correction (32790-scrollbar-red.log).
+The first child Resize message used Textual's automatic acronym conversion,
+which did not match its parent handler; the explicit namespace correction is
+covered by the final five-case readability run and independent replay.
+Two extra existing end-to-end checks initially stopped before mounting with
+RecoveryRequired(raw_source_selection_changed). Running each through the
+repository's private_profile_test process boundary made both pass; their
+assertions and mounted journey are unchanged.

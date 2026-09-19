@@ -1,0 +1,32 @@
+[
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-align-red-004/001",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0
+  }
+]

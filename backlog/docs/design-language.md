@@ -27,6 +27,12 @@ Textual TCSS substitutes variables **per token**: tokens are scalar,
 single-value definitions (`$ds-space-1: 1;`, `$ds-duration-fast: 0.2s;`).
 Multi-value composite tokens are not used (ADR-150).
 
+Consolidated widget `BUNDLED_CSS` also uses these central tokens. The builder
+resolves their aliases once, then seeds each widget's isolated variable scope
+before emitting the existing default-tier streams. Theme aliases remain dynamic;
+legacy local fallbacks cannot leak between widgets. No extra runtime stylesheet
+source or copied token definitions are needed (TASK-32816).
+
 ## 2. Token catalog
 
 ### 2.1 Color and semantic meaning (existing layer)

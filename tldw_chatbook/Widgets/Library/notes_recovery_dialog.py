@@ -18,13 +18,13 @@ class NotesRecoveryDialog(ModalScreen[None]):
     """Inspect an owner dry-run and request a separately confirmed approval."""
 
     BINDINGS: ClassVar = [("escape", "close", "Close")]
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     NotesRecoveryDialog { align: center middle; }
     #notes-recovery-dialog { width: 85%; max-width: 100; height: 85%;
         border: round $accent; background: $surface; padding: 1 2; }
     #notes-recovery-rows { height: 1fr; }
     #notes-recovery-actions { height: auto; }
-    #notes-recovery-dialog Static { height: auto; margin-bottom: 1; }
+    #notes-recovery-dialog Static.notes-recovery-dialog-static { height: auto; margin-bottom: 1; }
     """
 
     def __init__(
@@ -47,10 +47,17 @@ class NotesRecoveryDialog(ModalScreen[None]):
             "Notes Sync" if self.review.owner == "notes.sync_bindings" else "File Notes"
         )
         with Vertical(id="notes-recovery-dialog"):
-            yield Static(f"Review recovered {label} pairing", markup=False)
+            yield Static(
+                f"Review recovered {label} pairing",
+                markup=False,
+                classes="notes-recovery-dialog-static",
+            )
             with VerticalScroll(id="notes-recovery-rows"):
                 yield Static(
-                    str(self.review.root), id="notes-recovery-root", markup=False
+                    str(self.review.root),
+                    id="notes-recovery-root",
+                    markup=False,
+                    classes="notes-recovery-dialog-static",
                 )
                 yield Static(
                     "\n".join(
@@ -59,11 +66,13 @@ class NotesRecoveryDialog(ModalScreen[None]):
                     or "No local or retained files in this comparison.",
                     id="notes-recovery-entries",
                     markup=False,
+                    classes="notes-recovery-dialog-static",
                 )
                 yield Static(
                     "Issues:\n" + ("\n".join(self.review.issues) or "None"),
                     id="notes-recovery-issues",
                     markup=False,
+                    classes="notes-recovery-dialog-static",
                 )
                 yield Static(
                     "Historical managed memberships remain inactive; approval does not "
@@ -74,11 +83,13 @@ class NotesRecoveryDialog(ModalScreen[None]):
                     ),
                     id="notes-recovery-history",
                     markup=False,
+                    classes="notes-recovery-dialog-static",
                 )
             yield Static(
                 "Approval rechecks this comparison. Sync and Refresh remain separate actions.",
                 id="notes-recovery-status",
                 markup=False,
+                classes="notes-recovery-dialog-static",
             )
             with Horizontal(id="notes-recovery-actions"):
                 yield Button("Close", id="notes-recovery-close")

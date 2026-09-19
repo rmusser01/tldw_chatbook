@@ -10,17 +10,16 @@ from types import SimpleNamespace
 
 import pytest
 from rich.segment import Segment
-from textual.app import App
 from textual.geometry import Region
 from textual.widgets import Button, Static, TextArea
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
     ConsoleEditThinkingModal,
     ConsoleThinkingEditResult,
 )
-
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 _BUNDLED_CSS = _REPOSITORY_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"

@@ -12,17 +12,23 @@ through the workbench.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Click, DescendantFocus, Resize
 from textual.message import Message
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, OptionList, Select, Static
+from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
+from tldw_chatbook.MCP.local_config_saves import ConfigSaveState
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.UI.MCP_Modules.mcp_local_master_button import MCPLocalMasterButton
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     format_tool_state_label,
     state_text,
@@ -59,20 +65,6 @@ _EMPTY_ACTION_TOOLTIPS: dict[str, str] = {
     "connect": "Go to Servers mode to connect or refresh its tools.",
     "refresh": "Go to Servers mode to connect or refresh its tools.",
 }
-
-# One-shot mount-echo consumption sentinel -- mirrors mcp_rail.py's
-# `_ECHO_CONSUMED`. Textual 8.2.7 posts a `Select.Changed` for a freshly
-# mounted Select's own constructor value as part of mounting it; the filter
-# Select is rebuilt (remove + mount, not `set_options()`) every
-# `update_tools()` call, so this echo would otherwise re-trigger
-# `_apply_filter()` on every background resync even when the user never
-# touched the control. `on_select_changed()` compares the incoming event
-# against the value the Select was actually (re)mounted with
-# (`_displayed_server_value`) to swallow exactly that one echo -- once
-# consumed, the sentinel flips to this unique object so a later REAL user
-# selection landing back on the same value is never mistaken for a second
-# echo.
-_ECHO_CONSUMED = object()
 
 # task-32286: the master control's title text, reused by the toggle Button's
 # label (see `_local_tools_toggle_label()`) so the two never drift apart.
@@ -123,7 +115,68 @@ def _ellipsize(text: str, budget: int) -> str:
     return rendered.plain
 
 
-class MCPToolsMode(DataTableClickSelectMixin, Vertical):
+class _MCPToolsServerOverlay(SelectOverlay):
+    """Commit menu activation before queued indices can outlive the options."""
+
+    def post_message(self, message: Message) -> bool:
+        if isinstance(message, Click):
+            index = message.style.meta.get("option")
+            if isinstance(index, int):
+                # Pointer style metadata also carries an index. Apply the
+                # stock click action at admission, before it can queue across
+                # an option replacement (including removal of the last row).
+                if (
+                    0 <= index < len(self._options)
+                    and not self._options[index].disabled
+                ):
+                    self.highlighted = index
+                    self.action_select()
+                return True
+        if (
+            isinstance(message, OptionList.OptionSelected)
+            and message.option_list is self
+        ):
+            select = self.parent
+            if isinstance(select, MCPToolsServerSelect) and self.is_attached:
+                # Textual normally queues OptionSelected, then UpdateSelection.
+                # Both carry indices. Admit this real gesture synchronously so
+                # set_options cannot reinterpret it between either queue stage.
+                select._update_selection(self.UpdateSelection(message.option_index))
+            return True
+        return super().post_message(message)
+
+
+class MCPToolsServerSelect(Select):
+    """A catalog filter whose committed choice survives background refresh."""
+
+    def compose(self) -> ComposeResult:
+        """Compose the committed filter and its refresh-stable dropdown.
+
+        Yields:
+            The selected-value display and searchable server overlay.
+        """
+        yield SelectCurrent(self.prompt)
+        yield _MCPToolsServerOverlay(type_to_search=self._type_to_search).data_bind(
+            compact=Select.compact
+        )
+
+
+class MCPToolsTable(DataTable):
+    """Report the final catalog viewport, including parent scrollbar changes."""
+
+    class Resized(Message, namespace="mcp_tools_table"):
+        """The table's geometry changed independently of its outer canvas."""
+
+    def on_resize(self, event: Resize) -> None:
+        """Notify the parent that the catalog viewport changed.
+
+        Args:
+            event: Resize notification for this table.
+        """
+        self.post_message(self.Resized())
+
+
+class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
     BUNDLED_CSS = """
@@ -207,16 +260,25 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     class LocalToolsEnabledChanged(Message, namespace="mcp_tools_mode"):
         """Persist the workspace, web, and Watchlists provider master switch."""
 
-        def __init__(self, enabled: bool) -> None:
+        def __init__(self, enabled: bool, *, config_path: Path | None = None) -> None:
             super().__init__()
             self.enabled = enabled
+            self.config_path = config_path
 
     class WorkspaceRootSaveRequested(Message, namespace="mcp_tools_mode"):
         """Request validation and persistence of the workspace root."""
 
-        def __init__(self, workspace_root: str) -> None:
+        def __init__(
+            self,
+            workspace_root: str,
+            *,
+            draft_identity: tuple[object, int] | None = None,
+            config_path: Path | None = None,
+        ) -> None:
             super().__init__()
             self.workspace_root = workspace_root
+            self.draft_identity = draft_identity
+            self.config_path = config_path
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -242,17 +304,25 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         # `_apply_filter()` so the Tags column doesn't flicker in/out as a
         # text/server filter narrows the visible rows to a tagless subset.
         self._has_tags: bool = False
-        # Mount-echo guard state for the filter Select -- see _ECHO_CONSUMED.
-        self._displayed_server_value: Any = Select.NULL
+        self._tool_column_width: int | None = None
+        self._server_filter_options: list[tuple[str, str]] = []
         # task-32286: the last `enabled` value `update_local_config()` was
         # given -- the toggle Button posts the OPPOSITE of this on press
         # (mirrors `mcp_servers_mode._tool_gates_by_id`'s same read-not-
         # widget-state pattern; a Button carries no `.value` of its own).
         self._local_tools_enabled: bool = False
+        self.submit_local_master: Callable[[bool, Path | None], None] | None = None
+        self._workspace_root_saved: str | None = None
+        self._workspace_root_draft = ""
+        self._workspace_root_dirty = False
+        self._workspace_root_revision = 0
+        self._workspace_root_origin = object()
+        self._workspace_root_config: Path | None = None
+        self._workspace_root_pending = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-tools-local-config"):
-            yield Button(
+            yield MCPLocalMasterButton(
                 _local_tools_toggle_label(False),
                 id="mcp-tools-local-enabled",
                 classes="console-action-secondary",
@@ -263,13 +333,19 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                 ),
             )
             yield Static(
+                "",
+                id="mcp-tools-local-config-status",
+                classes="h-auto ds-text-muted",
+                markup=False,
+            )
+            yield Static(
                 "Available by default. Calls still follow Ask, Allow, or Off permissions.",
                 id="mcp-tools-local-config-help",
                 markup=False,
             )
             with Horizontal(id="mcp-tools-workspace-row"):
                 yield Input(
-                    placeholder="Workspace root (blank uses the app folder)",
+                    placeholder="Local MCP / Hub test root",
                     id="mcp-tools-workspace-root",
                 )
                 yield Button(
@@ -278,23 +354,31 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                     classes="console-action-primary",
                     compact=True,
                     tooltip=(
-                        "Save this workspace root for the next Console agent run; "
-                        "blank uses the app folder."
+                        "Save the root for local MCP serving and Hub tool tests. "
+                        "Blank uses the serving process's current folder."
                     ),
                 )
             yield Static(
-                "Changes apply to the next Console agent run.",
-                id="mcp-tools-local-config-status",
+                "",
+                id="mcp-tools-workspace-status",
+                classes="h-auto ds-text-muted",
+                markup=False,
+            )
+            yield Static(
+                "Root: local MCP serving and Hub tests. Blank uses the serving "
+                "process's current folder. Console uses Chat scratch and "
+                "admitted Workspace folders.",
+                id="mcp-tools-workspace-help",
+                classes="h-auto ds-text-muted",
                 markup=False,
             )
         with Horizontal(id="mcp-tools-filter-bar", classes="ds-toolbar"):
             yield Input(placeholder="Filter tools…", id="mcp-tools-filter-text")
-            # The filter Select is mounted dynamically (see
-            # `_rebuild_server_select()`) -- its option list depends on the
-            # servers actually present in the last `update_tools()` call,
-            # which compose() (run once, at construction time) can't know.
-            yield Vertical(id="mcp-tools-filter-server-slot")
-        table = DataTable(id="mcp-tools-table")
+            with Vertical(id="mcp-tools-filter-server-slot"):
+                yield MCPToolsServerSelect(
+                    [], id="mcp-tools-filter-server", prompt="All servers"
+                )
+        table = MCPToolsTable(id="mcp-tools-table")
         table.cursor_type = "row"
         yield table
         with Vertical(id="mcp-tools-empty", classes="ds-recovery-callout"):
@@ -309,10 +393,105 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-tools-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
-        await self._rebuild_server_select()
+        await self._sync_server_select()
         self._apply_filter()
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal the focused descendant after its layout settles.
+
+        Args:
+            event: Descendant focus notification, allowed to propagate.
+        """
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def on_resize(self, event: Resize) -> None:
+        """Refit the table and reveal focus after the new viewport is laid out.
+
+        Args:
+            event: Canvas resize notification, allowed to propagate.
+        """
+        self.call_after_refresh(self._reflow_table)
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def on_mcp_tools_table_resized(self, event: MCPToolsTable.Resized) -> None:
+        """Consume table geometry changes and defer column reflow.
+
+        Args:
+            event: Table resize message, stopped after scheduling the reflow.
+        """
+        event.stop()
+        self.call_after_refresh(self._reflow_table)
+
+    def _measured_tool_width(self, table: DataTable) -> int | None:
+        """Reserve readable State cells before allowing Tool names to wrap."""
+        if table.content_region.width <= 0:
+            return None
+        states = (
+            self._states.get((tool.server_key, tool.name)) for tool in self._tools
+        )
+        state_width = max(
+            [Text("State").cell_len]
+            + [
+                Text(format_tool_state_label(state)).cell_len
+                for state in states
+                if state is not None
+            ]
+        )
+        tool_width = max(
+            [Text("Tool").cell_len] + [Text(tool.name).cell_len for tool in self._tools]
+        )
+        # ds-runtime: available table cells minus measured State text, both
+        # columns' native padding and the scrollbar that wrapping may reveal.
+        budget = max(
+            1,
+            table.content_region.width
+            - table.styles.scrollbar_size_vertical
+            - state_width
+            - 4 * table.cell_padding,
+        )
+        return budget if tool_width > budget else None
+
+    def _reflow_table(self) -> None:
+        """Rebuild only when resize changes wrapping, retaining tool identity."""
+        if not self.is_attached or not self._tools:
+            return
+        table = self.query_one("#mcp-tools-table", DataTable)
+        if self._measured_tool_width(table) != self._tool_column_width:
+            self._apply_filter()
+            self.call_after_refresh(self.reveal_focused_control)
+
+    def reveal_focused_control(self) -> None:
+        """Reveal the current child after layout without overriding newer focus."""
+        if (
+            not self.is_attached
+            or not self.display
+            or self.app.screen is not self.screen
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
+            if focused.id == "mcp-tools-empty-action":
+                # The recovery callout has nested padding/borders. Measure the
+                # action in this scroll viewport: ancestor-relative scrolling
+                # can leave it just below the compact canvas's bottom edge.
+                self.scroll_to_region(
+                    focused.region.translate(
+                        self.scroll_offset - self.content_region.offset
+                    ),
+                    animate=False,
+                    immediate=True,
+                )
+            if isinstance(focused, DataTable) and focused.row_count:
+                focused._scroll_cursor_into_view(animate=False)
+
     # -- data ---------------------------------------------------------------
+
+    def _read_filter_controls(self) -> None:
+        """Read drafts that may be newer than their queued Changed messages."""
+        self._filter_text = self.query_one("#mcp-tools-filter-text", Input).value
+        value = self.query_one("#mcp-tools-filter-server", Select).value
+        self._filter_server_key = None if value is Select.NULL else str(value)
 
     async def update_tools(
         self,
@@ -346,12 +525,13 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                 server. Its group is ordered first (see `_apply_filter()`);
                 `None` ("All servers") keeps the plain label order.
         """
+        self._read_filter_controls()
         self._tools = list(tools)
         self._states = dict(states) if states else {}
         self._selected_server_key = selected_server_key
         self._empty_diagnosis = empty_diagnosis
         self._has_tags = any(tool.tags for tool in self._tools)
-        await self._rebuild_server_select()
+        await self._sync_server_select()
         self._apply_filter()
 
     async def focus_server(self, server_key: str | None) -> None:
@@ -361,14 +541,14 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         lands here, so the tools of the server the user drilled from are
         the whole visible table rather than a screenful of some other
         server's. A `server_key` with no tools in the current catalog falls
-        back to "All servers" (`_rebuild_server_select()`'s own dangling-
+        back to "All servers" (`_sync_server_select()`'s own dangling-
         filter guard).
 
         Args:
             server_key: The server to scope to, or `None` for all servers.
         """
         self._filter_server_key = server_key
-        await self._rebuild_server_select()
+        await self._sync_server_select()
         self._apply_filter()
 
     def update_local_config(
@@ -377,26 +557,116 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         enabled: bool,
         workspace_root: str,
         visible: bool,
+        config_path: Path | None = None,
     ) -> None:
         """Refresh local-tool controls from persisted configuration truth.
 
         Args:
             enabled: State of the workspace, web, and Watchlists master switch.
-            workspace_root: Persisted workspace confinement root, or an empty
-                string when the app launch directory is the root.
+            workspace_root: Saved local MCP/Hub root; blank selects process cwd.
             visible: Whether the local-source configuration panel is visible.
+            config_path: Configuration identity owning this field and receipt.
         """
         panel = self.query_one("#mcp-tools-local-config", Vertical)
         panel.display = visible
         self._local_tools_enabled = bool(enabled)
-        self.query_one("#mcp-tools-local-enabled", Button).label = (
-            _local_tools_toggle_label(self._local_tools_enabled)
-        )
+        button = self.query_one("#mcp-tools-local-enabled", MCPLocalMasterButton)
+        button.enabled, button.config_path = bool(enabled), config_path
+        button.label = _local_tools_toggle_label(self._local_tools_enabled)
         root_input = self.query_one("#mcp-tools-workspace-root", Input)
-        with root_input.prevent(Input.Changed):
-            root_input.value = workspace_root
-        self.set_local_config_status(
-            "Changes apply to the next Console agent run.", error=False
+        if config_path != self._workspace_root_config:
+            self._workspace_root_saved = None
+            self._workspace_root_dirty = False
+            self._workspace_root_origin = object()
+            self._workspace_root_revision = 0
+            self._workspace_root_config = config_path
+            self._workspace_root_pending = False
+            self.set_workspace_root_status("", error=False)
+        if self._workspace_root_saved is None or not self._workspace_root_dirty:
+            with root_input.prevent(Input.Changed):
+                root_input.value = workspace_root
+            self._workspace_root_draft = workspace_root
+        self._workspace_root_saved = workspace_root
+
+    @property
+    def workspace_root_draft_identity(self) -> tuple[object, int]:
+        """Identify the current draft without keeping its widget in a receipt."""
+        return self._workspace_root_origin, self._workspace_root_revision
+
+    def set_workspace_root_status(self, message: str, *, error: bool) -> None:
+        """Keep root outcomes independent of the local-tool master switch."""
+        status = self.query_one("#mcp-tools-workspace-status", Static)
+        status.update(message)
+        status.set_class(error, "is-error", "ds-text-error")
+        status.set_class(not error, "ds-text-muted")
+
+    def project_workspace_root_save(
+        self,
+        state: ConfigSaveState,
+        *,
+        generation: int | None = None,
+        file_revision: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        """Project an owned outcome without overwriting a newer local draft."""
+        if state.request.config_path != self._workspace_root_config:
+            return
+        field = self.query_one("#mcp-tools-workspace-root", Input)
+        same_draft = state.request.draft_identity == self.workspace_root_draft_identity
+        newer_draft = not same_draft and (
+            state.request.draft_identity[0] is self._workspace_root_origin
+            or self._workspace_root_dirty
+        )
+        self._workspace_root_pending = state.result is None
+        if state.result is None:
+            text = "Saving local MCP / Hub test root…"
+            error = False
+        else:
+            result = state.result
+            error = result.phase in {"invalid", "failed", "changed"}
+            text = {
+                "saved": "Saved local MCP / Hub test root.",
+                "cache_refresh": "Root saved to file. Restart to refresh live settings.",
+                "invalid": "Root not saved: choose an existing directory. Your edits are kept.",
+                "failed": "Root save failed. Your edits are kept; choose Save root to retry.",
+                "changed": "Configuration changed. Root not saved; reopen MCP before retrying.",
+            }[result.phase]
+            same_origin = state.request.draft_identity[0] is self._workspace_root_origin
+            if result.phase in {"failed", "invalid"} and not same_origin:
+                text = "An earlier root save failed. Review the current root and choose Save root to retry."
+            superseded = (
+                result.cache_generation is not None
+                and result.cache_generation != generation
+            ) or (
+                result.file_revision is not None
+                and result.file_revision != file_revision
+            )
+            if result.phase in {"saved", "cache_refresh"} and superseded:
+                text = "Root saved earlier; live settings have since changed."
+                newer_draft = self._workspace_root_dirty
+            if (
+                result.phase in {"saved", "cache_refresh"}
+                and same_draft
+                and not superseded
+            ):
+                with field.prevent(Input.Changed):
+                    field.value = result.stored or ""
+                self._workspace_root_draft = field.value
+                self._workspace_root_saved = field.value
+                self._workspace_root_dirty = False
+        if newer_draft:
+            text += " Current edits are not saved."
+        self.set_workspace_root_status(text, error=error)
+
+    def _record_workspace_root_edit(self, value: str) -> None:
+        if value == self._workspace_root_draft:
+            return
+        self._workspace_root_draft = value
+        self._workspace_root_dirty = True
+        self._workspace_root_revision += 1
+        prefix = "Saving submitted root. " if self._workspace_root_pending else ""
+        self.set_workspace_root_status(
+            prefix + "Current edits are not saved. Choose Save root to apply them.",
+            error=False,
         )
 
     def set_local_config_status(self, message: str, *, error: bool) -> None:
@@ -408,11 +678,19 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         """
         status = self.query_one("#mcp-tools-local-config-status", Static)
         status.update(message)
-        status.set_class(error, "is-error")
+        status.set_class(error, "is-error", "ds-text-error")
+        status.set_class(not error, "ds-text-muted")
 
     def _request_workspace_root_save(self) -> None:
         value = self.query_one("#mcp-tools-workspace-root", Input).value
-        self.post_message(self.WorkspaceRootSaveRequested(value))
+        self._record_workspace_root_edit(value)
+        self.post_message(
+            self.WorkspaceRootSaveRequested(
+                value,
+                draft_identity=self.workspace_root_draft_identity,
+                config_path=self._workspace_root_config,
+            )
+        )
 
     def update_states(self, states: dict[tuple[str, str], EffectiveToolState]) -> None:
         """Refresh the cached State-column data in place and re-render rows,
@@ -428,8 +706,7 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         that. This narrow setter lets those handlers hand that SAME dict to
         this widget too, so its State column reflects the mutation without
         the caller needing a second `effective_tool_states()` call, a
-        governance fetch, or a full `update_tools()` rebuild (which would
-        also remount the filter Select).
+        governance fetch, or a full `update_tools()` catalog refresh.
         """
         self._states = dict(states) if states else {}
         self._apply_filter()
@@ -450,6 +727,8 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         """
         if not any(tool.tool_id == tool_id for tool in self._tools):
             return False
+        self._read_filter_controls()
+        self._apply_filter()
         table = self.query_one("#mcp-tools-table", DataTable)
         try:
             table.get_row_index(tool_id)
@@ -471,7 +750,8 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             index = table.get_row_index(tool_id)
         except RowDoesNotExist:
             return False
-        table.move_cursor(row=index)
+        with self.repopulating_table(table):
+            table.move_cursor(row=index)
         return True
 
     def _server_options(self) -> list[tuple[str, str]]:
@@ -487,50 +767,35 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             key=lambda pair: pair[0],
         )
 
-    async def _rebuild_server_select(self) -> None:
-        """Remount `#mcp-tools-filter-server` with the current server list.
-
-        Remove + mount (not `Select.set_options()`) into a dedicated slot
-        container, mirroring the awaited remove-then-mount discipline used
-        throughout this canvas family (`MCPServersMode._rebuild_detail_
-        toolbar()`, `MCPRail`'s per-compose() scope selects) -- simpler to
-        reason about here than `set_options()`'s own selection-reset
-        semantics, and it reuses the exact mount-echo guard pattern
-        `MCPRail` already established for this Textual version.
-        """
+    async def _sync_server_select(self) -> None:
+        """Reconcile options without replacing the live filter or its open menu."""
         options = self._server_options()
         valid_keys = {key for _, key in options}
         if self._filter_server_key not in valid_keys:
-            # The previously filtered server is no longer in the catalog
-            # (disconnected, deleted) -- fall back to "All servers" rather
-            # than keep a dangling filter that would raise
-            # InvalidSelectValueError when the Select is constructed below.
             self._filter_server_key = None
-        value: Any = (
-            self._filter_server_key
-            if self._filter_server_key is not None
+        value = self._filter_server_key or Select.NULL
+        select = self.query_one("#mcp-tools-filter-server", Select)
+        overlay = select.query_one(SelectOverlay)
+        old_values = [Select.NULL, *(key for _, key in self._server_filter_options)]
+        highlighted = overlay.highlighted
+        highlighted_value = (
+            old_values[highlighted]
+            if highlighted is not None and 0 <= highlighted < len(old_values)
             else Select.NULL
         )
-        # Select's `value` is a `var` with `init=False` -- mounting it only
-        # actually FIRES a `Changed` echo when the constructor value differs
-        # from the var's own default (`Select.NULL`); constructing with
-        # `Select.NULL` itself (the common "All servers" case) is a no-op
-        # assignment that never echoes at all. Arming the one-shot guard
-        # with `Select.NULL` in that case would leave it loaded forever,
-        # ready to wrongly swallow the next REAL user selection back to "All
-        # servers" (there is no second, later mount to re-arm it) -- so only
-        # arm the guard when an echo is actually coming; otherwise mark it
-        # pre-consumed.
-        self._displayed_server_value = (
-            value if value is not Select.NULL else _ECHO_CONSUMED
-        )
-        slot = self.query_one("#mcp-tools-filter-server-slot", Vertical)
-        await slot.remove_children()
-        await slot.mount(
-            Select(
-                options, id="mcp-tools-filter-server", prompt="All servers", value=value
+        options_changed = options != self._server_filter_options
+        with select.prevent(Select.Changed):
+            if options_changed:
+                select.set_options(options)
+                self._server_filter_options = options
+            select.value = value
+        if options_changed and select.expanded:
+            # Labels can reorder while the user has highlighted (but has not
+            # committed) a choice. Preserve identity, not the old row number.
+            values = [Select.NULL, *(key for _, key in options)]
+            overlay.select(
+                values.index(highlighted_value) if highlighted_value in values else 0
             )
-        )
 
     def _apply_filter(self) -> None:
         """Re-render the DataTable from `self._tools` under the current
@@ -559,6 +824,9 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             ),
         )
         table = self.query_one("#mcp-tools-table", DataTable)
+        cursor_key = None
+        if table.columns and 0 <= table.cursor_row < table.row_count:
+            cursor_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
         # UX batch item 11: the Tags column tuple is decided by
         # `self._has_tags` (the FULL unfiltered catalog, set once per
         # `update_tools()` call), never recomputed against `ordered`
@@ -568,57 +836,76 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         # Rebuilding the rows moves the cursor back to row 0, which emits the
         # same RowHighlighted a click does. Declaring the rebuild stops that
         # being read as a selection -- see DataTableClickSelectMixin.
-        self.repopulating_table()
-        table.clear(columns=True)
-        table.add_columns(
-            *(_TABLE_COLUMNS if self._has_tags else _TABLE_COLUMNS_NO_TAGS)
-        )
-        seen_keys: set[str] = set()
-        for tool in ordered:
-            if tool.tool_id in seen_keys:
-                # Defense in depth: hub_tool_catalog's derivation functions
-                # already dedupe by (server_key, name), but a row key
-                # collision here would raise Textual's `DuplicateKey` and
-                # crash every mount that renders this table -- skip rather
-                # than trust every current and future upstream caller to
-                # have deduped first.
-                continue
-            seen_keys.add(tool.tool_id)
-            tool_state = self._states.get((tool.server_key, tool.name))
-            # Task 1 (MCP Hub Phase 6): the State cell's word is colored by
-            # the resolved verdict it names -- a tool absent from `states`
-            # renders the plain "—" placeholder at the `muted` weight (no
-            # verdict to color), same visual tier as every other "not
-            # resolved yet" dash in this canvas family.
-            if tool_state is not None:
-                state_cell = state_text(
-                    format_tool_state_label(tool_state), tool_state_kind(tool_state)
-                )
-            else:
-                state_cell = state_text("—", "muted")
-            # Qodo #2620 #6: when the label alone consumes the budget, the
-            # "(stale)" suffix -- the only table-level signal that a
-            # discovered local tool is currently disconnected -- was being
-            # truncated away. Reserve its width up front so the marker
-            # always survives the ellipsis.
-            suffix = " (stale)" if tool.stale else ""
-            budget = _SERVER_CELL_BUDGET - len(suffix)
-            server_cell = _ellipsize(tool.server_label, budget) + suffix
-            schema_cell = (
-                "form" if parse_schema(tool.input_schema) is not None else "raw"
+        with self.repopulating_table(table):
+            table.clear(columns=True)
+            self._tool_column_width = self._measured_tool_width(table)
+            table.add_column("Tool", width=self._tool_column_width)
+            table.add_columns(
+                *(_TABLE_COLUMNS[1:] if self._has_tags else _TABLE_COLUMNS_NO_TAGS[1:])
             )
-            row_cells: list[Any] = [Text(tool.name), state_cell, Text(server_cell)]
-            if self._has_tags:
-                tags_cell = ", ".join(tool.tags) if tool.tags else "—"
-                row_cells.append(Text(tags_cell))
-            row_cells.append(Text(schema_cell))
-            table.add_row(*row_cells, key=tool.tool_id)
+            seen_keys: set[str] = set()
+            for tool in ordered:
+                if tool.tool_id in seen_keys:
+                    # Defense in depth: hub_tool_catalog's derivation functions
+                    # already dedupe by (server_key, name), but a row key
+                    # collision here would raise Textual's `DuplicateKey` and
+                    # crash every mount that renders this table -- skip rather
+                    # than trust every current and future upstream caller to
+                    # have deduped first.
+                    continue
+                seen_keys.add(tool.tool_id)
+                tool_state = self._states.get((tool.server_key, tool.name))
+                # Task 1 (MCP Hub Phase 6): the State cell's word is colored by
+                # the resolved verdict it names -- a tool absent from `states`
+                # renders the plain "—" placeholder at the `muted` weight (no
+                # verdict to color), same visual tier as every other "not
+                # resolved yet" dash in this canvas family.
+                if tool_state is not None:
+                    state_cell = state_text(
+                        format_tool_state_label(tool_state), tool_state_kind(tool_state)
+                    )
+                else:
+                    state_cell = state_text("—", "muted")
+                # Qodo #2620 #6: when the label alone consumes the budget, the
+                # "(stale)" suffix -- the only table-level signal that a
+                # discovered local tool is currently disconnected -- was being
+                # truncated away. Reserve its width up front so the marker
+                # always survives the ellipsis.
+                suffix = " (stale)" if tool.stale else ""
+                budget = _SERVER_CELL_BUDGET - len(suffix)
+                server_cell = _ellipsize(tool.server_label, budget) + suffix
+                schema_cell = (
+                    "form" if parse_schema(tool.input_schema) is not None else "raw"
+                )
+                row_cells: list[Any] = [Text(tool.name), state_cell, Text(server_cell)]
+                if self._has_tags:
+                    tags_cell = ", ".join(tool.tags) if tool.tags else "—"
+                    row_cells.append(Text(tags_cell))
+                row_cells.append(Text(schema_cell))
+                table.add_row(*row_cells, key=tool.tool_id, height=None)
+            if cursor_key is not None:
+                try:
+                    cursor_row = table.get_row_index(cursor_key)
+                except RowDoesNotExist:
+                    # A removed or filtered-out tool leaves clear()'s first-row
+                    # fallback. Resolve by key because duplicate IDs are skipped.
+                    pass
+                else:
+                    table.move_cursor(row=cursor_row)
         has_any_tools = bool(self._tools)
+        if not has_any_tools and self.app.focused is table:
+            self.screen.set_focus(self.query_one("#mcp-tools-filter-text", Input))
         table.display = has_any_tools
         self._update_empty_state(show=not has_any_tools)
 
     def _update_empty_state(self, *, show: bool) -> None:
         container = self.query_one("#mcp-tools-empty", Vertical)
+        button = self.query_one("#mcp-tools-empty-action", Button)
+        has_action = self._empty_diagnosis is not None and bool(
+            self._empty_diagnosis[1]
+        )
+        if self.app.focused is button and (not show or not has_action):
+            self.screen.set_focus(self.query_one("#mcp-tools-filter-text", Input))
         container.display = show
         if not show:
             return
@@ -628,7 +915,6 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
             message, action_key = "No tools available.", None
         self._empty_action_key = action_key
         self.query_one("#mcp-tools-empty-message", Static).update(message)
-        button = self.query_one("#mcp-tools-empty-action", Button)
         if action_key is None:
             button.display = False
             # Hidden (no action to take), but still audited by
@@ -648,9 +934,17 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     # -- events ---------------------------------------------------------------
 
     def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "mcp-tools-workspace-root":
+            event.stop()
+            if event.value == event.input.value:
+                self._record_workspace_root_edit(event.value)
+            return
         if event.input.id != "mcp-tools-filter-text":
             return
         event.stop()
+        current = self.query_one("#mcp-tools-filter-text", Input)
+        if event.input is not current or event.value != current.value:
+            return
         self._filter_text = event.value
         self._apply_filter()
 
@@ -658,11 +952,12 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         if event.select.id != "mcp-tools-filter-server":
             return
         event.stop()
-        if (
-            event.value == self._displayed_server_value
-            and self._displayed_server_value is not _ECHO_CONSUMED
-        ):
-            self._displayed_server_value = _ECHO_CONSUMED
+        current = self.query_one("#mcp-tools-filter-server", Select)
+        if event.select is not current or event.value != current.value:
+            return
+        if event.value is not Select.NULL and event.value not in {
+            key for _, key in self._server_filter_options
+        }:
             return
         self._filter_server_key = (
             None if event.value is Select.NULL else str(event.value)
@@ -680,30 +975,39 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
         if event.row_key is not None and event.row_key.value is not None:
             self.post_message(self.ToolSelected(str(event.row_key.value)))
 
+    def project_local_master(
+        self,
+        enabled: bool,
+        message: str,
+        *,
+        error: bool,
+        config_path: Path,
+        pending: bool = False,
+    ) -> None:
+        """Refresh only the master control; root input events may still be queued."""
+        self._local_tools_enabled = enabled
+        button = self.query_one("#mcp-tools-local-enabled", MCPLocalMasterButton)
+        button.enabled, button.config_path = enabled, config_path
+        button.label = _local_tools_toggle_label(enabled)
+        self.set_local_config_status(message, error=error)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "mcp-tools-local-enabled":
-            # task-32286: the Button states its own current value in its
-            # label (see `_local_tools_toggle_label()`), so a press asks
-            # for the OPPOSITE of what it's currently showing -- read from
-            # `_local_tools_enabled` (the last `update_local_config()`
-            # value), never a fresh config read, which could race the
-            # workbench's own save/resync.
-            #
-            # Qodo #2600 #15: the cached value and the label are updated
-            # OPTIMISTICALLY, before the save is posted. Without that, a
-            # second press landing before the save/resync round trip read
-            # the stale value and posted the SAME request again -- an
-            # accidental toggle could not be reversed until the first one
-            # finished. A failed save calls `update_local_config()` back
-            # (`MCPWorkbench._refresh_local_tools_controls()`), which
-            # overwrites both with the persisted truth.
             event.stop()
-            requested = not self._local_tools_enabled
-            self._local_tools_enabled = requested
-            self.query_one("#mcp-tools-local-enabled", Button).label = (
-                _local_tools_toggle_label(requested)
+            requested, config_path = getattr(
+                event,
+                "mcp_local_master_choice",
+                (not self._local_tools_enabled, self._workspace_root_config),
             )
-            self.post_message(self.LocalToolsEnabledChanged(requested))
+            self._local_tools_enabled = requested
+            event.button.enabled = requested
+            event.button.label = _local_tools_toggle_label(requested)
+            if self.submit_local_master is not None:
+                self.submit_local_master(requested, config_path)
+            else:
+                self.post_message(
+                    self.LocalToolsEnabledChanged(requested, config_path=config_path)
+                )
             return
         if event.button.id == "mcp-tools-workspace-save":
             event.stop()

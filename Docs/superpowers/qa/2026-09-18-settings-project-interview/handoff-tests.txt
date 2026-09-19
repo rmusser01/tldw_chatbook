@@ -1,0 +1,6 @@
+..............                                                           [100%]
+============================= slowest 25 durations =============================
+25.66s call     Tests/Workspaces/test_workspace_profile_interview_handoff.py::test_fixed_workspace_pack_commits_every_distinct_allowed_record
+
+(24 durations < 1s hidden.)
+14 passed in 32.79s

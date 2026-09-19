@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││            Local workspace, web, and Watchlists tools: off ▸              ││                                             │
+│ Source                                     ││  Available by default. Calls still follow Ask, Allow, or Off              ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  permissions.                                                             ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊  Workspace root (blank uses the app folder)        ▎                   ││  Add server                                 │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││  stat — Virtual CLI (read-only)             │
+│ Servers                                    ││  Disabled. The next Console agent run will use this setting; calls        ││                                             │
+│  ◦ off (opt-in) · ⌂ built-in               ││  still follow Ask, Allow, or Off permissions.                             ││  Read-only virtual command: stat PATH. No   │
+│     All servers                            ││                                                                           ││  host shell is invoked. Permission is       │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  independent from equivalent filesystem     │
+│                                            ││  ▊  Filter tools…                         ▎▊  All servers          ▼  ▎   ││  and Git tools.                             │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  Tags: —                                    │
+│                                            ││                                                                           ││                                             │
+│                                            ││  Tool                                  State  Server                      ││  Parameters: form                           │
+│                                            ││  chat_with_character                   Ask    tldw_chatbook               ││                                             │
+│                                            ││  chat_with_llm                         Ask    tldw_chatbook               ││  Tool testing is unavailable from this      │
+│                                            ││  create_note                           Ask    tldw_chatbook               ││  policy view.                               │
+│                                            ││  export_conversation                   Ask    tldw_chatbook               ││  stat — Virtual CLI (read-only)             │
+│                                            ││  get_conversation_history              Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_get_conversation              Ask    tldw_chatbook               ││  Permission: Ask                            │
+│                                            ││  library_get_media                     Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_get_media_chunk               Ask    tldw_chatbook               ││  Inherited from the global default.         │
+│                                            ││  library_get_media_structure           Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_get_note                      Ask    tldw_chatbook               ││  Change in Permissions                      │
+│                                            ││  library_get_prompt                    Ask    tldw_chatbook           ▇▇  ││    Advanced…                                │
+│                                            ││  library_get_skill                     Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_chunk_specs              Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_conversations            Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_media                    Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_notes                    Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_prompts                  Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_list_skills                   Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_rechunk_media                 Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_save_chunk_spec               Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_save_note                     Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_conversations          Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_media                  Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_notes                  Ask    tldw_chatbook               ││                                             │
+│                                            ││  library_search_prompts                Ask    tldw_chatbook             ▇ ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

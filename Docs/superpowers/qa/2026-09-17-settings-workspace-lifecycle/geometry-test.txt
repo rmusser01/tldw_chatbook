@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+1.93s call     Tests/UI/test_css_build_integrity.py::test_library_notes_compact_geometry_matches_fallback_source_and_bundle
+
+(2 durations < 1s hidden.)
+1 passed, 28 deselected in 2.70s

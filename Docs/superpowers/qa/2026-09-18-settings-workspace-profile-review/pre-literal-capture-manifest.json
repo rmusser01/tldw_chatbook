@@ -1,0 +1,202 @@
+[
+  {
+    "file": "textual-dark-170x48-applied.svg",
+    "original_sha256": "7c90be74be5de7ce96a9d766bbddaabc4f90d1f10fdef3f0577962a2b2169c1c",
+    "stored_sha256": "6271fb9ab7295e7ddf3207defa0182d803069672c779a0c9762578a76e34f5d7"
+  },
+  {
+    "file": "textual-dark-170x48-applied.txt",
+    "original_sha256": "1c9493d331aca6a423eba9c543f5e54a51205de44409e7d66ba9dc0913e542c3",
+    "stored_sha256": "1c9493d331aca6a423eba9c543f5e54a51205de44409e7d66ba9dc0913e542c3"
+  },
+  {
+    "file": "textual-dark-170x48-cancelled.svg",
+    "original_sha256": "4722a55b40228f0724d312214b3a70b6ca504503f14b5d9411079e3f82570c20",
+    "stored_sha256": "383d6e61ae2cb63e156605f29c2078dec7c13c6b51e5065c80c89bfa345248ef"
+  },
+  {
+    "file": "textual-dark-170x48-cancelled.txt",
+    "original_sha256": "a0d4ab2f2b82ff8114c044567382c8a6aa0503d9c0dbe6c8bc6ce52cab045bc7",
+    "stored_sha256": "a0d4ab2f2b82ff8114c044567382c8a6aa0503d9c0dbe6c8bc6ce52cab045bc7"
+  },
+  {
+    "file": "textual-dark-170x48-policy.svg",
+    "original_sha256": "03d016959f3610c8f04beb430d0cd37e40b3fe37d522696f0add49c13cd69b22",
+    "stored_sha256": "e321e5c23a5f59718db7e24f48f601c1ac2f8e53c18f426f9bdaa47363d5c493"
+  },
+  {
+    "file": "textual-dark-170x48-policy.txt",
+    "original_sha256": "613b3b29838cc22d793b29086fa381e8d64340639417167658b097c94863415f",
+    "stored_sha256": "613b3b29838cc22d793b29086fa381e8d64340639417167658b097c94863415f"
+  },
+  {
+    "file": "textual-dark-170x48-stale.svg",
+    "original_sha256": "93ebf405b1927a2300f69013cd91f07c6b8671817d786d93596c8921658ce303",
+    "stored_sha256": "9410fa706a3117e6f0680ad39cfaa2729912acfa34fe71655d21468c9b5b1d64"
+  },
+  {
+    "file": "textual-dark-170x48-stale.txt",
+    "original_sha256": "14e1033fc1343574f79756454566b57aea6d98c75b645d5a78601e519ebce8af",
+    "stored_sha256": "14e1033fc1343574f79756454566b57aea6d98c75b645d5a78601e519ebce8af"
+  },
+  {
+    "file": "textual-dark-170x48-target.svg",
+    "original_sha256": "9da61bdad9c4eb10b8c38ade6fe95beabb603b25b2f11c3171eb8b657afb6c76",
+    "stored_sha256": "0c52fb7c2635045b2e0711915576f959fabc197930e063cbef80c168b92f91ae"
+  },
+  {
+    "file": "textual-dark-170x48-target.txt",
+    "original_sha256": "970eb4800767a5bf4868d4a9b6d548e2833a383a0d8d088c78bd99bd359a8ab6",
+    "stored_sha256": "970eb4800767a5bf4868d4a9b6d548e2833a383a0d8d088c78bd99bd359a8ab6"
+  },
+  {
+    "file": "textual-dark-80x24-applied.svg",
+    "original_sha256": "b7176556df032adcde8ae134fc30c8f557b94df36887157c05575e2ddd1fdfeb",
+    "stored_sha256": "351de1ec0cc310022bf80efda00246305aa79ea3e97e6edd8bce8dcad2c83ecf"
+  },
+  {
+    "file": "textual-dark-80x24-applied.txt",
+    "original_sha256": "64b937a3bf487d0489d746956770e4a861a6f48491131c1ff4b0c607e0d142a8",
+    "stored_sha256": "64b937a3bf487d0489d746956770e4a861a6f48491131c1ff4b0c607e0d142a8"
+  },
+  {
+    "file": "textual-dark-80x24-cancelled.svg",
+    "original_sha256": "639f79752b83ea3b5ff436d06f0d62d941c2ed9a946b9b27bea974241dee04a1",
+    "stored_sha256": "faa23eed038289d36c07f5459abecefdf8c44d9ce441bdb8ec67ae2093d101ab"
+  },
+  {
+    "file": "textual-dark-80x24-cancelled.txt",
+    "original_sha256": "1b11b5985b48258871578a1cf21abe6f3fdf4b005d51a332e599c38d724cfdbe",
+    "stored_sha256": "1b11b5985b48258871578a1cf21abe6f3fdf4b005d51a332e599c38d724cfdbe"
+  },
+  {
+    "file": "textual-dark-80x24-policy.svg",
+    "original_sha256": "4f3418887f89991eafaed74087c11d64e2023d032b2d6dbc54565cbaf14ed4fd",
+    "stored_sha256": "c5669324706f8e48b78e45f3329330c52bdbf74950a8f9997cfd2f322d8e5123"
+  },
+  {
+    "file": "textual-dark-80x24-policy.txt",
+    "original_sha256": "17b2ff19cd12ebe4ff8f8007108c659ff50a6fd780b61453aa1208956999d4dc",
+    "stored_sha256": "17b2ff19cd12ebe4ff8f8007108c659ff50a6fd780b61453aa1208956999d4dc"
+  },
+  {
+    "file": "textual-dark-80x24-stale.svg",
+    "original_sha256": "f13227911c606800c8c251549e6c23d2e4d844e07ed965be587ef989f943c900",
+    "stored_sha256": "73a27051488bcd31fc51d12994bf01b1fc48de030248f981c4196dc13fae9c0c"
+  },
+  {
+    "file": "textual-dark-80x24-stale.txt",
+    "original_sha256": "296e7a1fcb27e196564327ae7486b8ef2dd160ace6c760830e2b4277ac789eb4",
+    "stored_sha256": "296e7a1fcb27e196564327ae7486b8ef2dd160ace6c760830e2b4277ac789eb4"
+  },
+  {
+    "file": "textual-dark-80x24-target.svg",
+    "original_sha256": "ac37dc94bb37a890ecfe1778b09760bc1b007e375e6ffe88563c3412be76fcdc",
+    "stored_sha256": "dfbc88f3972c0128f2dc9d457166969ee31469257c72d3fa5b6622278e5bfe13"
+  },
+  {
+    "file": "textual-dark-80x24-target.txt",
+    "original_sha256": "ea946c60281e94bb19699f4843a839c8a21c3aa758183b9c6eeba10c89c67d07",
+    "stored_sha256": "ea946c60281e94bb19699f4843a839c8a21c3aa758183b9c6eeba10c89c67d07"
+  },
+  {
+    "file": "textual-light-170x48-applied.svg",
+    "original_sha256": "7167d7e9eb00641f70935dba30ba13c6ce15a7a1b353b9e545e3e21d837f56d6",
+    "stored_sha256": "1a466cf93a7af44ebe528457deb7cd4c6e6c8ac3242ec4eaf02e1ca1564d8d8f"
+  },
+  {
+    "file": "textual-light-170x48-applied.txt",
+    "original_sha256": "140fa1bd8a3c534c9910bd3085880212826b71604ddc0f36e1786f2693918361",
+    "stored_sha256": "140fa1bd8a3c534c9910bd3085880212826b71604ddc0f36e1786f2693918361"
+  },
+  {
+    "file": "textual-light-170x48-cancelled.svg",
+    "original_sha256": "11c7cc813b0b6af0e2fa4aa1ff97ff7aaec155548e02384b0f1848a923cfa4f9",
+    "stored_sha256": "f338b7c567e7912e4de81e61c407dc8332597ecfb18577a291c99355ef77eabc"
+  },
+  {
+    "file": "textual-light-170x48-cancelled.txt",
+    "original_sha256": "4ecd68b5f3044d27834148d499b681ca1547abb1ac0aed9f354d4988cf698a5e",
+    "stored_sha256": "4ecd68b5f3044d27834148d499b681ca1547abb1ac0aed9f354d4988cf698a5e"
+  },
+  {
+    "file": "textual-light-170x48-policy.svg",
+    "original_sha256": "4b23c3c9c4a1330f24ae8c83abcc83c8f8869e05e71c31e6328d0528a722040c",
+    "stored_sha256": "5ca36b837fd0a67b0ac4f1db83700b888def2f5f3426cf9137f237fa9c18002c"
+  },
+  {
+    "file": "textual-light-170x48-policy.txt",
+    "original_sha256": "e23e67ef8682a255d12267be736a49b0ce681b74df338f740ac2252bf0b78859",
+    "stored_sha256": "e23e67ef8682a255d12267be736a49b0ce681b74df338f740ac2252bf0b78859"
+  },
+  {
+    "file": "textual-light-170x48-stale.svg",
+    "original_sha256": "19ef595d91e2a1b4fa6f935d00dbd6c6a7fbac18c43c70d094fc611c4dc4400c",
+    "stored_sha256": "ebe34862da5ce854d0a40c73d43bb32cc09ebe2abff46bc7457514177ec71d5f"
+  },
+  {
+    "file": "textual-light-170x48-stale.txt",
+    "original_sha256": "ad874959cccf41e8ca30e47a74be9e1f6b560530c211552da161e439dacc9aec",
+    "stored_sha256": "ad874959cccf41e8ca30e47a74be9e1f6b560530c211552da161e439dacc9aec"
+  },
+  {
+    "file": "textual-light-170x48-target.svg",
+    "original_sha256": "14b2428094db0efaa12a941e20a8dd7b27adf5350195b2cc5f0ccdbfc4ebb920",
+    "stored_sha256": "14931e77aafc0c5637d6fa94f84b4ba3f4cdcba9a6552fe8b62a856c49eb9ddb"
+  },
+  {
+    "file": "textual-light-170x48-target.txt",
+    "original_sha256": "95a68850d22b9d45fecac8b538d9211c5b0dfc4c8b1d01624b69df283f896256",
+    "stored_sha256": "95a68850d22b9d45fecac8b538d9211c5b0dfc4c8b1d01624b69df283f896256"
+  },
+  {
+    "file": "textual-light-80x24-applied.svg",
+    "original_sha256": "2749a93b96081d06e8018dbf11128d7942318c7b3207c5c53e43ed3f5f7e28d8",
+    "stored_sha256": "2d2265846a187f3c9624019563368bc05a432460fa31c7052973a819e2a32f32"
+  },
+  {
+    "file": "textual-light-80x24-applied.txt",
+    "original_sha256": "32526922207ed43c3b4be18e6bbba5a939d169793b81c27491a8fc35882e2d58",
+    "stored_sha256": "32526922207ed43c3b4be18e6bbba5a939d169793b81c27491a8fc35882e2d58"
+  },
+  {
+    "file": "textual-light-80x24-cancelled.svg",
+    "original_sha256": "32e830d337df6a08f2e161bfc3a257bff2fda9e2c27f8856d502aa542cbc41ca",
+    "stored_sha256": "db952e43e756c5d224278d8fcf2eb1764772263ca3405359bca310850bff9c1f"
+  },
+  {
+    "file": "textual-light-80x24-cancelled.txt",
+    "original_sha256": "e0a0bbe019176ec640adad6b9070390fdf7100b6c53aeff0c59f46e2616df8ad",
+    "stored_sha256": "e0a0bbe019176ec640adad6b9070390fdf7100b6c53aeff0c59f46e2616df8ad"
+  },
+  {
+    "file": "textual-light-80x24-policy.svg",
+    "original_sha256": "506a32c3751624572d720b35086fd6ba87a9a22498ab0cb1e67e108609bc1487",
+    "stored_sha256": "d4fa3f7257e9f271acc82663fe37c728006169fc469c182bad59ebce5a5f0ab0"
+  },
+  {
+    "file": "textual-light-80x24-policy.txt",
+    "original_sha256": "e79a01ba11c5688b66c824b3e79b5adb3992a334d8647c029e903ff274ad226d",
+    "stored_sha256": "e79a01ba11c5688b66c824b3e79b5adb3992a334d8647c029e903ff274ad226d"
+  },
+  {
+    "file": "textual-light-80x24-stale.svg",
+    "original_sha256": "36fd761e4d85e8531fcf11a4d15e8c0786aa9584c376d683a0001908149ac226",
+    "stored_sha256": "c5c5b30af91d177f52ff8cdc88d43f099359c4577a1dd46d1bf7fc9e28188fca"
+  },
+  {
+    "file": "textual-light-80x24-stale.txt",
+    "original_sha256": "7f316b917c01efec64bc0f77aceb0321cf2d97d96fdf4008b2f5c5de0485e51a",
+    "stored_sha256": "7f316b917c01efec64bc0f77aceb0321cf2d97d96fdf4008b2f5c5de0485e51a"
+  },
+  {
+    "file": "textual-light-80x24-target.svg",
+    "original_sha256": "173ee0359235ad8e0533400e38763238d91230a53a7b248f05251559c9629dcb",
+    "stored_sha256": "3805f6844605b9fff2e584bd88b7c2373fb845999e7a333e5ef581bdcff6b93f"
+  },
+  {
+    "file": "textual-light-80x24-target.txt",
+    "original_sha256": "6fb68cacdbe1acefb1d650fdba99fee3ada8d3c90c845d8f3a444609c6bf6a0f",
+    "stored_sha256": "6fb68cacdbe1acefb1d650fdba99fee3ada8d3c90c845d8f3a444609c6bf6a0f"
+  }
+]

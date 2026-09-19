@@ -1,0 +1,192 @@
+{
+  "pid": 99396,
+  "base_commit": "ea559adee77824548bc3499939ac1c9c48f38454",
+  "source_hashes": {
+    "tldw_chatbook/UI/Navigation/character_conversation_navigation.py": "1ba26bfc0ceec15ceae4db0884b77f628e04a7c87be2f5e1ff14dd9a797962a5",
+    "tldw_chatbook/css/components/_dialogs.tcss": "ae5a712066473878b3a40415b9606176475040bc998d00d794ae38d0754dc2cf",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "e2743ee9b1eda968d8c188790d495bf99480e5a038af6d4227ff8a985905455f",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "2042e083a1d49186a2eb4022140eceff20d269d92ebd0b36f36f9b3d29a65fce",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "Docs/superpowers/qa/2026-09-18-dialog-action-alignment/native_check.py": "0ecb613c5abba920721ecf8a5c2955b48024ec8a33fc66432d36e9aa6543df25",
+    "Tests/UI/test_roleplay_recovery_layout.py": "172f74f98902081a6c2b92091cada028b9e8457f8ac31dea28254e1642acaa67",
+    "Tests/UI/test_dialog_action_alignment.py": "fde74371709820bc20b9f22781df8a80b3444de376abf5a8515548e8279ed3c2",
+    "tldw_chatbook/Widgets/pattern_gallery.py": "3ca9767b7e839c21961a1068c38fc7c9fa45b74b04ffe5efe81159824cd7ea6b",
+    "tldw_chatbook/css/components/_buttons.tcss": "dcd30a5691474bf3ab7e3d84d3d6055bb7cd81f561a0a5296d7ab44589b306df"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "frame": [
+        8,
+        4,
+        64,
+        15
+      ],
+      "gallery_regions": {
+        "row": [
+          3,
+          11,
+          73,
+          3
+        ],
+        "cancel": [
+          50,
+          12,
+          12,
+          1
+        ],
+        "delete": [
+          63,
+          12,
+          12,
+          1
+        ]
+      },
+      "gallery_palette_entry_focus_and_escape": true,
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "frame": [
+        53,
+        16,
+        64,
+        15
+      ],
+      "gallery_regions": {
+        "row": [
+          3,
+          23,
+          163,
+          3
+        ],
+        "cancel": [
+          140,
+          24,
+          12,
+          1
+        ],
+        "delete": [
+          153,
+          24,
+          12,
+          1
+        ]
+      },
+      "gallery_palette_entry_focus_and_escape": true,
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "frame": [
+        8,
+        4,
+        64,
+        15
+      ],
+      "gallery_regions": {
+        "row": [
+          3,
+          11,
+          73,
+          3
+        ],
+        "cancel": [
+          50,
+          12,
+          12,
+          1
+        ],
+        "delete": [
+          63,
+          12,
+          12,
+          1
+        ]
+      },
+      "gallery_palette_entry_focus_and_escape": true,
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "frame": [
+        53,
+        16,
+        64,
+        15
+      ],
+      "gallery_regions": {
+        "row": [
+          3,
+          23,
+          163,
+          3
+        ],
+        "cancel": [
+          140,
+          24,
+          12,
+          1
+        ],
+        "delete": [
+          153,
+          24,
+          12,
+          1
+        ]
+      },
+      "gallery_palette_entry_focus_and_escape": true,
+      "complete_failure_copy_painted": true,
+      "actions_fully_visible": true,
+      "keyboard_stay_pointer_retry_escape_results": [
+        null,
+        "retry",
+        null
+      ]
+    }
+  ],
+  "fixture_scope": "Real TldwCli: Ctrl+P, typed Pattern Gallery search, Enter to the real gallery, direct focus of its Cancel then Tab to Delete, Escape to host. Direct recovery modal with all four failed domains checks continuity; callbacks do not exercise save workers or normal partial-save entry.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notifications cleared",
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

@@ -1,0 +1,234 @@
+...F................                                                     [100%]
+=================================== FAILURES ===================================
+________ test_servers_reversal_uses_pending_tools_choice_and_same_queue ________
+
+self = <Coroutine test_servers_reversal_uses_pending_tools_choice_and_same_queue>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_servers_reversal_uses_pending_tools_choice_and_same_queue>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x1089ece90>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1977/test_servers_reversal_uses_pen0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ________ test_servers_reversal_uses_pending_tools_choice_and_same_queue ________
+E
+E           request = <FixtureRequest for <Coroutine test_servers_reversal_uses_pending_tools_choice_and_same_queue>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111ad0980>
+E
+E               @private_profile_test
+E               async def test_servers_reversal_uses_pending_tools_choice_and_same_queue(
+E                   request, monkeypatch
+E               ):
+E                   entered, release = threading.Event(), threading.Event()
+E                   calls = []
+E
+E                   def write(enabled):
+E                       calls.append(enabled)
+E                       if not enabled:
+E                           entered.set()
+E                           assert release.wait(10)
+E                       return ConfigMutationResult(True, True, None)
+E
+E                   values = _persistence(monkeypatch, write)
+E                   app = WorkbenchAppWithBundledCSS()
+E                   async with app.run_test() as pilot:
+E                       workbench, canvas = await _open(pilot)
+E                       try:
+E                           canvas.query_one("#mcp-tools-local-enabled", Button).press()
+E                           await _wait(pilot, entered.is_set)
+E                           workbench.set_mode("servers")
+E                           workbench._selected_server_key = next(
+E                               s.server_key for s in workbench._snapshots if s.source == "builtin"
+E                           )
+E                           await workbench._sync_children()
+E                           await _settle(pilot)
+E                           servers = workbench.query_one(MCPServersMode)
+E                           toggle = servers.query_one("#mcp-gate-local_tools_enabled", Button)
+E                           assert "off" in str(toggle.label)
+E                           assert not servers.query_one("#mcp-gate-local-master-off-note").display
+E                           toggle.press()
+E                           await _settle(pilot)
+E                           assert calls == [False]
+E                           assert servers._tool_gates_by_id[toggle.id].enabled is True
+E                           assert not servers.query_one("#mcp-gate-local-master-off-note").display
+E           >               assert not servers.query_one("#mcp-gate-web_deep_search", Button).disabled
+E                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_mcp_master_settings.py:181:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = MCPServersMode(id='mcp-mode-canvas-servers')
+E           selector = '#mcp-gate-web_deep_search'
+E           expect_type = <class 'textual.widgets._button.Button'>
+E
+E               def query_one(
+E                   self,
+E                   selector: str | type[QueryType],
+E                   expect_type: type[QueryType] | None = None,
+E               ) -> QueryType | Widget:
+E                   """Get a widget from this widget's children that matches a selector or widget type.
+E
+E                   Args:
+E                       selector: A selector or widget type.
+E                       expect_type: Require the object be of the supplied type, or None for any type.
+E
+E                   Raises:
+E                       WrongType: If the wrong type was found.
+E                       NoMatches: If no node matches the query.
+E
+E                   Returns:
+E                       A widget matching the selector.
+E                   """
+E                   _rich_traceback_omit = True
+E
+E                   base_node = self._get_dom_base()
+E
+E                   if isinstance(selector, str):
+E                       query_selector = selector
+E                   else:
+E                       query_selector = selector.__name__
+E
+E                   if is_id_selector(query_selector):
+E                       cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E                       cached_result = base_node._query_one_cache.get(cache_key)
+E                       if cached_result is not None:
+E                           return cached_result
+E                       if (
+E                           node := walk_breadth_search_id(
+E                               base_node, query_selector[1:], with_root=False
+E                           )
+E                       ) is not None:
+E                           if expect_type is not None and not isinstance(node, expect_type):
+E                               raise WrongType(
+E                                   f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                               )
+E                           base_node._query_one_cache[cache_key] = node
+E                           return node
+E           >           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           E           textual.css.query.NoMatches: No nodes match '#mcp-gate-web_deep_search' on MCPServersMode(id='mcp-mode-canvas-servers')
+E
+E           .venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 08:26:43.858 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 08:26:43.864 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 08:26:43.864 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 08:26:43.865 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 08:26:44.408 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:26:44.598 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:26:45.111 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 08:26:45.733 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.88s call     Tests/UI/test_mcp_master_settings.py::test_servers_reversal_uses_pending_tools_choice_and_same_queue
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_master_settings.py::test_servers_reversal_uses_pending_tools_choice_and_same_queue
+E           1 failed in 3.73s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+4.73s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]
+4.67s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]
+4.65s call     Tests/UI/test_mcp_master_settings.py::test_servers_reversal_uses_pending_tools_choice_and_same_queue
+4.62s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]
+4.53s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]
+4.48s call     Tests/UI/test_mcp_master_settings.py::test_master_catalog_failure_remains_distinct_from_persistence
+4.47s call     Tests/UI/test_mcp_master_settings.py::test_master_outcome_survives_workbench_recreation[False]
+4.45s call     Tests/UI/test_mcp_master_settings.py::test_master_outcome_survives_workbench_recreation[True]
+4.09s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal[servers]
+4.08s call     Tests/UI/test_mcp_master_settings.py::test_committed_master_with_failed_cache_is_not_reported_unsaved
+3.93s call     Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+3.87s call     Tests/UI/test_mcp_master_settings.py::test_master_reversal_waits_for_older_admitted_write
+3.86s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection[servers]
+3.85s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal[tools]
+3.63s call     Tests/UI/test_mcp_master_settings.py::test_old_configuration_events_from_both_controls_are_refused
+3.55s call     Tests/UI/test_mcp_master_settings.py::test_master_poll_does_not_overwrite_unprocessed_root_edit
+3.53s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection[tools]
+2.66s call     Tests/UI/test_mcp_master_settings.py::test_real_atomic_master_write_preserves_or_repairs_partial_root[False]
+2.64s call     Tests/UI/test_mcp_master_settings.py::test_real_atomic_master_write_preserves_or_repairs_partial_root[True]
+2.51s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_write_refuses_retargeted_configuration
+
+(5 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_master_settings.py::test_servers_reversal_uses_pending_tools_choice_and_same_queue
+1 failed, 19 passed in 81.86s (0:01:21)

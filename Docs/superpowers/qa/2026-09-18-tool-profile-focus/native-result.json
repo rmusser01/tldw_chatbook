@@ -1,0 +1,104 @@
+{
+  "pid": 92586,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "profile_id": "native-dark-80",
+      "imported_unbound": true,
+      "cancel_unchanged": true,
+      "reordered_focus_preserved": true,
+      "removed_tombstone": true,
+      "continuation": "tool-profiles-import",
+      "fixture_sha256": "b3405dae815068004d21adf953c32b71e3c64cb797e2c55851c3352d2908cf4b"
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "profile_id": "native-dark-170",
+      "imported_unbound": true,
+      "cancel_unchanged": true,
+      "reordered_focus_preserved": true,
+      "removed_tombstone": true,
+      "continuation": "tool-profiles-import",
+      "fixture_sha256": "b3405dae815068004d21adf953c32b71e3c64cb797e2c55851c3352d2908cf4b"
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "profile_id": "native-light-80",
+      "imported_unbound": true,
+      "cancel_unchanged": true,
+      "reordered_focus_preserved": true,
+      "removed_tombstone": true,
+      "continuation": "tool-profiles-import",
+      "fixture_sha256": "b3405dae815068004d21adf953c32b71e3c64cb797e2c55851c3352d2908cf4b"
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "profile_id": "native-light-170",
+      "imported_unbound": true,
+      "cancel_unchanged": true,
+      "reordered_focus_preserved": true,
+      "removed_tombstone": true,
+      "continuation": "tool-profiles-import",
+      "fixture_sha256": "b3405dae815068004d21adf953c32b71e3c64cb797e2c55851c3352d2908cf4b"
+    }
+  ],
+  "runner_sha256": "aca79ce777e0cb1e872ada35e82845456656ade577ebd479d418accd5740ea06",
+  "source_hashes": {
+    "tldw_chatbook/app.py": "157df1f5d16fd09f32c6a9b59809b1edd0146322ab05e650331f8e32ae1784e1",
+    "tldw_chatbook/Tool_Packs/service.py": "805b66d6e2f15082f794b5318219729d695b1859bcaf2c200b9e2bc9c6bb7d17",
+    "tldw_chatbook/Tool_Packs/export.py": "dd43ad4e11c9303bf9c12b73972eaec0258ea3cf8df5c3a2875fff120050c05a",
+    "tldw_chatbook/Tool_Packs/publication.py": "25a655551ca47d4c8c169a6fa272b27b675ffdb55c422d98d602bf30e52fc3bc",
+    "tldw_chatbook/Tool_Packs/activation.py": "aeccfd4004550c3b0b4f506802de561fd8c8509cf4fc329febf393f7b3335bbd",
+    "tldw_chatbook/Tool_Packs/importer.py": "43843f4c15277e1ed7be49ea4414c3085c90c6ef118eed2db52d1c9468f3fc23",
+    "tldw_chatbook/Tool_Packs/removal.py": "570de3908eec9b31b3ef0164b26074cbb184d8ae352e9918de7e838855c919a4",
+    "tldw_chatbook/Widgets/enhanced_file_picker.py": "26b74a35ca16725dce92e128d8fd147440c9ad8f18118434af4f92de0d3d0421",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_pack_import_review.py": "30843d15759e26b9d45ea7d8fd887524f97841e2d6228d111fbcbaed3bbb1858",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "e2d07be454fd3da6e0e5d3a1c0aea394e4f23e360f596a9b11c4583aee1a197a",
+    "tldw_chatbook/Workspaces/agent_provisioning.py": "7a94790e019370b9ae74c33d6ccba35a563f97a72d1bfc626f85751c48e562d0",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "55ca7cec2309b105dd55297f99779378edd241d407bf6519eae0b6ac28164f1f",
+    "tldw_chatbook/Widgets/workspace_persona_default.py": "5d2eab749cd73da2d1a459358ff67c910108eeab41a17d7848e5a3b40a573e7c",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "c2407576849caddad58e38b7f408c2842e710c2876fa3e35795092ad0aba9675",
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": "d81263d1dc5e7ef0f9796dd2034ae5ec5273b547fa9e27ca86e8d28de40d157c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "04061eee10a1146347ce31223db94b131294ec74324c5a0ca28f21613481e72b",
+    "tldw_chatbook/css/features/_settings.tcss": "382e41451a525784dcc15045121286c7afb8161d72c1774730300811c3ead942",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "4a790234fa12836d4dd4121f685cca7fbd9edec0c759ca38afa3a5c39cf3e43d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "5c33e3ccdfa2458257347bb2cbd95653c2e29b90a14e423114753b5ef544029f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "d83fc0a40e6b23c8481a9e0ee687746fefa9a6001977363428d24a836d0166d2",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "527cfc7921838381e7d83e59d13230a66353c7af5ef13e8b8f230298fec41507",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Notices clear",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "One private source profile and real service-exported archive. All import, revise, cancel and removal actions use the real UI and service. No provider requests.",
+  "passed": true,
+  "app_run_returned": true
+}

@@ -44,10 +44,9 @@ from tldw_chatbook.Scheduling.schedule_input_parsing import (
 )
 
 from ..task_detail import definition_cron_expression
-
 from .reminder_form import (
-    DEFAULT_TIME_OF_DAY,
     _TIME_OF_DAY_PRESETS,
+    DEFAULT_TIME_OF_DAY,
     cron_to_preset,
     preset_to_cron,
     system_timezone_name,
@@ -128,12 +127,12 @@ class AutomationDefinitionForm(ModalScreen):
         Binding("escape", "dismiss", "Close", show=False),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     AutomationDefinitionForm {
         align: center middle;
     }
 
-    AutomationDefinitionForm > VerticalScroll {
+    AutomationDefinitionForm > VerticalScroll.automation-definition-form-verticalscroll {
         width: 84;
         max-width: 100%;
         height: auto;
@@ -206,7 +205,7 @@ class AutomationDefinitionForm(ModalScreen):
         margin-top: 1;
     }
 
-    .button-container Button {
+    .button-container Button.automation-definition-form-button {
         margin: 0 1;
     }
     """
@@ -282,7 +281,10 @@ class AutomationDefinitionForm(ModalScreen):
     # -- compose --------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="automation-form-box"):
+        with VerticalScroll(
+            id="automation-form-box",
+            classes="automation-definition-form-verticalscroll",
+        ):
             yield Label(
                 "Edit Recurring Question"
                 if self._definition_row is not None
@@ -326,12 +328,17 @@ class AutomationDefinitionForm(ModalScreen):
             )
             with Vertical(id="automation-scope-sources-group"):
                 for label, value in _SCOPE_SOURCE_CHECKBOXES:
-                    yield Checkbox(label, value=True, id=f"automation-scope-{value.split('_')[0]}")
+                    yield Checkbox(
+                        label, value=True, id=f"automation-scope-{value.split('_')[0]}"
+                    )
             yield Static("", id="automation-scope-error", classes="error-text")
 
             yield Label("Schedule Kind:", classes="form-label")
             yield Select(
-                [(kind.value.replace("_", " ").title(), kind.value) for kind in ScheduleKind],
+                [
+                    (kind.value.replace("_", " ").title(), kind.value)
+                    for kind in ScheduleKind
+                ],
                 allow_blank=False,
                 value=self._default_schedule_kind(),
                 id="automation-schedule-kind",
@@ -387,7 +394,9 @@ class AutomationDefinitionForm(ModalScreen):
                 value="optional",
                 id="automation-generation-mode",
             )
-            yield Static("", id="automation-generation-mode-error", classes="error-text")
+            yield Static(
+                "", id="automation-generation-mode-error", classes="error-text"
+            )
 
             yield Label("Finding policy:", classes="form-label")
             yield Select(
@@ -415,9 +424,22 @@ class AutomationDefinitionForm(ModalScreen):
                 yield Static("", id="automation-preview-text", classes="form-preview")
                 yield Static("", id="automation-form-errors", classes="error-text")
                 with Horizontal(classes="button-container"):
-                    yield Button("Preview", id="automation-preview-btn")
-                    yield Button("Save", variant="success", id="automation-save")
-                    yield Button("Cancel", id="automation-cancel")
+                    yield Button(
+                        "Preview",
+                        id="automation-preview-btn",
+                        classes="automation-definition-form-button",
+                    )
+                    yield Button(
+                        "Save",
+                        variant="success",
+                        id="automation-save",
+                        classes="automation-definition-form-button",
+                    )
+                    yield Button(
+                        "Cancel",
+                        id="automation-cancel",
+                        classes="automation-definition-form-button",
+                    )
 
     def _default_schedule_kind(self) -> str:
         """Create mode's Schedule Kind default (31712 AC#2).
@@ -495,7 +517,9 @@ class AutomationDefinitionForm(ModalScreen):
 
         generation_mode = config.get("generation_mode")
         if generation_mode in {value for _, value in _GENERATION_MODE_OPTIONS}:
-            self.query_one("#automation-generation-mode", Select).value = generation_mode
+            self.query_one(
+                "#automation-generation-mode", Select
+            ).value = generation_mode
 
         finding_policy = (
             config.get("finding_policy")
@@ -519,9 +543,9 @@ class AutomationDefinitionForm(ModalScreen):
         schedule = row.get("schedule") if isinstance(row.get("schedule"), dict) else {}
         kind = schedule.get("kind")
         if kind == "one_time" and schedule.get("run_at"):
-            self.query_one("#automation-schedule-kind", Select).value = (
-                ScheduleKind.ONE_TIME.value
-            )
+            self.query_one(
+                "#automation-schedule-kind", Select
+            ).value = ScheduleKind.ONE_TIME.value
             self.query_one("#automation-run-at", Input).value = str(schedule["run_at"])
             self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
         # `cron` OR `expression` (final review F1 carry-forward): the
@@ -529,9 +553,9 @@ class AutomationDefinitionForm(ModalScreen):
         # server-only definition on the form's DEFAULT preset -- and saving
         # then wrote that default over the server's real schedule.
         elif kind == "cron" and definition_cron_expression(schedule):
-            self.query_one("#automation-schedule-kind", Select).value = (
-                ScheduleKind.RECURRING.value
-            )
+            self.query_one(
+                "#automation-schedule-kind", Select
+            ).value = ScheduleKind.RECURRING.value
             cron_value = str(definition_cron_expression(schedule))
             self.query_one("#automation-cron", Input).value = cron_value
             preset_key, time_text = cron_to_preset(cron_value)
@@ -670,7 +694,9 @@ class AutomationDefinitionForm(ModalScreen):
         sources = [
             value
             for label, value in _SCOPE_SOURCE_CHECKBOXES
-            if self.query_one(f"#automation-scope-{value.split('_')[0]}", Checkbox).value
+            if self.query_one(
+                f"#automation-scope-{value.split('_')[0]}", Checkbox
+            ).value
         ]
         return {"mode": "sources", "sources": sources}
 
@@ -795,7 +821,9 @@ class AutomationDefinitionForm(ModalScreen):
         form_errors.display = bool(unmatched)
 
     def _set_form_error(self, message: str) -> None:
-        self._set_validation_errors([{"field": "", "message": message}] if message else [])
+        self._set_validation_errors(
+            [{"field": "", "message": message}] if message else []
+        )
 
     def _client_side_schedule_error(self) -> str | None:
         """Same pre-flight schedule checks as `ReminderForm._save` runs.
@@ -834,7 +862,9 @@ class AutomationDefinitionForm(ModalScreen):
     def _run_preview(self) -> None:
         schedule_error = self._client_side_schedule_error()
         if schedule_error:
-            self._set_validation_errors([{"field": "schedule", "message": schedule_error}])
+            self._set_validation_errors(
+                [{"field": "schedule", "message": schedule_error}]
+            )
             return
         payload = self._build_payload()
         owner = self._selected_owner()
@@ -874,11 +904,16 @@ class AutomationDefinitionForm(ModalScreen):
         # server response; a non-list here would otherwise be sliced and
         # iterated (a str renders one character per "occurrence").
         occurrences = raw_occurrences if isinstance(raw_occurrences, list) else []
-        warnings = [str(w.get("message", "")) for w in (preview.warnings or []) if w.get("message")]
+        warnings = [
+            str(w.get("message", ""))
+            for w in (preview.warnings or [])
+            if w.get("message")
+        ]
         lines = []
         if occurrences:
             lines.append(
-                "Next runs: " + ", ".join(_format_occurrence(o) for o in occurrences[:3])
+                "Next runs: "
+                + ", ".join(_format_occurrence(o) for o in occurrences[:3])
             )
         else:
             lines.append("Valid.")
@@ -890,7 +925,9 @@ class AutomationDefinitionForm(ModalScreen):
     def _run_save(self) -> None:
         schedule_error = self._client_side_schedule_error()
         if schedule_error:
-            self._set_validation_errors([{"field": "schedule", "message": schedule_error}])
+            self._set_validation_errors(
+                [{"field": "schedule", "message": schedule_error}]
+            )
             return
         payload = self._build_payload()
         owner = self._selected_owner()

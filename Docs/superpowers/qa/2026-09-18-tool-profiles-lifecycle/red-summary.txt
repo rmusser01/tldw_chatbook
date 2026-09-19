@@ -1,0 +1,21 @@
+E   assert [ExportRequested()] == []
+E   assert [EditPolicyRequested()] == []
+E   assert [BindRequested()] == []
+E   assert [RemoveRequested()] == []
+E   assert [ExportRequested()] == []
+E   assert [EditPolicyRequested()] == []
+E   assert [BindRequested()] == []
+E   assert [RemoveRequested()] == []
+E   E           AssertionError: assert <WorkerState.CANCELLED: 3> is <WorkerState.RUNNING: 2>
+E   E           AssertionError: assert <WorkerState.CANCELLED: 3> is <WorkerState.RUNNING: 2>
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[replacement-export]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[replacement-edit]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[replacement-bind]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[replacement-remove]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[revision-export]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[revision-edit]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[revision-bind]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_queued_action_cannot_acquire_refreshed_profile[revision-remove]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_settings_cancellation_preserves_shared_profile_initialization[refresh]
+FAILED Tests/UI/test_tool_profiles_lifecycle.py::test_settings_cancellation_preserves_shared_profile_initialization[remove]
+10 failed in 10.38s

@@ -902,6 +902,27 @@ Button.settings-category-group-toggle:focus {
     height: auto;
 }
 
+/* Workspace rows share the detail pane scroll owner; keep every row inside
+   the list's bounds so keyboard focus can reveal it beside a tall card. */
+#settings-workspaces-list {
+    height: auto;
+}
+
+#settings-workspaces-list .settings-workspace-row {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
+/* Keep the selected option and its adjacent staging receipt together even
+   when the user's Persona/profile catalog is long. */
+#settings-workspace-persona-picker,
+#settings-workspace-profile-picker {
+    max-height: $ds-size-5;
+    /* The generic focus outline paints over compact option text. */
+    outline: none;
+}
+
 .settings-workbench-compact #settings-overview-primary .settings-action-row {
     layout: vertical;
     height: auto;
@@ -1005,7 +1026,6 @@ Button.settings-category-group-toggle:focus {
     border: none;
     outline: none;
 }
-/* RAW CLI DANGER GATE END */
 
 #settings-advanced-config-card {
     height: $ds-height-fill;

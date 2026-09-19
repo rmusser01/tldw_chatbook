@@ -1,0 +1,9 @@
+Read-only reviewer: /root/mcp_tools_access_review
+Initial review found no lifecycle guard issue after the root fixture acquired
+its required historical draft identity. The extended canvas-only review found
+that a previously displayed root receipt was skipped after replacement because
+the surviving Workbench stamp omitted canvas identity. The reproduced red case
+was fixed by including that identity and checking readiness before the stamp.
+Final review: no remaining actionable findings in the bounded diff. The test
+settle drains scheduled rendering and does not claim a generic Select shutdown
+fix. Reviewer ran no app tests concurrently with primary verification.

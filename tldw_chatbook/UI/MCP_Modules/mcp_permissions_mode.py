@@ -22,7 +22,8 @@ from typing import Any
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
@@ -401,7 +402,22 @@ def _tool_column_text(row: PermRow) -> str:
     return f"{_TOOL_ROW_INDENT}{row.tool_name or ''}"
 
 
-class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
+class MCPPermissionsTable(DataTable):
+    """Report matrix geometry after enclosing scrollbars settle."""
+
+    class Resized(Message, namespace="mcp_permissions_table"):
+        """The matrix viewport changed independently of its outer canvas."""
+
+    def on_resize(self, event: Resize) -> None:
+        """Notify the parent that the permission matrix viewport changed.
+
+        Args:
+            event: Resize notification for this table.
+        """
+        self.post_message(self.Resized())
+
+
+class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
     """Canvas for the Permissions mode: kill switch, matrix, policy preview."""
 
     BUNDLED_CSS = """
@@ -409,6 +425,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         width: 1fr;
         height: 100%;
         min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     /* Task 4 (MCP Hub Phase 6): the free-text filter Input sits directly
     above the matrix table -- this canvas has exactly one filter control
@@ -600,6 +618,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._kill_switch: bool = False
         self._profile_context: PermissionProfileContext | None = None
         self._profile_select_sync = False
+        self._tool_column_width: int | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -658,7 +677,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         # docstring below for why no mount-echo guard is needed here,
         # unlike the filter Select in `mcp_tools_mode.py`).
         yield Input(placeholder="Filter tool or server…", id="mcp-perm-filter-text")
-        table = DataTable(id="mcp-perm-table")
+        table = MCPPermissionsTable(id="mcp-perm-table")
         table.cursor_type = "row"
         yield table
         yield Static("", id="mcp-perm-preview", markup=False)
@@ -675,6 +694,95 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-perm-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal the focused descendant after its layout settles.
+
+        Args:
+            event: Descendant focus notification, allowed to propagate.
+        """
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def on_resize(self, event: Resize) -> None:
+        """Refit the table and reveal focus after the new viewport is laid out.
+
+        Args:
+            event: Canvas resize notification, allowed to propagate.
+        """
+        self.call_after_refresh(self._reflow_table)
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def on_mcp_permissions_table_resized(
+        self, event: MCPPermissionsTable.Resized
+    ) -> None:
+        """Consume matrix geometry changes and defer reflow and focus reveal.
+
+        Args:
+            event: Table resize message, stopped after scheduling updates.
+        """
+        event.stop()
+        self.call_after_refresh(self._reflow_table)
+        self.call_after_refresh(self.reveal_focused_control)
+
+    def _measured_tool_width(self, table: DataTable) -> int | None:
+        """Reserve readable State cells before allowing Tool labels to wrap."""
+        if table.content_region.width <= 0:
+            return None
+        state_width = max(
+            [Text("State").cell_len]
+            + [Text(row.state_label).cell_len for row in self._all_rows]
+        )
+        tool_width = max(
+            [Text("Tool").cell_len]
+            + [Text(_tool_column_text(row)).cell_len for row in self._all_rows]
+        )
+        # ds-runtime: available table cells minus measured State text, both
+        # columns' native padding and the scrollbar that wrapping may reveal.
+        budget = max(
+            1,
+            table.content_region.width
+            - table.styles.scrollbar_size_vertical
+            - state_width
+            - 4 * table.cell_padding,
+        )
+        return budget if tool_width > budget else None
+
+    def _reflow_table(self) -> None:
+        """Rebuild only when resize changes wrapping, retaining row authority."""
+        if not self.is_attached or not self._all_rows:
+            return
+        table = self.query_one("#mcp-perm-table", DataTable)
+        if self._measured_tool_width(table) != self._tool_column_width:
+            self._render_rows(self._visible_rows)
+            self.call_after_refresh(self.reveal_focused_control)
+
+    def reveal_focused_control(self) -> None:
+        """Reveal the current child after layout without overriding newer focus."""
+        if (
+            not self.is_attached
+            or not self.display
+            or self.app.screen is not self.screen
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
+            if isinstance(focused, DataTable) and focused.row_count:
+                focused._scroll_cursor_into_view(animate=False)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Enable permission cycling only while the matrix owns focus.
+
+        Args:
+            action: Action name being checked by Textual.
+            parameters: Action arguments forwarded for other framework actions.
+
+        Returns:
+            Whether cycling is allowed, or the inherited action availability.
+        """
+        if action == "cycle_state":
+            return self.app.focused is self.query_one("#mcp-perm-table", DataTable)
+        return super().check_action(action, parameters)
 
     # -- data -----------------------------------------------------------
 
@@ -930,33 +1038,37 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
-        self.repopulating_table()
-        table.clear(columns=True)
-        table.add_columns(*(_TABLE_COLUMNS if show_tags else _TABLE_COLUMNS_NO_TAGS))
-        for row in rows:
-            # Task 1 (MCP Hub Phase 6): the State cell's word is now colored
-            # by the resolved verdict it names (`state_text()`) -- the
-            # marker glyph baked into `state_label` (·/⚠/⚑) is rendered as
-            # part of that SAME string, unchanged, so it still reads even
-            # without color (the colorblind-safe channel `state_text()`'s
-            # own docstring describes).
-            row_cells: list[Any] = [
-                Text(_tool_column_text(row)),
-                state_text(row.state_label, _perm_row_kind(row.state_label)),
-            ]
-            if show_tags:
-                row_cells.append(Text(row.tags_label))
-            table.add_row(*row_cells, key=_row_key(row))
+        with self.repopulating_table(table):
+            table.clear(columns=True)
+            self._tool_column_width = self._measured_tool_width(table)
+            table.add_column("Tool", width=self._tool_column_width)
+            table.add_columns(
+                *(_TABLE_COLUMNS[1:] if show_tags else _TABLE_COLUMNS_NO_TAGS[1:])
+            )
+            for row in rows:
+                # Task 1 (MCP Hub Phase 6): the State cell's word is now colored
+                # by the resolved verdict it names (`state_text()`) -- the
+                # marker glyph baked into `state_label` (·/⚠/⚑) is rendered as
+                # part of that SAME string, unchanged, so it still reads even
+                # without color (the colorblind-safe channel `state_text()`'s
+                # own docstring describes).
+                row_cells: list[Any] = [
+                    Text(_tool_column_text(row)),
+                    state_text(row.state_label, _perm_row_kind(row.state_label)),
+                ]
+                if show_tags:
+                    row_cells.append(Text(row.tags_label))
+                table.add_row(*row_cells, key=_row_key(row), height=None)
 
-        if cursor_key is not None:
-            for index, row in enumerate(rows):
-                if _row_key(row) == cursor_key:
-                    table.move_cursor(row=index)
-                    break
-            # A key that no longer has a row (e.g. its tool/server vanished
-            # from this resync, or a filter now hides it) leaves the
-            # cursor at `clear()`'s own default -- row 0 -- the same
-            # graceful fallback `_restore_overview_cursor()` uses.
+            if cursor_key is not None:
+                for index, row in enumerate(rows):
+                    if _row_key(row) == cursor_key:
+                        table.move_cursor(row=index)
+                        break
+                # A key that no longer has a row (e.g. its tool/server vanished
+                # from this resync, or a filter now hides it) leaves the
+                # cursor at `clear()`'s own default -- row 0 -- the same
+                # graceful fallback `_restore_overview_cursor()` uses.
 
     async def update_server_profiles(
         self, profiles: list[Mapping[str, Any]] | None
@@ -1095,7 +1207,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             self._apply_filter()
         for index, candidate in enumerate(self._visible_rows):
             if _row_key(candidate) == key:
-                table.move_cursor(row=index)
+                with self.repopulating_table(table):
+                    table.move_cursor(row=index)
                 return True
         return False
 

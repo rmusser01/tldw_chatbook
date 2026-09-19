@@ -100,62 +100,78 @@ class ConsoleAppearancePickerModal(
 ):
     """Pick one conversation's icon glyph and palette color."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleAppearancePickerModal {
         align: center middle;
     }
 
     #console-appearance-picker-modal {
-        width: 64;
-        max-width: 100%;
-        height: 29;
-        max-height: 100%;
+        width: $ds-size-64;
+        max-width: $ds-width-full;
+        height: $ds-size-29;
+        max-height: $ds-height-full;
         border: tall $accent;
-        background: $panel;
-        padding: 1 2;
+        background: $ds-surface-panel;
+        padding: $ds-space-inset $ds-space-section;
     }
 
     #console-appearance-picker-filter {
-        width: 100%;
-        height: 3;
+        width: $ds-width-full;
+        height: $ds-control-height;
     }
 
     #console-appearance-picker-preview {
-        width: 100%;
-        height: 1;
-        color: $text-muted;
+        width: $ds-width-full;
+        height: $ds-control-height-compact;
+        color: $ds-text-muted;
     }
 
     #console-appearance-picker-emoji {
-        width: 100%;
-        height: 1fr;
-        min-height: 6;
-        background: $surface-darken-1;
+        width: $ds-width-full;
+        height: $ds-height-fill;
+        min-height: $ds-control-height;
+        background: $ds-surface-sunken;
+    }
+
+    /* The grid may shrink to one complete row at the 80x24 floor. Give
+       each icon its own cell budget instead of inheriting wide action buttons. */
+    #console-appearance-picker-emoji .emoji_row {
+        height: $ds-control-height;
+        width: $ds-width-full;
+    }
+
+    #console-appearance-picker-emoji .emoji_button {
+        width: $ds-size-4;
+        min-width: $ds-size-4;
+        max-width: $ds-size-4;
+        height: $ds-control-height;
+        padding: $ds-space-0;
+        margin: $ds-space-0;
     }
 
     #console-appearance-picker-colors {
         /* task-31209: a scrollable strip -- the 22-swatch palette (plus
            "none") no longer fits one modal row, and shrinking swatches to
            two cells left no content width under a selection border. */
-        width: 100%;
-        height: 3;
-        margin-top: 1;
+        width: $ds-width-full;
+        height: $ds-size-4;
+        margin-top: $ds-space-0;
     }
 
     #console-appearance-picker-hex {
-        width: 1fr;
-        height: 3;
-        margin-top: 1;
+        width: $ds-width-fill;
+        height: $ds-control-height;
+        margin-top: $ds-space-0;
     }
 
     .console-appearance-swatch {
-        width: 3;
-        min-width: 3;
-        max-width: 3;
-        height: 3;
-        min-height: 3;
-        margin: 0;
-        padding: 0;
+        width: $ds-size-3;
+        min-width: $ds-size-3;
+        max-width: $ds-size-3;
+        height: $ds-control-height;
+        min-height: $ds-control-height;
+        margin: $ds-space-0;
+        padding: $ds-space-0;
         border: none;
         text-align: center;
         content-align: center middle;
@@ -164,43 +180,43 @@ class ConsoleAppearancePickerModal(
     .console-appearance-swatch-selected {
         /* Background highlight, not a border: the 2-cell swatch has no room
            for a 2-cell border (zero content width crashed cell chopping). */
-        background: $accent 25%;
-        text-style: bold;
+        background: $accent $ds-percent-25;
+        text-style: $ds-text-strong;
     }
 
     #console-appearance-swatch-none {
-        width: 5;
-        min-width: 5;
-        max-width: 5;
+        width: $ds-size-6;
+        min-width: $ds-size-6;
+        max-width: $ds-size-6;
     }
 
     .console-appearance-emoji-selected {
-        background: $accent 25%;
-        text-style: bold;
+        background: $accent $ds-percent-25;
+        text-style: $ds-text-strong;
     }
 
     #console-appearance-picker-actions {
-        width: 100%;
-        height: 3;
-        margin-top: 1;
+        width: $ds-width-full;
+        height: $ds-control-height;
+        margin-top: $ds-space-stack;
     }
 
-    #console-appearance-picker-actions Button {
-        width: 1fr;
-        height: 3;
+    #console-appearance-picker-actions Button.console-appearance-picker-modal-button {
+        width: $ds-width-fill;
+        height: $ds-control-height;
         border: none;
-        margin: 0 1 0 0;
+        margin: $ds-space-0 $ds-space-inline $ds-space-0 $ds-space-0;
     }
 
     #console-appearance-picker-apply {
         background: $primary;
-        color: $text;
+        color: $ds-text-primary;
     }
 
     #console-appearance-picker-clear,
     #console-appearance-picker-cancel {
-        background: $surface;
-        color: $text;
+        background: $ds-surface-raised;
+        color: $ds-text-primary;
     }
     """
 
@@ -237,15 +253,16 @@ class ConsoleAppearancePickerModal(
             yield Input(
                 placeholder="Search icons by name…",
                 id=FILTER_INPUT_ID,
+                # Grid refresh briefly moves focus; preserve the typing cursor
+                # when it returns instead of selecting/replacing the query.
+                select_on_focus=False,
             )
-            yield EmojiGrid(
-                self._all_emojis, id=GRID_ID, can_focus=False
-            )
+            yield EmojiGrid(self._all_emojis, id=GRID_ID, can_focus=False)
             with HorizontalScroll(id=COLORS_ID):
                 yield Button(
                     "none",
                     id=SWATCH_NONE_ID,
-                    classes=SWATCH_CLASS,
+                    classes=(SWATCH_CLASS) + " console-appearance-picker-modal-button",
                     compact=True,
                 )
                 for label, hex_color in CONSOLE_APPEARANCE_PALETTE:
@@ -253,7 +270,8 @@ class ConsoleAppearancePickerModal(
                         _swatch_label(hex_color),
                         id=f"console-appearance-swatch-"
                         f"{label.lower().replace(' ', '-')}",
-                        classes=SWATCH_CLASS,
+                        classes=(SWATCH_CLASS)
+                        + " console-appearance-picker-modal-button",
                         compact=True,
                         tooltip=label,
                     )
@@ -264,9 +282,24 @@ class ConsoleAppearancePickerModal(
                 id=HEX_INPUT_ID,
             )
             with Horizontal(id="console-appearance-picker-actions"):
-                yield Button("Apply", id=APPLY_ID, compact=True)
-                yield Button("Clear", id=CLEAR_ID, compact=True)
-                yield Button("Cancel", id=CANCEL_ID, compact=True)
+                yield Button(
+                    "Apply",
+                    id=APPLY_ID,
+                    compact=True,
+                    classes="console-appearance-picker-modal-button",
+                )
+                yield Button(
+                    "Clear",
+                    id=CLEAR_ID,
+                    compact=True,
+                    classes="console-appearance-picker-modal-button",
+                )
+                yield Button(
+                    "Cancel",
+                    id=CANCEL_ID,
+                    compact=True,
+                    classes="console-appearance-picker-modal-button",
+                )
 
     async def on_mount(self) -> None:  # type: ignore[override]
         # EmojiGrid populates itself from its constructor list on mount;
@@ -304,9 +337,7 @@ class ConsoleAppearancePickerModal(
             first = grid.query(EmojiButton).first()
         except NoMatches:
             return
-        char = str(
-            getattr(first, "emoji_data", {}).get("char", "") or ""
-        )
+        char = str(getattr(first, "emoji_data", {}).get("char", "") or "")
         if char:
             self._select_icon(char)
 
@@ -343,7 +374,9 @@ class ConsoleAppearancePickerModal(
         else:
             hex_color = getattr(button, "hex_color", None)
             self._selected_color = (
-                hex_color if hex_color and is_valid_console_appearance_color(hex_color) else None
+                hex_color
+                if hex_color and is_valid_console_appearance_color(hex_color)
+                else None
             )
         self._sync_preview()
         self._sync_swatch_highlight()
@@ -367,9 +400,7 @@ class ConsoleAppearancePickerModal(
         # the recent-emoji side effect, so a rejected icon cannot leave a
         # stray recents entry (selection-time rejection makes this belt and
         # braces for foreign callers of `_select_icon`).
-        result = ConsoleConversationAppearance(
-            icon=icon, color=self._selected_color
-        )
+        result = ConsoleConversationAppearance(icon=icon, color=self._selected_color)
         if icon is not None:
             save_recent_emoji(icon)
         self.dismiss(result)
@@ -449,8 +480,7 @@ class ConsoleAppearancePickerModal(
         for button in self.query(f".{SWATCH_CLASS}"):
             hex_color = getattr(button, "hex_color", None)
             is_selected = (
-                self._selected_color is not None
-                and hex_color == self._selected_color
+                self._selected_color is not None and hex_color == self._selected_color
             )
             button.set_class(is_selected, SWATCH_SELECTED_CLASS)
 
@@ -476,7 +506,9 @@ class ConsoleAppearancePickerModal(
                 )
             )
         else:
-            preview.update(Content.assemble((f"{icon} ", "dim"), (f"{title}  no color", None)))
+            preview.update(
+                Content.assemble((f"{icon} ", "dim"), (f"{title}  no color", None))
+            )
 
     def _focus_filter(self) -> None:
         try:

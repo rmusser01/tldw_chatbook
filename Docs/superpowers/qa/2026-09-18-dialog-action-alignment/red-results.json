@@ -1,0 +1,582 @@
+[
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-None]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-None]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-None]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-None]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/001",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-001.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-left]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-left]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-left]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-left]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/002",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-002.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-center]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-center]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-center]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-center]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/003",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-003.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-right]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-right]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-right]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-dark-right]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/004",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-004.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-None]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-None]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-None]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-None]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/005",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-005.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-left]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-left]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-left]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-left]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/006",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-006.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-center]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-center]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-center]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-center]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/007",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-007.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-right]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-right]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-right]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size0-textual-light-right]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/008",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-008.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-None]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-None]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-None]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-None]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/009",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-009.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-left]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-left]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-left]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-left]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/010",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-010.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-center]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-center]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-center]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-center]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/011",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-011.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-right]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-right]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-right]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-dark-right]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/012",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-012.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-None]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-None]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-None]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-None]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/013",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-013.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-left]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-left]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-left]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-left]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/014",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-014.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-center]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-center]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-center]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-center]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/015",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-015.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-right]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-right]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-right]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_explicit_dialog_alignment_wins_without_moving_default_rows[size1-textual-light-right]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/016",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-016.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-dark]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-dark]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/017",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-017.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-light]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-light]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size0-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/018",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-018.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-dark]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-dark]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/019",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-019.txt"
+  },
+  {
+    "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-light]",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-light]",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_dialog_action_alignment.py::test_gallery_dialog_actions_use_the_documented_trailing_edge[size1-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32821-red-002/020",
+    "classes": [],
+    "mismatches": 0,
+    "log": "red-020.txt"
+  }
+]

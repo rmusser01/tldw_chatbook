@@ -1,0 +1,11 @@
+{
+  "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py": true,
+  "tldw_chatbook/css/widget_defaults_scoped.tcss": true,
+  "tldw_chatbook/css/widget_defaults_self.tcss": true,
+  "tldw_chatbook/css/tldw_cli_modular.tcss": true,
+  "tldw_chatbook/css/core/_variables.tcss": true,
+  "tldw_chatbook/css/build_css.py": true,
+  "tldw_chatbook/css/widget_css.py": true,
+  "Docs/superpowers/qa/2026-09-18-console-appearance/native_check.py": true,
+  "Tests/UI/test_console_appearance_compact.py": true
+}

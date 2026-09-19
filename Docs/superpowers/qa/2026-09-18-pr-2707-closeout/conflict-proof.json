@@ -1,0 +1,19 @@
+{
+  "base": "e89f28d751bc8a5b4f4545b8894b87437252c657",
+  "pr_parent": "157b19ee9fe0841d4d7c3694211e0d2d60689e2a",
+  "dev_parent": "53b56384cc83b4b6b5a19a7fffaa2f6f5fa9b1b5",
+  "conflicts": [
+    {
+      "path": "backlog/docs/lessons-testing-evidence.md",
+      "blocks": 1,
+      "resolution": "Retain the entire PR document byte for byte, inserting the complete incoming watcher-testing lesson before the first shared heading.",
+      "exact_union_verified": true
+    }
+  ],
+  "auto_merged_overlap": [
+    "Docs/security/production-diagnostic-inventory.json",
+    "Tests/UI/test_console_native_chat_flow.py",
+    "Tests/UI/test_mcp_workbench.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+  ]
+}

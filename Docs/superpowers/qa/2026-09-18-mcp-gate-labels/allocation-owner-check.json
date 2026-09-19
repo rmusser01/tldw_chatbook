@@ -1,0 +1,12 @@
+{
+  "refs": 230,
+  "worktrees": 33,
+  "tracked_paths": [],
+  "owners": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "path": "backlog/tasks/task-32822 - Keep-MCP-tool-switch-labels-readable-in-compact-panes.md"
+    }
+  ],
+  "unique": true
+}

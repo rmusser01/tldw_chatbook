@@ -334,8 +334,14 @@ outline that overwrites content or its click metadata).
 **Tokens consumed.** `$ds-focus-bg`, `$ds-focus-fg`, `$ds-grid-line`,
 `$ds-input-focus-bg`.
 
-**Python idiom.** none — hand-compose widgets; the contract applies
-automatically.
+**Python idiom.** Hand-compose widgets; the visual contract applies
+automatically. Panes using `DataTableClickSelectMixin` forward focused click/arrow
+highlights to their existing selection handler. Wrap programmatic row rebuilds
+and cursor restoration in `with self.repopulating_table(table):`. That context
+suppresses row/cell highlights before publication and resets gesture dedup only
+for that table, ready for its next real activation. Keep it synchronous; never hold it across an await.
+Refresh must not choose a row for the user or reopen a cleared inspector.
+See [ADR-170](../decisions/170-table-repopulation-selection-boundary.md).
 
 **Lifecycle.** Canonical as a contract (owning sheet
 `components/_lists.tcss`); registry `"classes"` is empty by design.
@@ -377,7 +383,9 @@ class RenameDialog(SafeModalDismissMixin, ModalScreen[None]):
 - `dialog-buttons` — horizontal action row at height 3, `align: center
   middle`; each `Button` takes `$ds-space-inline` side margins and
   `min-width: 12`. Compose with `button-group button-group-right` for the
-  standard right-aligned layout.
+  standard right-aligned layout. Explicit `button-group-left` and
+  `button-group-right` modifiers override the centered default while keeping
+  vertical centering; plain rows and `button-group-center` stay centered.
 
 **States.** Per §2.7 — the dialog itself has no states; the buttons in
 the row follow the Button type contract (`$ds-hover-*` / `$ds-focus-*` /

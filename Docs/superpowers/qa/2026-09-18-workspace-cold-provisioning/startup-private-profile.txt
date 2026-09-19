@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+6.86s call     Tests/App/test_startup_init_hygiene.py::test_the_credential_store_still_resolves_when_asked
+6.71s call     Tests/App/test_startup_init_hygiene.py::test_the_skills_stack_defers_only_the_trust_service
+6.44s call     Tests/App/test_startup_init_hygiene.py::test_app_construction_touches_no_os_keyring
+6.24s call     Tests/App/test_startup_init_hygiene.py::test_an_injected_skills_service_is_not_clobbered_by_a_sibling_read
+4.02s call     Tests/App/test_startup_init_hygiene.py::test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root
+
+(10 durations < 1s hidden.)
+5 passed, 16 deselected in 33.75s

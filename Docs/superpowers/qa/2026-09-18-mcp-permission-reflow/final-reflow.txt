@@ -1,0 +1,20 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+19.90s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+18.47s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+17.06s call     Tests/UI/test_mcp_permission_reflow.py::test_real_catalog_selected_row_stays_visible_after_resize
+14.06s call     Tests/UI/test_mcp_permission_reflow.py::test_production_permission_reflow_converges_through_repeated_resizes[textual-light]
+13.41s call     Tests/UI/test_mcp_permission_reflow.py::test_production_permission_reflow_converges_through_repeated_resizes[textual-dark]
+9.84s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-dark]
+9.77s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-light]
+6.92s call     Tests/UI/test_mcp_permission_reflow.py::test_matrix_count_resize_and_filter_keep_exact_visible_action[True]
+6.40s call     Tests/UI/test_mcp_permission_reflow.py::test_matrix_count_resize_and_filter_keep_exact_visible_action[False]
+4.24s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[True]
+4.05s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[False]
+3.38s call     Tests/UI/test_mcp_permission_reflow.py::test_reflow_does_not_swallow_new_enter_on_retained_permission_row
+3.10s call     Tests/UI/test_mcp_permission_reflow.py::test_child_height_change_reveals_selected_row_without_rebuilding
+3.10s call     Tests/UI/test_mcp_permission_reflow.py::test_child_viewport_change_reflows_without_outer_resize[60]
+2.85s call     Tests/UI/test_mcp_permission_reflow.py::test_child_viewport_change_reflows_without_outer_resize[1]
+
+(10 durations < 1s hidden.)
+15 passed in 139.61s (0:02:19)

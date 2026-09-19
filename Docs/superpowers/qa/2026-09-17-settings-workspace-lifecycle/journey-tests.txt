@@ -1,0 +1,18 @@
+.............                                                            [100%]
+============================= slowest 25 durations =============================
+22.31s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[retry]
+21.67s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[keep]
+21.42s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[escape]
+7.97s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[archive]
+7.81s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[rename_success]
+7.69s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[rename_error]
+7.29s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[create_error]
+7.15s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[literal_archive]
+7.10s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[restore]
+7.06s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[restore_error]
+6.79s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[activate]
+5.87s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-dark]
+5.82s call     Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-light]
+
+(12 durations < 1s hidden.)
+13 passed in 138.65s (0:02:18)

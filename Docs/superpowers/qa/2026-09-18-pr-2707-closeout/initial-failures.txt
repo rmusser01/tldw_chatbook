@@ -1,0 +1,5 @@
+Initial integration: 51 passed, 2 failed.
+Setup block: send_button.disabled was False after child-only sync and pilot.pause.
+Markup: expected literal [@click=app.quit], got Send disabled: type a message.
+Clean dev: setup block failed, markup passed.
+Final corrected Send-state module: 10 passed; initial other 43 cases passed.

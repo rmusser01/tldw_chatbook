@@ -1,0 +1,959 @@
+[
+  {
+    "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_partial_save_names_failed_domains_and_offers_retry_stay",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/001",
+    "classes": [
+      "RoleplayDraftNavigationDialog",
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/001.txt"
+  },
+  {
+    "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-discard-continue-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/002",
+    "classes": [
+      "RoleplayDraftNavigationDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/002.txt"
+  },
+  {
+    "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_personas_workbench.py::test_mounted_aggregate_discard_and_stay[#roleplay-draft-stay-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/003",
+    "classes": [
+      "RoleplayDraftNavigationDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/003.txt"
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/001",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/004.txt"
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size0-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/002",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/005.txt"
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/003",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/006.txt"
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size1-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/004",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/007.txt"
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-dark]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/005",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/008.txt"
+  },
+  {
+    "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_roleplay_recovery_layout.py::test_recovery_failure_and_actions_fit_centered_frame[size2-textual-light]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/006",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/009.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-dark-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/010",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/010.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size0-textual-light-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/011",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/011.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-dark-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/012",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/012.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_consolidation_recovery_dialogs.py::test_consolidated_dialog_actions_keep_focus_and_cancel[size1-textual-light-roleplay]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/013",
+    "classes": [
+      "RoleplayDraftRecoveryDialog"
+    ],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/013.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/007",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/014.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/008",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/015.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/009",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/016.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/010",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/017.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/011",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/018.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/012",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/019.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/013",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/020.txt"
+  },
+  {
+    "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/014",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/021.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/015",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/022.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/016",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/023.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/017",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/024.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/018",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/025.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/019",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/026.txt"
+  },
+  {
+    "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/020",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/027.txt"
+  },
+  {
+    "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-rekey-006/021",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "final-rekey-results.json",
+    "retained_log": "checks/028.txt"
+  },
+  {
+    "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/029",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/029.txt"
+  },
+  {
+    "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/030",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/030.txt"
+  },
+  {
+    "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32820-final-005/031",
+    "classes": [],
+    "mismatches": 0,
+    "receipt": "before-selector-rekey-results.json",
+    "retained_log": "checks/031.txt"
+  }
+]

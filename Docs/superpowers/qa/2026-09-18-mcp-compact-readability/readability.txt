@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+17.02s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+16.76s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+9.02s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-light]
+8.66s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-dark]
+3.94s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[True]
+3.68s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[False]
+
+(12 durations < 1s hidden.)
+6 passed in 61.06s (0:01:01)

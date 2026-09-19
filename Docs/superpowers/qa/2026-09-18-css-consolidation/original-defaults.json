@@ -1,0 +1,132 @@
+[
+  {
+    "module": "UI/LLM_Management/vllm_setup_view.py",
+    "class_name": "VllmSetupView",
+    "css": "\n    VllmSetupView > #vllm-local-setup,\n    VllmSetupView > #vllm-existing-setup,\n    VllmSetupView > #vllm-current-server,\n    VllmSetupView > #vllm-next-restart {\n        height: auto;\n    }\n    VllmSetupView > #vllm-next-action,\n    VllmSetupView > .vllm-mode-actions,\n    VllmSetupView > .vllm-profile-actions,\n    VllmSetupView > .vllm-source-actions,\n    VllmSetupView > .vllm-console-actions {\n        height: 3;\n    }\n    "
+  },
+  {
+    "module": "UI/Library_Modules/library_character_repair_controller.py",
+    "class_name": "LibraryCharacterRepairDialog",
+    "css": "\n    LibraryCharacterRepairDialog { align: center middle; }\n    LibraryCharacterRepairDialog > Container {\n        width: 76; max-width: 96%; height: auto; max-height: 90%;\n        border: thick $accent; background: $surface; padding: 1 2;\n    }\n    LibraryCharacterRepairDialog Select { width: 100%; }\n    LibraryCharacterRepairDialog Horizontal { height: auto; }\n    LibraryCharacterRepairDialog Button { min-width: 14; margin-right: 1; }\n    "
+  },
+  {
+    "module": "UI/Library_Modules/skill_import_choice_modal.py",
+    "class_name": "SkillImportChoiceModal",
+    "css": "\n    SkillImportChoiceModal {\n        align: center middle;\n        background: $background 75%;\n    }\n    #skill-import-choice {\n        width: 88;\n        max-width: 100%;\n        height: 28;\n        max-height: 100%;\n        min-height: 14;\n        background: $panel;\n        border: round $accent;\n        padding: 1 2;\n    }\n    #skill-import-choice-title,\n    #skill-import-choice-help {\n        height: auto;\n    }\n    #skill-import-choice-list {\n        height: 1fr;\n        min-height: 4;\n        background: $surface-darken-1;\n    }\n    #skill-import-choice-actions {\n        height: 3;\n    }\n    #skill-import-choice-actions Button {\n        width: auto;\n        min-width: 10;\n        height: 3;\n        margin-right: 1;\n    }\n    "
+  },
+  {
+    "module": "UI/Navigation/character_conversation_navigation.py",
+    "class_name": "RoleplayDraftNavigationDialog",
+    "css": "\n    RoleplayDraftNavigationDialog { align: center middle; }\n    RoleplayDraftNavigationDialog > Container {\n        width: 72; max-width: 96%; height: auto; border: thick $accent;\n        background: $surface; padding: 1 2;\n    }\n    RoleplayDraftNavigationDialog Vertical { height: auto; }\n    RoleplayDraftNavigationDialog Button { width: 100%; margin-top: 1; }\n    "
+  },
+  {
+    "module": "UI/Navigation/character_conversation_navigation.py",
+    "class_name": "RoleplayDraftRecoveryDialog",
+    "css": "\n    RoleplayDraftNavigationDialog { align: center middle; }\n    RoleplayDraftNavigationDialog > Container {\n        width: 72; max-width: 96%; height: auto; border: thick $accent;\n        background: $surface; padding: 1 2;\n    }\n    RoleplayDraftNavigationDialog Vertical { height: auto; }\n    RoleplayDraftNavigationDialog Button { width: 100%; margin-top: 1; }\n    "
+  },
+  {
+    "module": "UI/Screens/artifact_share_dialog.py",
+    "class_name": "ArtifactShareDialog",
+    "css": "\n    ArtifactShareDialog { align: center middle; background: $background 70%; }\n    ArtifactShareDialog > VerticalScroll {\n        width: 76; max-width: 96%; height: auto; max-height: 90%;\n        background: $surface; border: solid $primary; padding: 1 2;\n    }\n    ArtifactShareDialog Input, ArtifactShareDialog RadioSet, ArtifactShareDialog SelectionList {\n        margin-bottom: 1;\n    }\n    ArtifactShareDialog #share-dialog-status { color: $warning; }\n    "
+  },
+  {
+    "module": "UI/Screens/backup_restore_screen.py",
+    "class_name": "BackupRestoreScreen",
+    "css": "\n    BackupRestoreScreen { background: $background; }\n    BackupRestoreScreen #backup-title { height: auto; padding: 1 2; text-style: bold; }\n    BackupRestoreScreen #backup-actions { layout: grid; grid-size: 2; grid-columns: 1fr 1fr; height: 6; padding: 0 1; }\n    BackupRestoreScreen #backup-actions Button { width: 100%; }\n    BackupRestoreScreen #backup-status { height: auto; max-height: 5; padding: 0 2; }\n    BackupRestoreScreen #backup-body { height: 1fr; padding: 1 2; }\n    BackupRestoreScreen .backup-form { height: auto; }\n    BackupRestoreScreen .backup-form Static { height: auto; margin-top: 1; }\n    BackupRestoreScreen .backup-form Input { width: 100%; }\n    BackupRestoreScreen .backup-form Checkbox { height: auto; width: 100%; }\n    BackupRestoreScreen #backup-message { height: auto; padding: 0 2; max-height: 4; }\n    BackupRestoreScreen #backup-footer-actions { height: auto; padding: 0 1; }\n    BackupRestoreScreen #backup-footer-actions Button { min-width: 10; width: 1fr; }\n    "
+  },
+  {
+    "module": "UI/Screens/scheduling/forms/automation_definition_form.py",
+    "class_name": "AutomationDefinitionForm",
+    "css": "\n    AutomationDefinitionForm {\n        align: center middle;\n    }\n\n    AutomationDefinitionForm > VerticalScroll {\n        width: 84;\n        max-width: 100%;\n        height: auto;\n        max-height: 100%;\n        background: $surface;\n        border: thick $primary;\n        padding: 1 2;\n    }\n\n    #automation-form-footer {\n        dock: bottom;\n        height: auto;\n        background: $surface;\n    }\n\n    #automation-scope-sources-group,\n    #automation-run-at-group,\n    #automation-cron-group,\n    #automation-timezone-group,\n    #automation-preset-time-group,\n    #automation-cron-custom-group,\n    #automation-provider-group {\n        height: auto;\n    }\n\n    #automation-form-errors {\n        display: none;\n    }\n\n    #automation-question {\n        height: 3;\n        max-height: 5;\n    }\n\n    .form-title {\n        text-style: bold;\n        text-align: center;\n        padding: 0;\n    }\n\n    .form-label {\n        color: $text-muted;\n        padding: 1 0 0 0;\n    }\n\n    .form-helper {\n        color: $text-muted;\n        height: auto;\n        padding: 0;\n    }\n\n    .form-preview {\n        color: $text-muted;\n        height: auto;\n        min-height: 1;\n        padding: 0;\n    }\n\n    .error-text {\n        color: $error;\n        text-style: bold;\n        height: auto;\n        padding: 0;\n    }\n\n    .button-container {\n        align: center middle;\n        height: auto;\n        padding: 0;\n        margin-top: 1;\n    }\n\n    .button-container Button {\n        margin: 0 1;\n    }\n    "
+  },
+  {
+    "module": "UI/Screens/scheduling/forms/new_task_choice_modal.py",
+    "class_name": "NewTaskChoiceModal",
+    "css": "\n    NewTaskChoiceModal {\n        align: center middle;\n    }\n\n    NewTaskChoiceModal .new-task-choice-modal {\n        width: 64;\n        height: auto;\n        border: tall $accent;\n        background: $surface;\n        padding: 1 2;\n    }\n\n    NewTaskChoiceModal .new-task-choice-title {\n        text-style: bold;\n        margin-bottom: 1;\n    }\n\n    NewTaskChoiceModal .new-task-choice-copy {\n        height: auto;\n        color: $text-muted;\n        margin-bottom: 1;\n    }\n\n    NewTaskChoiceModal .new-task-choice-actions {\n        height: 3;\n        align-horizontal: right;\n    }\n\n    NewTaskChoiceModal .new-task-choice-actions Button {\n        width: auto;\n        margin-left: 1;\n    }\n    "
+  },
+  {
+    "module": "UI/Screens/skills_screen.py",
+    "class_name": "SkillRecoveryReviewModal",
+    "css": "\n    SkillRecoveryReviewModal { align: center middle; }\n    #skills-recovery-review { width: 90%; max-width: 110; height: 90%; border: tall $accent; padding: 1 2; background: $surface; }\n    #skills-recovery-scroll { height: 1fr; }\n    #skills-recovery-scroll Static { height: auto; margin-bottom: 1; }\n    #skills-recovery-actions { height: 3; align-horizontal: right; }\n    #skills-recovery-actions Button { width: auto; margin-left: 1; }\n    #skills-recovery-status { height: auto; color: $warning; }\n    "
+  },
+  {
+    "module": "Widgets/Console/console_appearance_picker_modal.py",
+    "class_name": "ConsoleAppearancePickerModal",
+    "css": "\n    ConsoleAppearancePickerModal {\n        align: center middle;\n    }\n\n    #console-appearance-picker-modal {\n        width: 64;\n        max-width: 100%;\n        height: 29;\n        max-height: 100%;\n        border: tall $accent;\n        background: $panel;\n        padding: 1 2;\n    }\n\n    #console-appearance-picker-filter {\n        width: 100%;\n        height: 3;\n    }\n\n    #console-appearance-picker-preview {\n        width: 100%;\n        height: 1;\n        color: $text-muted;\n    }\n\n    #console-appearance-picker-emoji {\n        width: 100%;\n        height: 1fr;\n        min-height: 6;\n        background: $surface-darken-1;\n    }\n\n    #console-appearance-picker-colors {\n        /* task-31209: a scrollable strip -- the 22-swatch palette (plus\n           \"none\") no longer fits one modal row, and shrinking swatches to\n           two cells left no content width under a selection border. */\n        width: 100%;\n        height: 3;\n        margin-top: 1;\n    }\n\n    #console-appearance-picker-hex {\n        width: 1fr;\n        height: 3;\n        margin-top: 1;\n    }\n\n    .console-appearance-swatch {\n        width: 3;\n        min-width: 3;\n        max-width: 3;\n        height: 3;\n        min-height: 3;\n        margin: 0;\n        padding: 0;\n        border: none;\n        text-align: center;\n        content-align: center middle;\n    }\n\n    .console-appearance-swatch-selected {\n        /* Background highlight, not a border: the 2-cell swatch has no room\n           for a 2-cell border (zero content width crashed cell chopping). */\n        background: $accent 25%;\n        text-style: bold;\n    }\n\n    #console-appearance-swatch-none {\n        width: 5;\n        min-width: 5;\n        max-width: 5;\n    }\n\n    .console-appearance-emoji-selected {\n        background: $accent 25%;\n        text-style: bold;\n    }\n\n    #console-appearance-picker-actions {\n        width: 100%;\n        height: 3;\n        margin-top: 1;\n    }\n\n    #console-appearance-picker-actions Button {\n        width: 1fr;\n        height: 3;\n        border: none;\n        margin: 0 1 0 0;\n    }\n\n    #console-appearance-picker-apply {\n        background: $primary;\n        color: $text;\n    }\n\n    #console-appearance-picker-clear,\n    #console-appearance-picker-cancel {\n        background: $surface;\n        color: $text;\n    }\n    "
+  },
+  {
+    "module": "Widgets/Console/console_edit_message_modal.py",
+    "class_name": "ConsoleEditThinkingModal",
+    "css": "\n    ConsoleEditThinkingModal {\n        align: center middle;\n    }\n\n    #console-edit-thinking-modal {\n        width: 92;\n        height: 28;\n        border: tall gray;\n        background: black;\n        padding: 1 2;\n    }\n\n    #console-edit-thinking-context {\n        height: auto;\n        margin: 1 0 1 0;\n    }\n\n    #console-edit-thinking-body {\n        width: 100%;\n        height: 1fr;\n        min-height: 8;\n    }\n\n    #console-edit-thinking-error {\n        height: auto;\n        min-height: 1;\n        color: red;\n    }\n\n    #console-edit-thinking-actions {\n        height: 3;\n        min-height: 3;\n        margin: 1 0 0 0;\n        align-horizontal: right;\n    }\n\n    #console-edit-thinking-cancel,\n    #console-edit-thinking-save {\n        width: 10;\n        min-width: 10;\n        height: 3;\n        min-height: 3;\n    }\n    "
+  },
+  {
+    "module": "Widgets/Console/console_endpoint_template_modal.py",
+    "class_name": "ConsoleEndpointTemplateModal",
+    "css": "\n    ConsoleEndpointTemplateModal {\n        align: center middle;\n    }\n\n    ConsoleEndpointTemplateModal #console-endpoint-template-modal {\n        width: 76;\n        max-width: 95%;\n        height: auto;\n        max-height: 90%;\n        border: round $panel;\n        background: $surface;\n        padding: 1 2;\n    }\n\n    ConsoleEndpointTemplateModal .console-settings-error {\n        background: $error 25%;\n        color: $text-error;\n        text-style: bold;\n        border-left: thick $error;\n        height: auto;\n        min-height: 1;\n        margin: 1 0;\n        padding: 0 1;\n    }\n\n    ConsoleEndpointTemplateModal #endpoint-template-picker {\n        height: auto;\n        max-height: 8;\n        margin: 0 0 1 0;\n    }\n\n    ConsoleEndpointTemplateModal .console-endpoint-template-label {\n        width: 16;\n        min-width: 16;\n        max-width: 16;\n        height: 1;\n        min-height: 1;\n        content-align: left middle;\n    }\n\n    ConsoleEndpointTemplateModal .console-settings-modal-row {\n        height: auto;\n        min-height: 3;\n    }\n\n    ConsoleEndpointTemplateModal .console-settings-control {\n        width: 1fr;\n        min-width: 0;\n    }\n\n    ConsoleEndpointTemplateModal Input,\n    ConsoleEndpointTemplateModal Select,\n    ConsoleEndpointTemplateModal Button {\n        height: 3;\n        min-height: 3;\n    }\n\n    ConsoleEndpointTemplateModal #endpoint-template-params {\n        height: 5;\n        min-height: 3;\n    }\n\n    ConsoleEndpointTemplateModal .console-endpoint-template-hint {\n        color: $text-muted;\n        height: 1;\n    }\n\n    ConsoleEndpointTemplateModal .console-endpoint-template-actions {\n        height: auto;\n        min-height: 3;\n        align-horizontal: right;\n    }\n    "
+  },
+  {
+    "module": "Widgets/Console/console_provider_picker.py",
+    "class_name": "ConsoleProviderPicker",
+    "css": "\n    ConsoleProviderPicker {\n        height: auto;\n        width: 1fr;\n    }\n\n    ConsoleProviderPicker #console-settings-provider-picker-input {\n        width: 100%;\n    }\n\n    ConsoleProviderPicker #console-settings-provider-picker-status {\n        height: auto;\n        color: $text-muted;\n    }\n\n    ConsoleProviderPicker #console-settings-provider-picker-results {\n        max-height: 12;\n    }\n    "
+  },
+  {
+    "module": "Widgets/Console/console_save_markdown_modal.py",
+    "class_name": "ConsoleSaveMarkdownModal",
+    "css": "\n    ConsoleSaveMarkdownModal {\n        align: center middle;\n    }\n    #console-save-markdown-box {\n        width: 64;\n        height: auto;\n        border: round $primary;\n        background: $surface;\n        padding: 1 2;\n    }\n    #console-save-markdown-title {\n        text-style: bold;\n        margin-bottom: 1;\n    }\n    #console-save-markdown-input {\n        width: 1fr;\n    }\n    #console-save-markdown-actions {\n        height: auto;\n        align-horizontal: right;\n        margin-top: 1;\n    }\n    "
+  },
+  {
+    "module": "Widgets/Console/console_terminal_session_modal.py",
+    "class_name": "ConsoleTerminalSessionModal",
+    "css": "\n    ConsoleTerminalSessionModal {\n        align: center middle;\n    }\n\n    #console-terminal-session-modal {\n        width: 72;\n        max-width: 94%;\n        height: auto;\n        border: round $primary;\n        background: $surface;\n        padding: 1 2;\n    }\n\n    #console-terminal-session-error {\n        min-height: 1;\n        color: $error;\n    }\n\n    #console-terminal-session-actions {\n        height: auto;\n        margin-top: 1;\n        align-horizontal: right;\n    }\n    "
+  },
+  {
+    "module": "Widgets/Console/console_workspace_switcher_modal.py",
+    "class_name": "WorkspaceArchiveReceiptModal",
+    "css": "\n    WorkspaceArchiveReceiptModal { align: center middle; }\n    #workspace-archive-receipt { width: 60; height: auto; border: tall $primary;\n        background: $surface; padding: 1 2; }\n    #workspace-archive-receipt-actions { height: 3; }\n    #workspace-archive-receipt-actions Button { width: auto; min-width: 8; margin-right: 1; }\n    "
+  },
+  {
+    "module": "Widgets/Library/notes_recovery_dialog.py",
+    "class_name": "NotesRecoveryDialog",
+    "css": "\n    NotesRecoveryDialog { align: center middle; }\n    #notes-recovery-dialog { width: 85%; max-width: 100; height: 85%;\n        border: round $accent; background: $surface; padding: 1 2; }\n    #notes-recovery-rows { height: 1fr; }\n    #notes-recovery-actions { height: auto; }\n    #notes-recovery-dialog Static { height: auto; margin-bottom: 1; }\n    "
+  },
+  {
+    "module": "Widgets/Persona_Widgets/buddy_conversation_modal.py",
+    "class_name": "BuddyConversationModal",
+    "css": "\n    BuddyConversationModal { align: center middle; }\n    #buddy-conversation { width: 90; max-width: 96%; height: 90%; max-height: 52;\n        border: round $accent; background: $panel; padding: 0 1; }\n    #buddy-conversation-title { height: 2; text-style: bold; }\n    #buddy-activity, #buddy-reply-notice { height: auto; }\n    #buddy-conversation-body { height: 1fr; min-height: 2; }\n    #buddy-transcript-navigation { height: 1; }\n    #buddy-transcript-navigation Button { height: 1; min-width: 8; width: auto; }\n    #buddy-transcript { height: auto; padding: 1 0; }\n    #buddy-reply { height: 5; min-height: 3; }\n    BuddyConversationModal.compact #buddy-reply { height: 3; }\n    BuddyConversationModal.compact #buddy-conversation-title { height: 1; }\n    #buddy-actions { height: 3; align-horizontal: right; }\n    #buddy-actions Button { min-width: 8; width: auto; margin-left: 1; }\n    #buddy-reply-notice { color: $text-muted; }\n    "
+  },
+  {
+    "module": "Widgets/Persona_Widgets/buddy_management_modal.py",
+    "class_name": "BuddyManagementModal",
+    "css": "\n    BuddyManagementModal { align: center middle; }\n    #buddy-management {\n        width: 78; max-width: 96%; height: 90%; max-height: 48;\n        border: round $accent; background: $panel; padding: 0 1;\n    }\n    #buddy-management-title { height: 2; text-style: bold; padding-top: 1; }\n    #buddy-management-body { height: 1fr; padding-right: 1; }\n    .buddy-section { height: auto; margin-top: 1; text-style: bold; }\n    .buddy-help { height: auto; color: $text-muted; }\n    #buddy-management-body Select, #buddy-management-body Input { width: 100%; }\n    .buddy-toggle-row { height: 3; align-vertical: middle; }\n    .buddy-toggle-row Static { width: 1fr; height: auto; }\n    .buddy-toggle-row Switch { width: auto; }\n    #buddy-size { height: 3; }\n    #buddy-management-body #buddy-size Input { width: 1fr; min-width: 4; }\n    #buddy-size Static { width: 9; height: 3; content-align: left middle; }\n    #buddy-size #buddy-height-label { width: 10; padding-left: 1; }\n    #buddy-preview { height: auto; max-height: 12; content-align: center middle; }\n    #buddy-artwork-pages { height: 3; }\n    #buddy-artwork-pages Button { width: auto; min-width: 10; }\n    #buddy-artwork-page { width: 1fr; content-align: center middle; }\n    #buddy-preview-actions { height: 3; }\n    #buddy-management-body #buddy-preview-state { width: 1fr; min-width: 10; }\n    #buddy-preview-button { width: auto; min-width: 11; }\n    #buddy-form-error, #buddy-import-error { height: auto; color: $error; }\n    #buddy-advanced { height: auto; padding: 0; }\n    #buddy-preview-button:focus { text-style: bold reverse; }\n    #buddy-management-actions { height: 3; min-height: 3; align-horizontal: right; }\n    #buddy-management-actions Button { width: auto; min-width: 10; margin-left: 1; }\n    "
+  },
+  {
+    "module": "Widgets/Persona_Widgets/buddy_speech_controls.py",
+    "class_name": "BuddySpeechControls",
+    "css": "\n    BuddySpeechControls { height: auto; }\n    BuddySpeechControls Static { height: auto; }\n    BuddySpeechControls Horizontal { height: auto; }\n    BuddySpeechControls Button { min-width: 8; }\n    "
+  },
+  {
+    "module": "Widgets/Persona_Widgets/buddy_workspace_modal.py",
+    "class_name": "BuddyWorkspaceModal",
+    "css": "\n    BuddyWorkspaceModal { align: center middle; }\n    #buddy-inbox {\n        width: 82; max-width: 96%; height: 85%; max-height: 42;\n        border: round $accent; background: $panel; padding: 0 1;\n    }\n    #buddy-inbox-title { height: 2; text-style: bold; padding-top: 1; }\n    #buddy-inbox-help { height: auto; color: $text-muted; }\n    #buddy-inbox-list { height: 1fr; margin-top: 1; }\n    #buddy-inbox-error { height: auto; color: $error; }\n    #buddy-inbox-actions { height: 3; min-height: 3; align-horizontal: right; }\n    #buddy-inbox-actions Button { width: auto; min-width: 8; margin-left: 1; }\n    "
+  },
+  {
+    "module": "Widgets/Settings_Widgets/tool_profiles_panel.py",
+    "class_name": "ToolProfilesPanel",
+    "css": "\n    ToolProfilesPanel {\n        width: 100%;\n        height: auto;\n    }\n\n    ToolProfilesPanel .tool-profiles-toolbar,\n    ToolProfilesPanel .tool-profile-actions {\n        width: 100%;\n        height: auto;\n        layout: horizontal;\n    }\n\n    ToolProfilesPanel .tool-profile-row {\n        width: 100%;\n        height: auto;\n        margin-bottom: 1;\n        padding: 0 1;\n        border: round $panel;\n    }\n\n    ToolProfilesPanel .tool-profile-title {\n        width: 100%;\n        text-style: bold;\n    }\n\n    ToolProfilesPanel .tool-profile-detail {\n        width: 100%;\n        color: $text-muted;\n    }\n\n    ToolProfilesPanel Button {\n        width: auto;\n        min-width: 8;\n        height: 1;\n        min-height: 1;\n        padding: 0 1;\n        border: none;\n        margin-right: 1;\n    }\n\n    ToolProfilesPanel .tool-profile-actions Button {\n        margin-right: 0;\n    }\n    "
+  },
+  {
+    "module": "Widgets/Settings_Widgets/workspace_change_review.py",
+    "class_name": "WorkspaceChangeReviewPanel",
+    "css": "\n    WorkspaceChangeReviewPanel {\n        height: auto;\n    }\n    "
+  },
+  {
+    "module": "Widgets/workspace_persona_default.py",
+    "class_name": "WorkspacePersonaDefaultModal",
+    "css": "\n    WorkspacePersonaDefaultModal { align: center middle; }\n    #workspace-default-dialog { width: 68; max-width: 95%; height: auto; max-height: 95%;\n        background: $surface; border: tall $primary; padding: 1 2; }\n    #workspace-default-form { height: auto; max-height: 17; }\n    #workspace-default-actions { height: 3; align-horizontal: right; }\n    #workspace-default-error { height: auto; color: $error; }\n    "
+  },
+  {
+    "module": "Widgets/workspace_persona_default.py",
+    "class_name": "WorkspacePersonaPicker",
+    "css": "\n    WorkspacePersonaPicker { height: auto; }\n    WorkspacePersonaPicker Static { height: auto; }\n    WorkspacePersonaPicker Select { height: 3; }\n    "
+  }
+]

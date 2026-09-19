@@ -1,0 +1,210 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_ancestor_scoped_bare_type_rule_count_is_a_ratchet ____________
+
+self = <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2044/test_ancestor_scoped_bare_type0/private-profile-process/pytest.log
+E           ct
+E           2026-09-18 10:48:35.204 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.versus_screen
+E           2026-09-18 10:48:35.204 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: versus_screen -> VersusScreenEffect
+E           2026-09-18 10:48:35.205 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.world_map
+E           2026-09-18 10:48:35.205 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: world_map -> WorldMapEffect
+E           2026-09-18 10:48:35.205 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.tetris
+E           2026-09-18 10:48:35.206 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: tetris -> TetrisEffect
+E           2026-09-18 10:48:35.206 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.sound_bars
+E           2026-09-18 10:48:35.207 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: sound_bars -> SoundBarsEffect
+E           2026-09-18 10:48:35.207 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.psychedelic_mandala
+E           2026-09-18 10:48:35.208 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: psychedelic_mandala -> PsychedelicMandalaEffect
+E           2026-09-18 10:48:35.208 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.kaleidoscope
+E           2026-09-18 10:48:35.208 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: kaleidoscope -> KaleidoscopeEffect
+E           2026-09-18 10:48:35.209 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.hypno_swirl
+E           2026-09-18 10:48:35.209 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: hypno_swirl -> HypnoSwirlEffect
+E           2026-09-18 10:48:35.209 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.electric_sheep
+E           2026-09-18 10:48:35.210 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: electric_sheep -> ElectricSheepEffect
+E           2026-09-18 10:48:35.210 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.shroom_vision
+E           2026-09-18 10:48:35.211 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: shroom_vision -> ShroomVisionEffect
+E           2026-09-18 10:48:35.211 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.trippy_tunnel
+E           2026-09-18 10:48:35.211 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: trippy_tunnel -> TrippyTunnelEffect
+E           2026-09-18 10:48:35.212 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.deep_dream
+E           2026-09-18 10:48:35.212 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: deep_dream -> DeepDreamEffect
+E           2026-09-18 10:48:35.212 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.melting_screen
+E           2026-09-18 10:48:35.213 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: melting_screen -> MeltingScreenEffect
+E           2026-09-18 10:48:35.213 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.lava_lamp
+E           2026-09-18 10:48:35.214 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: lava_lamp -> LavaLampEffect
+E           2026-09-18 10:48:35.214 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.ascii_mandala
+E           2026-09-18 10:48:35.215 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_mandala -> ASCIIMandalaEffect
+E           2026-09-18 10:48:35.215 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.custom.custom_image
+E           2026-09-18 10:48:35.216 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: custom_image -> CustomImageEffect
+E           2026-09-18 10:48:35.216 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.custom.emoji_face
+E           2026-09-18 10:48:35.216 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: emoji_face -> EmojiFaceEffect
+E           2026-09-18 10:48:35.217 | INFO     | tldw_chatbook.Utils.Splash_Screens:load_all_effects:84 - Loaded 87 effect modules, 87 effects registered
+E           2026-09-18 10:48:35.217 | DEBUG    | tldw_chatbook.Widgets.splash_screen:_start_animation:372 - Terminal size: 160x45
+E           2026-09-18 10:48:35.217 | DEBUG    | tldw_chatbook.Widgets.splash_screen:_start_animation:405 - Animation started successfully for pulse
+E           2026-09-18 10:48:35.218 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:324 - Splash screen auto-close timer set for 7.0s
+E           2026-09-18 10:48:35.298 | DEBUG    | tldw_chatbook.app:on_mount:15711 - Deferring logging setup until after splash screen closes
+E           2026-09-18 10:48:35.305 | DEBUG    | tldw_chatbook.app:on_mount:15865 - Applied default theme: textual-dark
+E           2026-09-18 10:48:35.306 | INFO     | tldw_chatbook.app:on_mount:15885 - on_mount completed in 0.011 seconds
+E           2026-09-18 10:48:35.456 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.PENDING)
+E           2026-09-18 10:48:35.457 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.PENDING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'})>
+E           2026-09-18 10:48:35.457 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.RUNNING)
+E           2026-09-18 10:48:35.457 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.RUNNING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'})>
+E           2026-09-18 10:48:35.458 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.PENDING)
+E           2026-09-18 10:48:35.458 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.PENDING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x111c9fac0>
+E           2026-09-18 10:48:35.458 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.RUNNING)
+E           2026-09-18 10:48:35.459 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x111c9fac0>
+E           2026-09-18 10:48:35.459 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.PENDING)
+E           2026-09-18 10:48:35.459 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.PENDING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x111aff100>
+E           2026-09-18 10:48:35.459 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.RUNNING)
+E           2026-09-18 10:48:35.460 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x111aff100>
+E           2026-09-18 10:48:35.460 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.PENDING)
+E           2026-09-18 10:48:35.460 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.PENDING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x111cd1ad0>
+E           2026-09-18 10:48:35.461 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.RUNNING)
+E           2026-09-18 10:48:35.461 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.RUNNING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x111cd1ad0>
+E           2026-09-18 10:48:35.468 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.SUCCESS)
+E           2026-09-18 10:48:35.468 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.SUCCESS | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x111aff100>
+E           2026-09-18 10:48:35.513 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryIngestJobsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2044/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_ingest_jobs.db [Client: default]
+E           2026-09-18 10:48:35.515 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.SUCCESS)
+E           2026-09-18 10:48:35.515 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.SUCCESS | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'})>
+E           2026-09-18 10:48:35.521 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.SUCCESS)
+E           2026-09-18 10:48:35.522 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.SUCCESS | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x111c9fac0>
+E           2026-09-18 10:48:35.554 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.SUCCESS)
+E           2026-09-18 10:48:35.554 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.SUCCESS | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x111cd1ad0>
+E           2026-09-18 10:48:35.556 | INFO     | tldw_chatbook.Chat.console_runtime:dispose:4758 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+E           2026-09-18 10:48:35.559 | INFO     | tldw_chatbook.app:on_unmount:19485 - Local MCP client sessions disconnected
+E           2026-09-18 10:48:35.559 | INFO     | tldw_chatbook.app:on_unmount:19495 - Artifact share stopped (if running)
+E           2026-09-18 10:48:35.559 | INFO     | tldw_chatbook.app:on_unmount:19509 - Server context provider cached client closed
+E           2026-09-18 10:48:35.560 | INFO     | tldw_chatbook.app:on_unmount:19524 - TTS resources cleaned up properly
+E           2026-09-18 10:48:35.560 | INFO     | tldw_chatbook.app:on_unmount:19555 - DB size update timer stopped during unmount.
+E           2026-09-18 10:48:35.561 | ERROR    | tldw_chatbook.app:on_unmount:19688 - Error checking active threads: [Errno 1] Operation not permitted (originated from sysctl() malloc 1/3)
+E           2026-09-18 10:48:35.561 | INFO     | tldw_chatbook.app:on_unmount:19707 - --- App Unmounted (Loguru) ---
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12312 Splash screen enabled: True
+E           INFO     root:app.py:12325 Creating splash screen - duration: 7.0, card: random
+E           INFO     root:app.py:12340 Splash screen yielded, returning early from compose
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           INFO     root:app.py:19334 --- App Unmounting ---
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_stopping component=app
+E           ============================= slowest 25 durations =============================
+E           2.02s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E           1 failed in 2.62s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 10:48:32.510 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-18 10:48:32.543 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_bs25bv92/config/config.toml
+2026-09-18 10:48:32.544 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6158 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_bs25bv92/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-18 10:48:32.545 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6167 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_bs25bv92/config/config.toml
+2026-09-18 10:48:32.545 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6234 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-18 10:48:32.545 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-18 10:48:32.550 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 10:48:32.550 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 10:48:32.551 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 10:48:32.551 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 10:48:32.582 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_bs25bv92/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 10:48:32.582 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 10:48:32.582 | INFO     | tldw_chatbook.config:<module>:9748 - Default API Endpoint (from config.py global scope): openai
+2026-09-18 10:48:32.583 | DEBUG    | tldw_chatbook.config:<module>:9771 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-18 10:48:32.680 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 10:48:32.689 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 10:48:32.791 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 10:48:32.876 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 10:48:32.876 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 10:48:32.877 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+3.04s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+1 failed in 3.82s

@@ -1,0 +1,3 @@
+PROBE {"case": "sentinel", "valid_persona_id": "none", "options": [["None", "none"]], "before_id": "none", "after_id": null, "after_explicit_none": true, "modal_closed": true}
+PROBE {"case": "sentinel", "valid_persona_id": "auto", "options": [["None", "none"], ["Saved Persona unavailable", "auto"]], "before_id": "auto", "after_id": "auto", "after_explicit_none": false, "modal_closed": true}
+PROBE {"case": "pagination", "service_total": 101, "service_default_count": 100, "selected_record_readable": "Persona 000", "selected_label": [["Saved Persona unavailable", "persona-000"]], "option_count": 102}

@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.test_library_shell import LibraryHarness
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterRepairCandidate,

@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+32.11s call     Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-dark]
+30.18s call     Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-light]
+30.16s call     Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size1-textual-light]
+28.39s call     Tests/UI/test_settings_workspace_folder_journeys.py::test_folder_actions_keep_feedback_and_recovery_visible[size1-textual-dark]
+
+(8 durations < 1s hidden.)
+4 passed in 123.90s (0:02:03)

@@ -1,0 +1,16 @@
+.                                                                        [100%]
+==================================== PASSES ====================================
+______ test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone ______
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 11:50:53.497 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 11:50:53.521 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 11:50:53.522 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 11:50:53.523 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 11:51:07.028 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ pydub dependency not found. Feature 'pydub' will be disabled. Reason: No module named 'pydub'
+2026-09-18 11:51:07.029 | WARNING  | tldw_chatbook.TTS.audio_stitch:<module>:83 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+============================= slowest 25 durations =============================
+14.42s call     Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone
+
+(2 durations < 1s hidden.)
+1 passed in 15.74s

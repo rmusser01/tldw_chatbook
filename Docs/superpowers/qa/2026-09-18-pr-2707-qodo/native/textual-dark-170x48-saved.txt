@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎P  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+───────────────────────────────────────────────────▊                                                                  ▎───────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage▊   Workspace default Persona                                      ▎
+ Mode: Workspaces                                  ▊                                                                  ▎
+┌──────────────────────────────┐  │  ┌─────────────▊  Default Persona · future new conversations                      ▎─────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │             ▊  Writer [none]                                               ▼   ▎             │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Appl▊                                                                  ▎r set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.    ▊                                                                  ▎             │  │  │                              │
+│  category search             │  │  │             ▊                                                                  ▎             │  │  │ Selected category:           │
+│                              │  │  │  Workspace m▊  Persona page 3                                                  ▎             │  │  │ Workspaces                   │
+│  Core                        │  │  │  Create work▊   Previous Personas                                              ▎             │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ ▊▔▔▔▔▔▔▔▔▔▔▔▊   Next Personas                                                  ▎             │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ ▊ ▐X▌ Show a▊  Existing, copied and moved conversations keep their Persona.    ▎             │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ ▊▁▁▁▁▁▁▁▁▁▁▁▊  Persona memory                                                  ▎             │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │  Default - 0▊  Read only                                                   ▼   ▎             │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │  textual-dar▊                                                                  ▎             │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │             ▊                                                                  ▎             │  │  │ config file.                 │
+│     Theme                    │  │  │  Select a wo▊                                                                  ▎rs.          │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │             ▊  ▐X▌ Confirm this Persona may write memory across sessions       ▎             │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │             ▊                                                                  ▎             │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │             ▊                                                                  ▎             │  │  │ tools.                       │
+│     Storage                  │  │  │             ▊                                                                  ▎             │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │             ▊                                     Cancel          Apply        ▎             │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │             ▊                                                                  ▎             │  │  │  actions)                    │
+│     Privacy & Security       │  │  │             ▊                                                                  ▎             │  │  │                              │
+│     Network                  │  │  │             ▊                                                                  ▎             │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │             ▊                                                                  ▎             │  │  │                              │
+│  Troubleshooting             │  │  │             ▊                                                                  ▎             │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │             ▊                                                                  ▎             │  │  │  lifecycle records and       │
+│     About (view)             │  │  │             ▊                                                                  ▎             │  │  │  their bound folders         │
+│     Agents                   │  │  │             ▊                                                                  ▎             │  │  │                              │
+│  Expert                      │  │  │             ▊                                                                  ▎             │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │             ▊                                                                  ▎             │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │             ▊                                                                  ▎             │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │             ▊                                                                  ▎             │  │  │  workspace in Library        │
+│                              │  │  │             ▊                                                                  ▎             │  │  │                              │
+│                              │  │  │             ▊                                                                  ▎             │  │  │  Boundary: lifecycle and     │
+│                              │  │  │             ▊                                                                  ▎             │  │  │  folder bindings apply       │
+│                              │  │  │             ▊                                                                  ▎             │  │  │  immediately; there is no    │
+│                              │  │  │             ▊                                                                  ▎             │  │  │  draft state here            │
+│                              │  │  │             ▊                                                                  ▎             │  │  │                              │
+│                              │  │  │             ▊                                                                  ▎             │  │  │                              │
+│                              │  │  │             ▊                                                                  ▎             │  │  │                              │
+│                              │  │  │             ▊                                                                  ▎             │  │  │                              │
+└──────────────────────────────┘  │  └─────────────▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎─────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

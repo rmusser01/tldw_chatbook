@@ -1,0 +1,28 @@
+{
+  "exitstatus": 1,
+  "cases": [
+    "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline"
+  ],
+  "outcomes": [
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+      "phase": "setup",
+      "outcome": "passed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+      "phase": "call",
+      "outcome": "failed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_surfaces_slug_exhaustion_inline",
+      "phase": "teardown",
+      "outcome": "passed",
+      "wasxfail": null
+    }
+  ],
+  "classes": {},
+  "mismatches": []
+}

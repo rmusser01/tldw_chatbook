@@ -812,6 +812,33 @@ Button.settings-category-group-toggle:focus {
     height: auto;
 }
 
+/* Workspace rows share the detail pane scroll owner; keep every row inside
+   the list's bounds so keyboard focus can reveal it beside a tall card. */
+#settings-workspaces-list {
+    height: auto;
+}
+
+#settings-workspaces-list .settings-workspace-row {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
+/* Keep the selected option and its adjacent staging receipt together even
+   when the user's Persona/profile catalog is long. */
+#settings-workspace-persona-picker,
+#settings-workspace-profile-picker {
+    max-height: $ds-size-5;
+    /* The generic focus outline paints over compact option text. */
+    outline: none;
+}
+
+#settings-workspace-persona-picker:focus > .option-list--option-highlighted,
+#settings-workspace-profile-picker:focus > .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 .settings-workbench-compact #settings-overview-primary .settings-action-row {
     layout: vertical;
     height: auto;
@@ -916,6 +943,19 @@ Button.settings-category-group-toggle:focus {
     outline: none;
 }
 /* RAW CLI DANGER GATE END */
+
+/* Keep every Tool Profile action visible inside the compact detail pane. */
+.settings-workbench-compact ToolProfilesPanel .tool-profile-actions {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-control-height-compact;
+    grid-gutter: $ds-space-stack $ds-space-inline;
+}
+
+.settings-workbench-compact ToolProfilesPanel Button.tool-profile-action {
+    width: $ds-width-fill;
+}
 
 #settings-advanced-config-card {
     height: $ds-height-fill;

@@ -1,0 +1,9 @@
+All checks passed!
+5 files already formatted
+All checks passed!
+tldw_chatbook/Widgets/Console/console_background_effect.py baseline=1 current=1 new={}
+tldw_chatbook/Widgets/Console/console_transcript.py baseline=27 current=27 new={}
+tldw_chatbook/UI/Screens/settings_screen.py baseline=116 current=116 new={}
+tldw_chatbook/UI/Screens/chat_screen.py baseline=208 current=208 new={}
+Tests/test_config_console_defaults.py baseline=4 current=4 new={}
+Tests/UI/test_console_native_transcript.py baseline=5 current=5 new={}

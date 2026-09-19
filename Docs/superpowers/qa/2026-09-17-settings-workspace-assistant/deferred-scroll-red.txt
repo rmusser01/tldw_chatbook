@@ -1,0 +1,1 @@
+held_scrolls=1 focus=other visible_before=True visible_after=False scroll_y=23.0

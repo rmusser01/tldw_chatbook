@@ -1,0 +1,29 @@
+........................                                                 [100%]
+============================= slowest 25 durations =============================
+4.31s call     Tests/Workspaces/test_workspace_create_modal.py::test_removed_and_rescanned_folder_clears_stale_discovery
+3.47s call     Tests/Workspaces/test_workspace_create_modal.py::test_folder_with_skills_annotated_and_carried_on_result
+3.37s call     Tests/Workspaces/test_workspace_create_modal.py::test_folder_binding_failure_keeps_modal_open_and_retries
+3.14s call     Tests/Workspaces/test_workspace_create_modal.py::test_create_with_folder_returns_result_and_binds
+3.11s call     Tests/Workspaces/test_workspace_create_modal.py::test_escape_after_partial_create_returns_partial_result
+2.78s call     Tests/Workspaces/test_workspace_create_modal.py::test_real_toctou_folder_deleted_before_create_shows_inline_failure
+2.39s call     Tests/Workspaces/test_workspace_create_modal.py::test_make_active_checkbox_survives_folder_add_recompose
+1.99s call     Tests/Workspaces/test_workspace_create_modal.py::test_remove_folder_clears_stale_error
+1.79s call     Tests/Workspaces/test_workspace_create_modal.py::test_kill_switch_suppresses_folder_discovery_scan
+1.68s call     Tests/Workspaces/test_workspace_create_modal.py::test_default_description_used_when_surface_passes_none
+1.64s call     Tests/Workspaces/test_workspace_create_modal.py::test_duplicate_name_error_keeps_modal_open
+1.62s call     Tests/Workspaces/test_workspace_create_modal.py::test_profile_interview_offer_is_opt_in_and_carried_on_result
+1.62s call     Tests/Workspaces/test_workspace_create_modal.py::test_make_active_checkbox_carried_on_result
+1.61s call     Tests/Workspaces/test_workspace_create_modal.py::test_surface_description_is_carried_onto_created_record
+1.61s call     Tests/Workspaces/test_workspace_create_modal.py::test_identity_failure_at_create_resets_committed_for_retry
+1.58s call     Tests/Workspaces/test_workspace_create_modal.py::test_overlong_name_shows_inline_error_and_creates_nothing
+1.50s call     Tests/Workspaces/test_workspace_create_modal.py::test_browse_pushes_picker_and_fills_path
+1.46s call     Tests/Workspaces/test_workspace_create_modal.py::test_enter_key_on_name_input_submits_via_real_keypress
+1.42s call     Tests/Workspaces/test_workspace_create_modal.py::test_invalid_folder_shows_inline_error
+1.24s call     Tests/Workspaces/test_workspace_create_modal.py::test_escape_dismisses_with_none
+1.24s call     Tests/Workspaces/test_workspace_create_modal.py::test_add_folder_empty_input_clears_stale_error
+1.18s call     Tests/Workspaces/test_workspace_create_modal.py::test_explainer_describes_private_scratch_and_optional_folders
+1.17s call     Tests/Workspaces/test_workspace_create_modal.py::test_double_submit_creates_exactly_one_workspace_no_crash
+1.15s call     Tests/Workspaces/test_workspace_create_modal.py::test_registry_read_failure_still_mounts_usable_modal
+
+(1 durations < 1s hidden.)
+24 passed in 48.99s

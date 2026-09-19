@@ -1,0 +1,68 @@
+--- dark-before
+
++++ dark-after
+
+@@ -1561,11 +1561,11 @@
+
+ <rect fill="#121212" x="12.2" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#121212" x="24.4" y="2099.9" width="549" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#1e1e1e" x="573.4" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#1e1e1e" x="597.8" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#1e1e1e" x="695.4" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#121212" x="719.8" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#1e1e1e" x="732" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#1e1e1e" x="756.4" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#1e1e1e" x="854" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#121212" x="878.4" y="2099.9" width="561.2" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#121212" x="24.4" y="2099.9" width="1085.8" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#1e1e1e" x="1110.2" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#1e1e1e" x="1134.6" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#1e1e1e" x="1232.2" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#121212" x="1256.6" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#1e1e1e" x="1268.8" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#1e1e1e" x="1293.2" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#1e1e1e" x="1390.8" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#121212" x="1415.2" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+ <rect fill="#121212" x="1439.6" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
+@@ -3290,4 +3290,4 @@
+
+ <text class="terminal-ID-r11" x="12.2" y="2118.4" textLength="12.2" clip-path="url(#terminal-ID-line-86)">│</text>
+-<text class="terminal-ID-r19" x="597.8" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Cancel&#160;</text>
+-<text class="terminal-ID-r19" x="756.4" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Delete&#160;</text>
++<text class="terminal-ID-r19" x="1134.6" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Cancel&#160;</text>
++<text class="terminal-ID-r19" x="1293.2" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Delete&#160;</text>
+ <text class="terminal-ID-r11" x="1439.6" y="2118.4" textLength="12.2" clip-path="url(#terminal-ID-line-86)">│</text>
+--- light-before
+
++++ light-after
+
+@@ -1560,11 +1560,11 @@
+
+ <rect fill="#e0e0e0" x="12.2" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#e0e0e0" x="24.4" y="2099.9" width="549" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#d8d8d8" x="573.4" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#d8d8d8" x="597.8" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#d8d8d8" x="695.4" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#e0e0e0" x="719.8" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#d8d8d8" x="732" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#d8d8d8" x="756.4" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#d8d8d8" x="854" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+-<rect fill="#e0e0e0" x="878.4" y="2099.9" width="561.2" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#e0e0e0" x="24.4" y="2099.9" width="1085.8" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#d8d8d8" x="1110.2" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#d8d8d8" x="1134.6" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#d8d8d8" x="1232.2" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#e0e0e0" x="1256.6" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#d8d8d8" x="1268.8" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#d8d8d8" x="1293.2" y="2099.9" width="97.6" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#d8d8d8" x="1390.8" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
++<rect fill="#e0e0e0" x="1415.2" y="2099.9" width="24.4" height="24.65" shape-rendering="crispEdges"/>
+ <rect fill="#e0e0e0" x="1439.6" y="2099.9" width="12.2" height="24.65" shape-rendering="crispEdges"/>
+@@ -3289,4 +3289,4 @@
+
+ <text class="terminal-ID-r24" x="12.2" y="2118.4" textLength="12.2" clip-path="url(#terminal-ID-line-86)">│</text>
+-<text class="terminal-ID-r19" x="597.8" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Cancel&#160;</text>
+-<text class="terminal-ID-r19" x="756.4" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Delete&#160;</text>
++<text class="terminal-ID-r19" x="1134.6" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Cancel&#160;</text>
++<text class="terminal-ID-r19" x="1293.2" y="2118.4" textLength="97.6" clip-path="url(#terminal-ID-line-86)">&#160;Delete&#160;</text>
+ <text class="terminal-ID-r24" x="1439.6" y="2118.4" textLength="12.2" clip-path="url(#terminal-ID-line-86)">│</text>

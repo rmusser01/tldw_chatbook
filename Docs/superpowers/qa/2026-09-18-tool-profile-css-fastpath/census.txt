@@ -1,0 +1,4 @@
+Before:
+[census] total=275 (Button=178, Input=29, Static=17, Select=17, Vertical=14, Checkbox=12, Horizontal=4, VerticalScroll=4)
+After:
+[census] total=274 (Button=177, Input=29, Static=17, Select=17, Vertical=14, Checkbox=12, Horizontal=4, VerticalScroll=4)

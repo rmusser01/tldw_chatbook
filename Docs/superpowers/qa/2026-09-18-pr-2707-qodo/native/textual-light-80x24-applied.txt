@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │ Writer [writer-010]                │  │
+│     Privacy & Security       │  │  │ │ Writer [writer-009]                │  │
+│     Network                  │  │  │ │ Writer [writer-008]                │  │
+│     My Profile               │  │  │ │ Writer [writer-007]                │  │
+│  Troubleshooting           ▇ │  │  │ │ Writer [writer-000]                │▃ │
+│     Diagnostics (view)       │  │  │ │  Persona page 2                    │▁ │
+│     About (view)             │  │  │ │  Previous Personas                 │  │
+│     Agents                   │  │  │ │  Next Personas                     │  │
+│  Expert                      │  │  │ │  Set memory: read_write            │  │
+│     Internal Prompts         │  │  │ │  Default assistant applied         │  │
+│     Advanced Config          │  │  │ │  (memory: read_only).              │  │
+│   Domain Defaults ▸ (11)     │  │  │ │ default                            │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

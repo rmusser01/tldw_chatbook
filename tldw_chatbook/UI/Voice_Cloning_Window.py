@@ -356,38 +356,38 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
-        self.repopulating_table()
-        table.clear()
+        with self.repopulating_table(table):
+            table.clear()
 
-        # Update test profile selector
-        test_select = self.query_one("#test-profile-select", Select)
-        test_options = []
+            # Update test profile selector
+            test_select = self.query_one("#test-profile-select", Select)
+            test_options = []
 
-        for profile in profiles:
-            # Add to table
-            table.add_row(
-                profile["name"],
-                profile["display_name"],
-                profile["language"],
-                profile["created_at"][:10]
-                if len(profile["created_at"]) > 10
-                else profile["created_at"],
-                ", ".join(profile["tags"][:2]) if profile["tags"] else "",
-            )
+            for profile in profiles:
+                # Add to table
+                table.add_row(
+                    profile["name"],
+                    profile["display_name"],
+                    profile["language"],
+                    profile["created_at"][:10]
+                    if len(profile["created_at"]) > 10
+                    else profile["created_at"],
+                    ", ".join(profile["tags"][:2]) if profile["tags"] else "",
+                )
 
-            # Add to test selector
-            test_options.append((profile["display_name"], profile["name"]))
+                # Add to test selector
+                test_options.append((profile["display_name"], profile["name"]))
 
-        # Update test selector
-        test_select.set_options(test_options)
+            # Update test selector
+            test_select.set_options(test_options)
 
-        # Update status
-        backend_status = self.query_one("#backend-status", Static)
-        backend_status.update(f"[green]{len(profiles)} profiles[/green]")
+            # Update status
+            backend_status = self.query_one("#backend-status", Static)
+            backend_status.update(f"[green]{len(profiles)} profiles[/green]")
 
-        # Reset selection
-        self.selected_profile = None
-        self._update_button_states()
+            # Reset selection
+            self.selected_profile = None
+            self._update_button_states()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle profile selection"""

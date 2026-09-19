@@ -1,0 +1,93 @@
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+______________ test_switching_selected_server_clears_tool_detail _______________
+
+    @pytest.mark.asyncio
+    async def test_switching_selected_server_clears_tool_detail():
+        app = ToolTestApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            workbench = app.query_one(MCPWorkbench)
+            workbench.set_mode("tools")
+            await pilot.pause()
+            await _select_tools_mode_row(app, pilot, 0)
+            assert list(app.query("#mcp-inspector-tool-name"))
+
+            await workbench._select_server_key("local:notes")
+            await pilot.pause()
+>           assert not list(app.query("#mcp-inspector-tool-name"))
+E           AssertionError: assert not [Static(id='mcp-inspector-tool-name', classes='ds-field-row')]
+E            +  where [Static(id='mcp-inspector-tool-name', classes='ds-field-row')] = list(<DOMQuery query='#mcp-inspector-tool-name'>)
+E            +    where <DOMQuery query='#mcp-inspector-tool-name'> = query('#mcp-inspector-tool-name')
+E            +      where query = ToolTestApp(title='ToolTestApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'}).query
+
+Tests/UI/test_mcp_workbench.py:4081: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 09:25:45.922 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 09:25:45.978 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 09:25:46.014 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 09:25:46.014 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 09:25:46.015 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 09:25:46.131 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 09:25:46.350 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 09:25:46.636 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+2026-09-18 09:25:47.145 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+_______________ test_switching_rail_server_clears_finding_detail _______________
+
+    @pytest.mark.asyncio
+    async def test_switching_rail_server_clears_finding_detail():
+        """I1 (MCP Hub Phase 6 finale, review -- the program's 6th occurrence of
+        this same stale-panel class): switching the RAIL SERVER selection (not
+        the source -- `_select_server_key()`'s own path, exercised here via
+        `MCPRail.ServerSelected` rather than `SourceChanged`) while a
+        Findings-detail pane is open must also clear it. Mirrors
+        `test_switch_source_clears_finding_detail()` exactly, but for the other
+        stale-panel trigger: leaving the OLD server's finding (remediation
+        buttons and all -- whose own "Refresh" would silently refresh the WRONG
+        target with a success toast) on screen after switching to a different
+        server under the SAME source."""
+        app = AuditFindingsApp()
+        app.unified_mcp_service.target_store = TwoTargetStore()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            workbench = app.query_one(MCPWorkbench)
+            assert workbench._source == "server"
+            assert workbench._selected_server_key == "server:main"
+            workbench.set_mode("audit")
+            await pilot.pause()
+            await pilot.click("#mcp-audit-subview-findings")
+            await pilot.pause()
+            await _select_findings_row(app, pilot, 0)
+
+            # Finding detail is now visible with action buttons
+            finding_pane = app.query_one("#mcp-inspector-finding")
+            assert finding_pane.display is True
+            action_buttons = list(finding_pane.query(Button))
+            assert len(action_buttons) > 0, "Expected action buttons in finding detail"
+
+            # Switch the RAIL SERVER selection (same source, different target).
+            rail = app.query_one(MCPRail)
+            rail.post_message(MCPRail.ServerSelected("server:aux"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert workbench._selected_server_key == "server:aux"
+            # Finding pane must be cleared -- not left showing "main"'s finding
+            # (and its now-mistargeted remediation buttons) under "aux".
+>           assert app.query_one("#mcp-inspector-finding").display is False
+E           AssertionError: assert True is False
+E            +  where True = Vertical(id='mcp-inspector-finding').display
+E            +    where Vertical(id='mcp-inspector-finding') = query_one('#mcp-inspector-finding')
+E            +      where query_one = AuditFindingsApp(title='AuditFindingsApp', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'}).query_one
+
+Tests/UI/test_mcp_workbench.py:10661: AssertionError
+============================= slowest 25 durations =============================
+1.06s call     Tests/UI/test_mcp_workbench.py::test_switching_rail_server_clears_finding_detail
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_workbench.py::test_switching_selected_server_clears_tool_detail
+FAILED Tests/UI/test_mcp_workbench.py::test_switching_rail_server_clears_finding_detail
+2 failed, 1 passed in 3.54s

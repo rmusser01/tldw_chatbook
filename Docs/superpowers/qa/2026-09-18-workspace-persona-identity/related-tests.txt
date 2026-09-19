@@ -1,0 +1,1523 @@
+F...F................F................                                   [100%]
+=================================== FAILURES ===================================
+_ test_create_choice_survives_folder_recompose_and_saves[WorkspacePersonaChoice.NONE] _
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1797/test_create_choice_survives_fo0')
+choice = <WorkspacePersonaChoice.NONE: 2>
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("choice", [WorkspacePersonaChoice.NONE, "author"])
+    async def test_create_choice_survives_folder_recompose_and_saves(tmp_path, choice):
+        personas = Personas()
+        registry, _permissions = build(tmp_path, personas)
+        app = App()
+        async with app.run_test(size=(90, 36)) as pilot:
+            await app.push_screen(
+                WorkspaceCreateModal(registry_service=registry, persona_service=personas)
+            )
+            modal = app.screen
+            modal.query_one("#workspace-create-name", Input).value = "Chosen"
+            modal.query_one("#workspace-default-persona", Select).value = choice
+            modal.query_one("#workspace-create-folder-path", Input).value = str(tmp_path)
+            modal.query_one("#workspace-create-folder-add", Button).press()
+            await pilot.pause()
+>           assert modal.query_one("#workspace-default-persona", Select).value == choice
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_workspace_persona_creation.py:41:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WorkspaceCreateModal(), selector = '#workspace-default-persona'
+expect_type = <class 'textual.widgets._select.Select'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#workspace-default-persona' on WorkspaceCreateModal()
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1797/test_create_choice_survives_fo0')
+choice = <WorkspacePersonaChoice.NONE: 2>
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("choice", [WorkspacePersonaChoice.NONE, "author"])
+    async def test_create_choice_survives_folder_recompose_and_saves(tmp_path, choice):
+        personas = Personas()
+        registry, _permissions = build(tmp_path, personas)
+        app = App()
+>       async with app.run_test(size=(90, 36)) as pilot:
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_workspace_persona_creation.py:31:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/workspace_create_modal.py:420: in _add_folder
+    resolved = validate_folder_binding_path(raw, self._folders)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Workspaces/registry_service.py:361: in validate_folder_binding_path
+    resolved = _validate_folder_path_rules(path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Workspaces/registry_service.py:299: in _validate_folder_path_rules
+    conflict = find_root_binding_conflict(resolved)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Utils/sensitive_paths.py:1030: in find_root_binding_conflict
+    ctx = context if context is not None else resolve_sensitive_context()
+                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Utils/sensitive_paths.py:641: in resolve_sensitive_context
+    _resolved(str(raw)) for raw in _direct_child_rule_container_dirs()
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Utils/sensitive_paths.py:512: in _direct_child_rule_container_dirs
+    from ..RAG_Search.config_profiles import default_rag_profiles_dir
+tldw_chatbook/RAG_Search/config_profiles.py:22: in <module>
+    from .simplified.config import RAGConfig
+tldw_chatbook/RAG_Search/simplified/__init__.py:31: in <module>
+    from .rag_service import RAGService, RAGConfig, create_and_index
+tldw_chatbook/RAG_Search/simplified/rag_service.py:96: in <module>
+    _config = load_settings()
+              ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c6bda60>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 01:18:55.406 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 01:18:55.420 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 01:18:55.423 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 01:18:55.425 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 01:18:55.894 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1797/test_create_choice_survives_fo0/ws.sqlite [Client: c1]
+2026-09-18 01:18:56.398 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:resolve_sensitive_context:615 - sensitive_paths: could not resolve user data dir: raw_source_selection_changed
+2026-09-18 01:18:56.398 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_skill_trust_dir:464 - sensitive_paths: could not resolve user data dir: raw_source_selection_changed
+2026-09-18 01:18:56.400 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_single_file_paths:411 - sensitive_paths: could not resolve user data dir: raw_source_selection_changed
+2026-09-18 01:18:56.404 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_chachanotes_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.405 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_prompts_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.406 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_media_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.407 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_library_collections_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.408 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_library_ingest_jobs_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.409 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_workspaces_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.409 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_subscriptions_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.410 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_notifications_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.413 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_research_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.414 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_writing_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.414 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_scheduled_tasks_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.415 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_evals_db_path: raw_source_selection_changed
+2026-09-18 01:18:56.416 | DEBUG    | tldw_chatbook.Utils.sensitive_paths:_sensitive_db_paths:361 - sensitive_paths: could not resolve get_rag_indexing_db_path: raw_source_selection_changed
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Widgets/workspace_create_modal.py:420 in            │
+│ _add_folder                                                                  │
+│                                                                              │
+│   417 │   │   │   self._set_error("")                                        │
+│   418 │   │   │   return                                                     │
+│   419 │   │   try:                                                           │
+│ ❱ 420 │   │   │   resolved = validate_folder_binding_path(raw, self._folders │
+│   421 │   │   except WorkspaceRegistryServiceError as exc:                   │
+│   422 │   │   │   self._set_error(str(exc))                                  │
+│   423 │   │   │   return                                                     │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ event = Pressed()                                                        │ │
+│ │   raw = '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytes… │ │
+│ │  self = WorkspaceCreateModal()                                           │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Workspaces/registry_service.py:361 in               │
+│ validate_folder_binding_path                                                 │
+│                                                                              │
+│    358 │   │   │   directory, is the filesystem root, is the home directory, │
+│    359 │   │   │   a sensitive path, or duplicates/nests any existing bindin │
+│    360 │   """                                                               │
+│ ❱  361 │   resolved = _validate_folder_path_rules(path)                      │
+│    362 │   _validate_folder_overlap(resolved, existing_locators)             │
+│    363 │   return resolved                                                   │
+│    364                                                                       │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ existing_locators = []                                                   │ │
+│ │              path = '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh00… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Workspaces/registry_service.py:299 in               │
+│ _validate_folder_path_rules                                                  │
+│                                                                              │
+│    296 │   # what the agent file tools can reach up to the edge of whatever  │
+│    297 │   # the denylist enumerates. See ``find_root_binding_conflict`` for │
+│    298 │   # the exact "is, or contains, or is contained by" rule.           │
+│ ❱  299 │   conflict = find_root_binding_conflict(resolved)                   │
+│    300 │   if conflict is not None:                                          │
+│    301 │   │   raise WorkspaceRegistryServiceError(                          │
+│    302 │   │   │   f"'{resolved}' cannot be bound: it is, or contains, the " │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ candidate = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh… │ │
+│ │      path = '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/p… │ │
+│ │  resolved = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Utils/sensitive_paths.py:1030 in                    │
+│ find_root_binding_conflict                                                   │
+│                                                                              │
+│   1027 │   │   it -- naming the closest conflict is more actionable than nam │
+│   1028 │   │   an obscure one several levels further away.                   │
+│   1029 │   """                                                               │
+│ ❱ 1030 │   ctx = context if context is not None else resolve_sensitive_conte │
+│   1031 │                                                                     │
+│   1032 │   protected_dirs = ctx.dirs + ctx.direct_child_denied_dirs          │
+│   1033 │   protected_files: list[Path] = list(ctx.files)                     │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ context = None                                                           │ │
+│ │    root = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh00… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Utils/sensitive_paths.py:641 in                     │
+│ resolve_sensitive_context                                                    │
+│                                                                              │
+│    638 │   │   direct_child_denied_dirs=tuple(                               │
+│    639 │   │   │   p                                                         │
+│    640 │   │   │   for p in (                                                │
+│ ❱  641 │   │   │   │   _resolved(str(raw)) for raw in _direct_child_rule_con │
+│    642 │   │   │   )                                                         │
+│    643 │   │   │   if p is not None                                          │
+│    644 │   │   ),                                                            │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │         _config = <module 'tldw_chatbook.config' from                    │ │
+│ │                   '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.w… │ │
+│ │    dynamic_dirs = ()                                                     │ │
+│ │ skill_trust_dir = None                                                   │ │
+│ │   user_data_dir = None                                                   │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Utils/sensitive_paths.py:512 in                     │
+│ _direct_child_rule_container_dirs                                            │
+│                                                                              │
+│    509 │   │   check, as elsewhere in this module.                           │
+│    510 │   """                                                               │
+│    511 │   from .. import config as _config                                  │
+│ ❱  512 │   from ..RAG_Search.config_profiles import default_rag_profiles_dir │
+│    513 │   from ..RAG_Search.simplified.config import default_chroma_persist │
+│    514 │                                                                     │
+│    515 │   resolved: list[Path] = []                                         │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ _config = <module 'tldw_chatbook.config' from                            │ │
+│ │           '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/RAG_Search/config_profiles.py:22 in <module>        │
+│                                                                              │
+│     19 import hashlib                                                        │
+│     20 from loguru import logger                                             │
+│     21                                                                       │
+│ ❱   22 from .simplified.config import RAGConfig                              │
+│     23 from .reranker import RerankingConfig                                 │
+│     24 from .parallel_processor import ProcessingConfig                      │
+│     25 from ..Backup_Recovery.storage_admission import acquire_storage       │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │      Dict = typing.Dict                                                  │ │
+│ │   hashlib = <module 'hashlib' from                                       │ │
+│ │             '/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-… │ │
+│ │      json = <module 'json' from                                          │ │
+│ │             '/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-… │ │
+│ │      List = typing.List                                                  │ │
+│ │   Literal = typing.Literal                                               │ │
+│ │    logger = <loguru.logger handlers=[(id=1, level=10, sink=<_io.FileIO   │ │
+│ │             name=8 mode='rb+' closefd=True>)]>                           │ │
+│ │  Optional = typing.Optional                                              │ │
+│ │        os = <module 'os' (frozen)>                                       │ │
+│ │        re = <module 're' from                                            │ │
+│ │             '/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-… │ │
+│ │ threading = <module 'threading' from                                     │ │
+│ │             '/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-… │ │
+│ │      time = <module 'time' (built-in)>                                   │ │
+│ │     Tuple = typing.Tuple                                                 │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/RAG_Search/simplified/__init__.py:31 in <module>    │
+│                                                                              │
+│    28 │   create_vector_store,                                               │
+│    29 )                                                                      │
+│    30                                                                        │
+│ ❱  31 from .rag_service import RAGService, RAGConfig, create_and_index       │
+│    32                                                                        │
+│    33 from .enhanced_rag_service import EnhancedRAGService, create_enhanced_ │
+│    34                                                                        │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │        circuit_breaker = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.circuit_b… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │              citations = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.citations' │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │ collection_fingerprint = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.collectio… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │                 config = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.config'    │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │            data_models = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.data_mode… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │     db_connection_pool = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.db_connec… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │     embeddings_wrapper = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.embedding… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │           health_check = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.health_ch… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │       indexing_helpers = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.indexing_… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │           simple_cache = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.simple_ca… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ │           vector_store = <module                                         │ │
+│ │                          'tldw_chatbook.RAG_Search.simplified.vector_st… │ │
+│ │                          from                                            │ │
+│ │                          '/Users/macbook-dev/Documents/GitHub/tldw_chat… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/RAG_Search/simplified/rag_service.py:96 in <module> │
+│                                                                              │
+│     93                                                                       │
+│     94                                                                       │
+│     95 # Load constants from config with fallbacks                           │
+│ ❱   96 _config = load_settings()                                             │
+│     97 _rag_service_config = _config.get("rag", {}).get("service", {})       │
+│     98                                                                       │
+│     99 # Constants from config                                               │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │                            abc = <module 'collections.abc' from          │ │
+│ │                                  '/Users/macbook-dev/.local/share/uv/py… │ │
+│ │                        asyncio = <module 'asyncio' from                  │ │
+│ │                                  '/Users/macbook-dev/.local/share/uv/py… │ │
+│ │                       Callable = typing.Callable                         │ │
+│ │                     Collection = typing.Collection                       │ │
+│ │ DEFAULT_HYBRID_POOL_MULTIPLIER = 2                                       │ │
+│ │                  DEFAULT_RRF_K = 60                                      │ │
+│ │                           Dict = typing.Dict                             │ │
+│ │                      FrozenSet = typing.FrozenSet                        │ │
+│ │                 FTS5_STOPWORDS = frozenset({                             │ │
+│ │                                  │   'into',                             │ │
+│ │                                  │   'these',                            │ │
+│ │                                  │   'have',                             │ │
+│ │                                  │   'and',                              │ │
+│ │                                  │   'how',                              │ │
+│ │                                  │   'as',                               │ │
+│ │                                  │   'in',                               │ │
+│ │                                  │   'the',                              │ │
+│ │                                  │   'does',                             │ │
+│ │                                  │   'so',                               │ │
+│ │                                  │   ... +57                             │ │
+│ │                                  })                                      │ │
+│ │                       Hashable = typing.Hashable                         │ │
+│ │                           json = <module 'json' from                     │ │
+│ │                                  '/Users/macbook-dev/.local/share/uv/py… │ │
+│ │                           List = typing.List                             │ │
+│ │                        Literal = typing.Literal                          │ │
+│ │                    log_counter = <bound method MetricsLogger.log_counter │ │
+│ │                                  of                                      │ │
+│ │                                  <tldw_chatbook.Metrics.metrics_logger.… │ │
+│ │                                  object at 0x10ab11910>>                 │ │
+│ │                      log_gauge = <bound method MetricsLogger.log_gauge   │ │
+│ │                                  of                                      │ │
+│ │                                  <tldw_chatbook.Metrics.metrics_logger.… │ │
+│ │                                  object at 0x10ab11910>>                 │ │
+│ │                  log_histogram = <bound method                           │ │
+│ │                                  MetricsLogger.log_histogram of          │ │
+│ │                                  <tldw_chatbook.Metrics.metrics_logger.… │ │
+│ │                                  object at 0x10ab11910>>                 │ │
+│ │                         logger = <loguru.logger handlers=[(id=1,         │ │
+│ │                                  level=10, sink=<_io.FileIO name=8       │ │
+│ │                                  mode='rb+' closefd=True>)]>             │ │
+│ │                        Mapping = typing.Mapping                          │ │
+│ │                             np = <module 'numpy' from                    │ │
+│ │                                  '/Users/macbook-dev/Documents/GitHub/t… │ │
+│ │                NUMPY_AVAILABLE = True                                    │ │
+│ │                       Optional = typing.Optional                         │ │
+│ │            projection_lifetime = <tldw_chatbook.Backup_Recovery.rag_pro… │ │
+│ │                                  object at 0x10d9692b0>                  │ │
+│ │                         psutil = <module 'psutil' from                   │ │
+│ │                                  '/Users/macbook-dev/Documents/GitHub/t… │ │
+│ │                             re = <module 're' from                       │ │
+│ │                                  '/Users/macbook-dev/.local/share/uv/py… │ │
+│ │                       Sequence = typing.Sequence                         │ │
+│ │                        sqlite3 = <module 'sqlite3' from                  │ │
+│ │                                  '/Users/macbook-dev/.local/share/uv/py… │ │
+│ │                           time = <module 'time' (built-in)>              │ │
+│ │                          Tuple = typing.Tuple                            │ │
+│ │                          Union = typing.Union                            │ │
+│ │                           uuid = <module 'uuid' from                     │ │
+│ │                                  '/Users/macbook-dev/.local/share/uv/py… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Backup_Recovery/config_participants.py:419 in       │
+│ wrapped                                                                      │
+│                                                                              │
+│   416 │   │   target = (                                                     │
+│   417 │   │   │   (args[0] if args else kwargs.get("config_path")) if path_h │
+│   418 │   │   )                                                              │
+│ ❱ 419 │   │   with operation(source, target=target):                         │
+│   420 │   │   │   return function(*args, **kwargs)                           │
+│   421 │                                                                      │
+│   422 │   return wrapped                                                     │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │        args = ()                                                         │ │
+│ │      kwargs = {}                                                         │ │
+│ │ path_helper = False                                                      │ │
+│ │      source = <module 'tldw_chatbook.config' from                        │ │
+│ │               '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.workt… │ │
+│ │      target = None                                                       │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none │
+│ /lib/python3.12/contextlib.py:137 in __enter__                               │
+│                                                                              │
+│   134 │   │   # they are only needed for recreation, which is not possible a │
+│   135 │   │   del self.args, self.kwds, self.func                            │
+│   136 │   │   try:                                                           │
+│ ❱ 137 │   │   │   return next(self.gen)                                      │
+│   138 │   │   except StopIteration:                                          │
+│   139 │   │   │   raise RuntimeError("generator didn't yield") from None     │
+│   140                                                                        │
+│                                                                              │
+│ ╭────────────────────────────── locals ──────────────────────────────╮       │
+│ │ self = <contextlib._GeneratorContextManager object at 0x114c6f410> │       │
+│ ╰────────────────────────────────────────────────────────────────────╯       │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Backup_Recovery/config_participants.py:352 in       │
+│ operation                                                                    │
+│                                                                              │
+│   349 │   │   │   for name in _STATE_NAMES                                   │
+│   350 │   │   │   if hasattr(source, name)                                   │
+│   351 │   │   }                                                              │
+│ ❱ 352 │   │   with raw._scope(source, route, writing=True, selected_read=tar │
+│   353 │   │   │   state = raw._states[active]                                │
+│   354 │   │   │   entered = True                                             │
+│   355 │   │   │   yield active                                               │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │      acquired = <contextlib.ExitStack object at 0x114c6f5f0>             │ │
+│ │       attempt = <tldw_chatbook.Backup_Recovery.storage_admission._Acqui… │ │
+│ │                 object at 0x114c6f710>                                   │ │
+│ │        before = {                                                        │ │
+│ │                 │   '_CONFIG_CACHE': {                                   │ │
+│ │                 │   │   'config_schema_version': 1,                      │ │
+│ │                 │   │   'general': {                                     │ │
+│ │                 │   │   │   'default_tab': 'chat',                       │ │
+│ │                 │   │   │   'focus_mode': False,                         │ │
+│ │                 │   │   │   'default_theme': 'textual-dark',             │ │
+│ │                 │   │   │   'palette_theme_limit': 1,                    │ │
+│ │                 │   │   │   'log_level': 'INFO',                         │ │
+│ │                 │   │   │   'users_name': 'default_user',                │ │
+│ │                 │   │   │   'shutdown_grace_seconds': 120.0              │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'console': {                                     │ │
+│ │                 │   │   │   'collapse_large_pastes': True,               │ │
+│ │                 │   │   │   'show_model_thinking': True,                 │ │
+│ │                 │   │   │   'thinking_history_policy_default': 'auto',   │ │
+│ │                 │   │   │   'reasoning_history': 'auto',                 │ │
+│ │                 │   │   │   'reasoning_history_overrides': {},           │ │
+│ │                 │   │   │   'reasoning_native_tool_overrides': {},       │ │
+│ │                 │   │   │   'stack_collapsed_rail_labels': False,        │ │
+│ │                 │   │   │   'rail_layout_scope': 'global',               │ │
+│ │                 │   │   │   'assistant_library_access_default': False,   │ │
+│ │                 │   │   │   'paste_collapse_threshold': 50,              │ │
+│ │                 │   │   │   ... +40                                      │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'hooks': {'enabled': True},                      │ │
+│ │                 │   │   'skills': {},                                    │ │
+│ │                 │   │   'appearance': {                                  │ │
+│ │                 │   │   │   'character_expression_mode': 'dynamic',      │ │
+│ │                 │   │   │   'density': 'normal',                         │ │
+│ │                 │   │   │   'animations_enabled': True,                  │ │
+│ │                 │   │   │   'smooth_scrolling': True,                    │ │
+│ │                 │   │   │   'reduce_motion': False,                      │ │
+│ │                 │   │   │   'ascii_glyphs': False,                       │ │
+│ │                 │   │   │   'console_transcript_style': 'role_accents'   │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'acp': {                                         │ │
+│ │                 │   │   │   'runtime': {                                 │ │
+│ │                 │   │   │   │   'command': '',                           │ │
+│ │                 │   │   │   │   'args': [],                              │ │
+│ │                 │   │   │   │   'cwd': '',                               │ │
+│ │                 │   │   │   │   'runtime_id': 'local-acp-runtime',       │ │
+│ │                 │   │   │   │   'runtime_label': 'Local ACP Runtime',    │ │
+│ │                 │   │   │   │   'runtime_version': '',                   │ │
+│ │                 │   │   │   │   'startup_timeout_seconds': 2.0           │ │
+│ │                 │   │   │   }                                            │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'tldw_api': {                                    │ │
+│ │                 │   │   │   'base_url': 'http://127.0.0.1:8000',         │ │
+│ │                 │   │   │   'auth_token':                                │ │
+│ │                 'default-secret-key-for-single-user'                     │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'library': {                                     │ │
+│ │                 │   │   │   'ingest_directory_scan_limit': 1000,         │ │
+│ │                 │   │   │   'ingest_url_preflight_probe': False,         │ │
+│ │                 │   │   │   'reader': {},                                │ │
+│ │                 │   │   │   'media_reader': {                            │ │
+│ │                 │   │   │   │   'library_open': True,                    │ │
+│ │                 │   │   │   │   'items_open': True,                      │ │
+│ │                 │   │   │   │   'custom_widths_enabled': False,          │ │
+│ │                 │   │   │   │   'library_width': 36,                     │ │
+│ │                 │   │   │   │   'items_width': 50                        │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'collections_reader': {                      │ │
+│ │                 │   │   │   │   'items_open': True,                      │ │
+│ │                 │   │   │   │   'items_width': 50                        │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'conversations_reader': {                    │ │
+│ │                 │   │   │   │   'items_open': True,                      │ │
+│ │                 │   │   │   │   'items_width': 50                        │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'notes_reader': {                            │ │
+│ │                 │   │   │   │   'items_open': True,                      │ │
+│ │                 │   │   │   │   'items_width': 50,                       │ │
+│ │                 │   │   │   │   'files_tree_open': True,                 │ │
+│ │                 │   │   │   │   'files_tree_width': 50                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'prompts_reader': {                          │ │
+│ │                 │   │   │   │   'items_open': True,                      │ │
+│ │                 │   │   │   │   'items_width': 50                        │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'skills_reader': {                           │ │
+│ │                 │   │   │   │   'items_open': True,                      │ │
+│ │                 │   │   │   │   'items_width': 50                        │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'ingest_options': {}                         │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'caching': {                                     │ │
+│ │                 │   │   │   'anthropic_enabled': True,                   │ │
+│ │                 │   │   │   'cache_ttl': '5m',                           │ │
+│ │                 │   │   │   'openai_cache_key': False                    │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   ... +48                                          │ │
+│ │                 │   },                                                   │ │
+│ │                 │   '_CONFIG_CACHE_SOURCE':                              │ │
+│ │                 PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2… │ │
+│ │                 │   '_CONFIG_FILE_STAMP': (1789719530152958079, 97557),  │ │
+│ │                 │   '_CONFIG_STAT_CHECKED_MONOTONIC': 133906.601922,     │ │
+│ │                 │   '_SETTINGS_CACHE': {                                 │ │
+│ │                 │   │   'APP_MODE_STR': 'single',                        │ │
+│ │                 │   │   'SINGLE_USER_MODE': True,                        │ │
+│ │                 │   │   'LOG_LEVEL': 'INFO',                             │ │
+│ │                 │   │   'PROJECT_ROOT':                                  │ │
+│ │                 PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_cha… │ │
+│ │                 │   │   'API_COMPONENT_ROOT':                            │ │
+│ │                 PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_cha… │ │
+│ │                 │   │   'USERS_NAME': 'default_user',                    │ │
+│ │                 │   │   'general': {                                     │ │
+│ │                 │   │   │   'default_tab': 'chat',                       │ │
+│ │                 │   │   │   'focus_mode': False,                         │ │
+│ │                 │   │   │   'default_theme': 'textual-dark',             │ │
+│ │                 │   │   │   'palette_theme_limit': 1,                    │ │
+│ │                 │   │   │   'log_level': 'INFO',                         │ │
+│ │                 │   │   │   'users_name': 'default_user',                │ │
+│ │                 │   │   │   'shutdown_grace_seconds': 120.0              │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'logging': {                                     │ │
+│ │                 │   │   │   'log_filename': 'tldw_cli_app.log',          │ │
+│ │                 │   │   │   'file_log_level': 'INFO',                    │ │
+│ │                 │   │   │   'log_max_bytes': 10485760,                   │ │
+│ │                 │   │   │   'log_backup_count': 5                        │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'database': {                                    │ │
+│ │                 │   │   │   'chachanotes_db_path':                       │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db',  │ │
+│ │                 │   │   │   'prompts_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_prompts.db',           │ │
+│ │                 │   │   │   'media_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_media_v2.db',          │ │
+│ │                 │   │   │   'research_db_path':                          │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_research.db',     │ │
+│ │                 │   │   │   'writing_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_writing.db',      │ │
+│ │                 │   │   │   'library_collections_db_path':               │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_library_collecti… │ │
+│ │                 │   │   │   'workspaces_db_path':                        │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_workspaces.db',   │ │
+│ │                 │   │   │   'evals_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/evals.db',                      │ │
+│ │                 │   │   │   'rag_indexing_db_path':                      │ │
+│ │                 '~/.local/share/tldw_cli/rag_indexing.db',               │ │
+│ │                 │   │   │   'subscriptions_db_path':                     │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db… │ │
+│ │                 │   │   │   ... +3                                       │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'api_settings': {                                │ │
+│ │                 │   │   │   'openai': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENAI_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'gpt-5.6-terra',                │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'anthropic': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'ANTHROPIC_API_KEY',  │ │
+│ │                 │   │   │   │   'model': 'claude-sonnet-5',              │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'cohere': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'COHERE_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'command-a-03-2025',            │ │
+│ │                 │   │   │   │   'temperature': 0.3,                      │ │
+│ │                 │   │   │   │   'top_p': 0.75,                           │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'deepseek': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'DEEPSEEK_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'deepseek-v4-flash',            │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'groq': {                                    │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GROQ_API_KEY',       │ │
+│ │                 │   │   │   │   'model': 'llama-3.3-70b-versatile',      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'google': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GOOGLE_API_KEY',     │ │
+│ │                 │   │   │   │   'api_key': '<API_KEY_HERE>',             │ │
+│ │                 │   │   │   │   'model': 'gemini-2.5-flash',             │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.9,                            │ │
+│ │                 │   │   │   │   'top_k': 100,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'huggingface': {                             │ │
+│ │                 │   │   │   │   'api_key_env_var':                       │ │
+│ │                 'HUGGINGFACE_API_KEY',                                   │ │
+│ │                 │   │   │   │   'model': 'openai/gpt-oss-120b',          │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://router.huggingface.co/v1',                      │ │
+│ │                 │   │   │   │   'api_chat_path': 'chat/completions',     │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 50,                             │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   ... +2                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'mistralai': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MISTRAL_API_KEY',    │ │
+│ │                 │   │   │   │   'model': 'mistral-large-latest',         │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'openrouter': {                              │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENROUTER_API_KEY', │ │
+│ │                 │   │   │   │   'model':                                 │ │
+│ │                 'meta-llama/Llama-3.1-8B-Instruct',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'min_p': 0.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'moonshot': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MOONSHOT_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'kimi-k3',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.95,                           │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'api_region': 'international',           │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://api.moonshot.ai/v1',                            │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 1.0,                      │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   ... +19                                      │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   ... +60                                          │ │
+│ │                 │   },                                                   │ │
+│ │                 │   '_SETTINGS_CACHE_SOURCE':                            │ │
+│ │                 PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2… │ │
+│ │                 │   'settings': {                                        │ │
+│ │                 │   │   'APP_MODE_STR': 'single',                        │ │
+│ │                 │   │   'SINGLE_USER_MODE': True,                        │ │
+│ │                 │   │   'LOG_LEVEL': 'INFO',                             │ │
+│ │                 │   │   'PROJECT_ROOT':                                  │ │
+│ │                 PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_cha… │ │
+│ │                 │   │   'API_COMPONENT_ROOT':                            │ │
+│ │                 PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_cha… │ │
+│ │                 │   │   'USERS_NAME': 'default_user',                    │ │
+│ │                 │   │   'general': {                                     │ │
+│ │                 │   │   │   'default_tab': 'chat',                       │ │
+│ │                 │   │   │   'focus_mode': False,                         │ │
+│ │                 │   │   │   'default_theme': 'textual-dark',             │ │
+│ │                 │   │   │   'palette_theme_limit': 1,                    │ │
+│ │                 │   │   │   'log_level': 'INFO',                         │ │
+│ │                 │   │   │   'users_name': 'default_user',                │ │
+│ │                 │   │   │   'shutdown_grace_seconds': 120.0              │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'logging': {                                     │ │
+│ │                 │   │   │   'log_filename': 'tldw_cli_app.log',          │ │
+│ │                 │   │   │   'file_log_level': 'INFO',                    │ │
+│ │                 │   │   │   'log_max_bytes': 10485760,                   │ │
+│ │                 │   │   │   'log_backup_count': 5                        │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'database': {                                    │ │
+│ │                 │   │   │   'chachanotes_db_path':                       │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db',  │ │
+│ │                 │   │   │   'prompts_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_prompts.db',           │ │
+│ │                 │   │   │   'media_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_media_v2.db',          │ │
+│ │                 │   │   │   'research_db_path':                          │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_research.db',     │ │
+│ │                 │   │   │   'writing_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_writing.db',      │ │
+│ │                 │   │   │   'library_collections_db_path':               │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_library_collecti… │ │
+│ │                 │   │   │   'workspaces_db_path':                        │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_workspaces.db',   │ │
+│ │                 │   │   │   'evals_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/evals.db',                      │ │
+│ │                 │   │   │   'rag_indexing_db_path':                      │ │
+│ │                 '~/.local/share/tldw_cli/rag_indexing.db',               │ │
+│ │                 │   │   │   'subscriptions_db_path':                     │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db… │ │
+│ │                 │   │   │   ... +3                                       │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'api_settings': {                                │ │
+│ │                 │   │   │   'openai': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENAI_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'gpt-5.6-terra',                │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'anthropic': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'ANTHROPIC_API_KEY',  │ │
+│ │                 │   │   │   │   'model': 'claude-sonnet-5',              │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'cohere': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'COHERE_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'command-a-03-2025',            │ │
+│ │                 │   │   │   │   'temperature': 0.3,                      │ │
+│ │                 │   │   │   │   'top_p': 0.75,                           │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'deepseek': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'DEEPSEEK_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'deepseek-v4-flash',            │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'groq': {                                    │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GROQ_API_KEY',       │ │
+│ │                 │   │   │   │   'model': 'llama-3.3-70b-versatile',      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'google': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GOOGLE_API_KEY',     │ │
+│ │                 │   │   │   │   'api_key': '<API_KEY_HERE>',             │ │
+│ │                 │   │   │   │   'model': 'gemini-2.5-flash',             │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.9,                            │ │
+│ │                 │   │   │   │   'top_k': 100,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'huggingface': {                             │ │
+│ │                 │   │   │   │   'api_key_env_var':                       │ │
+│ │                 'HUGGINGFACE_API_KEY',                                   │ │
+│ │                 │   │   │   │   'model': 'openai/gpt-oss-120b',          │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://router.huggingface.co/v1',                      │ │
+│ │                 │   │   │   │   'api_chat_path': 'chat/completions',     │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 50,                             │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   ... +2                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'mistralai': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MISTRAL_API_KEY',    │ │
+│ │                 │   │   │   │   'model': 'mistral-large-latest',         │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'openrouter': {                              │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENROUTER_API_KEY', │ │
+│ │                 │   │   │   │   'model':                                 │ │
+│ │                 'meta-llama/Llama-3.1-8B-Instruct',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'min_p': 0.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'moonshot': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MOONSHOT_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'kimi-k3',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.95,                           │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'api_region': 'international',           │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://api.moonshot.ai/v1',                            │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 1.0,                      │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   ... +19                                      │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   ... +60                                          │ │
+│ │                 │   },                                                   │ │
+│ │                 │   '_CONFIG_GENERATION': 1,                             │ │
+│ │                 │   '_ENCRYPTION_PASSWORD': None,                        │ │
+│ │                 │   '_FIRST_PROFILE_CREATED_THIS_SESSION': True          │ │
+│ │                 }                                                        │ │
+│ │          core = None                                                     │ │
+│ │       entered = False                                                    │ │
+│ │          lock = <unlocked _thread.RLock object owner=0 count=0 at        │ │
+│ │                 0x10c95a2c0>                                             │ │
+│ │          name = '_FIRST_PROFILE_CREATED_THIS_SESSION'                    │ │
+│ │        nested = False                                                    │ │
+│ │ nested_target = None                                                     │ │
+│ │      previous = None                                                     │ │
+│ │           raw = <module 'tldw_chatbook.Backup_Recovery.raw_participants' │ │
+│ │                 from                                                     │ │
+│ │                 '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.wor… │ │
+│ │         route = 'config'                                                 │ │
+│ │        source = <module 'tldw_chatbook.config' from                      │ │
+│ │                 '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.wor… │ │
+│ │        target = None                                                     │ │
+│ │         value = True                                                     │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none │
+│ /lib/python3.12/contextlib.py:137 in __enter__                               │
+│                                                                              │
+│   134 │   │   # they are only needed for recreation, which is not possible a │
+│   135 │   │   del self.args, self.kwds, self.func                            │
+│   136 │   │   try:                                                           │
+│ ❱ 137 │   │   │   return next(self.gen)                                      │
+│   138 │   │   except StopIteration:                                          │
+│   139 │   │   │   raise RuntimeError("generator didn't yield") from None     │
+│   140                                                                        │
+│                                                                              │
+│ ╭────────────────────────────── locals ──────────────────────────────╮       │
+│ │ self = <contextlib._GeneratorContextManager object at 0x114c85a00> │       │
+│ ╰────────────────────────────────────────────────────────────────────╯       │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Backup_Recovery/raw_participants.py:611 in _scope   │
+│                                                                              │
+│    608 │   │   │   # Constructor directory selection is complete before bind │
+│    609 │   │   │   if route == "template_directory":                         │
+│    610 │   │   │   │   source.user_templates_dir = selected                  │
+│ ❱  611 │   │   │   participant = _raw_participant(source)                    │
+│    612 │   │   │   binding = _participant_state(participant)                 │
+│    613 │   │   │   if (                                                      │
+│    614 │   │   │   │   binding.owner                                         │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │          anchor = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │ anchor_identity = (16777234, 219741505)                                  │ │
+│ │     anchor_info = os.stat_result(st_mode=16832, st_ino=219741505,        │ │
+│ │                   st_dev=16777234, st_nlink=2, st_uid=501, st_gid=20,    │ │
+│ │                   st_size=64, st_atime=1789719535, st_mtime=1789719535,  │ │
+│ │                   st_ctime=1789719535)                                   │ │
+│ │         attempt = <tldw_chatbook.Backup_Recovery.storage_admission._Acq… │ │
+│ │                   object at 0x114c85b50>                                 │ │
+│ │  body_completed = False                                                  │ │
+│ │            core = None                                                   │ │
+│ │     directories = ()                                                     │ │
+│ │  directory_only = False                                                  │ │
+│ │       installed = True                                                   │ │
+│ │          locked = False                                                  │ │
+│ │         missing = []                                                     │ │
+│ │       operation = None                                                   │ │
+│ │           owned = None                                                   │ │
+│ │          parent = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │     participant = None                                                   │ │
+│ │           paths = (                                                      │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   )                                                      │ │
+│ │          pinned = True                                                   │ │
+│ │        previous = None                                                   │ │
+│ │           route = 'config'                                               │ │
+│ │        selected = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │   selected_read = None                                                   │ │
+│ │          source = <module 'tldw_chatbook.config' from                    │ │
+│ │                   '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.w… │ │
+│ │     source_lock = None                                                   │ │
+│ │        template = None                                                   │ │
+│ │     temporaries = {                                                      │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qw… │ │
+│ │                   }                                                      │ │
+│ │       temporary = None                                                   │ │
+│ │   user_template = True                                                   │ │
+│ │         writing = True                                                   │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Backup_Recovery/raw_participants.py:269 in          │
+│ _raw_participant                                                             │
+│                                                                              │
+│    266 │   │   │   │   weakref.ref(source), type(source), owner, selected    │
+│    267 │   │   │   )                                                         │
+│    268 │   │   │   _source_participants[source] = participant                │
+│ ❱  269 │   │   state = _participant_state(participant)                       │
+│    270 │   │   if state.selected != selected:                                │
+│    271 │   │   │   raise bootstrap.RecoveryRequired("raw_source_selection_ch │
+│    272 │   │   return participant                                            │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │        installed = True                                                  │ │
+│ │            owner = 'config'                                              │ │
+│ │      participant = <tldw_chatbook.Backup_Recovery.raw_participants._Raw… │ │
+│ │                    object at 0x10c6bda60>                                │ │
+│ │         selected = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8q… │ │
+│ │ settings_binding = (                                                     │ │
+│ │                    │   'config',                                         │ │
+│ │                    │                                                     │ │
+│ │                    PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8q… │ │
+│ │                    │   True                                              │ │
+│ │                    )                                                     │ │
+│ │           source = <module 'tldw_chatbook.config' from                   │ │
+│ │                    '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/Backup_Recovery/raw_participants.py:127 in          │
+│ _participant_state                                                           │
+│                                                                              │
+│    124 │   if state.owner == "config":                                       │
+│    125 │   │   binding = config_files.binding(source)                        │
+│    126 │   │   if binding is None or binding[1] != state.selected:           │
+│ ❱  127 │   │   │   raise bootstrap.RecoveryRequired("raw_source_selection_ch │
+│    128 │   if state.owner in {                                               │
+│    129 │   │   "eval.definitions",                                           │
+│    130 │   │   "notes.templates",                                            │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │     binding = (                                                          │ │
+│ │               │   'config',                                              │ │
+│ │               │                                                          │ │
+│ │               PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2ny… │ │
+│ │               │   True                                                   │ │
+│ │               )                                                          │ │
+│ │ participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParti… │ │
+│ │               object at 0x10c6bda60>                                     │ │
+│ │      source = <module 'tldw_chatbook.config' from                        │ │
+│ │               '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.workt… │ │
+│ │       state = _ParticipantState(                                         │ │
+│ │               │   source=<weakref at 0x10c923e20; to 'module' at         │ │
+│ │               0x10c3b7bf0>,                                              │ │
+│ │               │   source_type=<class 'module'>,                          │ │
+│ │               │   owner='config',                                        │ │
+│ │               │                                                          │ │
+│ │               selected=PosixPath('/private/var/folders/sn/m80n2j152t9gw… │ │
+│ │               │   closed=False                                           │ │
+│ │               )                                                          │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────╯
+RecoveryRequired: raw_source_selection_changed
+__ test_console_bootstrap_workspace_activation_and_details_use_target_default __
+
+    @pytest.mark.asyncio
+    async def test_console_bootstrap_workspace_activation_and_details_use_target_default():
+        from Tests.UI.app_factory import _build_test_app
+        from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
+        from tldw_chatbook.Widgets.workspace_persona_default import (
+            WorkspacePersonaDefaultModal,
+        )
+        from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
+
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_workspace_persona_creation.py:126:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c6bda60>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_ test_read_write_acknowledgement_remains_separate_from_first_bind_review[True] _
+
+self = <Coroutine test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]>>, 'cancel_before_bind': True}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1797/test_read_write_acknowledgemen1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_read_write_acknowledgement_remains_separate_from_first_bind_review[True] _
+E
+E           request = <FixtureRequest for <Coroutine test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]>>
+E           cancel_before_bind = True
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("cancel_before_bind", [False, True])
+E               @private_profile_test
+E               async def test_read_write_acknowledgement_remains_separate_from_first_bind_review(
+E                   request,
+E                   cancel_before_bind,
+E               ) -> None:
+E                   app = _build_test_app()
+E                   registry = app.workspace_registry_service
+E                   registry.create_workspace(workspace_id="ws-bind-rw", name="Bind RW")
+E                   registry.set_assistant_defaults(
+E                       "ws-bind-rw",
+E                       WorkspaceAssistantDefaults(
+E                           assistant_id="persona-1", persona_memory_mode="read_write"
+E                       ),
+E                       confirm_read_write=True,
+E                   )
+E                   registry.attach_tool_profile_guard(_FirstBindGuard())
+E                   app.tool_pack_service = _FirstBindService()
+E                   _stub_assistant_services(
+E                       app,
+E                       personas=[_persona("persona-1", "Helper")],
+E                       tool_names=["search_notes"],
+E                       profiles=["default", "research"],
+E                   )
+E                   host = DestinationHarness(app, "settings")
+E
+E                   async with host.run_test(size=(180, 50)) as pilot:
+E                       screen = await _open_workspace_card(pilot, host, "ws-bind-rw")
+E                       profile_picker = screen.query_one(
+E                           "#settings-workspace-profile-picker", OptionList
+E                       )
+E                       profile = next(
+E                           profile_picker.get_option_at_index(index)
+E                           for index in range(profile_picker.option_count)
+E                           if getattr(profile_picker.get_option_at_index(index), "profile_id", None)
+E                           == "research"
+E                       )
+E                       screen.handle_workspace_profile_selected(_FakeOptionSelected(profile))
+E                       await pilot.pause()
+E
+E                       toggle = screen.query_one("#settings-workspace-memory-toggle", Button)
+E                       toggle.press()
+E                       await pilot.pause()
+E                       assert "Confirm read_write?" in _visible_text(screen)
+E                       assert not isinstance(host.screen, ToolProfileFirstBindReviewModal)
+E                       assert (
+E                           registry.get_workspace(
+E                               "ws-bind-rw"
+E                           ).assistant_defaults.tool_policy_profile_id
+E                           is None
+E                       )
+E                       assert (
+E                           registry.get_workspace("ws-bind-rw").assistant_defaults.persona_memory_mode
+E                           == "read_write"
+E                       )
+E
+E                       screen.query_one("#settings-workspace-memory-toggle", Button).press()
+E                       await pilot.pause(0.3)
+E           >           assert isinstance(host.screen, ToolProfileFirstBindReviewModal)
+E           E           AssertionError: assert False
+E           E            +  where False = isinstance(SettingsScreen(classes='shell-header-normal'), ToolProfileFirstBindReviewModal)
+E           E            +    where SettingsScreen(classes='shell-header-normal') = DestinationHarness(title='DestinationHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).screen
+E
+E           Tests/UI/test_settings_workspace_assistant_defaults.py:745: AssertionError
+E
+E           During handling of the above exception, another exception occurred:
+E
+E           request = <FixtureRequest for <Coroutine test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]>>
+E           cancel_before_bind = True
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("cancel_before_bind", [False, True])
+E               @private_profile_test
+E               async def test_read_write_acknowledgement_remains_separate_from_first_bind_review(
+E                   request,
+E                   cancel_before_bind,
+E               ) -> None:
+E                   app = _build_test_app()
+E                   registry = app.workspace_registry_service
+E                   registry.create_workspace(workspace_id="ws-bind-rw", name="Bind RW")
+E                   registry.set_assistant_defaults(
+E                       "ws-bind-rw",
+E                       WorkspaceAssistantDefaults(
+E                           assistant_id="persona-1", persona_memory_mode="read_write"
+E                       ),
+E                       confirm_read_write=True,
+E                   )
+E                   registry.attach_tool_profile_guard(_FirstBindGuard())
+E                   app.tool_pack_service = _FirstBindService()
+E                   _stub_assistant_services(
+E                       app,
+E                       personas=[_persona("persona-1", "Helper")],
+E                       tool_names=["search_notes"],
+E                       profiles=["default", "research"],
+E                   )
+E                   host = DestinationHarness(app, "settings")
+E
+E           >       async with host.run_test(size=(180, 50)) as pilot:
+E                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_settings_workspace_assistant_defaults.py:713:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+E               await self.gen.athrow(value)
+E           .venv/lib/python3.12/site-packages/textual/app.py:2214: in run_test
+E               await app._shutdown()
+E           .venv/lib/python3.12/site-packages/textual/app.py:3744: in _shutdown
+E               await self._close_all()
+E           .venv/lib/python3.12/site-packages/textual/app.py:3726: in _close_all
+E               await self._prune(stack_screen)
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E               async def await_prune() -> None:
+E                   """Wait for the prune operation to finish."""
+E           >       await gather(*tasks)
+E           E       asyncio.exceptions.CancelledError
+E
+E           .venv/lib/python3.12/site-packages/textual/await_remove.py:43: CancelledError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:22:54.304 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:22:54.391 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:22:54.394 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:22:54.398 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:22:54.731 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 01:22:54.821 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 01:22:54.821 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 01:22:54.822 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 01:22:54.824 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 01:22:55.091 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1797/test_read_write_acknowledgemen1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:22:55.378 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-3zu3379i/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:22:56.303 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-3zu3379i/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:22:56.363 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:22:56.364 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-3zu3379i/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:22:56.365 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-3zu3379i/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:22:56.548 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 01:22:56.595 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 01:22:56.653 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 01:22:56.729 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 01:22:56.787 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 01:22:56.891 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 01:22:56.891 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-3zu3379i/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 01:22:57.055 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 01:22:57.055 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 01:22:57.068 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 01:22:57.197 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 01:22:57.198 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1797/test_read_write_acknowledgemen1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 01:22:57.199 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 01:22:57.701 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 01:22:57.701 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E           2026-09-18 01:22:57.702 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 01:22:57.704 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 3.259 seconds
+E           2026-09-18 01:22:57.713 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.372s (11.4%)
+E           2026-09-18 01:22:57.717 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 01:22:57.729 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.010s (0.3%)
+E           2026-09-18 01:22:57.730 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:22:57.730 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:22:57.731 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:22:57.732 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:22:57.733 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E           2026-09-18 01:22:57.949 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-18 01:22:58.471 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-18 01:23:02.038 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           7.64s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]
+E           1 failed in 15.27s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+33.67s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]
+27.38s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]
+27.18s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]
+26.60s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]
+25.64s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]
+24.50s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]
+24.18s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]
+20.53s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[False]
+20.30s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+20.21s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only
+19.87s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default
+19.07s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default
+18.92s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]
+18.67s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]
+18.40s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy
+17.72s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses
+17.61s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]
+16.75s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker
+16.18s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers
+15.45s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog
+2.04s call     Tests/UI/test_workspace_persona_creation.py::test_create_choice_survives_folder_recompose_and_saves[WorkspacePersonaChoice.NONE]
+1.12s call     Tests/UI/test_workspace_persona_creation.py::test_default_modal_cancel_preserves_and_apply_clears
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_workspace_persona_creation.py::test_create_choice_survives_folder_recompose_and_saves[WorkspacePersonaChoice.NONE]
+FAILED Tests/UI/test_workspace_persona_creation.py::test_console_bootstrap_workspace_activation_and_details_use_target_default
+FAILED Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]
+3 failed, 35 passed in 454.04s (0:07:34)

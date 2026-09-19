@@ -25,7 +25,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "request_safe_cancel", "Close")
     ]
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     BuddyWorkspaceModal { align: center middle; }
     #buddy-inbox {
         width: 82; max-width: 96%; height: 85%; max-height: 42;
@@ -36,7 +36,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
     #buddy-inbox-list { height: 1fr; margin-top: 1; }
     #buddy-inbox-error { height: auto; color: $error; }
     #buddy-inbox-actions { height: 3; min-height: 3; align-horizontal: right; }
-    #buddy-inbox-actions Button { width: auto; min-width: 8; margin-left: 1; }
+    #buddy-inbox-actions Button.buddy-workspace-modal-button { width: auto; min-width: 8; margin-left: 1; }
     """
 
     def __init__(
@@ -72,10 +72,23 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
             yield Static("", id="buddy-inbox-error", markup=False)
             with Horizontal(id="buddy-inbox-actions"):
                 yield Button(
-                    "Open", id="buddy-inbox-open", variant="primary", disabled=True
+                    "Open",
+                    id="buddy-inbox-open",
+                    variant="primary",
+                    disabled=True,
+                    classes="buddy-workspace-modal-button",
                 )
-                yield Button("Mark seen", id="buddy-inbox-seen", disabled=True)
-                yield Button("Close", id="buddy-inbox-close")
+                yield Button(
+                    "Mark seen",
+                    id="buddy-inbox-seen",
+                    disabled=True,
+                    classes="buddy-workspace-modal-button",
+                )
+                yield Button(
+                    "Close",
+                    id="buddy-inbox-close",
+                    classes="buddy-workspace-modal-button",
+                )
 
     async def on_mount(self) -> None:
         self.call_after_refresh(self.refresh_inbox)

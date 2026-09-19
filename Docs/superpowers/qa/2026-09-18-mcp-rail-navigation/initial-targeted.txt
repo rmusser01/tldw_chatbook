@@ -1,0 +1,1156 @@
+..FF............................FF...................................... [ 59%]
+.....................................F.......F...                        [100%]
+=================================== FAILURES ===================================
+_ test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-dark] _
+
+self = <Coroutine test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[t...52t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke0'), 'theme': 'textual-dark'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke0/private-profile-process/pytest.log
+E           _and_keep_exact_targets_through_resize_and_refresh[textual-dark]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke0/private-profile-process/pytest/test_long_rail_rows_fit_and_ke0')
+E           theme = 'textual-dark'
+E
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh(
+E                   request, tmp_path, theme
+E               ):
+E                   save_setting_to_cli_config("splash_screen", "enabled", False)
+E                   app = _build_test_app("home")
+E                   app.theme = theme
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       workbench = await _open(pilot, tmp_path / "permissions.json")
+E                       snapshots = [
+E                           replace(_snap(f"local:server-{i}", name), tool_count=count)
+E                           for i, (name, count) in enumerate(
+E                               [
+E                                   ("漢字資料庫と文書", 1234),
+E                                   ("[bold]literal[/bold]", 7),
+E                                   ("e\u0301quipe", 81),
+E                                   ("Documents", 999),
+E                                   *[(f"Research server {i}", i) for i in range(12)],
+E                               ]
+E                           )
+E                       ]
+E                       workbench._snapshots = snapshots
+E                       await workbench._sync_children()
+E                       await _settle(pilot)
+E                       rail = workbench.query_one(MCPRail)
+E                       for size in [(80, 24), (100, 30), (170, 48), (80, 24)]:
+E                           prior = app.focused
+E                           await pilot.resize_terminal(*size)
+E                           await _settle(pilot)
+E                           if prior in rail._row_targets:
+E                               assert app.focused is prior
+E                               _visible(app, prior)
+E                           assert rail._row_budget == rail._label_budget()
+E                           for index in (1, 2, 3, 4, len(snapshots)):
+E                               row = rail.query_one(f"#mcp-rail-row-{index}", Button)
+E                               row.focus()
+E                               await _settle(pilot)
+E                               _visible(app, row)
+E                               paint = _compact(_paint(app.screen, row.content_region))
+E                               label = _compact(str(row.label))
+E                               assert label in paint, (label, paint, row.region, row.content_region)
+E                               assert str(snapshots[index - 1].tool_count) in paint
+E                               await pilot.press("enter")
+E                               await _settle(pilot)
+E                               assert workbench._selected_server_key == snapshots[index - 1].server_key
+E                               assert app.focused is row
+E                               _visible(app, row)
+E                           selected = workbench._selected_server_key
+E                           await workbench._sync_children()
+E                           await _settle(pilot)
+E                           assert workbench._selected_server_key == selected
+E                           active = rail.query_one("Button.mcp-rail-row.is-active", Button)
+E                           assert app.focused is active
+E                           _visible(app, active)
+E                           assert await pilot.click(active)
+E                           await _settle(pilot)
+E                           assert workbench._selected_server_key == selected
+E                       # Same outer size, different scrollbars: refit to the final viewport.
+E                       await pilot.resize_terminal(170, 48)
+E                       await _settle(pilot)
+E           >           outside = workbench.query_one("#mcp-mode-tools", Button)
+E                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_mcp_rail_compact_navigation.py:101:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = MCPWorkbench(id='mcp-hub-workbench'), selector = '#mcp-mode-tools'
+E           expect_type = <class 'textual.widgets._button.Button'>
+E
+E               def query_one(
+E                   self,
+E                   selector: str | type[QueryType],
+E                   expect_type: type[QueryType] | None = None,
+E               ) -> QueryType | Widget:
+E                   """Get a widget from this widget's children that matches a selector or widget type.
+E
+E                   Args:
+E                       selector: A selector or widget type.
+E                       expect_type: Require the object be of the supplied type, or None for any type.
+E
+E                   Raises:
+E                       WrongType: If the wrong type was found.
+E                       NoMatches: If no node matches the query.
+E
+E                   Returns:
+E                       A widget matching the selector.
+E                   """
+E                   _rich_traceback_omit = True
+E
+E                   base_node = self._get_dom_base()
+E
+E                   if isinstance(selector, str):
+E                       query_selector = selector
+E                   else:
+E                       query_selector = selector.__name__
+E
+E                   if is_id_selector(query_selector):
+E                       cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E                       cached_result = base_node._query_one_cache.get(cache_key)
+E                       if cached_result is not None:
+E                           return cached_result
+E                       if (
+E                           node := walk_breadth_search_id(
+E                               base_node, query_selector[1:], with_root=False
+E                           )
+E                       ) is not None:
+E                           if expect_type is not None and not isinstance(node, expect_type):
+E                               raise WrongType(
+E                                   f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                               )
+E                           base_node._query_one_cache[cache_key] = node
+E                           return node
+E           >           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           E           textual.css.query.NoMatches: No nodes match '#mcp-mode-tools' on MCPWorkbench(id='mcp-hub-workbench')
+E
+E           .venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 10:22:23.205 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 10:22:23.211 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 10:22:23.211 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 10:22:23.211 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 10:22:23.213 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+E           2026-09-18 10:22:23.228 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+E           2026-09-18 10:22:23.239 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke0/private-profile-process/profile/config/config.toml
+E           2026-09-18 10:22:23.240 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:22:23.241 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:22:23.241 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 10:22:23.242 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 10:22:23.263 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 10:22:23.264 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 10:22:23.264 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E           2026-09-18 10:22:23.340 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 10:22:23.363 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 10:22:23.363 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 10:22:23.363 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 10:22:23.364 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 10:22:23.443 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:23.512 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1vstv24j/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:23.684 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1vstv24j/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:23.696 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:23.697 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1vstv24j/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:23.697 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1vstv24j/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:23.808 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 10:22:23.850 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 10:22:23.923 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 10:22:23.958 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 10:22:23.994 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 10:22:24.036 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 10:22:24.036 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1vstv24j/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 10:22:24.081 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 10:22:24.081 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 10:22:24.088 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 10:22:24.164 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 10:22:24.164 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 10:22:24.165 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 10:22:24.232 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 10:22:24.233 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+E           2026-09-18 10:22:24.234 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 10:22:24.237 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.961 seconds
+E           2026-09-18 10:22:24.238 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.088s (9.2%)
+E           2026-09-18 10:22:24.240 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 10:22:24.241 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.002s (0.2%)
+E           2026-09-18 10:22:24.244 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.2% of parallel_init)
+E           2026-09-18 10:22:24.245 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:22:24.247 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:22:24.248 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 10:22:24.251 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: home
+E           WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12312 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E           ============================= slowest 25 durations =============================
+E           22.98s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-dark]
+E           1 failed in 24.76s
+
+Tests/private_profile.py:84: Failed
+_ test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-light] _
+
+self = <Coroutine test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[t...2t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke1'), 'theme': 'textual-light'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke1/private-profile-process/pytest.log
+E           keep_exact_targets_through_resize_and_refresh[textual-light]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke1/private-profile-process/pytest/test_long_rail_rows_fit_and_ke0')
+E           theme = 'textual-light'
+E
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh(
+E                   request, tmp_path, theme
+E               ):
+E                   save_setting_to_cli_config("splash_screen", "enabled", False)
+E                   app = _build_test_app("home")
+E                   app.theme = theme
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       workbench = await _open(pilot, tmp_path / "permissions.json")
+E                       snapshots = [
+E                           replace(_snap(f"local:server-{i}", name), tool_count=count)
+E                           for i, (name, count) in enumerate(
+E                               [
+E                                   ("漢字資料庫と文書", 1234),
+E                                   ("[bold]literal[/bold]", 7),
+E                                   ("e\u0301quipe", 81),
+E                                   ("Documents", 999),
+E                                   *[(f"Research server {i}", i) for i in range(12)],
+E                               ]
+E                           )
+E                       ]
+E                       workbench._snapshots = snapshots
+E                       await workbench._sync_children()
+E                       await _settle(pilot)
+E                       rail = workbench.query_one(MCPRail)
+E                       for size in [(80, 24), (100, 30), (170, 48), (80, 24)]:
+E                           prior = app.focused
+E                           await pilot.resize_terminal(*size)
+E                           await _settle(pilot)
+E                           if prior in rail._row_targets:
+E                               assert app.focused is prior
+E                               _visible(app, prior)
+E                           assert rail._row_budget == rail._label_budget()
+E                           for index in (1, 2, 3, 4, len(snapshots)):
+E                               row = rail.query_one(f"#mcp-rail-row-{index}", Button)
+E                               row.focus()
+E                               await _settle(pilot)
+E                               _visible(app, row)
+E                               paint = _compact(_paint(app.screen, row.content_region))
+E                               label = _compact(str(row.label))
+E                               assert label in paint, (label, paint, row.region, row.content_region)
+E                               assert str(snapshots[index - 1].tool_count) in paint
+E                               await pilot.press("enter")
+E                               await _settle(pilot)
+E                               assert workbench._selected_server_key == snapshots[index - 1].server_key
+E                               assert app.focused is row
+E                               _visible(app, row)
+E                           selected = workbench._selected_server_key
+E                           await workbench._sync_children()
+E                           await _settle(pilot)
+E                           assert workbench._selected_server_key == selected
+E                           active = rail.query_one("Button.mcp-rail-row.is-active", Button)
+E                           assert app.focused is active
+E                           _visible(app, active)
+E                           assert await pilot.click(active)
+E                           await _settle(pilot)
+E                           assert workbench._selected_server_key == selected
+E                       # Same outer size, different scrollbars: refit to the final viewport.
+E                       await pilot.resize_terminal(170, 48)
+E                       await _settle(pilot)
+E           >           outside = workbench.query_one("#mcp-mode-tools", Button)
+E                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_mcp_rail_compact_navigation.py:101:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = MCPWorkbench(id='mcp-hub-workbench'), selector = '#mcp-mode-tools'
+E           expect_type = <class 'textual.widgets._button.Button'>
+E
+E               def query_one(
+E                   self,
+E                   selector: str | type[QueryType],
+E                   expect_type: type[QueryType] | None = None,
+E               ) -> QueryType | Widget:
+E                   """Get a widget from this widget's children that matches a selector or widget type.
+E
+E                   Args:
+E                       selector: A selector or widget type.
+E                       expect_type: Require the object be of the supplied type, or None for any type.
+E
+E                   Raises:
+E                       WrongType: If the wrong type was found.
+E                       NoMatches: If no node matches the query.
+E
+E                   Returns:
+E                       A widget matching the selector.
+E                   """
+E                   _rich_traceback_omit = True
+E
+E                   base_node = self._get_dom_base()
+E
+E                   if isinstance(selector, str):
+E                       query_selector = selector
+E                   else:
+E                       query_selector = selector.__name__
+E
+E                   if is_id_selector(query_selector):
+E                       cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E                       cached_result = base_node._query_one_cache.get(cache_key)
+E                       if cached_result is not None:
+E                           return cached_result
+E                       if (
+E                           node := walk_breadth_search_id(
+E                               base_node, query_selector[1:], with_root=False
+E                           )
+E                       ) is not None:
+E                           if expect_type is not None and not isinstance(node, expect_type):
+E                               raise WrongType(
+E                                   f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                               )
+E                           base_node._query_one_cache[cache_key] = node
+E                           return node
+E           >           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           E           textual.css.query.NoMatches: No nodes match '#mcp-mode-tools' on MCPWorkbench(id='mcp-hub-workbench')
+E
+E           .venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 10:22:49.050 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 10:22:49.056 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 10:22:49.060 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 10:22:49.060 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 10:22:49.065 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+E           2026-09-18 10:22:49.084 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+E           2026-09-18 10:22:49.097 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke1/private-profile-process/profile/config/config.toml
+E           2026-09-18 10:22:49.098 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:22:49.101 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:22:49.102 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 10:22:49.106 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 10:22:49.125 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 10:22:49.125 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 10:22:49.126 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E           2026-09-18 10:22:49.209 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 10:22:49.232 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 10:22:49.232 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 10:22:49.233 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 10:22:49.233 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 10:22:49.302 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:49.365 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hc0tkoe2/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:49.521 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hc0tkoe2/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:49.536 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:49.537 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hc0tkoe2/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:49.537 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hc0tkoe2/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:22:49.640 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 10:22:49.675 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 10:22:49.718 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 10:22:49.757 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 10:22:49.799 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 10:22:49.839 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 10:22:49.840 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hc0tkoe2/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 10:22:49.891 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 10:22:49.892 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 10:22:49.899 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 10:22:49.973 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 10:22:49.973 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_long_rail_rows_fit_and_ke1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 10:22:49.973 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 10:22:50.039 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 10:22:50.039 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+E           2026-09-18 10:22:50.040 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 10:22:50.040 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.902 seconds
+E           2026-09-18 10:22:50.040 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.092s (10.2%)
+E           2026-09-18 10:22:50.040 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 10:22:50.041 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.002s (0.2%)
+E           2026-09-18 10:22:50.041 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:22:50.041 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:22:50.042 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-18 10:22:50.042 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 10:22:50.042 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: home
+E           WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12312 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E           ============================= slowest 25 durations =============================
+E           22.97s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-light]
+E           1 failed in 24.80s
+
+Tests/private_profile.py:84: Failed
+_____ test_purpose_and_both_source_labels_are_fully_painted[textual-dark] ______
+
+self = <Coroutine test_purpose_and_both_source_labels_are_fully_painted[textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_purpose_and_both_source_labels_are_fully_painted[textual-dark]>>, 'tmp...52t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l0'), 'theme': 'textual-dark'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l0/private-profile-process/pytest.log
+E           --- _setup_logging START (from Logging_Config.py) ---
+E           Loguru: All pre-existing sinks removed.
+E           Loguru: Configured to forward its messages to standard Python logging system.
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _____ test_purpose_and_both_source_labels_are_fully_painted[textual-dark] ______
+E
+E           request = <FixtureRequest for <Coroutine test_purpose_and_both_source_labels_are_fully_painted[textual-dark]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l0/private-profile-process/pytest/test_purpose_and_both_source_l0')
+E           theme = 'textual-dark'
+E
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_purpose_and_both_source_labels_are_fully_painted(
+E                   request, tmp_path, theme
+E               ):
+E                   save_setting_to_cli_config("splash_screen", "enabled", False)
+E                   app = _build_test_app("home")
+E                   app.theme = theme
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       workbench = await _open(pilot, tmp_path / "permissions.json")
+E                       for size in [(80, 24), (100, 30), (120, 40), (170, 48), (80, 24)]:
+E                           await pilot.resize_terminal(*size)
+E                           await _settle(pilot)
+E                           purpose = app.screen.query_one("#mcp-purpose")
+E                           assert _compact(
+E                               "most people never need to change anything here."
+E                           ) in _compact(_paint(app.screen, purpose.content_region))
+E                           for value, label in [("server", "Server"), ("local", "Local")]:
+E                               source = app.screen.query_one("#mcp-rail-source", Select)
+E                               source.focus()
+E                               await _settle(pilot)
+E                               await pilot.press(
+E                                   "enter", "end" if value == "server" else "home", "enter"
+E                               )
+E                               await _wait(
+E                                   pilot,
+E                                   lambda value=value: (
+E                                       workbench._source == value and not workbench._reloading
+E                                   ),
+E                               )
+E                               await _settle(pilot)
+E                               source = app.screen.query_one("#mcp-rail-source", Select)
+E                               current = source.query_one("SelectCurrent")
+E                               text = current.query_one("#label")
+E           >                   assert text.content_region.height == 1
+E           E                   AssertionError: assert 2 == 1
+E           E                    +  where 2 = Region(x=4, y=11, width=4, height=2).height
+E           E                    +    where Region(x=4, y=11, width=4, height=2) = NonSelectableStatic(id='label').content_region
+E
+E           Tests/UI/test_mcp_compact_readability.py:108: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 10:23:23.615 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 10:23:23.620 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 10:23:23.621 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 10:23:23.621 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 10:23:23.622 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+E           2026-09-18 10:23:23.638 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+E           2026-09-18 10:23:23.648 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l0/private-profile-process/profile/config/config.toml
+E           2026-09-18 10:23:23.649 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:23:23.650 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:23:23.650 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 10:23:23.651 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 10:23:23.670 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 10:23:23.670 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 10:23:23.671 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E           2026-09-18 10:23:23.748 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 10:23:23.771 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 10:23:23.772 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 10:23:23.772 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 10:23:23.772 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 10:23:23.842 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:23.901 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-f68i7af4/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:24.058 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-f68i7af4/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:24.071 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:24.072 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-f68i7af4/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:24.072 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-f68i7af4/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:24.181 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 10:23:24.214 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 10:23:24.249 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 10:23:24.284 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 10:23:24.317 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 10:23:24.351 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 10:23:24.352 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-f68i7af4/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 10:23:24.396 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 10:23:24.396 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 10:23:24.404 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 10:23:24.472 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 10:23:24.472 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 10:23:24.472 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 10:23:24.539 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 10:23:24.539 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+E           2026-09-18 10:23:24.540 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 10:23:24.540 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.861 seconds
+E           2026-09-18 10:23:24.540 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.090s (10.5%)
+E           2026-09-18 10:23:24.541 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 10:23:24.541 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.001s (0.2%)
+E           2026-09-18 10:23:24.541 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:23:24.541 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:23:24.542 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-18 10:23:24.542 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 10:23:24.542 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: home
+E           WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12312 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E           ============================= slowest 25 durations =============================
+E           6.50s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+E           1 failed in 8.27s
+
+Tests/private_profile.py:84: Failed
+_____ test_purpose_and_both_source_labels_are_fully_painted[textual-light] _____
+
+self = <Coroutine test_purpose_and_both_source_labels_are_fully_painted[textual-light]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_purpose_and_both_source_labels_are_fully_painted[textual-light]>>, 'tm...2t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l1'), 'theme': 'textual-light'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l1/private-profile-process/pytest.log
+E           --- _setup_logging START (from Logging_Config.py) ---
+E           Loguru: All pre-existing sinks removed.
+E           Loguru: Configured to forward its messages to standard Python logging system.
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _____ test_purpose_and_both_source_labels_are_fully_painted[textual-light] _____
+E
+E           request = <FixtureRequest for <Coroutine test_purpose_and_both_source_labels_are_fully_painted[textual-light]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l1/private-profile-process/pytest/test_purpose_and_both_source_l0')
+E           theme = 'textual-light'
+E
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_purpose_and_both_source_labels_are_fully_painted(
+E                   request, tmp_path, theme
+E               ):
+E                   save_setting_to_cli_config("splash_screen", "enabled", False)
+E                   app = _build_test_app("home")
+E                   app.theme = theme
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       workbench = await _open(pilot, tmp_path / "permissions.json")
+E                       for size in [(80, 24), (100, 30), (120, 40), (170, 48), (80, 24)]:
+E                           await pilot.resize_terminal(*size)
+E                           await _settle(pilot)
+E                           purpose = app.screen.query_one("#mcp-purpose")
+E                           assert _compact(
+E                               "most people never need to change anything here."
+E                           ) in _compact(_paint(app.screen, purpose.content_region))
+E                           for value, label in [("server", "Server"), ("local", "Local")]:
+E                               source = app.screen.query_one("#mcp-rail-source", Select)
+E                               source.focus()
+E                               await _settle(pilot)
+E                               await pilot.press(
+E                                   "enter", "end" if value == "server" else "home", "enter"
+E                               )
+E                               await _wait(
+E                                   pilot,
+E                                   lambda value=value: (
+E                                       workbench._source == value and not workbench._reloading
+E                                   ),
+E                               )
+E                               await _settle(pilot)
+E                               source = app.screen.query_one("#mcp-rail-source", Select)
+E                               current = source.query_one("SelectCurrent")
+E                               text = current.query_one("#label")
+E           >                   assert text.content_region.height == 1
+E           E                   AssertionError: assert 2 == 1
+E           E                    +  where 2 = Region(x=4, y=11, width=4, height=2).height
+E           E                    +    where Region(x=4, y=11, width=4, height=2) = NonSelectableStatic(id='label').content_region
+E
+E           Tests/UI/test_mcp_compact_readability.py:108: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 10:23:32.883 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 10:23:32.889 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 10:23:32.889 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 10:23:32.890 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 10:23:32.891 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+E           2026-09-18 10:23:32.907 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+E           2026-09-18 10:23:32.917 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l1/private-profile-process/profile/config/config.toml
+E           2026-09-18 10:23:32.918 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:23:32.919 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 10:23:32.919 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 10:23:32.920 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 10:23:32.939 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 10:23:32.940 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 10:23:32.940 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E           2026-09-18 10:23:33.019 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 10:23:33.041 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 10:23:33.041 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 10:23:33.041 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 10:23:33.042 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 10:23:33.112 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:33.175 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-52eszf8x/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:33.337 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-52eszf8x/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:33.350 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:33.351 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-52eszf8x/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:33.352 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-52eszf8x/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 10:23:33.463 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 10:23:33.498 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 10:23:33.534 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 10:23:33.574 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 10:23:33.610 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 10:23:33.643 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 10:23:33.644 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-52eszf8x/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 10:23:33.688 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 10:23:33.689 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 10:23:33.697 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 10:23:33.768 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 10:23:33.769 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2032/test_purpose_and_both_source_l1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 10:23:33.769 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 10:23:33.834 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 10:23:33.834 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+E           2026-09-18 10:23:33.834 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 10:23:33.835 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.886 seconds
+E           2026-09-18 10:23:33.835 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.090s (10.2%)
+E           2026-09-18 10:23:33.835 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 10:23:33.836 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.001s (0.2%)
+E           2026-09-18 10:23:33.836 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:23:33.836 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-18 10:23:33.836 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-18 10:23:33.837 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 10:23:33.837 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: home
+E           WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12312 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+E           ============================= slowest 25 durations =============================
+E           6.64s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+E           1 failed in 8.45s
+
+Tests/private_profile.py:84: Failed
+_________ test_full_destination_tour_stays_under_the_parse_cache_cliff _________
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_full_destination_tour_stays_under_the_parse_cache_cliff():
+        """A full 13-destination tour must leave the source count under the cliff.
+
+        This is the measurement the whole task exists for: before consolidation the
+        same tour ended at 94 sources with ``stylesheet.parse()`` costing 127-378 ms
+        per call; it must now finish well under Textual's ``LRUCache(64)`` with the
+        cache warm.
+        """
+        from Tests.UI.app_factory import _build_test_app
+
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_widget_css_consolidation.py:710:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x108d71ee0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_______________ test_class_level_css_stays_within_the_allowlist ________________
+
+    def test_class_level_css_stays_within_the_allowlist():
+        """No new ``DEFAULT_CSS``/``CSS`` outside the allowlist; no stale entries.
+
+        TASK-21115. Static and boot-free on purpose: the integration tour above is
+        the *measurement*, but it is slow and has spent red stretches during which
+        34 new ``DEFAULT_CSS`` declarations accreted unnoticed -- enough that a
+        feature-rich session (~10 distinct modal opens) crossed the LRUCache(64)
+        parse-cache cliff. This test makes the invariant cheap enough to run on
+        every change.
+        """
+        declared = set(_textual_css_declarations())
+        assert declared, "no class-level CSS declarations found -- the walk is broken"
+
+        offenders = sorted(declared - _UNCONSOLIDATED_CSS_ALLOWLIST)
+>       assert not offenders, (
+            f"{len(offenders)} class-level CSS declaration(s) outside the "
+            "allowlist:\n"
+            + "\n".join(f"  {module}::{name}.{attr}" for module, name, attr in offenders)
+            + "\n\nEvery class-level DEFAULT_CSS/CSS registers one more stylesheet "
+            "source at first mount, and Textual's parse cache holds 64 -- past the "
+            "cliff every first-mount of an unseen class re-pays a full cold parse "
+            "(~150-450 ms) for the rest of the session. Two sanctioned options:\n"
+            "  1. (default) Ride the bundle: rename DEFAULT_CSS -> BUNDLED_CSS "
+            "(widget-defaults tier), or a Screen's CSS -> BUNDLED_SCREEN_CSS "
+            "(app-CSS tier), keep the block a plain string literal, then run "
+            "`python tldw_chatbook/css/build_css.py` and commit the regenerated "
+            "sheets in css/ together with your source change.\n"
+            "  2. (reviewed exception only) add the (module, class, attr) triple "
+            "to _UNCONSOLIDATED_CSS_ALLOWLIST in this file, with the reason in "
+            "your PR -- e.g. the CSS genuinely cannot be a plain string literal, "
+            "or the widget belongs to a standalone app that never loads this "
+            "app's bundle."
+        )
+E       AssertionError: 26 class-level CSS declaration(s) outside the allowlist:
+E           UI/LLM_Management/vllm_setup_view.py::VllmSetupView.DEFAULT_CSS
+E           UI/Library_Modules/library_character_repair_controller.py::LibraryCharacterRepairDialog.DEFAULT_CSS
+E           UI/Library_Modules/skill_import_choice_modal.py::SkillImportChoiceModal.DEFAULT_CSS
+E           UI/Navigation/character_conversation_navigation.py::RoleplayDraftNavigationDialog.DEFAULT_CSS
+E           UI/Navigation/character_conversation_navigation.py::RoleplayDraftRecoveryDialog.DEFAULT_CSS
+E           UI/Screens/artifact_share_dialog.py::ArtifactShareDialog.DEFAULT_CSS
+E           UI/Screens/backup_restore_screen.py::BackupRestoreScreen.DEFAULT_CSS
+E           UI/Screens/scheduling/forms/automation_definition_form.py::AutomationDefinitionForm.DEFAULT_CSS
+E           UI/Screens/scheduling/forms/new_task_choice_modal.py::NewTaskChoiceModal.DEFAULT_CSS
+E           UI/Screens/skills_screen.py::SkillRecoveryReviewModal.DEFAULT_CSS
+E           Widgets/Console/console_appearance_picker_modal.py::ConsoleAppearancePickerModal.DEFAULT_CSS
+E           Widgets/Console/console_edit_message_modal.py::ConsoleEditThinkingModal.DEFAULT_CSS
+E           Widgets/Console/console_endpoint_template_modal.py::ConsoleEndpointTemplateModal.DEFAULT_CSS
+E           Widgets/Console/console_provider_picker.py::ConsoleProviderPicker.DEFAULT_CSS
+E           Widgets/Console/console_save_markdown_modal.py::ConsoleSaveMarkdownModal.DEFAULT_CSS
+E           Widgets/Console/console_terminal_session_modal.py::ConsoleTerminalSessionModal.DEFAULT_CSS
+E           Widgets/Console/console_workspace_switcher_modal.py::WorkspaceArchiveReceiptModal.DEFAULT_CSS
+E           Widgets/Library/notes_recovery_dialog.py::NotesRecoveryDialog.DEFAULT_CSS
+E           Widgets/Persona_Widgets/buddy_conversation_modal.py::BuddyConversationModal.DEFAULT_CSS
+E           Widgets/Persona_Widgets/buddy_management_modal.py::BuddyManagementModal.DEFAULT_CSS
+E           Widgets/Persona_Widgets/buddy_speech_controls.py::BuddySpeechControls.DEFAULT_CSS
+E           Widgets/Persona_Widgets/buddy_workspace_modal.py::BuddyWorkspaceModal.DEFAULT_CSS
+E           Widgets/Settings_Widgets/tool_profiles_panel.py::ToolProfilesPanel.DEFAULT_CSS
+E           Widgets/Settings_Widgets/workspace_change_review.py::WorkspaceChangeReviewPanel.DEFAULT_CSS
+E           Widgets/workspace_persona_default.py::WorkspacePersonaDefaultModal.DEFAULT_CSS
+E           Widgets/workspace_persona_default.py::WorkspacePersonaPicker.DEFAULT_CSS
+E
+E         Every class-level DEFAULT_CSS/CSS registers one more stylesheet source at first mount, and Textual's parse cache holds 64 -- past the cliff every first-mount of an unseen class re-pays a full cold parse (~150-450 ms) for the rest of the session. Two sanctioned options:
+E           1. (default) Ride the bundle: rename DEFAULT_CSS -> BUNDLED_CSS (widget-defaults tier), or a Screen's CSS -> BUNDLED_SCREEN_CSS (app-CSS tier), keep the block a plain string literal, then run `python tldw_chatbook/css/build_css.py` and commit the regenerated sheets in css/ together with your source change.
+E           2. (reviewed exception only) add the (module, class, attr) triple to _UNCONSOLIDATED_CSS_ALLOWLIST in this file, with the reason in your PR -- e.g. the CSS genuinely cannot be a plain string literal, or the widget belongs to a standalone app that never loads this app's bundle.
+E       assert not [('UI/LLM_Management/vllm_setup_view.py', 'VllmSetupView', 'DEFAULT_CSS'), ('UI/Library_Modules/library_character_repa...aftRecoveryDialog', 'DEFAULT_CSS'), ('UI/Screens/artifact_share_dialog.py', 'ArtifactShareDialog', 'DEFAULT_CSS'), ...]
+
+Tests/UI/test_widget_css_consolidation.py:1209: AssertionError
+============================= slowest 25 durations =============================
+25.95s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-light]
+25.72s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-dark]
+17.97s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+17.39s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+11.62s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_all_servers_is_fully_painted_in_the_real_compact_rail[textual-light]
+11.08s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_all_servers_is_fully_painted_in_the_real_compact_rail[textual-dark]
+9.59s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-light]
+9.54s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+9.17s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-dark]
+9.15s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+7.83s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-light]
+7.69s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]
+4.20s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+4.10s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[True]
+3.79s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[False]
+3.33s call     Tests/UI/test_widget_css_consolidation.py::test_class_level_css_blocks_outside_the_package_parse[Tests]
+3.16s call     Tests/UI/test_widget_css_consolidation.py::test_consolidated_classes_declare_no_textual_css_attribute
+2.69s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_a_delayed_rail_press_cannot_select_a_replacement_row
+2.65s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_catalog_refresh_keeps_the_focused_server_control
+2.46s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.92s call     Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+1.88s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-click-row]
+1.84s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-down-row]
+1.84s call     Tests/UI/test_mcp_table_refresh_selection.py::test_focused_external_tool_drill_moves_without_selecting[tools]
+1.82s call     Tests/UI/test_widget_css_consolidation.py::test_scope_rewrite_matches_textuals_own_scoping
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-dark]
+FAILED Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-light]
+FAILED Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+FAILED Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+FAILED Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff
+FAILED Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist
+6 failed, 115 passed in 270.74s (0:04:30)

@@ -2248,6 +2248,10 @@ prompt to the agent's final reply — however many tool rounds that takes.
 
 Changes apply to your next message — no restart.
 
+Steps supports **1–199,999**. Settings refuses values outside this range and
+keeps your entry available to correct. A legacy configuration with a value
+above the maximum falls back to 25,000; Settings displays that effective value.
+
 **The token budget is the one that actually stops a long run.** This is the
 least obvious thing on this page, so it is worth stating plainly: the whole
 conversation is re-sent to the provider on *every* turn, so cost does not
@@ -2350,8 +2354,9 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   one run: token budget, wall-clock, per-tool-call, model turns, and steps
   (saved as `console.agent_max_total_tokens`,
   `console.agent_max_wall_seconds`, `console.agent_max_tool_call_seconds`,
-  `console.agent_max_model_turns`, `console.agent_max_steps`). No upper
-  bounds. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
+  `console.agent_max_model_turns`, `console.agent_max_steps`). Steps supports
+  1–199,999; the other four budgets have no upper bounds.
+  See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
   above for why the token budget, not the turn cap, is what stops a long run.
 - **`[agents] run_log_evict_enabled`** in `config.toml` — whether older
   rounds are trimmed out of what gets re-sent to the provider each turn

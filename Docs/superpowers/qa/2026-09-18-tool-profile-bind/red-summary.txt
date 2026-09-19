@@ -1,0 +1,11 @@
+Six original cases failed before repair. Independent review added a seventh precise regression for a delayed valid callback after layout; it failed before synchronous focus correction.
+
+FAILED Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size0-textual-dark]
+FAILED Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size0-textual-light]
+FAILED Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size1-textual-dark]
+FAILED Tests/UI/test_tool_profile_bind_handoff.py::test_bind_preserves_persona_draft_and_reveals_apply[size1-textual-light]
+FAILED Tests/UI/test_tool_profile_bind_handoff.py::test_bind_without_persona_reveals_picker_and_guidance
+FAILED Tests/UI/test_tool_profile_bind_handoff.py::test_bind_without_explicit_workspace_reveals_recovery
+6 failed in 37.82s
+FAILED Tests/UI/test_tool_profile_bind_handoff.py::test_delayed_bind_continuation_reveals_after_layout_settled
+1 failed, 13 deselected in 7.21s

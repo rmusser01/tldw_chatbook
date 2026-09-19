@@ -762,6 +762,13 @@ without a dependency, the warning must state the actual current consequences —
 written for an old architecture ("commands execute when you stop") becomes actively
 misleading after a rework and nobody re-reads it unless a review targets it.
 
+**Later incident (TASK-32822, 2026-09-18).** A shutdown database probe run with
+bare `python3`/SQLite 3.51.0 could not open six private databases read-only. The
+identical probe using the app's `.venv` Python 3.12/SQLite 3.49.1 passed all ten
+without changing the database files. Run lifecycle probes with the same explicit
+interpreter as the app and record the runtime; this observation alone does not
+establish a SQLite compatibility defect or database corruption.
+
 ---
 
 ## Scratch-profile live launches: copy `chromadb/` too, expect a config rewrite, and the real provider lever is `[API] default_api` (PR-3 Task 8, 2026-08-03)
@@ -2839,6 +2846,16 @@ harness and read `screen.focused`. And when a control's focus treatment is a
 colour swap that its own selected/active state also uses, that is itself the
 bug worth filing — a reader cannot see focus there either.
 
+**Refinement (TASK-32787, 2026-09-18): calling `focus()` is not evidence
+that it succeeded.** The second Tool Profile recreation native fixture tried to
+focus Import while a real service lock kept the listing in its loading state.
+Import was disabled, so Textual correctly retained category focus. A helper that
+checked geometry alone accepted the no-op and the later focus assertion failed.
+The final helper checks enabled state and `screen.focused is widget`, while the
+journey deliberately preserves category focus until Import becomes available.
+All four final recreation cells pass. Pair actual identity with rendered focus
+and visibility checks; none of the three substitutes for the others.
+
 ## "The key is being swallowed" — check the framework binds it at all before hunting the swallower (task-32247, 2026-09-11)
 
 **What happened.** The task recorded, as an inferred cause, "Textual's
@@ -3221,3 +3238,43 @@ diff. Cite those by symbol with the file and no line number
 finds a symbol after any rewrite, and a reader who greps never learns the
 number was wrong. Line numbers stay right for files outside the branch's diff
 and best of all for frozen captures.
+
+
+## Debounced grid refresh can replace a search query (TASK-32816)
+
+The Appearance layout repair passed its existing filter tests, but native
+run 001 typed `rocket` and ended with `ket`, selecting a ticket on Enter.
+`EmojiGrid.populate_grid` briefly focused an icon; the modal returned focus to
+its search Input, whose default select-on-focus behavior selected the typed
+prefix. Later keystrokes replaced that prefix. The existing filter test assigned
+`Input.value` directly and could not expose this interaction.
+
+For search controls that rebuild focusable children, verify actual keystrokes
+with pauses beyond the debounce interval and assert both text and cursor/selection.
+Preserve the search cursor on programmatic refocus. The two-theme failing test,
+minimal `select_on_focus=False` repair and corrected native captures are retained
+in `Docs/superpowers/qa/2026-09-18-console-appearance/README.md`.
+
+
+## A CSS route tour can leave a native compiler alive (TASK-32818, 2026-09-18)
+
+During TASK-32816 verification, both private CSS-tour runs printed their
+passing assertion but exceeded 180 seconds during teardown. A child-side timed
+stack dump identified Runner.close draining an executor worker in Meetings
+prepare → system_audio_tap.ensure_helper → swiftc. Cancelling a Textual worker
+does not stop its synchronous subprocess. The CSS-only builder now isolates
+only its instance's tap probe; real owner/preparation, screens, fifteen route
+sentinels and source limits remain, and both tours terminate normally. A passing
+dot is not a completed test; inspect child cleanup and retain the nonzero run.
+This fixture isolation does not establish production audio/compiler shutdown.
+
+
+## Paging can push compact modal actions outside the clip
+
+PR2707 Qodo follow-up (TASK32824): three Persona paging rows passed keyboard Apply
+assertions, but the real 80×24 default modal painted no action buttons. Focus and
+Enter still reached the clipped Apply control. The form used auto height inside a
+capped dialog. A compositor-region regression now requires the whole action to be
+visible; the form fills remaining space and scrolls, with validation errors and
+actions outside the scroller. Keep the existing error-paint assertion too: making
+the form scroll initially hid the unavailable-Persona explanation.

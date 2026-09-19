@@ -4,6 +4,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Static
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Widgets.workspace_create_modal import (
@@ -14,6 +15,18 @@ from tldw_chatbook.Workspaces.registry_service import (
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
 )
+
+
+async def _click_visible(pilot, selector):
+    """Scroll a real focusable action into view before clicking it."""
+    control = pilot.app.screen.query_one(selector)
+    control.focus()
+    await pilot.pause()
+    await pilot.wait_for_scheduled_animations()
+    await pilot.pause()
+    region, clip = pilot.app.screen._compositor.visible_widgets[control]
+    assert region.intersection(clip) == region
+    assert await pilot.click(selector)
 
 
 def _registry(tmp_path):
@@ -81,7 +94,10 @@ class _HarnessApp(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_explainer_describes_private_scratch_and_optional_folders(tmp_path):
+@private_profile_test
+async def test_explainer_describes_private_scratch_and_optional_folders(
+    request, tmp_path
+):
     app = _HarnessApp(_registry(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -94,13 +110,14 @@ async def test_explainer_describes_private_scratch_and_optional_folders(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_browse_pushes_picker_and_fills_path(tmp_path):
+@private_profile_test
+async def test_browse_pushes_picker_and_fills_path(request, tmp_path):
     app = _HarnessApp(_registry(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
         assert isinstance(modal, WorkspaceCreateModal)
-        await pilot.click("#workspace-create-browse")
+        await _click_visible(pilot, "#workspace-create-browse")
         await pilot.pause()
         assert isinstance(app.screen, SelectDirectory)
         project = tmp_path / "project"
@@ -114,7 +131,8 @@ async def test_browse_pushes_picker_and_fills_path(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_escape_dismisses_with_none(tmp_path):
+@private_profile_test
+async def test_escape_dismisses_with_none(request, tmp_path):
     app = _HarnessApp(_registry(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -124,7 +142,8 @@ async def test_escape_dismisses_with_none(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_invalid_folder_shows_inline_error(tmp_path):
+@private_profile_test
+async def test_invalid_folder_shows_inline_error(request, tmp_path):
     app = _HarnessApp(_registry(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -132,7 +151,7 @@ async def test_invalid_folder_shows_inline_error(tmp_path):
         modal.query_one("#workspace-create-folder-path", Input).value = str(
             tmp_path / "missing"
         )
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
         error = modal.query_one("#workspace-create-error", Static)
         assert "does not exist" in str(error.renderable)
@@ -140,7 +159,8 @@ async def test_invalid_folder_shows_inline_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_create_with_folder_returns_result_and_binds(tmp_path):
+@private_profile_test
+async def test_create_with_folder_returns_result_and_binds(request, tmp_path):
     registry = _registry(tmp_path)
     project = tmp_path / "project"
     project.mkdir()
@@ -150,9 +170,9 @@ async def test_create_with_folder_returns_result_and_binds(tmp_path):
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
     result = app.result
     assert isinstance(result, WorkspaceCreateResult)
@@ -167,7 +187,8 @@ async def test_create_with_folder_returns_result_and_binds(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_name_error_keeps_modal_open(tmp_path):
+@private_profile_test
+async def test_duplicate_name_error_keeps_modal_open(request, tmp_path):
     registry = _registry(tmp_path)
     registry.create_workspace(workspace_id="workspace-local-9", name="Video Tool")
     app = _HarnessApp(registry)
@@ -175,7 +196,7 @@ async def test_duplicate_name_error_keeps_modal_open(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
         error = modal.query_one("#workspace-create-error", Static)
         assert "already exists" in str(error.renderable)
@@ -183,19 +204,23 @@ async def test_duplicate_name_error_keeps_modal_open(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_make_active_checkbox_carried_on_result(tmp_path):
+@private_profile_test
+async def test_make_active_checkbox_carried_on_result(request, tmp_path):
     app = _HarnessApp(_registry(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-make-active", Checkbox).value = False
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
     assert app.result.make_active is False
 
 
 @pytest.mark.asyncio
-async def test_profile_interview_offer_is_opt_in_and_carried_on_result(tmp_path):
+@private_profile_test
+async def test_profile_interview_offer_is_opt_in_and_carried_on_result(
+    request, tmp_path
+):
     app = _HarnessApp(_registry(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -203,13 +228,14 @@ async def test_profile_interview_offer_is_opt_in_and_carried_on_result(tmp_path)
         offer = modal.query_one("#workspace-create-profile-interview", Checkbox)
         assert offer.value is False
         offer.value = True
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
     assert app.result.offer_profile_interview is True
 
 
 @pytest.mark.asyncio
-async def test_double_submit_creates_exactly_one_workspace_no_crash(tmp_path):
+@private_profile_test
+async def test_double_submit_creates_exactly_one_workspace_no_crash(request, tmp_path):
     """Finding 1: rapid Enter-Enter (or a double-click race on Create) must
     not create a duplicate workspace, and must not raise ScreenStackError
     from a second dismiss landing after the modal has already popped.
@@ -237,7 +263,8 @@ async def test_double_submit_creates_exactly_one_workspace_no_crash(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_add_folder_empty_input_clears_stale_error(tmp_path):
+@private_profile_test
+async def test_add_folder_empty_input_clears_stale_error(request, tmp_path):
     """Finding 5: an invalid-folder error must not linger once the field is
     cleared and Add is pressed again on blank input.
 
@@ -267,7 +294,8 @@ async def test_add_folder_empty_input_clears_stale_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_remove_folder_clears_stale_error(tmp_path):
+@private_profile_test
+async def test_remove_folder_clears_stale_error(request, tmp_path):
     """Finding 5: removing a bound folder must not leave a prior invalid-
     folder error rendered."""
     registry = _registry(tmp_path)
@@ -296,7 +324,8 @@ async def test_remove_folder_clears_stale_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_overlong_name_shows_inline_error_and_creates_nothing(tmp_path):
+@private_profile_test
+async def test_overlong_name_shows_inline_error_and_creates_nothing(request, tmp_path):
     """Finding 2: a name sanitize_string(raw, 100) would truncate/strip must
     be rejected inline at the boundary rather than silently mangled into the
     registry."""
@@ -306,7 +335,7 @@ async def test_overlong_name_shows_inline_error_and_creates_nothing(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "x" * 300
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
         assert app.screen is modal
         error = modal.query_one("#workspace-create-error", Static)
@@ -316,7 +345,8 @@ async def test_overlong_name_shows_inline_error_and_creates_nothing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_registry_read_failure_still_mounts_usable_modal(tmp_path):
+@private_profile_test
+async def test_registry_read_failure_still_mounts_usable_modal(request, tmp_path):
     """Finding 6a: next_local_workspace_identity() raising during __init__
     (list_workspaces() failing) must not crash the modal before it can even
     mount -- it falls back to an empty suggested name and shows an inline
@@ -335,8 +365,9 @@ async def test_registry_read_failure_still_mounts_usable_modal(tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_identity_failure_at_create_resets_committed_for_retry(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Finding 6b: next_local_workspace_identity() raising inside _create()
     used to run AFTER _committed was set True and OUTSIDE the try/except
@@ -355,7 +386,7 @@ async def test_identity_failure_at_create_resets_committed_for_retry(
             raise WorkspaceRegistryServiceError("boom")
 
         monkeypatch.setattr(wcm_module, "next_local_workspace_identity", _raise)
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
         assert app.screen is modal
         assert app.result == "unset"
@@ -374,7 +405,8 @@ async def test_identity_failure_at_create_resets_committed_for_retry(
 
 
 @pytest.mark.asyncio
-async def test_folder_binding_failure_keeps_modal_open_and_retries(tmp_path):
+@private_profile_test
+async def test_folder_binding_failure_keeps_modal_open_and_retries(request, tmp_path):
     """Finding 7: a per-folder add_folder_binding() failure must not
     dismiss the modal or lose the already-created workspace -- it renders
     the failure inline, and a subsequent Create press retries only the
@@ -389,9 +421,9 @@ async def test_folder_binding_failure_keeps_modal_open_and_retries(tmp_path):
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
 
         assert app.screen is modal
@@ -418,7 +450,8 @@ async def test_folder_binding_failure_keeps_modal_open_and_retries(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_escape_after_partial_create_returns_partial_result(tmp_path):
+@private_profile_test
+async def test_escape_after_partial_create_returns_partial_result(request, tmp_path):
     """Finding 7: cancel after a partial create is a fact, not something
     Cancel/Escape can undo -- it must deliver the partial result instead of
     None so callers still sync their workspace list."""
@@ -433,9 +466,9 @@ async def test_escape_after_partial_create_returns_partial_result(tmp_path):
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
         modal.query_one("#workspace-create-profile-interview", Checkbox).value = True
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
         assert app.result == "unset"
         offer = modal.query_one("#workspace-create-profile-interview", Checkbox)
@@ -456,7 +489,8 @@ async def test_escape_after_partial_create_returns_partial_result(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
+@private_profile_test
+async def test_folder_with_skills_annotated_and_carried_on_result(request, tmp_path):
     registry = _registry(tmp_path)
     project = tmp_path / "project"
     skill = project / ".SKILLS" / "alpha-skill"
@@ -467,7 +501,7 @@ async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
         rows = [
             str(s.renderable) for s in modal.query(".workspace-create-folder-locator")
@@ -477,14 +511,17 @@ async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
         assert any(
             row == f"{project.resolve()} — contains 1 project skill" for row in rows
         ), rows
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
     assert len(app.result.project_skills) == 1
     assert app.result.project_skills[0].entries[0].name == "alpha-skill"
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_suppresses_folder_discovery_scan(tmp_path, monkeypatch):
+@private_profile_test
+async def test_kill_switch_suppresses_folder_discovery_scan(
+    request, tmp_path, monkeypatch
+):
     """Finding 1: with the ``[skills] project_skills_prompt_enabled``
     kill-switch off, ``_add_folder`` must not scan the bound folder for
     project skills AT ALL -- "no scanning" must be literally true, not
@@ -514,14 +551,15 @@ async def test_kill_switch_suppresses_folder_discovery_scan(tmp_path, monkeypatc
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
 
     assert calls == []
 
 
 @pytest.mark.asyncio
-async def test_removed_and_rescanned_folder_clears_stale_discovery(tmp_path):
+@private_profile_test
+async def test_removed_and_rescanned_folder_clears_stale_discovery(request, tmp_path):
     """Finding 9 (Qodo review, PR #1810): a removed folder's stale
     ``_folder_discoveries`` entry must not linger -- ``_remove_folder`` has
     to pop it -- and a fresh ``_add_folder`` rescan that finds nothing
@@ -539,7 +577,7 @@ async def test_removed_and_rescanned_folder_clears_stale_discovery(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
         rows = [
             str(s.renderable) for s in modal.query(".workspace-create-folder-locator")
@@ -557,14 +595,14 @@ async def test_removed_and_rescanned_folder_clears_stale_discovery(tmp_path):
         # (empty) scan must not resurrect the stale annotation.
         shutil.rmtree(project / ".SKILLS")
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
         rows = [
             str(s.renderable) for s in modal.query(".workspace-create-folder-locator")
         ]
         assert not any("project skill" in row for row in rows)
 
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
     assert app.result.project_skills == ()
 
@@ -575,7 +613,8 @@ async def test_removed_and_rescanned_folder_clears_stale_discovery(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_enter_key_on_name_input_submits_via_real_keypress(tmp_path):
+@private_profile_test
+async def test_enter_key_on_name_input_submits_via_real_keypress(request, tmp_path):
     """The Enter-submit fast path (``Input.Submitted`` on
     ``#workspace-create-name`` -> ``_create``) driven by a REAL keypress,
     not a direct ``modal._create()`` call or a Button press -- the
@@ -603,7 +642,10 @@ async def test_enter_key_on_name_input_submits_via_real_keypress(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_real_toctou_folder_deleted_before_create_shows_inline_failure(tmp_path):
+@private_profile_test
+async def test_real_toctou_folder_deleted_before_create_shows_inline_failure(
+    request, tmp_path
+):
     """A real TOCTOU race: the folder validates and is added at Add time,
     then is deleted from disk before Create actually attempts the binding
     -- ``failed_folders`` must come from the real ``add_folder_binding()``
@@ -618,13 +660,13 @@ async def test_real_toctou_folder_deleted_before_create_shows_inline_failure(tmp
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
 
         # The race: the bound folder disappears between Add and Create.
         shutil.rmtree(project)
 
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
 
         assert app.screen is modal
@@ -641,7 +683,8 @@ async def test_real_toctou_folder_deleted_before_create_shows_inline_failure(tmp
 
 
 @pytest.mark.asyncio
-async def test_make_active_checkbox_survives_folder_add_recompose(tmp_path):
+@private_profile_test
+async def test_make_active_checkbox_survives_folder_add_recompose(request, tmp_path):
     """Unchecking "Switch to this workspace" via a REAL click, then adding a
     folder (which triggers ``refresh(recompose=True)``), must not silently
     reset the checkbox back to checked -- ``_stash_form_state`` is what
@@ -654,12 +697,12 @@ async def test_make_active_checkbox_survives_folder_add_recompose(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
-        await pilot.click("#workspace-create-make-active")
+        await _click_visible(pilot, "#workspace-create-make-active")
         await pilot.pause()
         assert modal.query_one("#workspace-create-make-active", Checkbox).value is False
 
         modal.query_one("#workspace-create-folder-path", Input).value = str(project)
-        await pilot.click("#workspace-create-folder-add")
+        await _click_visible(pilot, "#workspace-create-folder-add")
         await pilot.pause()
 
         # compose() re-ran (a new folder row now exists) -- the checkbox
@@ -669,7 +712,8 @@ async def test_make_active_checkbox_survives_folder_add_recompose(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_surface_description_is_carried_onto_created_record(tmp_path):
+@private_profile_test
+async def test_surface_description_is_carried_onto_created_record(request, tmp_path):
     """TASK-17962 controller ruling: per-surface ``description`` provenance
     is restored -- a caller-supplied ``description`` reaches
     ``create_workspace`` verbatim, so the created record still says which
@@ -685,7 +729,7 @@ async def test_surface_description_is_carried_onto_created_record(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
 
     result = app.result
@@ -696,7 +740,8 @@ async def test_surface_description_is_carried_onto_created_record(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_default_description_used_when_surface_passes_none(tmp_path):
+@private_profile_test
+async def test_default_description_used_when_surface_passes_none(request, tmp_path):
     """Without an explicit ``description``, the modal falls back to its own
     generic wording rather than an empty string."""
     registry = _registry(tmp_path)
@@ -705,7 +750,7 @@ async def test_default_description_used_when_surface_passes_none(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#workspace-create-name", Input).value = "Video Tool"
-        await pilot.click("#workspace-create-confirm")
+        await _click_visible(pilot, "#workspace-create-confirm")
         await pilot.pause()
 
     result = app.result

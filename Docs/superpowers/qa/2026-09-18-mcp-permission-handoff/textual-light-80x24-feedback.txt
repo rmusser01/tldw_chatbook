@@ -1,0 +1,24 @@
+   ╭────────╮
+ ‹ │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Me  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││                  │
+│ Source       ││ ▊  Filter tool or server…             ▎  ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││  ◦ Off (opt-in)  │
+│ ▊  Loca ▼  ▎ ││  Tool                                    ││  tldw_chatbook   │
+│ ▊  l       ▎ ││  Global default                      ▇▇  ││  (built-in)      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  Server default — tldw_chatbook          ││  Why · Off —     │
+│              ││    chat_with_character                   ││  enable it to    │
+│ Servers      ││    chat_with_llm                         ││  let MCP         │
+│  ◦ off · ⌂   ││    create_note                           ││  clients use     │
+│  built-in    ││    export_conversation                   ││  chatbook's      │
+│     All      ││    get_conversation_history              ││  tools.          │
+│   ◦ ⌂ tld... ││    library_get_conversation            ▅ ││  Add server      │
+│              ││                   ▉                      ││    Advanced…     │
+│              ││ tldw_chatbook: 0 allow · 30 ask · 0 off  ││                  │
+│              ││ — global default: off                    ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

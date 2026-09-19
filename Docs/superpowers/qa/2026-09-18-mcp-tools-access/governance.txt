@@ -1,0 +1,28 @@
+....................................                                     [100%]
+============================= slowest 25 durations =============================
+18.39s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+18.17s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+16.88s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+8.84s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+4.26s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.27s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+2.60s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.64s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.51s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.48s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.47s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+1.45s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]
+1.44s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+1.44s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.44s call     Tests/UI/test_component_pattern_governance.py::test_pin_rejects_active_css_extension_without_writing_baseline
+1.42s call     Tests/UI/test_component_pattern_governance.py::test_canonical_owning_sheets_are_bundled
+1.42s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.42s call     Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+1.41s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+1.41s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+1.40s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.39s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.39s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.38s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_ignores_tokens_and_token_definitions
+1.38s call     Tests/UI/test_component_pattern_governance.py::test_ratchet_regexes_match_pin_script
+36 passed in 112.02s (0:01:52)

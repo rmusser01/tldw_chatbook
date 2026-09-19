@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each action reversible: unarchive, rename again, or set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.                                                                                     │  │  │                              │
+│  category search             │  │  │                                                                                              │  │  │ Selected category:           │
+│                              │  │  │  Workspace management                                                                        │  │  │ Workspaces                   │
+│  Core                        │  │  │  Create workspace…                                                                           │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                       │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ ▊ ▐X▌ Show archived  ▎                                                                       │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                       │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │  Default (active) - 0 folders                                                                │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │  Review 1 - 1 folders                                                                        │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │  Review 2 - 1 folders                                                                        │  │  │ config file.                 │
+│     Theme                    │  │  │  Review 3 - 1 folders                                                                        │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │                                                                                              │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │                                                                                              │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │  Selected workspace                                                                          │  │  │ tools.                       │
+│     Storage                  │  │  │ ┌─────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │ │ │ Draft name                                                                Rename      │  │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │ │    Set active                                                                           │▂ │  │  │  actions)                    │
+│     Privacy & Security       │  │  │ │     Archive                                                                             │  │  │  │                              │
+│     Network                  │  │  │ │                                                                                         │  │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │ │  Folders (agent file-tool access)                                                       │  │  │  │                              │
+│  Troubleshooting             │  │  │ │  /private/tmp/tldw-32771-native-004-fixtures/textual-light-170x48 [ro] ready            │  │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │ │   Allow write        Remove                                                             │  │  │  │  lifecycle records and       │
+│     About (view)             │  │  │ │                                                                                         │  │  │  │  their bound folders         │
+│     Agents                   │  │  │ │ │ ~/path/to/folder                                                        Add folder    │  │  │  │                              │
+│  Expert                      │  │  │ │                                                                                         │  │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │ │                                                                                         │  │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │ │  Change review (post-run diffs)                                                         │  │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │ │  Change Review stores shadow Git history in application data, including file contents,  │  │  │  │  workspace in Library        │
+│                              │  │  │ │  for 30 days by default. Disabling stops new review snapshots but does not erase        │  │  │  │                              │
+│                              │  │  │ │  existing history.                                                                      │  │  │  │  Boundary: lifecycle and     │
+│                              │  │  │ │  Tracking enabled: agent runs record per-turn diffs for this workspace's folders.       │  │  │  │  folder bindings apply       │
+│                              │  │  │ │  Change history ready for 1 folder(s).                                                  │  │  │  │  immediately; there is no    │
+│                              │  │  │ │  Disable change review                                                                  │  │  │  │  draft state here            │
+│                              │  │  │ │  Retry scheduled for 1 folder(s).                                                       │  │  │  │                              │
+│                              │  │  │ │                                                                                         │  │  │  │                              │
+│                              │  │  │ │  Default assistant                                                                      │  │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

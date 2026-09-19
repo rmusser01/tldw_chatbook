@@ -13,11 +13,11 @@ from textual.widgets import Button, Static
 class BuddySpeechControls(Vertical):
     """Project an app-owned queue; unmounting this widget never stops playback."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     BuddySpeechControls { height: auto; }
-    BuddySpeechControls Static { height: auto; }
-    BuddySpeechControls Horizontal { height: auto; }
-    BuddySpeechControls Button { min-width: 8; }
+    BuddySpeechControls Static.buddy-speech-controls-static { height: auto; }
+    BuddySpeechControls Horizontal.buddy-speech-controls-horizontal { height: auto; }
+    BuddySpeechControls Button.buddy-speech-controls-button { min-width: 8; }
     """
 
     def __init__(self, coordinator: Any, **kwargs: Any) -> None:
@@ -25,12 +25,39 @@ class BuddySpeechControls(Vertical):
         self.coordinator = coordinator
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="buddy-speech-status", markup=False)
-        with Horizontal(id="buddy-speech-actions"):
-            yield Button("Pause", id="buddy-speech-pause", compact=True)
-            yield Button("Skip", id="buddy-speech-skip", compact=True)
-            yield Button("Mute", id="buddy-speech-mute", compact=True)
-            yield Button("Confirm speech", id="buddy-speech-confirm", compact=True)
+        yield Static(
+            "",
+            id="buddy-speech-status",
+            markup=False,
+            classes="buddy-speech-controls-static",
+        )
+        with Horizontal(
+            id="buddy-speech-actions", classes="buddy-speech-controls-horizontal"
+        ):
+            yield Button(
+                "Pause",
+                id="buddy-speech-pause",
+                compact=True,
+                classes="buddy-speech-controls-button",
+            )
+            yield Button(
+                "Skip",
+                id="buddy-speech-skip",
+                compact=True,
+                classes="buddy-speech-controls-button",
+            )
+            yield Button(
+                "Mute",
+                id="buddy-speech-mute",
+                compact=True,
+                classes="buddy-speech-controls-button",
+            )
+            yield Button(
+                "Confirm speech",
+                id="buddy-speech-confirm",
+                compact=True,
+                classes="buddy-speech-controls-button",
+            )
 
     def on_mount(self) -> None:
         self.refresh_state()

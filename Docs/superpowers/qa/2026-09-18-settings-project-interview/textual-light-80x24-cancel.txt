@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹╭──────────────────────────────────────────────────────────────────────────╮
+──│                                                                          │──
+ S│  Get to know you                                                         │
+ M│                                                                          │
+┌─│  Fix╭──────────────────────────────────────────────────────────────╮     │─┐
+│ │  No │                                                              │     │ │
+│ │   In│  Leave interview                                             │t    │ │
+│ │   wh│                                                              │     │ │
+│ │  Que│  This interview exists only in memory. Discard it or         │     │ │
+│ │  Wha│  continue; it cannot be kept after Chatbook closes.          │     │ │
+│ │     │                                                              │     │ │
+│ │  │  │                                                              │     │ │
+│ │  │  │       Continue interview             Discard draft           │     │ │
+│ │  │  │                                                              │     │ │
+│ │     │                                                              │     │ │
+│ │     │                                                              │     │ │
+│ │     │                                                              │     │ │
+│ │     ╰──────────────────────────────────────────────────────────────╯     │ │
+│ │                Cancel                                                    │ │
+│ │                                                                          │ │
+└─│                                                                          │─┘
+  ╰──────────────────────────────────────────────────────────────────────────╯
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -253,9 +253,9 @@ def test_selected_absent_catalog_does_not_create_root(selected_media, parent_exi
 async def test_mounted_review_discloses_aliases_and_retains_accepted_delete(
     selected_media, monkeypatch
 ):
-    from textual.app import App
     from textual.widgets import Button, Checkbox, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import recovered_media as owner
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -323,9 +323,9 @@ async def test_mounted_review_discloses_aliases_and_retains_accepted_delete(
 async def test_late_owner_review_is_discarded_after_dismissal(
     selected_media, monkeypatch, dismiss
 ):
-    from textual.app import App
     from textual.widgets import Button, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.Backup_Recovery import recovered_media as owner
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
@@ -380,9 +380,9 @@ async def test_late_owner_review_is_discarded_after_dismissal(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["held", "deleted"])
 async def test_mounted_non_actionable_rows_keep_recorded_details(selected_media, state):
-    from textual.app import App
     from textual.widgets import Button, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
     from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 
     service, store, asset, _ = selected_media

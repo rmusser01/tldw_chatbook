@@ -1,0 +1,5 @@
+Independent reviewer: /root/mcp_tools_access_review
+
+Initial production-CSS probes reproduced selector replacement, delayed invalid filtering, and empty focus loss. Review of the first repair found both queued option-index stages and pending filter events overriding an explicit tool drill. Follow-up pointer probing found queued Click retargeting and IndexError. All have deterministic regressions and synchronous activation admission or live-value guards. Final source review found no additional actionable issue.
+
+Native run001 subsequently found compact recovery-action focus outside the viewport. Two full-app tests reproduced it. Independent review confirmed that the final targeted measured scroll uses the proper coordinate contract, retains all screen/focus guards, and is limited to that action. No further actionable findings.

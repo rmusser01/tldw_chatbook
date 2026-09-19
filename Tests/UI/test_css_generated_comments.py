@@ -6,7 +6,7 @@ import pytest
 from textual.css.parse import parse_selectors
 from textual.css.tokenize import tokenize
 
-from tldw_chatbook.css import build_css
+from tldw_chatbook.css import build_css, widget_css
 
 
 def normalized_tokens(css):
@@ -70,8 +70,45 @@ def test_comment_removal_keeps_quotes_and_surrounding_whitespace():
     assert result == 'Button.active { border-title: "x /* not prose */  "; }'
 
 
+def test_widget_streams_omit_source_prose_but_keep_provenance_and_tokens():
+    source = """/* Widget rationale stays in Python. */
+Sample/* self compound */.active { height: auto; }
+Sample /* descendant boundary */ .child {
+    border-title: "/* literal marker */  "; /* do not publish this prose */
+}
+.scoped { padding: 0 1; }
+"""
+    block = widget_css.BundledBlock("sample.py", "Sample", 1, source)
+    expected = widget_css.split_scoped_css(source, "Sample", scope_every_selector=True)
+    actual = widget_css.render_stylesheets([block], "test", scope_every_selector=True)
+    for before, after in zip(expected, actual, strict=True):
+        assert "Widget rationale" not in after
+        assert "do not publish this prose" not in after
+        assert "/* ===== WIDGET: Sample (sample.py) ===== */" in after
+        assert normalized_tokens(before) == normalized_tokens(after)
+    assert block.css == source
+
+
 @pytest.mark.parametrize("relative_path", build_css.CSS_MODULES)
 def test_real_source_css_keeps_token_and_selector_whitespace(relative_path):
     source = (Path(build_css.__file__).parent / relative_path).read_text()
     result = build_css._without_source_comments(source)
     assert normalized_tokens(result) == normalized_tokens(source)
+
+
+@pytest.mark.parametrize(
+    "block",
+    widget_css.iter_blocks(Path(widget_css.__file__).parents[1], widget_css.WIDGET_ATTR)
+    + widget_css.iter_blocks(
+        Path(widget_css.__file__).parents[1], widget_css.SCREEN_ATTR
+    ),
+    ids=lambda block: f"{block.module}::{block.class_name}",
+)
+def test_real_bundled_block_comment_removal_preserves_tokens(block):
+    source = widget_css.isolate_local_variables(block.css, scope=block.class_name)
+    for stream in widget_css.split_scoped_css(
+        source, block.class_name, scope_every_selector=True
+    ):
+        assert normalized_tokens(
+            widget_css.without_source_comments(stream)
+        ) == normalized_tokens(stream)

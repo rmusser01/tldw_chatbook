@@ -6,11 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 from textual.css.query import QueryError
 from textual.screen import Screen
 from textual.widgets import Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterConversationNavigationService,
     CharacterKeywordSnapshot,

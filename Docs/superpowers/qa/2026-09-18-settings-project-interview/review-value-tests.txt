@@ -1,0 +1,7 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+11.53s call     Tests/UI/test_profile_interview_answer_journeys.py::test_review_payload_value_remains_readable_while_focused
+3.32s setup    Tests/UI/test_profile_interview_answer_journeys.py::test_review_payload_value_remains_readable_while_focused
+
+(1 durations < 1s hidden.)
+1 passed, 7 deselected in 16.23s

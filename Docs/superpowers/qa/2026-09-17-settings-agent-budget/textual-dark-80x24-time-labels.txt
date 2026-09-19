@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes   │
+│  Core                        │  │  │  affect global Console fallbacks after  │
+│     Overview (view)          │  │  │  save.                                  │
+│     Providers & Models       │  │  │ │ │ child_max_wall_seconds, so     │ │  │
+│     Web Search               │  │  │ │ │ raising this does not extend   │ │  │
+│     Speech & TTS             │  │  │ │ │ them.                          │ │  │
+│  Interface                   │  │  │ │ │Per-tool-call (seconds)         │ │  │
+│     Appearance               │  │  │ │ │█ 0.0                           │ │  │
+│     Theme                  ▁ │  │  │ │ │                                │ │  │
+│     Splash Screen            │  │  │ │ │ 0 = unlimited. Ceiling on a    │ │  │
+│   > Console Behavior         │  │  │ ╭─────────────────────────────────────╮ │
+│  Data & Privacy              │  │  │ │                                     │ │
+│     Storage                  │  │  │ │ Console behavior settings saved.    │ │
+│     Workspaces               │  │  │ │                                     │ │
+│     Tool Profiles            │  │  │ ╰─────────────────────────────────────╯ │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, s save category | F1 · F6 · Ctrl+P · Ctrl+Q

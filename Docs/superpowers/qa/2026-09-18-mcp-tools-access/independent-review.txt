@@ -1,0 +1,2 @@
+Initial P2: reveal_focused_control made the table visible but did not reveal its selected last row after 170x48 -> 80x24 shrink with 60 catalog rows. Added red regressions and focused-table cursor reveal.
+Final independent private replay retained row 59 visibly through 170 -> 80 -> 100 -> 120 -> 170 -> 80 resizing, without new navigation. Canvas keyboard scrolling also passed. Finding resolved; no remaining actionable findings in the bounded diff. No reviewer edits.

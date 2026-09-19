@@ -3628,15 +3628,10 @@ compaction_native_delegation = false     # TASK-26021: delegate compaction to a 
 micro_compaction_every_turns = 0         # TASK-25910: in AUTOMATIC mode, fold the oldest exchange into memory every N completed turns (0 = off; bounds prompt-cache breaks to 1/N of turns)
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
-# Confinement root for the fs_*/git_* agent tools (ADR-032). Empty = the app's
-# cwd at startup, so the boundary MOVES with where you launch the app: start it
-# from your home directory and every personal file under it is inside the
-# agent's reach. Credential, gate-state and app-state paths (~/.ssh, ~/.aws,
-# this file, mcp_permissions.json, the app's databases) are refused regardless
-# of this setting -- see Utils/sensitive_paths.py, enforced for these tools in
-# Tools/local_tool_impls.py's resolve_workspace_path (TASK-19551) -- but that
-# denylist is a guardrail, not a substitute for pointing this at the one
-# project directory you actually want an agent working in.
+# Root for local MCP serving and operator Hub tool tests. Blank uses that
+# serving process's current working directory. This is NOT Console file
+# authority: Console uses Chat scratch and admitted Workspace folders
+# (ADR-082/102). Existing sensitive-path and permission checks still apply.
 # workspace_root = ""
 
 # Agent run budget (Settings > Console Behavior > Agent run budget).

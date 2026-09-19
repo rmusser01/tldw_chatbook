@@ -1,0 +1,60 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______________ test_modal_offers_all_personas_beyond_first_page _______________
+
+request = <FixtureRequest for <Coroutine test_modal_offers_all_personas_beyond_first_page>>
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2819/test_modal_offers_all_personas0')
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_modal_offers_all_personas_beyond_first_page(request, tmp_path):
+        ids = [f"writer-{i:03}" for i in range(205)]
+        personas = _personas(tmp_path, ids)
+        assert ids[0] not in {p["id"] for p in personas.list_persona_profiles()}
+        registry, _store = build(tmp_path, personas)
+        registry.create_workspace(
+            workspace_id="chosen",
+            name="Chosen",
+            assistant_defaults=WorkspaceAssistantDefaults(assistant_id=ids[0]),
+        )
+        host = _Host()
+        try:
+            async with host.run_test(size=(80, 24)) as pilot:
+                await host.push_screen(
+                    WorkspacePersonaDefaultModal(registry, personas, "chosen")
+                )
+                select = host.screen.query_one("#workspace-default-persona", Select)
+                offered = set()
+                for page in range(3):
+                    select = host.screen.query_one("#workspace-default-persona", Select)
+                    assert len(select._options) <= 102  # One page, None, saved identity.
+                    offered.update(value for _, value in select._options)
+                    assert _selected_label(select) == "Writer [writer-000]"
+                    if page < 2:
+                        await _press(host, pilot, "#workspace-persona-next")
+                assert set(ids) <= offered
+                assert host.screen.query_one("#workspace-persona-next", Button).disabled
+                apply = host.screen.query_one("#workspace-default-apply", Button)
+                apply.focus()
+                await pilot.pause()
+>               region, clip = host.screen._compositor.visible_widgets[apply]
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               KeyError: Button(id='workspace-default-apply', classes='-style-default -textual-compact')
+
+Tests/UI/test_workspace_persona_picker_identity.py:158: KeyError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 16:14:10.401 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 16:14:10.410 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 16:14:10.466 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 16:14:10.535 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 16:14:10.536 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 16:14:10.536 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 16:14:10.635 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 16:14:10.887 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 16:14:12.222 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2819/test_modal_offers_all_personas0/ws.sqlite [Client: c1]
+============================= slowest 25 durations =============================
+2.18s call     Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+
+(2 durations < 1s hidden.)
+1 failed in 3.25s

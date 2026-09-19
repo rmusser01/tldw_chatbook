@@ -1,0 +1,6 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+4.43s call     Tests/UI/test_mcp_master_settings.py::test_servers_reversal_uses_pending_tools_choice_and_same_queue
+
+(8 durations < 1s hidden.)
+3 passed, 79 deselected in 6.64s

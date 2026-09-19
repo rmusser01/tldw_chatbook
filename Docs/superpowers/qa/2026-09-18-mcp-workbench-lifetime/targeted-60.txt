@@ -1,0 +1,28 @@
+............................................................             [100%]
+============================= slowest 25 durations =============================
+4.33s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-light]
+4.15s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size0-textual-dark]
+4.09s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]
+4.05s call     Tests/UI/test_mcp_master_settings.py::test_master_outcome_survives_workbench_recreation[False]
+4.01s call     Tests/UI/test_mcp_master_settings.py::test_master_outcome_survives_workbench_recreation[True]
+3.93s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-light]
+3.91s call     Tests/UI/test_mcp_master_settings.py::test_servers_reversal_uses_pending_tools_choice_and_same_queue
+3.86s call     Tests/UI/test_mcp_master_settings.py::test_master_catalog_failure_remains_distinct_from_persistence
+3.75s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal[servers]
+3.59s call     Tests/UI/test_mcp_master_settings.py::test_committed_master_with_failed_cache_is_not_reported_unsaved
+3.58s call     Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+3.50s call     Tests/UI/test_mcp_master_settings.py::test_master_reversal_waits_for_older_admitted_write
+3.47s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection[servers]
+3.45s call     Tests/UI/test_mcp_master_settings.py::test_projection_between_two_master_presses_cannot_lose_reversal[tools]
+3.34s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[workbench-local_tools_enabled]
+3.34s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[workbench-workspace_root]
+3.23s call     Tests/UI/test_mcp_master_settings.py::test_queued_master_button_does_not_retarget_after_projection[tools]
+3.21s call     Tests/UI/test_mcp_master_settings.py::test_old_configuration_events_from_both_controls_are_refused
+3.16s call     Tests/UI/test_mcp_master_settings.py::test_master_poll_does_not_overwrite_unprocessed_root_edit
+3.08s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[canvas-local_tools_enabled]
+3.01s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[canvas-workspace_root]
+3.00s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[workspace_root]
+2.92s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2.92s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[local_tools_enabled]
+2.90s call     Tests/UI/test_mcp_workbench_lifetime.py::test_deferred_initial_load_remains_pending_until_dispatched
+60 passed, 334 deselected in 132.57s (0:02:12)

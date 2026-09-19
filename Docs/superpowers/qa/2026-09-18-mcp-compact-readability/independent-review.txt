@@ -1,0 +1,4 @@
+Read-only design and implementation review by agent_budget_review.
+Source analysis confirmed purpose height, compact SelectCurrent padding and content-auto Tool width as the three bounded causes. A stock Textual probe verified fixed Tool width plus auto-height rows paints long underscore names completely beside State.
+Implementation review found no introduced blocker. Measurement reserves the style-defined scrollbar width and both columns padding; reflow retains repopulating_table and key restoration, filter state and permission context. CSS/generated bundle match scope.
+The reviewer separately mounted a 42 -> 90 -> 34 -> 42 resize probe and confirmed the selected row stays visible and focused without explicit test scrolling. No files changed. Primary-agent targeted and native evidence are recorded separately.

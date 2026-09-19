@@ -1,0 +1,11 @@
+{
+  "test_console_collapsed_paste_sends_full_payload_not_visible_token": true,
+  "test_console_native_send_preserves_expanded_payload_whitespace": true,
+  "test_console_native_send_clears_composer_after_acceptance_and_updates_store": true,
+  "test_console_accepted_send_records_first_send_flag": true,
+  "test_console_edit_resend_clears_replaced_descendant_original_attempt": true,
+  "test_console_continue_action_streams_new_message_from_selected_turn": true,
+  "test_console_regenerate_action_streams_selected_variant": true,
+  "test_console_routine_send_fires_no_success_toast": true,
+  "CapturingGateway": true
+}

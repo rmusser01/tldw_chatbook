@@ -1,0 +1,19 @@
+.........                                                                [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_settings_panel_scoped_updates.py::test_focus_owner_check_survives_a_detached_focused_widget
+  Tests/UI/test_settings_panel_scoped_updates.py:324: PytestWarning: The test <Function test_focus_owner_check_survives_a_detached_focused_widget> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_focus_owner_check_survives_a_detached_focused_widget():
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+4.82s call     Tests/UI/test_settings_panel_scoped_updates.py::test_same_category_rebuild_keeps_focus_on_the_control_used
+4.77s call     Tests/UI/test_settings_panel_scoped_updates.py::test_category_switch_lands_focus_on_the_selected_rail_button
+4.69s call     Tests/UI/test_settings_panel_scoped_updates.py::test_sync_rows_refresh_runs_once_per_visit
+4.60s call     Tests/UI/test_settings_panel_scoped_updates.py::test_category_switch_moves_the_active_rail_marker
+4.55s call     Tests/UI/test_settings_panel_scoped_updates.py::test_category_switch_rebuilds_only_the_two_category_panes
+4.45s call     Tests/UI/test_settings_panel_scoped_updates.py::test_category_switch_keeps_compact_pane_classes_at_a_compact_size
+4.25s call     Tests/UI/test_settings_panel_scoped_updates.py::test_sync_row_refresh_patches_rows_without_rebuilding_the_screen
+4.11s call     Tests/UI/test_settings_panel_scoped_updates.py::test_sync_row_regions_repaint_when_the_row_SET_changes
+
+(17 durations < 1s hidden.)
+9 passed, 1 warning in 38.28s

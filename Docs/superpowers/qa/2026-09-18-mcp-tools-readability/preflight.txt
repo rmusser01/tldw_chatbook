@@ -1,0 +1,9 @@
+Ruff passes for MCPToolsMode, both changed test files and the native runner.
+Both changed test files and runner pass formatting. Changed production methods
+pass a scoped AST-extracted formatting probe; the whole production module keeps
+two pre-existing formatting differences in unchanged label assignments.
+Backlog: 4141 task files, no duplicate IDs, all paths Windows-compatible.
+Diagnostic inventory: 607 owners, 1407 TASK-492 calls, 55 TASK-31551 calls,
+7763 TASK-494 calls, 14 sink files, verified.
+ID allocation scanned 227 distinct local/remote commits and 30 worktrees;
+previous maximum32789, no32790 collision. Whitespace diff check passes.

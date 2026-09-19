@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+3.75s call     Tests/UI/test_mcp_master_settings.py::test_pending_master_choice_survives_read_only_refresh
+
+(2 durations < 1s hidden.)
+1 passed in 5.31s

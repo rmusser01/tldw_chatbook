@@ -86,7 +86,7 @@ def test_disabled_reason_helper_covers_run_blocked_state():
 @pytest.mark.asyncio
 @private_profile_test
 async def test_empty_draft_disables_send_with_visible_idle_reason(request):
-    app, host = _ready_host()
+    _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -104,7 +104,7 @@ async def test_empty_draft_disables_send_with_visible_idle_reason(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_typing_enables_send_and_clears_reason_immediately(request):
-    app, host = _ready_host()
+    _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -133,22 +133,22 @@ async def test_typing_enables_send_and_clears_reason_immediately(request):
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_setup_block_shows_reason_and_clears_when_unblocked(request):
-    app, host = _ready_host()
+async def test_setup_block_shows_reason_and_clears_when_unblocked(request, monkeypatch):
+    _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
         reason = composer.query_one("#console-send-disabled-reason", Static)
 
-        composer.load_draft("draft ready")
-        composer.sync_action_state(
-            has_draft=True,
-            run_active=False,
-            can_save_chatbook=False,
-            send_blocked=True,
-            setup_blocked_reason="Choose a model in Console Settings before sending.",
+        # Supply the screen's source of truth so its periodic refresh keeps
+        # projecting the same blocker instead of overwriting a child-only state.
+        blocker = Mock(
+            return_value="Choose a model in Console Settings before sending."
         )
+        monkeypatch.setattr(console, "_console_setup_blocked_reason", blocker)
+        composer.load_draft("draft ready")
+        console._sync_console_composer_action_state(can_save_chatbook=False)
         await pilot.pause(0.1)
 
         assert send_button.disabled is True
@@ -165,13 +165,8 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked(request):
         )
 
         # Configuring the model unblocks: same sync, blockers cleared.
-        composer.sync_action_state(
-            has_draft=True,
-            run_active=False,
-            can_save_chatbook=False,
-            send_blocked=False,
-            setup_blocked_reason="",
-        )
+        blocker.return_value = ""
+        console._sync_console_composer_action_state(can_save_chatbook=False)
         await pilot.pause(0.1)
 
         assert send_button.disabled is False
@@ -185,7 +180,7 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_active_run_block_shows_wait_reason(request):
-    app, host = _ready_host()
+    _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -230,7 +225,7 @@ async def test_active_run_block_shows_wait_reason(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_reason_strip_never_adds_height_to_the_composer_row(request):
-    app, host = _ready_host()
+    _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -251,7 +246,7 @@ async def test_reason_strip_never_adds_height_to_the_composer_row(request):
 @private_profile_test
 async def test_idle_stop_button_has_no_unreachable_tooltip(request):
     """DS-07: the hidden idle Stop must not carry copy nobody can hover."""
-    app, host = _ready_host()
+    _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -394,17 +389,19 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_setup_blocked_reason_never_parses_reason_text_as_markup(request):
-    app, host = _ready_host()
+    _app, host = _ready_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         reason_widget = composer.query_one("#console-send-disabled-reason", Static)
 
         hostile = "Send blocked — [@click=app.quit]click[/] [bold]x[/bold]"
+        await pilot.pause(0.1)
         composer.set_class(True, "console-composer-setup-blocked")
         composer._sync_send_disabled_reason(hostile, muted=False)
-        await pilot.pause(0.1)
 
+        # This synchronous formatting contract must be inspected before the
+        # parent can replace the test input with its real setup-state reason.
         rendered = reason_widget.renderable
         plain = rendered.plain if hasattr(rendered, "plain") else str(rendered)
         # The metacharacters survive verbatim — nothing was interpreted.

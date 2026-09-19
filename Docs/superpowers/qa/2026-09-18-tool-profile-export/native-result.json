@@ -1,0 +1,173 @@
+{
+  "pid": 85848,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "archive_sha256": "5f370076ee2d27d87dff8962686117a266e3945d5ccea0a3c8c801d6405c1390",
+      "manifest": {
+        "content_digest": "b027ed1c2861bf2958e19905add290a8f4940131c8952740178178583ecf21b1",
+        "files": [
+          {
+            "path": "profile/profile.json",
+            "sha256": "ddacf68538cadc2d7fd09a9aa16cb7be1d938eadb0e367e9e99b0967291c3292",
+            "size": 15822
+          }
+        ],
+        "producer": {
+          "name": "tldw_chatbook",
+          "version": "1"
+        },
+        "profile": {
+          "display_name": "native-export",
+          "payload": "profile/profile.json",
+          "suggested_id": "native-export"
+        },
+        "required_features": [],
+        "schema": "tldw.tool-pack/v1"
+      },
+      "existing_preserved": true,
+      "cancel_no_write": true,
+      "policy_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "archive_sha256": "5f370076ee2d27d87dff8962686117a266e3945d5ccea0a3c8c801d6405c1390",
+      "manifest": {
+        "content_digest": "b027ed1c2861bf2958e19905add290a8f4940131c8952740178178583ecf21b1",
+        "files": [
+          {
+            "path": "profile/profile.json",
+            "sha256": "ddacf68538cadc2d7fd09a9aa16cb7be1d938eadb0e367e9e99b0967291c3292",
+            "size": 15822
+          }
+        ],
+        "producer": {
+          "name": "tldw_chatbook",
+          "version": "1"
+        },
+        "profile": {
+          "display_name": "native-export",
+          "payload": "profile/profile.json",
+          "suggested_id": "native-export"
+        },
+        "required_features": [],
+        "schema": "tldw.tool-pack/v1"
+      },
+      "existing_preserved": true,
+      "cancel_no_write": true,
+      "policy_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "archive_sha256": "5f370076ee2d27d87dff8962686117a266e3945d5ccea0a3c8c801d6405c1390",
+      "manifest": {
+        "content_digest": "b027ed1c2861bf2958e19905add290a8f4940131c8952740178178583ecf21b1",
+        "files": [
+          {
+            "path": "profile/profile.json",
+            "sha256": "ddacf68538cadc2d7fd09a9aa16cb7be1d938eadb0e367e9e99b0967291c3292",
+            "size": 15822
+          }
+        ],
+        "producer": {
+          "name": "tldw_chatbook",
+          "version": "1"
+        },
+        "profile": {
+          "display_name": "native-export",
+          "payload": "profile/profile.json",
+          "suggested_id": "native-export"
+        },
+        "required_features": [],
+        "schema": "tldw.tool-pack/v1"
+      },
+      "existing_preserved": true,
+      "cancel_no_write": true,
+      "policy_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "archive_sha256": "5f370076ee2d27d87dff8962686117a266e3945d5ccea0a3c8c801d6405c1390",
+      "manifest": {
+        "content_digest": "b027ed1c2861bf2958e19905add290a8f4940131c8952740178178583ecf21b1",
+        "files": [
+          {
+            "path": "profile/profile.json",
+            "sha256": "ddacf68538cadc2d7fd09a9aa16cb7be1d938eadb0e367e9e99b0967291c3292",
+            "size": 15822
+          }
+        ],
+        "producer": {
+          "name": "tldw_chatbook",
+          "version": "1"
+        },
+        "profile": {
+          "display_name": "native-export",
+          "payload": "profile/profile.json",
+          "suggested_id": "native-export"
+        },
+        "required_features": [],
+        "schema": "tldw.tool-pack/v1"
+      },
+      "existing_preserved": true,
+      "cancel_no_write": true,
+      "policy_unchanged": true
+    }
+  ],
+  "runner_sha256": "4146b59657b37eafb8b00a7d1697e07988cc6e574478d942fd4fabe639b45219",
+  "source_hashes": {
+    "tldw_chatbook/app.py": "157df1f5d16fd09f32c6a9b59809b1edd0146322ab05e650331f8e32ae1784e1",
+    "tldw_chatbook/Tool_Packs/service.py": "805b66d6e2f15082f794b5318219729d695b1859bcaf2c200b9e2bc9c6bb7d17",
+    "tldw_chatbook/Tool_Packs/export.py": "dd43ad4e11c9303bf9c12b73972eaec0258ea3cf8df5c3a2875fff120050c05a",
+    "tldw_chatbook/Tool_Packs/publication.py": "25a655551ca47d4c8c169a6fa272b27b675ffdb55c422d98d602bf30e52fc3bc",
+    "tldw_chatbook/Widgets/enhanced_file_picker.py": "26b74a35ca16725dce92e128d8fd147440c9ad8f18118434af4f92de0d3d0421",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_pack_import_review.py": "30843d15759e26b9d45ea7d8fd887524f97841e2d6228d111fbcbaed3bbb1858",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "8d78f5919b441f7ce09898027e8b02f295b7c47b5ca081b11896329f9a0fe1c1",
+    "tldw_chatbook/Workspaces/agent_provisioning.py": "7a94790e019370b9ae74c33d6ccba35a563f97a72d1bfc626f85751c48e562d0",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "e4c89a73bbeb47ca5481104692fd2d8b1f04dafdfac8fcf63458a8c6fe3e7af6",
+    "tldw_chatbook/Widgets/workspace_persona_default.py": "5d2eab749cd73da2d1a459358ff67c910108eeab41a17d7848e5a3b40a573e7c",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "c2407576849caddad58e38b7f408c2842e710c2876fa3e35795092ad0aba9675",
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": "d81263d1dc5e7ef0f9796dd2034ae5ec5273b547fa9e27ca86e8d28de40d157c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a8a6cb6f6899c774eb9844a06d81ab227ec5e1af5ab33feb5f3b656f06b0b6fa",
+    "tldw_chatbook/css/features/_settings.tcss": "60aa5ed477b868d548a68ed199a620b09a5b1e8ae791bc22ce1e9136e1445a99",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "4a790234fa12836d4dd4121f685cca7fbd9edec0c759ca38afa3a5c39cf3e43d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "5c33e3ccdfa2458257347bb2cbd95653c2e29b90a14e423114753b5ef544029f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "d83fc0a40e6b23c8481a9e0ee687746fefa9a6001977363428d24a836d0166d2",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "1889f679e60b75e715493ec7ff5084bcb97298c068bf11f51b478a62e743bd6e",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Export cancelled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "One private local profile; real app inventory, capture, review and publication. No provider requests.",
+  "passed": true,
+  "app_run_returned": true
+}

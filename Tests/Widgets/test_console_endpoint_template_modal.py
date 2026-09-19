@@ -1,5 +1,6 @@
 """Component tests for the Console "New endpoint from template" modal (ADR-146)."""
 
+import os
 import threading
 import tomllib
 from pathlib import Path
@@ -9,6 +10,7 @@ from textual.widgets import Button, Input, Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.custom_endpoint_registry import load_custom_endpoints
@@ -44,13 +46,14 @@ class _TemplateModalHarness(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_creates_entry_and_dismisses_with_id(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     # app_config fixtures follow Tests/UI/test_console_session_settings.py's
     # tmp-path config pattern (isolate_config style)
-    config_path = tmp_path / "endpoint-template-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # Select the private profile before import; recovery ownership is source-bound.
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_module.load_settings(force_reload=True)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:
@@ -90,7 +93,8 @@ async def test_template_modal_creates_entry_and_dismisses_with_id(
 
 
 @pytest.mark.asyncio
-async def test_template_modal_shows_validation_inline(tmp_path):
+@private_profile_test
+async def test_template_modal_shows_validation_inline(request, tmp_path):
     # app_config fixtures follow Tests/UI/test_console_session_settings.py's
     # tmp-path config pattern (isolate_config style)
     app = _TemplateModalHarness(app_config={})
@@ -115,12 +119,15 @@ async def test_template_modal_shows_validation_inline(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_template_modal_surfaces_slug_exhaustion_inline(tmp_path, monkeypatch):
+@private_profile_test
+async def test_template_modal_surfaces_slug_exhaustion_inline(
+    request, tmp_path, monkeypatch
+):
     # Every derivable slug for the name is taken: Create must surface the
     # collision inline (error-banner pattern) instead of persisting an
     # entry that overwrites an existing slug's config section.
-    config_path = tmp_path / "endpoint-template-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # Select the private profile before import; recovery ownership is source-bound.
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_module.load_settings(force_reload=True)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:
@@ -164,7 +171,10 @@ async def test_template_modal_surfaces_slug_exhaustion_inline(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_template_modal_hides_error_banner_on_untouched_blank_form(tmp_path):
+@private_profile_test
+async def test_template_modal_hides_error_banner_on_untouched_blank_form(
+    request, tmp_path
+):
     """H8: at mount the blank template is invalid (no name, no URL) but the
     form is untouched -- Create is disabled from the first frame while the
     error banner stays hidden instead of scolding the untouched form."""
@@ -183,7 +193,8 @@ async def test_template_modal_hides_error_banner_on_untouched_blank_form(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_template_modal_shows_error_banner_after_first_edit(tmp_path):
+@private_profile_test
+async def test_template_modal_shows_error_banner_after_first_edit(request, tmp_path):
     """Once the user edits a field, the same invalid state surfaces the
     banner (validation feedback begins with interaction)."""
     app = _TemplateModalHarness(app_config={})
@@ -205,7 +216,10 @@ async def test_template_modal_shows_error_banner_after_first_edit(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_template_modal_from_entry_preselects_same_family_starter(tmp_path):
+@private_profile_test
+async def test_template_modal_from_entry_preselects_same_family_starter(
+    request, tmp_path
+):
     """H5: opened with template_provider=custom-ep:X, the active template is
     the synthetic same-family starter (entry's family, blank name, blank URL
     -- a second server, not the family default and not a copy of X), placed
@@ -253,7 +267,8 @@ async def test_template_modal_from_entry_preselects_same_family_starter(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_template_modal_builtin_template_provider_unchanged(tmp_path):
+@private_profile_test
+async def test_template_modal_builtin_template_provider_unchanged(request, tmp_path):
     """A built-in template_provider keeps the plain prefill behavior: no
     synthetic starter is inserted and the family default URL prefills."""
     from textual.widgets import OptionList, Select
@@ -276,7 +291,10 @@ async def test_template_modal_builtin_template_provider_unchanged(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_template_modal_llama_url_placeholder_explains_both_defaults(tmp_path):
+@private_profile_test
+async def test_template_modal_llama_url_placeholder_explains_both_defaults(
+    request, tmp_path
+):
     """H4: the llama family's URL placeholder explains the prefill/default
     split instead of quoting a port the prefill does not use."""
     from textual.widgets import Select
@@ -302,7 +320,10 @@ async def test_template_modal_llama_url_placeholder_explains_both_defaults(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_template_modal_prefill_filters_placeholder_model_sentinels(tmp_path):
+@private_profile_test
+async def test_template_modal_prefill_filters_placeholder_model_sentinels(
+    request, tmp_path
+):
     """CE-004: the app's model placeholder sentinels (None/null spellings a
     configured model list may carry) are not models -- a template seeded from
     the provider's configured list must not prefill them into the Models
@@ -322,14 +343,15 @@ async def test_template_modal_prefill_filters_placeholder_model_sentinels(tmp_pa
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_parsed_models_drop_placeholder_entries(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """CE-004: manually entered placeholder model ids parse to nothing -- a
     models input of 'None, real-model' must persist only the real model
     instead of writing models = ["None", ...] into the registry entry."""
-    config_path = tmp_path / "endpoint-template-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # Select the private profile before import; recovery ownership is source-bound.
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_module.load_settings(force_reload=True)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:
@@ -397,7 +419,9 @@ def _saved_result() -> "config_module.ConfigMutationResult":
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_rederives_slug_when_concurrent_create_takes_it(
+    request,
     monkeypatch,
 ):
     """A competing same-process create that commits the derived slug under
@@ -416,7 +440,9 @@ async def test_template_modal_rederives_slug_when_concurrent_create_takes_it(
         return write_results.pop(0)
 
     monkeypatch.setattr(modal_module, "load_custom_endpoints", lambda _cfg: {})
-    monkeypatch.setattr(modal_module, "apply_settings_mutation_to_cli_config", fake_apply)
+    monkeypatch.setattr(
+        modal_module, "apply_settings_mutation_to_cli_config", fake_apply
+    )
     app = _TemplateModalHarness(app_config={})
     async with app.run_test(size=(100, 40)) as pilot:
         modal = ConsoleEndpointTemplateModal(
@@ -440,7 +466,9 @@ async def test_template_modal_rederives_slug_when_concurrent_create_takes_it(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhaust(
+    request,
     monkeypatch,
 ):
     """When every bounded re-derivation attempt collides with a concurrent
@@ -457,7 +485,9 @@ async def test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhau
         return _conflict_result()
 
     monkeypatch.setattr(modal_module, "load_custom_endpoints", lambda _cfg: {})
-    monkeypatch.setattr(modal_module, "apply_settings_mutation_to_cli_config", fake_apply)
+    monkeypatch.setattr(
+        modal_module, "apply_settings_mutation_to_cli_config", fake_apply
+    )
     app = _TemplateModalHarness(app_config={})
     async with app.run_test(size=(100, 40)) as pilot:
         modal = ConsoleEndpointTemplateModal(
@@ -486,15 +516,16 @@ async def test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhau
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """A competitor entry committed to disk after this modal's in-memory view
     was built must survive Create: the write shares the config writer lock,
     so the occupied section aborts the mutation and the slug re-derives
     instead of replacing the competitor's URL/models/credentials."""
-    config_path = tmp_path / "endpoint-template-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # Select the private profile before import; recovery ownership is source-bound.
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_module.load_settings(force_reload=True)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:
@@ -537,7 +568,9 @@ async def test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_v
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_create_runs_registry_derivation_off_the_event_loop(
+    request,
     monkeypatch,
 ):
     """Registry loading and slug derivation during Create run in a worker
@@ -579,14 +612,15 @@ async def test_template_modal_create_runs_registry_derivation_off_the_event_loop
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_duplicate_carries_env_ref_and_copy_name(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Duplicating an existing entry copies the credential *reference*
     (api_key_env, never the stored api_key) and prefills the display name
     suffixed ' (copy)' (spec: creation-from-template decision)."""
-    config_path = tmp_path / "endpoint-template-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # Select the private profile before import; recovery ownership is source-bound.
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_module.load_settings(force_reload=True)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:
@@ -629,8 +663,7 @@ async def test_template_modal_duplicate_carries_env_ref_and_copy_name(
         # The in-memory mirror keeps the credential reference too, so the
         # opener's readiness/credential resolution sees it without a reload.
         assert (
-            load_custom_endpoints(app.app_config)["paid-copy"].api_key_env
-            == "PAID_KEY"
+            load_custom_endpoints(app.app_config)["paid-copy"].api_key_env == "PAID_KEY"
         )
     finally:
         config_module.load_settings(force_reload=True)
@@ -638,14 +671,15 @@ async def test_template_modal_duplicate_carries_env_ref_and_copy_name(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_template_modal_duplicate_prefill_respects_display_name_limit(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Duplicating an entry named at the 80-character maximum must prefill a
     still-valid duplicate name: the source is truncated to reserve the
     seven-character ' (copy)' suffix instead of leaving Create disabled."""
-    config_path = tmp_path / "endpoint-template-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # Select the private profile before import; recovery ownership is source-bound.
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_module.load_settings(force_reload=True)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:

@@ -1,0 +1,28 @@
+...............................                                          [100%]
+============================= slowest 25 durations =============================
+18.52s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+17.44s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+4.58s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+2.57s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.72s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.58s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.54s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.52s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+1.50s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.50s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.48s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]
+1.47s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+1.46s call     Tests/UI/test_component_pattern_governance.py::test_pin_rejects_active_css_extension_without_writing_baseline
+1.45s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.45s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+1.45s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.44s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+1.44s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.43s call     Tests/UI/test_component_pattern_governance.py::test_ratchet_regexes_match_pin_script
+1.43s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.43s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.40s call     Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+1.40s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.40s call     Tests/UI/test_component_pattern_governance.py::test_canonical_owning_sheets_are_bundled
+1.40s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+31 passed in 83.94s (0:01:23)

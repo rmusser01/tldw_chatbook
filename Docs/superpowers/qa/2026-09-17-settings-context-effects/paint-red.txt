@@ -1,0 +1,144 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-dark] _
+
+theme = 'textual-dark'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    async def test_effect_is_painted_in_empty_transcript_space_without_changing_messages(
+        theme,
+    ):
+        from tldw_chatbook.Chat.console_chat_models import (
+            ConsoleChatMessage,
+            ConsoleMessageRole,
+        )
+
+        app = StyledSurfaceHarness()
+        app.theme = theme
+        async with app.run_test(size=(80, 30)) as pilot:
+            transcript = app.query_one(ConsoleTranscript)
+            transcript.set_messages(
+                [
+                    ConsoleChatMessage(
+                        id="paint-user",
+                        role=ConsoleMessageRole.USER,
+                        content="Sample question",
+                    ),
+                    ConsoleChatMessage(
+                        id="paint-assistant",
+                        role=ConsoleMessageRole.ASSISTANT,
+                        content="Sample answer",
+                    ),
+                ]
+            )
+            await transcript.refresh_messages()
+            await pilot.pause(0.2)
+            effect = app.query_one(ConsoleBackgroundEffect)
+            surface = app.query_one(ConsoleTranscriptSurface)
+            surface.update_settings(
+                ConsoleBackgroundEffectSettings(
+                    enabled=True, effect="matrix", intensity="high", fps=9
+                )
+            )
+            await pilot.pause(0.2)
+            row = transcript.query_one("#console-message-paint-user")
+            before_text = transcript.to_plain_text()
+            before_scroll = transcript.scroll_offset
+            assert row.region.y > transcript.region.y + 2
+
+            def empty_space():
+                region = transcript.content_region
+                return "\n".join(
+                    strip.crop(region.x, region.right).text
+                    for strip in app.screen._compositor.render_strips()[
+                        region.y : row.region.y - 1
+                    ]
+                )
+
+            assert effect.is_effect_active
+>           assert any(char.isalnum() for char in empty_space()), (
+                "Running effect is hidden by transcript paint"
+            )
+E           AssertionError: Running effect is hidden by transcript paint
+E           assert False
+E            +  where False = any(<generator object test_effect_is_painted_in_empty_transcript_space_without_changing_messages.<locals>.<genexpr> at 0x11686a810>)
+
+Tests/UI/test_console_background_effects.py:369: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 20:44:54.641 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 20:44:54.647 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 20:44:54.648 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 20:44:54.648 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-light] _
+
+theme = 'textual-light'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    async def test_effect_is_painted_in_empty_transcript_space_without_changing_messages(
+        theme,
+    ):
+        from tldw_chatbook.Chat.console_chat_models import (
+            ConsoleChatMessage,
+            ConsoleMessageRole,
+        )
+
+        app = StyledSurfaceHarness()
+        app.theme = theme
+        async with app.run_test(size=(80, 30)) as pilot:
+            transcript = app.query_one(ConsoleTranscript)
+            transcript.set_messages(
+                [
+                    ConsoleChatMessage(
+                        id="paint-user",
+                        role=ConsoleMessageRole.USER,
+                        content="Sample question",
+                    ),
+                    ConsoleChatMessage(
+                        id="paint-assistant",
+                        role=ConsoleMessageRole.ASSISTANT,
+                        content="Sample answer",
+                    ),
+                ]
+            )
+            await transcript.refresh_messages()
+            await pilot.pause(0.2)
+            effect = app.query_one(ConsoleBackgroundEffect)
+            surface = app.query_one(ConsoleTranscriptSurface)
+            surface.update_settings(
+                ConsoleBackgroundEffectSettings(
+                    enabled=True, effect="matrix", intensity="high", fps=9
+                )
+            )
+            await pilot.pause(0.2)
+            row = transcript.query_one("#console-message-paint-user")
+            before_text = transcript.to_plain_text()
+            before_scroll = transcript.scroll_offset
+            assert row.region.y > transcript.region.y + 2
+
+            def empty_space():
+                region = transcript.content_region
+                return "\n".join(
+                    strip.crop(region.x, region.right).text
+                    for strip in app.screen._compositor.render_strips()[
+                        region.y : row.region.y - 1
+                    ]
+                )
+
+            assert effect.is_effect_active
+>           assert any(char.isalnum() for char in empty_space()), (
+                "Running effect is hidden by transcript paint"
+            )
+E           AssertionError: Running effect is hidden by transcript paint
+E           assert False
+E            +  where False = any(<generator object test_effect_is_painted_in_empty_transcript_space_without_changing_messages.<locals>.<genexpr> at 0x116869080>)
+
+Tests/UI/test_console_background_effects.py:369: AssertionError
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-dark]
+FAILED Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-light]
+2 failed, 11 deselected in 3.31s

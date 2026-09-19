@@ -902,32 +902,7 @@ def build_screen_owned_sheets(css_dir: Path, output_dir: Path) -> None:
                 seen[selector] = filename
 
 
-_SOURCE_COMMENT_OR_STRING = re.compile(
-    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/''',
-    re.DOTALL,
-)
-_TRAILING_SPACE_OR_STRING = re.compile(
-    r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[ \t]+(?=\n|$)''',
-    re.DOTALL,
-)
-
-
-def _without_source_comments(css: str) -> str:
-    """Remove comment bytes without changing Textual's selector boundaries.
-
-    Textual skips comments without inserting whitespace, so ``Button/*x*/.on``
-    must remain a compound selector. Existing surrounding whitespace stays
-    intact. Quoted text is protected in both the comment and trailing-space
-    passes, including strings containing comment markers or trailing spaces.
-    Module provenance banners are added separately by the builder.
-    """
-    without_comments = _SOURCE_COMMENT_OR_STRING.sub(
-        lambda match: "" if match.group().startswith("/*") else match.group(), css
-    )
-    return _TRAILING_SPACE_OR_STRING.sub(
-        lambda match: match.group() if match.group()[0] in "\"'" else "",
-        without_comments,
-    )
+_without_source_comments = widget_css.without_source_comments
 
 
 def build_css(css_dir: Path, output_file: Path) -> None:
@@ -1005,6 +980,19 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     print(f"Total size: {len(''.join(combined_css)):,} characters")
 
 
+def design_token_preamble(css_dir: Path) -> str:
+    """Read central token declarations for isolated widget-default builds.
+
+    Args:
+        css_dir: Root directory containing ``core/_variables.tcss``.
+
+    Returns:
+        Declarations in source order, ready for per-block variable isolation.
+    """
+    source = (css_dir / "core/_variables.tcss").read_text(encoding="utf-8")
+    return "\n".join(_VARIABLE_DEF_RE.findall(source)) + "\n"
+
+
 def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
     """Write the two consolidated widget-defaults stylesheets.
 
@@ -1021,9 +1009,15 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
         ValueError: If a ``BUNDLED_CSS`` declaration cannot be lifted.
     """
     blocks = widget_css.iter_blocks(css_dir.parent, widget_css.WIDGET_ATTR)
+    # TASK-32816: Textual variables are per stylesheet source. Resolve the
+    # central design tokens using the existing per-block isolation pass;
+    # theme references remain dynamic and local fallbacks cannot leak. No
+    # token preamble or additional stylesheet source is emitted at runtime.
+    tokens = widget_css.resolve_variable_definitions(design_token_preamble(css_dir))
     own, scoped = widget_css.render_stylesheets(
         blocks,
         "Widget DEFAULT_CSS (widget-defaults tier), lifted from Python sources",
+        variables=tokens,
         # TASK-15998: scope EVERY selector of a comma list, exactly as the
         # screen sheets below already do. Textual's scoped-DEFAULT_CSS parser
         # prefixes only the LAST selector of a comma list, so `A, .b {…}`

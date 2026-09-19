@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appea▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ Mode: Workspaces                    ▊                                                                                              ▎
+┌──────────────────────────────┐  │  ▊  Review first Tool Profile bind                                                              ▎  │  ┌──────────────────────────────┐
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│  Filter categories (/)       │  │  ▊                                                                                              ▎  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  ▊  Target                                                                                      ▎  │  │                              │
+│  category search             │  │  ▊  Workspace: native-light-170-workspace                                                       ▎  │  │ Selected category:           │
+│                              │  │  ▊  Action: Set                                                                                 ▎  │  │ Workspaces                   │
+│  Core                        │  │  ▊  Profile: native-light-170 · revision 1                                                      ▎  │  │ No unsaved changes           │
+│     Overview (view)          │  │  ▊  Policy digest: d3193f097b4c94fce4d3e411c4816ca8da07f66ef3a810c8c8742bf9ef856d76             ▎  │  │  Immediate actions:          │
+│     Providers & Models       │  │  ▊  Assistant kind: persona                                                                     ▎  │  │  workspace changes apply as  │
+│     Web Search               │  │  ▊  Persona: native-helper                                                                      ▎  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  ▊  Memory: read_only                                                                           ▎  │  │  draft to save or revert.    │
+│  Interface                   │  │  ▊  Voice: Default                                                                              ▎  │  │ Local-only: saves write your │
+│     Appearance               │  │  ▊  Style: Default                                                                              ▎  │  │ config file.                 │
+│     Theme                    │  │  ▊                                                                                              ▎  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  ▊  Effective policy                                                                            ▎  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  ▊  Global fallback: Ask                                                                        ▎  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  ▊  Built-in fallback: Ask                                                                      ▎  │  │ tools.                       │
+│     Storage                  │  │  ▊  Allow-server fallbacks: None                                                                ▎  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  ▊  Allow 2 · Ask 82 · Deny 0                                                                   ▎  │  │  registry (immediate         │
+│     Tool Profiles            │  │  ▊  Stored exact allows: agent:builtin/calculator, agent:builtin/get_current_datetime           ▎  │  │  actions)                    │
+│     Privacy & Security       │  │  ▊  Effective allows: agent:builtin/calculator, agent:builtin/get_current_datetime              ▎  │  │                              │
+│     Network                  │  │  ▊  Unavailable allows: None                                                                    ▎  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  ▊  Downgraded allows: None                                                                     ▎  │  │                              │
+│  Troubleshooting             │  │  ▊  High-risk allows: None                                                                      ▎  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  ▊  Inventory digest: c25130bae4b93edc0cb1c881fb2d3ffa32d0cccd1e82f557fe3285e5bce4f5f9          ▎  │  │  lifecycle records and       │
+│     About (view)             │  │  ▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ▎  │  │  their bound folders         │
+│     Agents                   │  │  ▊  ▊  ▶ Ask detail (82)                                                                    ▎   ▎  │  │                              │
+│  Expert                      │  │  ▊  ▊                                                                                       ▎   ▎  │  │  Recovery:                   │
+│     Internal Prompts         │  │  ▊  ▊                                                                                       ▎   ▎  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  ▊  ▊                                                                                       ▎   ▎  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  ▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ▎  │  │  workspace in Library        │
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│                              │  │  ▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ▎  │  │  Boundary: lifecycle and     │
+│                              │  │  ▊  ▊  ▶ Deny detail (0)                                                                    ▎   ▎  │  │  folder bindings apply       │
+│                              │  │  ▊                                                                                              ▎  │  │  immediately; there is no    │
+│                              │  │  ▊                                                                                              ▎  │  │  draft state here            │
+│                              │  │  ▊                                                              Cancel     Confirm exact bind   ▎  │  │                              │
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│                              │  │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,15 @@
+.........                                                                [100%]
+============================= slowest 25 durations =============================
+26.30s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page
+19.13s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+14.63s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]
+14.54s call     Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]
+11.03s call     Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page
+9.55s call     Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]
+9.46s call     Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]
+8.64s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+8.47s call     Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]
+1.22s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]
+
+(15 durations < 1s hidden.)
+9 passed in 125.38s (0:02:05)

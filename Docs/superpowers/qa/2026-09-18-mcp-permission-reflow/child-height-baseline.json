@@ -1,0 +1,1 @@
+{"before": {"outer": [90, 60], "outer_virtual": [90, 60], "table": [90, 20], "cursor": 59, "scroll_y": 41.0, "cell": [0, 31, 20, 1], "visible": [0, 31, 20, 1]}, "after": {"outer": [90, 60], "outer_virtual": [90, 60], "table": [90, 10], "cursor": 59, "scroll_y": 41.0, "cell": [0, 31, 20, 1], "visible": [0, 22, 20, 0]}, "reveals": [], "converged": true, "events": []}

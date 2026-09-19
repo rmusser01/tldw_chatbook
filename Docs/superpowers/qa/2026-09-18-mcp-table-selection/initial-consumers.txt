@@ -1,0 +1,369 @@
+........................................................................ [ 27%]
+........................................................................ [ 54%]
+........................................................................ [ 81%]
+.....FF.FF......................................FF                       [100%]
+=================================== FAILURES ===================================
+_______ test_audit_table_height_rule_pinned_in_bundle_source_and_bundle ________
+
+    def test_audit_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+        """T9 (MCP Hub Phase 5): `#mcp-audit-table` gets `height: auto;
+        max-height: 70%;` in `MCPAuditMode.BUNDLED_CSS` alone -- mirrors
+        `#mcp-servers-table`/`#mcp-tools-table`/`#mcp-perm-table`'s own
+        established lockstep bundle-source copies (test_mcp_servers_mode.py /
+        test_mcp_tools_mode.py / test_mcp_permissions_mode.py) so app-loaded
+        CSS cascading on top of DEFAULT_CSS can't silently reintroduce the
+        `height: 1fr` ballooning regression those fixed."""
+>       _assert_rule_pinned_in_bundle_source_and_bundle(
+            "#mcp-audit-table {", ("height: auto;", "max-height: 70%;")
+        )
+
+Tests/UI/test_mcp_audit_mode.py:790:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '#mcp-audit-table {'
+expected_declarations = ('height: auto;', 'max-height: 70%;')
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -> None:
+        """Shared pin-test body (T9, MCP Hub Phase 5): asserts ``selector``'s
+        block carries every one of ``expected_declarations`` in BOTH the
+        bundle-source component file (`_agentic_terminal.tcss`) and the
+        generated bundle (`tldw_cli_modular.tcss`) -- the latter also proves
+        `build_css.py` was re-run after the source edit. Mirrors
+        `test_tools_table_height_rule_pinned_in_bundle_source_and_bundle` /
+        `test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle`
+        in test_mcp_tools_mode.py, factored into a helper since T9 adds several
+        of these pins at once (audit table, findings table, sub-view strip,
+        both filter Selects)."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+>               assert declaration in block, (
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '#mcp-audit-table {' block is missing 'max-height: 70%;'
+E               assert 'max-height: 70%;' in '#mcp-audit-table {\n    height: auto;\n    max-height: $ds-agentic-mcp-table-cap;\n'
+
+Tests/UI/test_mcp_audit_mode.py:58: AssertionError
+______ test_findings_table_height_rule_pinned_in_bundle_source_and_bundle ______
+
+    def test_findings_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
+        """T9: same fix, same rationale, for the T8 Findings sub-view table."""
+>       _assert_rule_pinned_in_bundle_source_and_bundle(
+            "#mcp-audit-findings-table {", ("height: auto;", "max-height: 70%;")
+        )
+
+Tests/UI/test_mcp_audit_mode.py:797:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '#mcp-audit-findings-table {'
+expected_declarations = ('height: auto;', 'max-height: 70%;')
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -> None:
+        """Shared pin-test body (T9, MCP Hub Phase 5): asserts ``selector``'s
+        block carries every one of ``expected_declarations`` in BOTH the
+        bundle-source component file (`_agentic_terminal.tcss`) and the
+        generated bundle (`tldw_cli_modular.tcss`) -- the latter also proves
+        `build_css.py` was re-run after the source edit. Mirrors
+        `test_tools_table_height_rule_pinned_in_bundle_source_and_bundle` /
+        `test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle`
+        in test_mcp_tools_mode.py, factored into a helper since T9 adds several
+        of these pins at once (audit table, findings table, sub-view strip,
+        both filter Selects)."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+>               assert declaration in block, (
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '#mcp-audit-findings-table {' block is missing 'max-height: 70%;'
+E               assert 'max-height: 70%;' in '#mcp-audit-findings-table {\n    height: auto;\n    max-height: $ds-agentic-mcp-table-cap;\n'
+
+Tests/UI/test_mcp_audit_mode.py:58: AssertionError
+__ test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle ___
+
+    def test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+        """T9: Defect-1 Select-width lesson (`_conversations.tcss`'s bare
+        `Select { width: 100%; }` rule always beats DEFAULT_CSS regardless of
+        source order) applies to `#mcp-audit-filter-decision` too -- an
+        id-scoped bundle rule directly on the Select's own id, matching its
+        slot's width (24), pins it defensively even if the slot wrapper were
+        ever removed or the Select mounted outside it. Checks DEFAULT_CSS,
+        bundle-source, and bundle to prevent silent drift between layers."""
+>       _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
+            "#mcp-audit-filter-decision {", ("width: 24;",)
+        )
+
+Tests/UI/test_mcp_audit_mode.py:821:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '#mcp-audit-filter-decision {'
+expected_declarations = ('width: 24;',)
+
+    def _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -> None:
+        """T9 (MCP Hub Phase 5): Extended assertion that checks ``selector``'s
+        block carries every one of ``expected_declarations`` in THREE places:
+        the MCPAuditMode.BUNDLED_CSS source, the bundle-source component file
+        (_agentic_terminal.tcss), and the generated bundle (tldw_cli_modular.tcss).
+        This prevents the three layers from silently drifting -- if DEFAULT_CSS
+        is ever changed, both bundle layers must also change to match."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
+
+        default_css = MCPAuditMode.BUNDLED_CSS
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (default_css, "MCPAuditMode.BUNDLED_CSS"),
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+>               assert declaration in block, (
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '#mcp-audit-filter-decision {' block is missing 'width: 24;'
+E               assert 'width: 24;' in '#mcp-audit-filter-decision {\n    width: $ds-size-24;\n'
+
+Tests/UI/test_mcp_audit_mode.py:88: AssertionError
+__ test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle __
+
+    def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
+        None
+    ):
+        """T9: same fix, same rationale, as the decision Select above.
+        Checks DEFAULT_CSS, bundle-source, and bundle to prevent silent drift."""
+>       _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
+            "#mcp-audit-filter-initiator {", ("width: 20;",)
+        )
+
+Tests/UI/test_mcp_audit_mode.py:831:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '#mcp-audit-filter-initiator {'
+expected_declarations = ('width: 20;',)
+
+    def _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -> None:
+        """T9 (MCP Hub Phase 5): Extended assertion that checks ``selector``'s
+        block carries every one of ``expected_declarations`` in THREE places:
+        the MCPAuditMode.BUNDLED_CSS source, the bundle-source component file
+        (_agentic_terminal.tcss), and the generated bundle (tldw_cli_modular.tcss).
+        This prevents the three layers from silently drifting -- if DEFAULT_CSS
+        is ever changed, both bundle layers must also change to match."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
+
+        default_css = MCPAuditMode.BUNDLED_CSS
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (default_css, "MCPAuditMode.BUNDLED_CSS"),
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+>               assert declaration in block, (
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '#mcp-audit-filter-initiator {' block is missing 'width: 20;'
+E               assert 'width: 20;' in '#mcp-audit-filter-initiator {\n    width: $ds-size-20;\n'
+
+Tests/UI/test_mcp_audit_mode.py:88: AssertionError
+_______ test_choosing_it_switches_the_view_rather_than_pushing_a_screen ________
+
+    @pytest.mark.asyncio
+    async def test_choosing_it_switches_the_view_rather_than_pushing_a_screen():
+        """The frame must survive. If a screen is pushed, the rail that the user
+        just clicked is no longer on screen."""
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_speech_voice_cloning_view.py:28:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a76d280>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_________________ test_the_profile_surface_is_inside_the_frame _________________
+
+    @pytest.mark.asyncio
+    async def test_the_profile_surface_is_inside_the_frame():
+        """The point of the move: its controls live in the Lab body."""
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_speech_voice_cloning_view.py:58:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a76d280>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+============================= slowest 25 durations =============================
+3.81s call     Tests/UI/test_mcp_table_click_selects_end_to_end.py::test_clicking_a_tool_row_updates_the_inspector_end_to_end
+3.79s call     Tests/UI/test_mcp_table_click_selects_end_to_end.py::test_opening_tools_mode_selects_nothing_on_its_own
+1.93s call     Tests/UI/test_mcp_permissions_mode.py::test_legend_line_renders_fixed_marker_key
+1.86s call     Tests/UI/test_mcp_permissions_mode.py::test_matrix_and_kill_switch_have_nonzero_geometry_with_bundled_css
+1.85s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend
+1.83s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_text_input_has_nonzero_geometry_with_bundled_css
+1.73s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_appends_gate_breadcrumb_to_the_legend
+1.71s call     Tests/UI/test_mcp_permissions_mode.py::test_legend_and_breadcrumb_are_fully_readable_at_100_columns
+1.66s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_input_has_nonzero_geometry_with_bundled_css
+1.65s call     Tests/UI/test_mcp_permissions_mode.py::test_space_after_filter_cycles_the_row_actually_under_the_cursor
+1.63s call     Tests/UI/test_mcp_permissions_mode.py::test_clearing_the_filter_after_narrowing_restores_every_row
+1.63s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_persists_across_a_full_matrix_resync
+1.62s call     Tests/UI/test_mcp_permissions_mode.py::test_user_press_posts_kill_switch_toggled_exactly_once
+1.60s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_markup_safe
+1.60s call     Tests/UI/test_mcp_permissions_mode.py::test_space_on_server_row_allows_cycling_back_to_inherit
+1.60s call     Tests/UI/test_mcp_permissions_mode.py::test_user_press_toggles_off_when_currently_on
+1.59s call     Tests/UI/test_mcp_permissions_mode.py::test_space_with_no_rows_is_a_noop
+1.59s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target
+1.58s call     Tests/UI/test_mcp_permissions_mode.py::test_enter_on_server_row_posts_row_selected_with_no_tool_name
+1.58s call     Tests/UI/test_mcp_permissions_mode.py::test_update_server_profiles_transitions_from_present_to_absent
+1.58s call     Tests/UI/test_mcp_permissions_mode.py::test_update_matrix_echo_none_clears_a_previously_shown_echo
+1.58s call     Tests/UI/test_mcp_permissions_mode.py::test_space_on_tool_row_posts_next_state_per_cycle_helper
+1.58s call     Tests/UI/test_mcp_permissions_mode.py::test_cursor_row_key_survives_a_refilter_that_still_shows_it
+1.57s call     Tests/UI/test_mcp_permissions_mode.py::test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_rows
+1.57s call     Tests/UI/test_mcp_permissions_mode.py::test_enter_on_tool_row_posts_row_selected_with_tool_fields
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_audit_mode.py::test_audit_table_height_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_mcp_audit_mode.py::test_findings_table_height_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_mcp_audit_mode.py::test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_mcp_audit_mode.py::test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_speech_voice_cloning_view.py::test_choosing_it_switches_the_view_rather_than_pushing_a_screen
+FAILED Tests/UI/test_speech_voice_cloning_view.py::test_the_profile_surface_is_inside_the_frame
+6 failed, 260 passed in 155.53s (0:02:35)

@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appea▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ Mode: Tool Profiles                 ▊                                                                                              ▎
+┌──────────────────────────────┐  │  ▊  Review Tool Pack                                                                            ▎  │  ┌──────────────────────────────┐
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│  Filter categories (/)       │  │  ▊                                                                                              ▎  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  ▊  Identity                                                                                    ▎  │  │                              │
+│  category search             │  │  ▊  Name: Native fixture                                                                        ▎  │  │ Selected category: Tool      │
+│                              │  │  ▊  Producer: tldw_chatbook 1                                                                   ▎  │  │ Profiles                     │
+│  Core                        │  │  ▊  Content digest: 574686418a616c92e2a946fb0bc83ed2f97df4396e468295ba084354e9ead0c7            ▎  │  │ No unsaved changes           │
+│     Overview (view)          │  │  ▊  Proposed profile id: native-light-170                                                       ▎  │  │  Reviewed actions: imports   │
+│     Providers & Models       │  │  ▊                                                                                              ▎  │  │  stay unbound, exports       │
+│     Web Search               │  │  ▊  Policy                                                                                      ▎  │  │  publish an exact snapshot,  │
+│     Speech & TTS             │  │  ▊  Fallback · builtin/agent:builtin: Ask                                                       ▎  │  │  and policy editing opens    │
+│  Interface                   │  │  ▊  Fallback · mcp/*: Ask                                                                    ▆  ▎  │  │  MCP Permissions.            │
+│     Appearance               │  │  ▊  Fallback · mcp/builtin:tldw_chatbook: Ask                                                   ▎  │  │ Local-only: saves write your │
+│     Theme                    │  │  ▊  Fallback · mcp/local:__local__: Ask                                                         ▎  │  │ config file.                 │
+│     Splash Screen            │  │  ▊  Fallback · mcp/local:__virtual_cli__: Ask                                                   ▎  │  │ Impact and boundaries        │
+│     Console Behavior         │  │  ▊  Source rules · Allow 2 · Ask 82 · Deny 0                                                    ▎  │  │ Import, export, review,      │
+│  Data & Privacy              │  │  ▊  Exact matches: 84                                                                           ▎  │  │ bind, and remove portable    │
+│     Storage                  │  │  ▊  Changed contracts: 0                                                                        ▎  │  │ tool permission profiles.    │
+│     Workspaces               │  │  ▊  Missing tools: 0                                                                            ▎  │  │  Runtime owner:              │
+│   > Tool Profiles            │  │  ▊  Pending Denies: 0                                                                           ▎  │  │  ToolPackService             │
+│     Privacy & Security       │  │  ▊  Omitted Ask/Allow: 0                                                                        ▎  │  │  (immediate reviewed         │
+│     Network                  │  │  ▊                                                                                              ▎  │  │  actions)                    │
+│     My Profile               │  │  ▊  Destination tools                                                                           ▎  │  │                              │
+│  Troubleshooting             │  │  ▊  agent:builtin/calculator · connected                                                        ▎  │  │  Writes allowed: Yes         │
+│     Diagnostics (view)       │  │  ▊  agent:builtin/create_note · connected                                                       ▎  │  │                              │
+│     About (view)             │  │  ▊  agent:builtin/expand_document · connected                                                   ▎  │  │  Owns: MCP                   │
+│     Agents                   │  │  ▊  agent:builtin/get_current_datetime · connected                                              ▎  │  │  permission-store Tool       │
+│  Expert                      │  │  ▊  agent:builtin/glob_files · connected                                                        ▎  │  │  profiles                    │
+│     Internal Prompts         │  │  ▊  agent:builtin/grep_files · connected                                                        ▎  │  │  portable Tool Pack import   │
+│     Advanced Config          │  │  ▊  agent:builtin/list_directory · connected                                                    ▎  │  │  receipts                    │
+│   Domain Defaults ▸ (11)     │  │  ▊  agent:builtin/read_file · connected                                                         ▎  │  │                              │
+│                              │  │  ▊  agent:builtin/update_note · connected                                                       ▎  │  │  Affected data: local Tool   │
+│                              │  │  ▊  agent:builtin/write_file · connected                                                        ▎  │  │  policy profiles and         │
+│                              │  │  ▊  builtin:tldw_chatbook/chat_with_character · connected                                       ▎  │  │  portable Tool Pack          │
+│                              │  │  ▊                                                                                              ▎  │  │  receipts                    │
+│                              │  │  ▊                                                                                              ▎  │  │                              │
+│                              │  │  ▊                                  Cancel     Change id or mappings   Import unbound profile   ▎  │  │  Recovery: re-inspect        │
+│                              │  │  ▊                                                                                              ▎  │  │  imports, keep profiles      │
+│                              │  │  ▊                                                                                              ▎  │  │ ▼ more — scroll the          │
+│                              │  │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+ Inspect a Tool Pack before importing an unbound profile.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

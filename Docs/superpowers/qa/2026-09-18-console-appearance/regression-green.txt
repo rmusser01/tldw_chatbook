@@ -1,0 +1,28 @@
+.............................................................            [100%]
+============================= slowest 25 durations =============================
+13.44s call     Tests/UI/test_console_appearance_picker.py::test_filter_matches_name_and_alias
+13.05s call     Tests/UI/test_console_appearance_picker.py::test_filter_narrows_the_grid
+11.61s call     Tests/UI/test_console_appearance_picker.py::test_carried_in_appearance_is_preselected
+10.89s call     Tests/UI/test_console_appearance_picker.py::test_apply_commits_icon_and_color_and_saves_recents
+9.63s call     Tests/UI/test_console_appearance_picker.py::test_clear_resets_to_unset
+9.58s call     Tests/UI/test_console_appearance_picker.py::test_swatch_press_updates_custom_color_field
+9.32s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+8.97s call     Tests/UI/test_console_appearance_picker.py::test_switcher_prefix_renders_placeholder_for_color_only
+8.93s call     Tests/UI/test_console_appearance_picker.py::test_constructor_rejects_foreign_values
+8.37s call     Tests/UI/test_console_appearance_picker.py::test_preview_renders_color_not_markup_tags
+8.14s call     Tests/UI/test_console_appearance_picker.py::test_escape_cancels_with_none_without_crashing
+7.99s call     Tests/UI/test_widget_css_consolidation.py::test_widget_build_resolves_central_tokens_without_leaking_local_overrides
+7.74s call     Tests/UI/test_console_appearance_picker.py::test_custom_hex_entry_applies_valid_color
+7.57s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+7.23s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+7.22s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+7.10s call     Tests/UI/test_console_appearance_picker.py::test_switcher_row_shows_colored_icon_left_of_title
+6.47s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+6.34s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+6.07s call     Tests/UI/test_console_appearance_picker.py::test_unstorable_emoji_sequence_is_rejected_at_selection
+5.84s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+5.44s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+5.40s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+5.19s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+4.22s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+61 passed in 219.00s (0:03:38)

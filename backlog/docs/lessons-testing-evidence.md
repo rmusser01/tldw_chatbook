@@ -1,5 +1,117 @@
 # Lessons: what counts as evidence a change works
 
+## Large SVG failure diagnostics can hide a quick assertion result
+
+**TASK-32821, 2026-09-18.** Both gallery snapshots passed at the baseline.
+After an intended button alignment change, the first normal-mode snapshot
+comparison consumed a CPU core without a completed report; the owned runner
+and child were interrupted and recorded as unqualified. Rerunning the same
+assertions with pytest `--assert=plain` promptly reported both expected
+mismatches. A semantic SVG diff showed only the action row moved, and the
+reviewed updates then passed again in normal mode. When large string diagnostics
+stall a failure run, preserve that attempt and use concise assertion reporting
+for diagnosis; do not weaken equality, mask geometry or count an interrupted
+attempt as a test result.
+
+## CSS consolidation must include standalone production hosts
+
+**TASK-32813, 2026-09-18.** Moving BackupRestoreScreen defaults into the main
+app's generated sheets left the separate RecoveryApp unstyled. The real
+recovery subprocess caught it; a main-app test alone could not. Register that
+screen's existing bundled CSS at its native default scope/tier in the standalone
+host. Keep the child test's patch on native `textual.app.App.run` and assert
+computed geometry on the actual RecoveryApp. Test hosts also need the split
+feature sheets; resolve real screen CSS_PATH sequences before calling them bare.
+
+## A redraw highlight can arrive after the refresh callback that released its guard
+
+**TASK-32796, 2026-09-18.** MCP server navigation cleared tool/finding details,
+then the focused table's redraw reopened them. Nine regressions held real
+published table messages until after refresh callbacks and reproduced the
+selection. Suppress programmatic RowHighlighted/CellHighlighted at publication
+with Textual prevent(), across synchronous rebuild/cursor work only. Review
+also caught hidden Audit Findings clearing Executions' pending Enter gesture;
+include the originating table in dedup identity and reset only that table.
+External drill cursor moves need their own boundary after a rebuild ends.
+
+## A pane resize does not report its child's final scrollbar geometry
+
+**TASK-32790, 2026-09-18.** MCP Tools wrapping passed 60-row resize checks,
+then independent review clipped one State cell in a five-row Unicode catalog.
+The outer scrollbar narrowed the table after the pane's resize callback;
+measuring again by hand restored the missing cell. Observe the table's own
+Resize and gate rebuilding on changed measured width. The first local message
+was also unhandled because Textual converted `MCPToolsTable` to `mcptools_table`;
+an explicit message namespace aligned the handler. Exercise short and long
+catalogs across scrollbar transitions, not only the terminal dimensions.
+
+**TASK-32792 follow-up.** The sibling Permissions table retained the same gap: a
+child-only width42→39 left the canvas geometry unchanged and clipped State.
+The native real catalog then exposed a selected row below the viewport after
+resize, while an earlier test manually scrolled it back before checking paint.
+Observe final child geometry, and reveal the current selected row without test
+repair. Height-only20→10 changes need a separate deferred reveal even when
+width-gated reflow correctly performs no rebuild. Preserve newer focus and
+check the selected cell against both compositor and table viewport.
+
+## A stale review and an admitted write have different lifetimes
+
+**TASK-32780, 2026-09-18.** Preventing delayed Tool Profile reviews after
+navigation initially hid errors from already-admitted import/export writes
+because their shared exception handlers used the same visit guard. A mounted
+publisher held after confirmation then raised `durability_uncertain` after a
+category roundtrip; its receipt was empty. Track mutation admission separately:
+discard obsolete preparation, but preserve outcomes of writes the user already
+confirmed. The same probe then retained its uncertainty receipt.
+
+## A fake payload can preserve the same wrong contract as its consumer
+
+**TASK-32779, 2026-09-18.** Export-review tests invented `payload.rules`,
+matching the UI, while the real `ToolProfilePayload` exposes `tools`. A real
+service export crashed before filename selection despite passing policy-count
+tests. Construct the actual validated payload in presentation fixtures and
+retain at least one real capture → review → publication journey. Fixing only
+the fixture's field spelling would still leave its contract unvalidated.
+
+## A reused widget ID cannot identify the action that was pressed
+
+**TASK-32778, 2026-09-18.** Holding a real Tool Profiles button event across
+row recomposition made Export, Edit, Bind and Remove target the replacement
+profile or revision. The handler resolved the old event through a new map
+keyed by the same row-index ID. Key captured action context by the originating
+control and reject detached origins. Exercise event delivery after refresh;
+an immediate click cannot expose this identity substitution.
+
+## App tokens do not cross consolidated widget stylesheet scopes
+
+**TASK-32773, 2026-09-17.** Native light-theme review exposed a black
+WorkspaceCreateModal surface. Moving `$ds-*` references into its `BUNDLED_CSS`
+then failed native startup: the consolidated widget stylesheet did not share
+the app token definitions. Keep the token-backed override in the app dialog
+module and a matching Textual theme-variable fallback in the widget. Rebuild
+the generated sheets and verify actual startup and computed dark/light colors;
+a valid token name in another stylesheet does not prove it resolves here.
+
+## A workspace ID does not identify what a confirmation approved
+
+**TASK-32770, 2026-09-17.** The memory toggle stored only the workspace ID
+between its first and second presses. Mounted regressions showed that A→B→A,
+category return and modal suspension retained the old acknowledgement; replacing
+the saved persona/profile before the second press applied read-write to that new
+record. Capture saved and intended values when asking, compare before applying,
+and discard the review on navigation. Exercise cancellation as well as acceptance:
+the separate imported-profile modal must preserve staging but require a fresh
+memory acknowledgement when the user retries after cancelling.
+
+**TASK-32774, 2026-09-18.** First-bind review had the same lifetime gap
+across an asynchronous service call: four mounted journeys reproduced an old
+dialog after category/workspace A→B→A, an unrelated modal, or a newer persona
+draft. Capture the Apply intent before dispatch and invalidate that identity
+on navigation or staging changes. Check it again after both review and token
+exchange; a delayed token must not commit after the user leaves. Exempt only
+the owned review modal from suspension invalidation, while still discarding
+its separate memory acknowledgement.
+
 ## A watcher test must prove selection and await worker completion
 
 **PR #2709 / TASK-32819, 2026-09-18.** The MCP stale-panel test intermittently
@@ -109,6 +221,18 @@ governance negative cases also needed to call the original assertion via
 `.__wrapped__`, because invoking the newly async wrapper without awaiting it
 otherwise made their expected failures disappear. Preserve the production guard,
 prove the baseline, and exercise negative controls after harness changes.
+
+**TASK-32777, 2026-09-18.** Five App startup hygiene cases hit the same
+collection-to-fixture profile change while checking cold provisioning. Four
+raised `raw_source_selection_changed`; the composition case swallowed it and
+reported an empty call list. Giving each the existing private-profile process
+wrapper restored all five original assertions without changing recovery admission.
+
+**TASK-32778, 2026-09-18.** Fifteen existing Tool Profiles workflow cases hit
+the same profile-selection guard. The existing process wrapper restored their
+original setup and assertions. Two then reached real viewport failures: their
+click targets were at row 37 in a 35-row viewport. Scroll the actual target
+into view before the click; do not replace the workflow with direct service calls.
 
 ## Range comparisons do not prove finite input
 
@@ -2032,6 +2156,19 @@ after the fact** over raising inside code that catches broadly.
 ---
 
 ## Mount dispatch can be attached before it is mounted
+
+**TASK-32795, 2026-09-18.** MCP save-status polling found a deferred Tools
+canvas in the DOM before its controls existed, and found that same parent while
+its controls were being pruned. Both boundaries reproduced `NoMatches` for root
+and master receipts. Direct control projection needs a fully mounted, attached,
+non-pruning canvas and owner; attachment alone is only enough for scheduling.
+Deferral must not consume a receipt. A second regression found that a retained
+Workbench stamp skipped an unchanged receipt after replacing just its Tools
+canvas: the projection stamp must include the identity of the canvas that
+actually displayed it. The before/during receipt matrix covers both canvas-only
+and whole-Workbench removal. The CI startup test also waited on an empty worker
+manager before the after-refresh load had been dispatched; it now waits on the
+synchronously claimed loading state before asserting actual rail rows.
 
 **TASK-15459, 2026-08-13.** A deterministic `asyncio.Event` barrier released
 the Library source worker while `LibraryScreen.on_mount()` was still awaiting.
@@ -4141,6 +4278,21 @@ should have.
 ---
 
 ## `Widget.focus()` is deferred — a same-handler capture of `app.focused` sees the old widget
+
+**TASK-32785, 2026-09-18.** The real Settings→MCP Edit route focused a table
+below its canvas clip at 80×24; standalone profile-selection checks missed it.
+Adding overflow alone still failed all four size/theme cases because focus
+preceded final matrix/profile layout. Revealing the current focused descendant
+after focus, resize and completed sync repaired the route. A guarded callback
+must also preserve newer mode/dialog ownership; reading the now-focusable
+canvas must not inherit Space permission mutation from its table.
+
+**TASK-32783, 2026-09-18.** The Tool Profile Bind continuation called `focus()`
+then a focus-guarded receipt reveal. Initial mounted and native journeys passed
+because a later receipt resize retried the reveal. Holding the valid callback
+until layout settled exposed the missed reveal: Persona and guidance remained
+below the compact viewport. Synchronous guarded `Screen.set_focus` fixed the
+ordering. Test the settled-layout path as well as the initial resize path.
 
 **task-3311, 2026-08-09.** The Ingest Clear handler called `path_input.focus()` and
 then a structural recompose helper that captures `app.focused` to restore focus
@@ -11126,6 +11278,21 @@ its bug — verified by reintroducing all three. A test harness that yields the
 widget straight into the App gives it the screen's whole box, which is exactly
 the geometry the bug does not live in.
 
+**TASK-32788, 2026-09-18 recurrence.** Compact MCP permission rows initially
+reserved the current `DataTable.scrollbar_size_vertical`, which is zero before
+wrapping creates the bar. Long Unicode rows then clipped State by two cells.
+Budgeting against `table.styles.scrollbar_size_vertical` before wrapping fixed
+the reproduced case. Qualify both scrollbar states and actual painted Tool/State
+regions after resizing; a pre-layout width measurement alone is insufficient.
+
+**TASK-32789, 2026-09-18 follow-up.** The MCP Tools canvas could reveal its
+DataTable while leaving the selected last row below the table's own viewport
+after shrink. Tests that pressed Ctrl+Home/End after every resize passed because
+those keys repaired the scroll. Independent review seeded sixty rows and resized
+with row 59 selected and no further navigation; both themes failed. Reveal the
+focused table's cursor after layout as well as the outer widget, and test resize
+without a later action that could repair the geometry being asserted.
+
 ## A clean rebase can orphan an import, and only a full-suite A/B sees it
 
 **TASK-22500, 2026-08-27.** The branch stopped importing `VerticalScroll` in
@@ -15671,6 +15838,134 @@ warning. Synchronizing Select errors/options and testing invalid-to-valid-to-
 invalid transitions fixed the interaction while preserving editor identity.
 When one branch adds a control state and another changes refresh strategy,
 exercise the composed control's next update, even after a clean text merge.
+
+## A cancelled Settings worker can finish writing without publishing the result
+
+**TASK-32767, 2026-09-17.** The native background-effects journey first found
+a saved setting that never reached a cached Console. After adding appearance
+publication and resume reconciliation, the mounted save-then-return test passed,
+but returning while the real file writer was blocked still failed: the file was
+replaced and caches reloaded, while the app's refresh generation stayed zero.
+Popping Settings cancelled its Textual worker handle without stopping the file
+thread. After unmount, that thread's `self.app` lookup had no parent to follow.
+Retaining the host before the blocking write allowed the completion callback to
+publish to the existing Console. Both timing variants now preserve seeded
+user/assistant text and start/stop the same effect widget. Test the physical
+writer and UI publication boundaries separately; a cancelled worker handle or
+a saved file alone does not prove that the live view received the result.
+
+## A running decoration timer does not prove its glyphs reach the screen
+
+**TASK-32767, 2026-09-17.** Background run007 passed active/timer assertions,
+but populated native screenshots showed no particles: Textual's full-size
+transcript blank strips occluded the sibling effect despite transparent colors.
+Moving the dedicated renderer below message children exposed another native-only
+fixture gap: the Console shell's outer layer list overrode the viewport order
+and hid the messages. Compositor assertions with the production ancestor now
+check both message glyphs and particles in unused space. Preserve a populated
+fixture and inspect actual output when qualifying decoration; lifecycle state
+alone can pass while the intended visual is absent or hides useful content.
+
+## Restore focus on the replacement after a pane rebuild
+
+**TASK-32768, 2026-09-17.** Folder-removal matrix tests initially passed after
+calling the old Add button's `focus()` before rebuilding Settings. Native run002
+painted the replacement button while `app.focused` still referred to the old one;
+Ctrl+Q did not route until a mouse click focused a live control. Textual queues
+focus through the app, and a request admitted during pruning can outlive its
+widget. Querying and focusing Add after pane replacement repaired the race.
+The regression delays an old-control focus request until after replacement and
+checks current widget identity, attachment, paint and real Tab traversal. Native
+run003 then completed all four size/theme cells and quit normally. A matching
+control ID alone is not proof that focus belongs to the mounted control.
+
+## A screen refresh callback can precede a Static receipt’s text reflow (TASK-32769)
+
+The workspace assistant journey changed a one-row staging receipt into a
+four-row memory disclosure. Two screen `call_after_refresh` callbacks still
+observed the old one-row region; scrolling then left two disclosure rows clipped
+at 80×24. An immediate scroll closed the separate stale-navigation race, but
+could not repair that outdated geometry. A small receipt `on_resize` hook now
+reuses the guarded reveal after actual text reflow. The populated dark/light
+keyboard matrix asserts the complete painted disclosure and focused action, and
+the native gallery records the final layout. Use geometry-change evidence for
+this case; another screen callback alone did not prove text had reflowed.
+
+## Retained controls must capture intent when an activation is posted
+
+**TASK-32771, 2026-09-17.** Keeping Change Review controls mounted preserved
+workspace drafts, but independent review queued a Disable press, changed the
+registry, and repainted that same button as Enable before its handler ran. The
+handler read the button's mutable target and enabled review against the user's
+original action. Capturing the immutable consent revision and target on the
+actual Button.Pressed message repaired the race while preserving Textual's
+normal activation/debounce behavior. A real-registry regression now expects
+the stale Disable to conflict and leave review disabled. When replacing pane
+rebuilds with in-place updates, test queued actions across those updates; stable
+widget identity does not mean its action intent stayed stable.
+
+
+## Focus identity alone does not prove a complete button is visible
+
+**TASK-32781, 2026-09-18.** Tool Profiles focus restoration correctly selected
+Remove after refresh, but the production 80×24 compositor clipped a ten-column
+button to eight columns. The full-region paint assertion failed three cases
+that identity-only checks would have passed. A scoped two-column action grid
+repaired the clipping; four native size/theme journeys then showed complete
+labels and the same focus continuation. Qualify the focused control's entire
+painted region, not just its identity or intersection with the viewport.
+
+## Exclusive UI cancellation does not prove an admitted thread stopped writing
+
+**TASK-32786, 2026-09-18.** A second Tool Profile Remove cancelled the first
+exclusive UI worker while its `asyncio.to_thread` call continued. The actual
+profile disappeared, but Settings retained the row and reported `Remove
+cancelled`. A real publication probe also completed a destination when the
+cancellation flag changed after the publisher's last pre-commit poll. Guarding
+same-operation dispatch during the admitted write preserved observation without
+changing shutdown cancellation. Mounted tests cover all three operations and
+terminal outcomes; a native real-service lock delay confirms exact-once removal.
+Test persisted state, observed outcome and refreshed UI together across this
+boundary. Swallowing cancellation to retain an observer would introduce a
+different lifecycle contract and needs separate design/qualification.
+
+## Config publication generation does not cover external TOML reloads
+
+TASK-32791 initially scoped retained root-save receipts to the config path and
+publication generation. Independent private review saved B with a cache publication
+failure, externally edited TOML to C, then forced the supported bootstrap reload.
+The reader returned C while the generation was unchanged; the retained override
+still returned B. Root receipts now capture device/inode/mtime/size under the
+existing mutation lock and after replacement, and fence both the cache override
+and later canonicalization with that file revision. A real private-config
+regression reproduces the unchanged-generation external reload. Do not use a
+publication counter alone to prove a disk-backed setting is unchanged.
+
+
+## App-owned writes still need synchronous UI admission (TASK-32793)
+
+The shared MCP save queue serialized admitted requests, but independent review
+pressed Off, ran the 250ms projection before the child message reached its parent,
+and pressed again. Projection reset the cached control to On, so both actions
+requested Off. The same poll refreshed root input before Input.Changed and erased
+its newest edit. Synchronous canvas admission, activation-time target/config
+capture, and master-only projection fixed both mounted reproductions. Queue
+ownership starts after admission; test the event boundary before it as well.
+
+
+## A retained Select still has queued index-based activation stages
+
+**TASK-32794, 2026-09-18.** Keeping MCP Tools' server Select mounted repaired
+focus loss but exposed three earlier queues: pointer Click, OptionSelected, and
+SelectOverlay.UpdateSelection each carried an index from older options. A held
+real B activation followed by label reorder selected A; removing C instead raised
+IndexError. Guarding the final Changed message could not prevent either failure.
+The local overlay now admits pointer/keyboard activation synchronously before
+those indices can queue across option replacement. Tests delay actual message
+queues and retain native inputs; bypassing the production post_message boundary
+would bypass the fix and test a different path. The same task's native compact
+run found a focused recovery button below a padded callout; full-app compositor
+paint assertions caught what focus identity alone missed.
 
 ## An RLock probe built on `acquire` reports a re-entrant hold as free
 

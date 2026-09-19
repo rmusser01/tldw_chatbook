@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││ Tool policy profile                                                       ││                                             │
+│ Source                                     ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ ▊  default · local                                                   ▼  ▎ ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││                                                                           ││  Add server                                 │
+│                                            ││  Review restored MCP roots                                                ││  watchlists_update_collection_sources —     │
+│ Servers                                    ││ Restored permissions stay inactive until reviewed. Review creates fresh   ││  Local workspace, web, and Watchlists       │
+│  ◦ off (opt-in) · ⌂ built-in               ││ Ask/local defaults; connecting and granting tools remain separate         ││  Permission: Ask                            │
+│     All servers                            ││ actions.                                                                  ││                                             │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││  Block all tool calls in chat: Off ▸                                      ││  Tool override: —                           │
+│                                            ││  Also blocks the app's own built-in tools (calculator, date/time, file    ││                                             │
+│                                            ││  and note tools).                                                         ││  Server default: —                          │
+│                                            ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                                             │
+│                                            ││ ▊  watchlists_update_collection_sources                                 ▎ ││  ▸ Global default: Ask                      │
+│                                            ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││                                             │
+│                                            ││  Tool                                                   State  Tags       ││    Advanced…                                │
+│                                            ││  Global default                                         Ask    —          ││                                             │
+│                                            ││  Server default — Local workspace, web, and Watchlists  Ask    —          ││                                             │
+│                                            ││    watchlists_update_collection_sources                 Ask    mutates    ││                                             │
+│                                            ││ tldw_chatbook: 0 allow · 30 ask · 0 off — global default: ask             ││                                             │
+│                                            ││ • override · ⚠ definition changed · ⚑ high-risk floor · ≡ exact-input     ││                                             │
+│                                            ││ allows · (session) approved until Chatbook exits · Space cycles Inherit → ││                                             │
+│                                            ││ Ask → Allow → Off                                                         ││                                             │
+│                                            ││ 9 tool gate(s) are off. Configure the workspace, web, and Watchlists      ││                                             │
+│                                            ││ master switch in Tools mode; other registration gates are under MCP ▸     ││                                             │
+│                                            ││ Servers ▸ built-in row ▸ Tool gates.                                      ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
