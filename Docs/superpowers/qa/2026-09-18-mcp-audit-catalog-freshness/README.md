@@ -1,5 +1,7 @@
 # Audit catalog freshness — TASK-32838 / PR2726
 
+The owner approved this visual/conflict snapshot. [Current closeout evidence](CLOSEOUT.md) records the inherited selector-budget repair, 203 passing targeted checks and pixel-identical modal/Audit replays. Earlier pending-approval and unchanged-source statements below describe the approved snapshot; final-head CI/review still gates merge.
+
 Audit navigation can wait while the catalog replaces the selected tool. Both
 drilldowns now resolve that identity again under the existing publication lock,
 then select the row and render its current description, schema and availability.

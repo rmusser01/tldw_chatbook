@@ -1,5 +1,7 @@
 # PR2726 current-dev native gallery
 
+The owner approved this visual/conflict snapshot. [Current closeout evidence](CLOSEOUT.md) records the inherited selector-budget repair, 203 passing targeted checks and pixel-identical modal/Audit replays. Earlier pending-approval and unchanged-source statements below describe the approved snapshot; final-head CI/review still gates merge.
+
 All eight replay captures were rendered and inspected. See [scope and lifecycle](README.md) and [conflict choices](CURRENT-DEV-REVIEW.md).
 
 The first run had an intermittent light-wide table header mismatch. Review the

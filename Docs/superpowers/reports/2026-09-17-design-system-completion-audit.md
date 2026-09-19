@@ -1,5 +1,18 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2726 approved closeout — selector-budget repair
+
+The owner approved PR2726's integrated conflict choices and gallery. Qodo found
+zero issues on approved head `a4158a6a9a`. The Perf Guard then exposed three
+inherited wide-modal selectors from PR2742 (277/274). Class-qualified subjects
+preserve their exact targets and token values while restoring the unchanged
+ratchet. [203 passing targeted cases, seven guards and independent review](../qa/2026-09-18-mcp-audit-catalog-freshness/CLOSEOUT.md)
+verify the closeout; all twelve modal before/after captures and all eight
+approved Audit captures are pixel-identical. Final-head CI/review and fresh live
+dev inspection remain before the authorized merge. The header rendering race
+and remaining component reviews are separate follow-ups.
+
+
 ## Current checkpoint — PR2724 merged; PR2726 integrated
 
 PR2724 merged at `cccf0acdad8e939a55cb003588ff1406cef5d1f4` after owner

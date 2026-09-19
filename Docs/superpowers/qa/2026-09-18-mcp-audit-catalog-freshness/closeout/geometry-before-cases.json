@@ -1,0 +1,29 @@
+{
+  "distinct_cases": 6,
+  "cases": [
+    {
+      "id": "Tests.UI.test_wide_modal_selector_geometry::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-extraction]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_wide_modal_selector_geometry::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-dictionary]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_wide_modal_selector_geometry::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-conversation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_wide_modal_selector_geometry::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-extraction]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_wide_modal_selector_geometry::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-dictionary]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_wide_modal_selector_geometry::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-conversation]",
+      "status": "passed"
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # PR2726 conflict choices and visual review
 
+The owner approved this visual/conflict snapshot. [Current closeout evidence](CLOSEOUT.md) records the inherited selector-budget repair, 203 passing targeted checks and pixel-identical modal/Audit replays. Earlier pending-approval and unchanged-source statements below describe the approved snapshot; final-head CI/review still gates merge.
+
 The saved PR at `9684e7a98f93abbb82f95446e0c765a0780f70e2` was rebased onto
 merged dev `cccf0acdad8e939a55cb003588ff1406cef5d1f4` (PR2724). The rebase
 produced local commit `4c4b4176c3`; the follow-up preserves profile checks and
