@@ -59,6 +59,7 @@ from tldw_chatbook.Library.library_skills_state import (
     skill_allowed_tools_sequence,
     skill_name_shadows_builtin,
     skill_trust_requires_details,
+    skill_trust_header_has_skills,
     skill_trust_header_line,
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -990,11 +991,12 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 self.query_one(
                     "#library-skills-trust-region", LibrarySkillsTrustHeader
                 ).sync_state(
-                    has_skills=bool(state and state.source_summary_fresh)
-                    and (
-                        bool(rows)
-                        or bool(title_count)
-                        or bool(state and state.blocked_total)
+                    has_skills=skill_trust_header_has_skills(
+                        self.trust_posture,
+                        source_summary_fresh=bool(state and state.source_summary_fresh),
+                        has_rows=bool(rows),
+                        has_title_count=bool(title_count),
+                        blocked_total=(state.blocked_total if state else 0),
                     ),
                     blocked_count=(
                         state.blocked_total
@@ -1231,8 +1233,13 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # in its own retained region so that update cannot invalidate a row's
         # already-posted Button.Pressed event.
         yield LibrarySkillsTrustHeader(
-            has_skills=self.trust_posture == "recovery_review" or (state.source_summary_fresh
-            and (bool(state.rows) or bool(title_count) or state.blocked_total > 0)),
+            has_skills=skill_trust_header_has_skills(
+                self.trust_posture,
+                source_summary_fresh=bool(state.source_summary_fresh),
+                has_rows=bool(state.rows),
+                has_title_count=bool(title_count),
+                blocked_total=state.blocked_total,
+            ),
             blocked_count=(
                 state.blocked_total
                 if state.pager is not None
