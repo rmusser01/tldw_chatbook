@@ -301,3 +301,21 @@ The initial compact failures and harness-only native selection failure remain
 in the receipt. This closes the label clipping retained by TASK-32793; broader
 MCP server lifecycles, execution and remaining destination review stay open.
 PR2707 remains draft/unmerged, subject to its own visual approval.
+
+## Post-merge Audit navigation review — TASK-32837
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`;
+its unmerged checkpoints above are historical. Component reviews resumed on
+separate branches, and the resume heartbeat is paused.
+
+TASK-32837 binds Audit actions to their displayed record/profile and honors
+missing destination rows. [64 targeted cases, seven preflight guards, independent
+review and 16 native dark/light captures](../qa/2026-09-18-mcp-audit-navigation/README.md)
+qualify this bounded repair. The fresh-dev branch does not include separate
+Audit selection/filter or inspector-guidance PRs. No tool execution, external
+server or permission mutation was part of its native journey. Current-head CI
+and final visual approval remain required before merging the follow-up.
+
+Next review: same-ID catalog replacement during an in-flight Audit drilldown.
+The [MCP ledger](2026-09-18-mcp-review.md) retains that and the wider scope; this
+repair does not close the component review workstream.
