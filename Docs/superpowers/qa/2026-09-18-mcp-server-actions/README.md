@@ -7,7 +7,7 @@ cannot redirect an Alpha deletion. Deferred Keep focus uses the same live-contro
 check. A two-column compact toolbar keeps all actions fully visible.
 
 Base: merged dev `149acda36be8939fe8cd5e589bf77d13462257e7`.
-Branch: `codex/mcp-server-action-ownership`. Saved PR: pending creation.
+Branch: `codex/mcp-server-action-ownership`. Saved as [draft PR #2712](https://github.com/rmusser01/tldw_chatbook/pull/2712).
 This branch is independent of draft PR2711's inspector implementation.
 ADR required: no; existing ADR-161 governs the component contract. No storage,
 service admission, execution authority or token value changed.

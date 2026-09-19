@@ -1,11 +1,11 @@
 ---
 id: TASK-32825
 title: Keep MCP server actions bound to their displayed target
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 00:33'
-updated_date: '2026-09-19 00:57'
+updated_date: '2026-09-19 00:58'
 labels:
   - mcp
   - ui
@@ -45,4 +45,6 @@ Reason: correct UI action identity and confirmation lifetime inside existing han
 
 <!-- SECTION:NOTES:BEGIN -->
 Retire current toolbar target associations before replacement awaits, reject detached or effectively hidden controls, and capture accepted deletion identity before presentation work. Keep focus uses the same live-target guard. Compact toolbar uses a two-column token-backed grid with existing action-class selectors; wide geometry and the 274 CSS candidate ceiling are preserved. 109 distinct targeted cases pass, including 17 new regressions and final CSS checks. Four final real-TTY theme/size journeys and twelve inspected captures verify safe Keep/Escape, ignored retired Connect and exact real-store Alpha deletion while Beta remains selected. Clean exit, released lock, ten healthy private databases, unchanged defaults and eight matching source hashes pass. No introduced Ruff findings; new files and changed production ranges formatted. All seven preflight guards pass, with CSS rechecked after selector rekey. Independent review found a hidden-mode gap, repaired and reproduced by three regressions; final review has no blockers. Initial compact clipping and selector-ratchet failures are retained. Existing ADR-161 applies; no new ADR. Evidence: Docs/superpowers/qa/2026-09-18-mcp-server-actions/README.md. Separate draft PR save pending; PR2711 inspector CI repair remains separate. External connection/execution and wider destination reviews remain open.
+
+Saved as draft PR2712 against dev: https://github.com/rmusser01/tldw_chatbook/pull/2712. All task ACs are checked. Current-head CI, accumulated review and owner visual approval remain independent merge gates.
 <!-- SECTION:NOTES:END -->

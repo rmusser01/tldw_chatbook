@@ -47,8 +47,9 @@ safe Keep/Escape and complete compact/wide toolbar paint. The native journey
 removes only the confirmed Alpha profile while Beta stays selected and persisted.
 All private lifecycle checks pass. The compact CSS rule uses existing action
 classes to preserve the unchanged 274 selector ceiling. Broader server connection,
-execution, recovery and other destination reviews remain open. Separate bounded
-draft PR creation is the final save step; no merge is authorized here.
+execution, recovery and other destination reviews remain open. The bounded repair is saved as [draft PR #2712](https://github.com/rmusser01/tldw_chatbook/pull/2712);
+TASK-32825 is Done. Current-head CI, accumulated review and owner visual approval
+remain separate merge gates.
 
 ## Remaining review
 
