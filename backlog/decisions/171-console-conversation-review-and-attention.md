@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: Proposed — design approved in conversation; written specification awaiting user review.
+Status: Accepted — written design approved; pre-implementation review corrections recorded 2026-09-18.
 
 Related tasks:
 
@@ -11,8 +11,8 @@ Related tasks:
 - [TASK-32828: Inspector modal](../tasks/task-32828%20-%20Redesign-the-Conversation-Inspector-modal-for-context-and-costs.md)
 
 Amends presentation in ADR-083. Preserves ADR-010 local marks, ADR-085 receipt
-authority, ADR-069 instruction disclosure, ADR-031 keyboard conventions and
-ADR-150 design tokens.
+authority, ADR-069 including its September 7 capture amendment, ADR-097 trace
+disclosure, ADR-031 keyboard conventions and ADR-150 design tokens.
 
 ## Context
 
@@ -28,7 +28,10 @@ its underlying data requires. The user explicitly excludes the Inspector sidebar
    ADR-010, independent of syncable conversation metadata and operational
    unseen-result receipts. It clears on explicit Mark as read or a successful
    deliberate revisit, never repaint, background work or automatic restoration.
-   Fence acknowledgement against a newer mark and changed target identity.
+   Fence acknowledgement against a newer mark and changed target identity via
+   serialized compare-and-clear. A process-lifetime generation suffices for UI
+   callbacks; timestamp equality alone is not a concurrency guard. Batch reads
+   must cover the requested conversation IDs, not only the latest 100 marks.
 2. Give Conversations and workspace chat rows a consistent compact visual and
    keyboard contract while retaining their existing ownership, ordering and
    bounded projections. Preserve subagent/progress information.
@@ -41,11 +44,17 @@ its underlying data requires. The user explicitly excludes the Inspector sidebar
    stopped/cancelled outcomes and successful unseen results honest and subject
    to their existing acknowledgement rules. A manual mark never rewrites or
    clears an operational receipt. The spec defines complete icon precedence.
+   Coarse background-unseen evidence without an outcome uses a neutral activity
+   indicator, never a success check. Typed semantic projection data preserves
+   concurrent states and hidden-row aggregation without a new receipt owner.
 5. Organize the existing **Conversation Inspector modal** into Context,
    Usage & cost, and Exchange history. Entry points open relevant views.
    Context uses section/detail navigation; usage uses turn/detail navigation;
    narrow layouts provide a Back route. Preserve accounting, capture, export,
-   redaction and explicit Next Send disclosure authorities.
+   redaction and explicit Next Send disclosure authorities. Preserve historical
+   captured instruction access under ADR-069/097, and invalidate Safe/Full bodies
+   across every trace-bearing view. Usage labels state actual estimate/coverage
+   scope; call detail is never added twice to aggregate costs.
 6. Do not redesign the Inspector sidebar or globally change its glyphs as a
    side effect. Shared code edits must preserve that surface's behavior.
 
@@ -74,8 +83,9 @@ provider call, dependency, sync contract or Inspector-sidebar redesign is intend
 
 Targeted persistence/race tests, mounted navigation and production-CSS rendering
 are required. Meaningful symbols must be qualified in supported terminal fonts
-and ASCII mode. The written specification must be reviewed before implementation
-planning, and implementation plans/notes must link this ADR.
+and ASCII mode. The written specification has been approved; its source-backed
+review corrections are documented there. Implementation plans/notes must link
+this ADR. No implementation or live UX qualification is claimed by acceptance.
 
 ## Links
 
