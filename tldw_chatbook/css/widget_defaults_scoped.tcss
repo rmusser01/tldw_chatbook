@@ -342,6 +342,10 @@
         min-height: 0;
         display: none;
     }
+    MCPInspector #mcp-inspector-tool Button {
+        min-width: 0;
+        max-width: 100%;
+    }
 
     MCPInspector #mcp-inspector-permission {
         height: auto;

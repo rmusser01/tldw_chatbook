@@ -1,0 +1,74 @@
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:20-21: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:914-915: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:945-949: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:1161-1163: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:1168-1169: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:1366-1367: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:1437-1467: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:1985-1986: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2009-2031: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2038-2040: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2059-2061: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2100-2110: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2156-2162: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2739-2740: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2741-2742: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2743-2745: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2750-2751: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2894-2895: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2911-2920: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:3743-3744: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:814-815: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:1561-1562: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4437-4458: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:5344-5352: exit0
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:5496-5499: exit0
+1 file already formatted

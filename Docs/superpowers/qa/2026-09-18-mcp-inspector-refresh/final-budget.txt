@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+3.37s call     Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist
+1.49s call     Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+
+(4 durations < 1s hidden.)
+2 passed in 5.58s

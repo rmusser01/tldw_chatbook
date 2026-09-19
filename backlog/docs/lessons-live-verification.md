@@ -1,5 +1,16 @@
 # Lessons: verifying against the real thing
 
+## Focus identity does not prove a long inspector action is visible
+
+**TASK-32823, 2026-09-18.** Native MCP run001 focused Test Tool at 80×24
+while it was below a non-scrolling inspector. Adding vertical overflow exposed
+a button wider than the scroll viewport and a fractional-height nested form;
+bounding tool buttons and using the canonical natural-height utility fixed those.
+Run002 then retained replacement-button focus after a catalog change but painted
+it offscreen because content height changed after focus scrolling. Observe the
+settled content/viewport size and reveal only current focus. Compositor regressions
+reproduced each clip, and run003 passed both themes at compact/wide sizes.
+
 ## Private config and data paths do not replace a private recovery HOME
 
 **TASK-32749, 2026-09-17.** The first integration probe selected private config

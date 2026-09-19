@@ -811,6 +811,7 @@ class MCPWorkbench(Container):
         # Presentation generation only. Service preview consumption and its
         # active registry remain the execution authority.
         self._tool_test_generation: int = 0
+        self._tool_test_panel_token: object | None = None
         # Presentation bookkeeping only. The service registry remains the
         # authority; this copy exists because Textual unmounts descendants
         # before the parent's ``on_unmount`` can query the inspector.
@@ -5340,6 +5341,14 @@ class MCPWorkbench(Container):
         """Prepare a service-owned preview off the UI loop."""
         event.stop()
         inspector = self.query_one(MCPInspector)
+        if (
+            event.panel_token is None
+            or event.panel_token is not inspector.test_panel_token
+        ):
+            return
+        self._tool_test_generation += 1
+        generation = self._tool_test_generation
+        self._tool_test_panel_token = event.panel_token
         inspector.show_test_preparing()
         context = self._validate_profile_context(event.profile_context)
         if context is None:
@@ -5348,8 +5357,6 @@ class MCPWorkbench(Container):
             )
             return
         tool = self._tool_for(event.server_key, event.tool_name)
-        self._tool_test_generation += 1
-        generation = self._tool_test_generation
         if tool is None:
             inspector.show_test_unavailable("The selected tool is no longer available.")
             return
@@ -5486,7 +5493,9 @@ class MCPWorkbench(Container):
             return False
         current = inspector.current_tool
         return (
-            current is not None
+            self._tool_test_panel_token is not None
+            and inspector.test_panel_token is self._tool_test_panel_token
+            and current is not None
             and current.server_key == tool.server_key
             and current.name == tool.name
             and bool(inspector.query("#mcp-inspector-test-panel"))
@@ -5503,7 +5512,6 @@ class MCPWorkbench(Container):
     ) -> None:
         """Revoke a nonce leaving the visible panel, best effort."""
         event.stop()
-        self._tool_test_generation += 1
         if event.preview_nonce == self._tool_test_preview_nonce:
             self._tool_test_preview_nonce = None
         self.run_worker(

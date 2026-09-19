@@ -17,6 +17,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.widgets import (
     Button,
@@ -910,6 +911,7 @@ class MCPInspector(Vertical):
         min-width: 28;
         height: 100%;
         min-height: 0;
+        overflow-y: auto;
     }
     /* F-054: let the empty-state/badge line WRAP at narrow widths instead
     of clipping mid-word -- the shared `.ds-status-badge` rule pins
@@ -939,6 +941,10 @@ class MCPInspector(Vertical):
         height: auto;
         min-height: 0;
         display: none;
+    }
+    #mcp-inspector-tool Button {
+        min-width: $ds-size-0;
+        max-width: $ds-width-full;
     }
     /* T7: the permission-explanation container, shared by `show_tool()`'s
     `effective` keyword (mounted below `#mcp-inspector-tool`, Tools-mode
@@ -1152,11 +1158,14 @@ class MCPInspector(Vertical):
             server_key: str,
             tool_name: str,
             profile_context: PermissionProfileContext | None = None,
+            *,
+            panel_token: object | None = None,
         ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
             self.profile_context = profile_context
+            self.panel_token = panel_token
 
     class ToolTestPreviewRevocationRequested(Message, namespace="mcp_inspector"):
         """Best-effort revocation request for a preview leaving the panel."""
@@ -1354,6 +1363,7 @@ class MCPInspector(Vertical):
         # know which tool a Run press is testing without re-querying the
         # workbench.
         self._current_tool: HubTool | None = None
+        self._test_panel_token: object | None = None
         self._current_tool_profile_context: PermissionProfileContext | None = None
         # Task 7: the `HubTool` `#mcp-inspector-permission` currently
         # describes, or `None` when hidden -- set by
@@ -1423,6 +1433,36 @@ class MCPInspector(Vertical):
             target = self._advanced_target_label or "(none selected)"
             return f"Showing: server {target}"
         return "Showing: Local control plane"
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal keyboard focus after the inspector content settles.
+
+        Args:
+            event: Descendant focus notification, allowed to propagate.
+        """
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def on_resize(self, event: Resize) -> None:
+        """Keep current focus visible after viewport changes.
+
+        Args:
+            event: Inspector resize notification, allowed to propagate.
+        """
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def watch_virtual_size(self) -> None:
+        """Reveal retained focus after a refresh changes the content height."""
+        if self.is_running:
+            self.call_after_refresh(self._reveal_focused_control)
+
+    def _reveal_focused_control(self) -> None:
+        """Reveal only the current descendant and cancel obsolete scroll motion."""
+        if not self.is_attached or self.app.screen is not self.screen:
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            self.scroll_to(y=self.scroll_y, animate=False, immediate=True)
+            focused.scroll_visible(animate=False, immediate=True)
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
@@ -1984,6 +2024,10 @@ class MCPInspector(Vertical):
                 and focused is not None
                 and container in focused.ancestors
             )
+            if restore_focus:
+                # Remove only this retiring view's focus before teardown can
+                # auto-select another child; a newer explicit focus wins.
+                self.app.set_focus(None)
             self._current_tool = tool
             self._current_tool_profile_context = (
                 profile_context if tool is not None else None
@@ -1991,6 +2035,8 @@ class MCPInspector(Vertical):
             self._current_permission_profile_context = (
                 profile_context if tool is not None else None
             )
+            # Invalidate pending preparation before yielding to child teardown.
+            self._test_panel_token = None
             old_nonce = self.clear_test_preview()
             if old_nonce:
                 self.post_message(self.ToolTestPreviewRevocationRequested(old_nonce))
@@ -2107,7 +2153,11 @@ class MCPInspector(Vertical):
                 arg_rules=arg_rules,
                 session_approvals=session_approvals,
             )
-            if restore_focus and tool.executable:
+            if (
+                restore_focus
+                and tool.executable
+                and (self.app.focused is None or self.app.focused is focused)
+            ):
                 self.query_one("#mcp-inspector-test-tool", Button).focus()
 
     async def _render_permission_container(
@@ -2686,13 +2736,18 @@ class MCPInspector(Vertical):
             # requires a unique id across the whole subtree.
             self._build_test_goto_permission_button(),
             id="mcp-inspector-test-panel",
+            classes="h-auto",
         )
+        panel_token = self._test_panel_token = object()
         await container.mount(panel)
+        if self._test_panel_token is not panel_token:
+            return
         self.post_message(
             self.ToolTestPreviewRequested(
                 tool.server_key,
                 tool.name,
                 self._current_tool_profile_context,
+                panel_token=panel_token,
             )
         )
         # F-056: opening the panel moves keyboard focus into it -- the
@@ -2836,6 +2891,7 @@ class MCPInspector(Vertical):
         return "opened"
 
     async def _close_test_tool_panel(self) -> None:
+        self._test_panel_token = None
         nonce = self.clear_test_preview()
         if nonce:
             self.post_message(self.ToolTestPreviewRevocationRequested(nonce))
@@ -2851,6 +2907,15 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-inspector-test-tool", Button).disabled = False
         except NoMatches:
             pass
+
+    @property
+    def test_panel_token(self) -> object | None:
+        """Identify the live form, invalidated before asynchronous removal.
+
+        Returns:
+            The opaque form identity, or None while no current form is open.
+        """
+        return self._test_panel_token
 
     @property
     def current_permission_tool(self) -> HubTool | None:
@@ -3675,6 +3740,7 @@ class MCPInspector(Vertical):
                     tool.server_key,
                     tool.name,
                     self._current_tool_profile_context,
+                    panel_token=self._test_panel_token,
                 )
             )
             return

@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+4.60s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_tool_inspector_reveals_focused_actions_and_arguments[size0]
+4.56s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_tool_inspector_reveals_focused_actions_and_arguments[size1]
+
+(4 durations < 1s hidden.)
+2 passed, 11 deselected in 11.44s

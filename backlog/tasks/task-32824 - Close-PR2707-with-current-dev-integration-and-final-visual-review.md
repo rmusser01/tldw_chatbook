@@ -1,11 +1,11 @@
 ---
 id: TASK-32824
 title: Close PR2707 with current dev integration and final visual review
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-18 21:53'
-updated_date: '2026-09-18 23:22'
+updated_date: '2026-09-18 23:55'
 labels:
   - ui
   - design-system
@@ -23,7 +23,7 @@ Close the existing PR at its approved scope boundary, verify current dev integra
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Unfinished inspector work is safely preserved outside PR2707 and remaining destination reviews are explicitly deferred without becoming closeout blockers.
-- [ ] #2 Current dev is integrated with an exact conflict-resolution record; targeted affected checks and current-head CI are reviewed with any remaining failures identified.
+- [x] #2 Current dev is integrated with an exact conflict-resolution record; targeted affected checks and current-head CI are reviewed with any remaining failures identified.
 - [x] #3 A concrete final visual and conflict review identifies the proposed merge result; PR remains unmerged until this review receives user approval.
 - [x] #4 Qodo review findings are resolved with bounded complete-catalog Persona navigation, retained selected identities, documented public contracts and targeted evidence before the authorized merge.
 <!-- AC:END -->
@@ -37,5 +37,5 @@ ADR required: no. ADR path: backlog/decisions/079-workspace-assistant-defaults.m
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Preserved TASK32823 separately at 135f226888. Rebased onto latest dev53b56384cc; retained both testing lessons and recomputed combined diagnostic counts, then restored merge-only composer tests. Rebased tree654e39956b18 matched the visually approved tree exactly. Addressed all ten Qodo findings: nine documented API groups are executable-AST equivalent; both Persona pickers use finite pages with selected identity retained, and the service normalizes only the requested page. Native QA caught clipped compact actions; added visible-region regression, constrained the form and kept errors/actions outside its scroller.59 distinct targeted cases pass, including final22 UI/governance checks. Seven preflight guards and scoped lint pass; generated CSS reverified after final layout correction. Twenty final native captures inspected across dark/light and compact/wide, clean exit0,11 healthy private databases, matching source hashes and unchanged defaults. Independent review found no blocker. ADR required:no, existing ADR079/139/150/161 apply. QA: Docs/superpowers/qa/2026-09-18-pr-2707-qodo/README.md. User approved merge; final pushed-head Qodo/CI qualification remains pending.
+Preserved TASK32823 separately at 135f226888. Rebased onto latest dev53b56384cc; retained both testing lessons and recomputed combined diagnostic counts, then restored merge-only composer tests. Rebased tree654e39956b18 matched the visually approved tree exactly. Addressed all ten Qodo findings: nine documented API groups are executable-AST equivalent; both Persona pickers use finite pages with selected identity retained, and the service normalizes only the requested page. Native QA caught clipped compact actions; added visible-region regression, constrained the form and kept errors/actions outside its scroller.59 distinct targeted cases pass, including final22 UI/governance checks. Seven preflight guards and scoped lint pass; generated CSS reverified after final layout correction. Twenty final native captures inspected across dark/light and compact/wide, clean exit0,11 healthy private databases, matching source hashes and unchanged defaults. Independent review found no blocker. ADR required:no, existing ADR079/139/150/161 apply. QA: Docs/superpowers/qa/2026-09-18-pr-2707-qodo/README.md. User approved merge. All ten Qodo findings and review threads are resolved; all 11 applicable current-head Actions checks passed on 2ac5d7aab6. Squash-merged into dev at 149acda36be8939fe8cd5e589bf77d13462257e7 on 2026-09-18 23:53:55 UTC. Fetched dev has the exact qualified tree. Resumed TASK32823 on fresh codex/mcp-inspector-refresh-review by cherry-picking the preserved investigation; backup heartbeat paused.
 <!-- SECTION:NOTES:END -->
