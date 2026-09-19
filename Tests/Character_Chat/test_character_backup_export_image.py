@@ -10,7 +10,7 @@
 so the backup crashed with ``TypeError: Object of type ... is not JSON
 serializable``. These tests pin the serialization helper the worker now
 uses: raw BLOB replaced by a plain-base64 ``image_base64`` string (the
-`Chat_Functions.load_characters` compatibility shape -- deliberately NOT a
+character-card import compatibility shape -- deliberately NOT a
 data-URI, because the import chain b64decodes the raw string), datetimes
 as ISO strings, and a full export -> re-import round trip that restores the
 image byte-for-byte.
