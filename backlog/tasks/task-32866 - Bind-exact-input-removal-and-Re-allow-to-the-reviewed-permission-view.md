@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 15:49'
-updated_date: '2026-09-19 16:10'
+updated_date: '2026-09-19 16:34'
 labels: []
 dependencies: []
 ---
@@ -22,6 +22,7 @@ Keep delayed permission controls tied to the displayed rule, profile and tool de
 - [x] #2 Re-allow refuses a tool definition changed since rendering and valid re-allow still clears the downgrade.
 - [x] #3 Failed actions remain retryable; successful completion never overwrites a newer permission selection.
 - [x] #4 Targeted regressions, independent review and disposable native dark/light evidence verify the existing permission model and presentation.
+- [x] #5 The native QA entry point validates its CLI and output root before startup, and public permission refresh/retry methods document all inputs and view-token semantics.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -30,9 +31,10 @@ Keep delayed permission controls tied to the displayed rule, profile and tool de
 1. Reproduce delayed/repeated Remove and Re-allow presses, definition drift and late completion using mounted inspector and private permission-store fixtures.
 2. Capture mounted control targets and reviewed definition fingerprints, consume each control once, and guard refresh/retry by the originating view.
 3. Run targeted checks and independent review; verify both actions in the native app at both supported review sizes/themes with disposable state, then save a draft stacked on PR2731.
+4. Reuse the parent QA boundary for Qodo CLI/path findings, document all refresh/retry parameters without behavior changes, and verify the runner and native replay before CI closeout.
 ADR required: no
 ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md; backlog/decisions/150-design-token-system-and-design-language.md
-Reason: routine UI ownership repair under existing permission and design boundaries; no new persistence, permission policy or service contract.
+Reason: routine UI ownership repair and QA/documentation fixes under existing permission and design boundaries; no new persistence, permission policy or service contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -47,4 +49,6 @@ Twelve inspected native captures cover keyboard Remove and Re-allow at 120x40 an
 Evidence: Docs/superpowers/qa/2026-09-19-mcp-rule-actions/README.md and GALLERY.md. Both review ledgers updated; lessons-testing-evidence.md records the reproduced cached-fingerprint trap. Fresh all-ref/worktree census and sole-owner/history checks validate TASK-32866.
 
 ADR required: no new ADR. Existing backlog/decisions/032-local-agent-tool-permission-boundary.md and backlog/decisions/150-design-token-system-and-design-language.md govern the repair. Save a separate draft stacked on PR2731 (6de5273903) because the renderer is shared. Current-head CI/review and owner visual approval remain merge gates. Other permission controls and connected runtime journeys remain outside scope.
+
+PR2734 Qodo follow-up: reuse the validated shared native QA boundary from parent edc59b2094, with safe temporary roots, unused outputs, exact CLI shape and portable tmux discovery. Document every show_permission/retry_permission_action parameter and None/identity/fingerprint semantics. AST comparison proves no executable inspector changes. All 28 QA boundary cases pass after seven child-runner failures were reproduced; independent review finds no blocker. Fresh native replay passes four cells/twelve captures and lifecycle checks. Seven derived guards pass; Ruff adds no diagnostics. The complete approved permission stack also passed all 56 targeted tests and seven guards on a clean local merge with dev d7537cbb65. No conflict choices or full sweep. Original approved receipts remain historical; qodo-followup/README.md records fresh evidence and finding dispositions. Owner approval received; current-head CI/review remain merge gates.
 <!-- SECTION:NOTES:END -->

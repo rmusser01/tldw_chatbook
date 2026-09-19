@@ -12,14 +12,22 @@ import traceback
 from pathlib import Path
 
 
-def main():
-    root = Path(sys.argv[1]).resolve()
-    tmux_socket, session = sys.argv[2:4]
+def main() -> None:
+    """Run ROOT TMUX_SOCKET SESSION in an existing native tmux session.
+
+    ROOT is an unused, prepared private profile under /tmp. Arguments, profile
+    paths and tmux availability are checked before app startup or output writes.
+    The run writes native.log, launch.json and evidence/ under ROOT. It exits 0
+    after a successful journey, 1 for a journey failure and 2 for invalid input.
+    """
     here = Path(__file__).resolve().parent
     repo = here.parents[3]
-    runpy.run_path(str(here.parent / "2026-09-16-ingest-lifecycle/native_check.py"))[
-        "validate_profile"
-    ](root)
+    sys.path.insert(0, str(repo))
+    args = runpy.run_path(str(here.parent / "native_runner_args.py"))[
+        "parse_native_args"
+    ]()
+    root, tmux_socket, session = args.root, args.tmux_socket, args.session
+    tmux_path = args.tmux_path
     os.environ.update(
         HOME=str(root / "home"),
         USERPROFILE=str(root / "home"),
@@ -39,7 +47,6 @@ def main():
         return original_connect(sock, address)
 
     socket.socket.connect = guard_connect
-    sys.path.insert(0, str(repo))
     from loguru import logger
     from textual.widgets import Button, DataTable
 
@@ -86,7 +93,7 @@ def main():
     async def tmux(*args):
         return await asyncio.to_thread(
             subprocess.run,
-            ["/opt/homebrew/bin/tmux", "-L", tmux_socket, *args],
+            [tmux_path, "-L", tmux_socket, *args],
             check=True,
             text=True,
             capture_output=True,

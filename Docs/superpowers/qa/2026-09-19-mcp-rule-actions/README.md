@@ -9,8 +9,10 @@ Failures can be retried, and late completion cannot replace a newer selection.
 
 Branch `codex/mcp-rule-action-review` is stacked on PR2731 at `6de5273903` because
 the fixes share the permission renderer. No policy, storage, service API or styling
-changes. Existing ADR-032 and ADR-150 apply; no new ADR. Keep draft/unmerged pending
-current-head CI/review and owner visual approval.
+changes. Existing ADR-032 and ADR-150 apply; no new ADR. The owner approved the
+gallery and continuation; the PR is ready for review. Current-head CI and
+accumulated review remain merge gates. [Qodo follow-up](qodo-followup/README.md)
+records CLI/path hardening and parameter documentation with fresh native replay.
 
 ## Verification
 

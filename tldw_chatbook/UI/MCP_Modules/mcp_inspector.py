@@ -2397,6 +2397,24 @@ class MCPInspector(Vertical):
         matrix (`MCPWorkbench._build_permission_rows()`) -- `None` (the
         default) falls back to the pre-Task-3 single origin sentence.
         `expected_view` fences an action completion against navigation or refresh.
+
+        Args:
+            tool: Tool whose permission rule is displayed, or None to clear
+                the permission block.
+            effective: Resolved state for the displayed tool, or None to clear
+                the block even when a tool is supplied.
+            cascade: Raw tool, server and global policy values, or None to
+                display the single effective-origin explanation.
+            profile_context: Reviewed profile identity and epoch captured by
+                the controls, or None when no reviewed context is available.
+            arg_rules: Exact-input rule records applicable to this tool.
+            session_approvals: Live grants in the reviewed profile, represented
+                as (server_key, tool_name) pairs.
+            expected_view: Originating view token for an action completion.
+                It must match the current token by identity after locking;
+                otherwise this call does nothing. None means an unconditional
+                fresh selection. A matching token preserves the previously
+                reviewed definition fingerprint.
         """
         async with self._refresh_lock:
             if expected_view is not None and expected_view is not self._permission_view:
@@ -2415,7 +2433,14 @@ class MCPInspector(Vertical):
             )
 
     async def retry_permission_action(self, permission_view: object | None) -> None:
-        """Restore usable controls after a failed write if its view still owns them."""
+        """Restore usable controls after a failed write if its view still owns them.
+
+        Args:
+            permission_view: View token captured by the failed action. Only
+                identity with the current token after locking permits a retry
+                render. None or an obsolete token does nothing. The render
+                preserves the cached selection and reviewed definition hash.
+        """
         async with self._refresh_lock:
             if permission_view is not self._permission_view:
                 return
