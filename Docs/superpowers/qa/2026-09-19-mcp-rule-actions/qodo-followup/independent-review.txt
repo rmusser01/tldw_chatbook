@@ -1,0 +1,1 @@
+Read-only review: no integration blockers. Runner validates before startup/output and uses discovered tmux. Docs accurately describe None, identity checks after locking, and fingerprint preservation. Malformed CLI coverage includes both runners. No tests/apps run by reviewer.

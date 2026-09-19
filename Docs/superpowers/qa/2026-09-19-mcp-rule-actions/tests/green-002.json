@@ -1,0 +1,148 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[same-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[same-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[reorder-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[reorder-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[tool-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[tool-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[profile-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[profile-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[clear-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[clear-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[roundtrip-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[roundtrip-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_live_permission_controls_are_consumed_once_with_the_displayed_target[remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_live_permission_controls_are_consumed_once_with_the_displayed_target[reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[description]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[schema]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_failed_permission_action_is_retryable[remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_failed_permission_action_is_retryable[reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[tool-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[tool-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[clear-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[clear-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[roundtrip-remove]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[roundtrip-reallow]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[retry]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[session]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[reorder]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[replace]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[profile]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[clear]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[same]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_invalid_as_soon_as_permission_replacement_starts",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_failed_revoke_can_be_retried_without_reselecting_the_tool",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_older_revoke_refresh_preserves_a_newer_profiles_listing",
+      "status": "passed"
+    }
+  ]
+}

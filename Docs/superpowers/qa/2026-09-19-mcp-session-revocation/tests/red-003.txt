@@ -1,0 +1,172 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_________ test_older_revoke_refresh_preserves_a_newer_profiles_listing _________
+
+self = <Coroutine test_older_revoke_refresh_preserves_a_newer_profiles_listing>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_older_revoke_refresh_preserves_a_newer_profiles_listing>>, 'tmp_path':.../pytest-3166/test_older_revoke_refresh_pres0'), 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a687cb0>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3166/test_older_revoke_refresh_pres0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________ test_older_revoke_refresh_preserves_a_newer_profiles_listing _________
+E
+E           request = <FixtureRequest for <Coroutine test_older_revoke_refresh_preserves_a_newer_profiles_listing>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3166/test_older_revoke_refresh_pres0/private-profile-process/pytest/test_older_revoke_refresh_pres0')
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ac14d70>
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_older_revoke_refresh_preserves_a_newer_profiles_listing(request, tmp_path, monkeypatch):
+E                   app = PermissionsApp(tmp_path / "permissions.json")
+E                   service = app.unified_mcp_service
+E                   service.session_approvals.update(("default", *grant) for grant in GRANTS)
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       workbench, inspector = await open_permissions(app, pilot)
+E                       context = workbench._tool_policy_profile_context
+E                       entered, release = asyncio.Event(), asyncio.Event()
+E                       original = workbench._sync_permissions_mode
+E
+E                       async def held_sync():
+E                           entered.set()
+E                           await release.wait()
+E                           await original()
+E
+E                       monkeypatch.setattr(workbench, "_sync_permissions_mode", held_sync)
+E                       revoke = asyncio.create_task(workbench.on_mcp_inspector_revoke_session_approval_requested(
+E                           MCPInspector.RevokeSessionApprovalRequested("agent:builtin", "calculator", context)
+E                       ))
+E                       other = PermissionProfileContext("other", 8, "c" * 64, 4)
+E                       try:
+E                           await asyncio.wait_for(entered.wait(), 2)
+E                           await show(inspector, [("local:files", "read")], other)
+E                       finally:
+E                           release.set()
+E                           await revoke
+E                       await pilot.pause()
+E           >           assert inspector._current_permission_session_approvals == [("local:files", "read")]
+E           E           AssertionError: assert [('local:docs', 'search')] == [('local:files', 'read')]
+E           E
+E           E             At index 0 diff: ('local:docs', 'search') != ('local:files', 'read')
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:219: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:33:14.421 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:33:14.516 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:33:14.558 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:33:14.558 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:33:14.559 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:33:14.669 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:33:14.927 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-19 08:33:15.478 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'PermissionsHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           1.11s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_older_revoke_refresh_preserves_a_newer_profiles_listing
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_older_revoke_refresh_preserves_a_newer_profiles_listing
+E           1 failed in 2.32s
+
+Tests/private_profile.py:84: Failed
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a934ff34-16c9-4444-83ef-5e316c74ca1d/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a934ff34-16c9-4444-83ef-5e316c74ca1d/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a934ff34-16c9-4444-83ef-5e316c74ca1d
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a934ff34-16c9-4444-83ef-5e316c74ca1d'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+3.22s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_failed_revoke_can_be_retried_without_reselecting_the_tool
+2.96s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_older_revoke_refresh_preserves_a_newer_profiles_listing
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_older_revoke_refresh_preserves_a_newer_profiles_listing
+1 failed, 1 passed, 2 warnings in 7.05s

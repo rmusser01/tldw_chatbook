@@ -46,6 +46,7 @@ from tldw_chatbook.MCP.local_runtime_delegate import (
 from tldw_chatbook.MCP.permission_store import (
     HIGH_RISK_TAGS,
     EffectiveToolState,
+    definition_hash,
 )
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
@@ -1170,7 +1171,8 @@ class MCPInspector(Vertical):
         downgraded tool's permission block (`#mcp-inspector-reallow`, only
         ever mounted for that downgrade -- see
         `_render_permission_container()`). `MCPWorkbench` resolves the
-        live `HubTool` and calls `set_tool_state(..., "allow", tool=tool)`
+        live `HubTool`, verifies its rendered definition fingerprint, and
+        calls `set_tool_state(..., "allow", tool=tool)`
         (T4), which stores the tool's CURRENT definition hash and clears
         the rug-pull downgrade -- then resyncs the Permissions matrix (its
         ⚠ marker clears)."""
@@ -1180,11 +1182,16 @@ class MCPInspector(Vertical):
             server_key: str,
             tool_name: str,
             profile_context: PermissionProfileContext | None = None,
+            *,
+            reviewed_definition_hash: str | None = None,
+            permission_view: object | None = None,
         ) -> None:
             super().__init__()
             self.server_key = server_key
             self.tool_name = tool_name
             self.profile_context = profile_context
+            self.reviewed_definition_hash = reviewed_definition_hash
+            self.permission_view = permission_view
 
     class RemoveArgRuleRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses Remove on one exact-input allow
@@ -1211,6 +1218,8 @@ class MCPInspector(Vertical):
             rule_id: str,
             profile_context: PermissionProfileContext | None = None,
             owner_profile_id: str | None = None,
+            *,
+            permission_view: object | None = None,
         ) -> None:
             super().__init__()
             self.server_key = server_key
@@ -1218,6 +1227,7 @@ class MCPInspector(Vertical):
             self.rule_id = rule_id
             self.profile_context = profile_context
             self.owner_profile_id = owner_profile_id
+            self.permission_view = permission_view
 
     class RevokeSessionApprovalRequested(Message, namespace="mcp_inspector"):
         """Posted when the user presses Revoke on one session-approval row
@@ -1369,10 +1379,20 @@ class MCPInspector(Vertical):
         # button's press handler (below) to resolve the pressed row's
         # `rule_id` for `RemoveArgRuleRequested` without re-fetching.
         self._current_permission_arg_rules: list[Mapping[str, Any]] = []
-        # task-32291: index-aligned with the session-approval rows this
-        # block last rendered, so a Revoke press resolves its own entry
-        # without re-fetching.
+        # Retain the listing for refresh; action ownership uses the actual
+        # mounted control, never a row index that a refresh may reuse.
         self._current_permission_session_approvals: list[tuple[str, str]] = []
+        self._permission_view = object()
+        self._current_permission_definition_hash: str | None = None
+        self._permission_actions: dict[
+            Button, MCPInspector.ReallowRequested | MCPInspector.RemoveArgRuleRequested
+        ] = {}
+        self._session_approval_actions: dict[
+            Button, tuple[str, str, PermissionProfileContext | None]
+        ] = {}
+        self._permission_navigation: dict[
+            Button, tuple[str, str, PermissionProfileContext | None]
+        ] = {}
         # task-32291: the rest of the block's own inputs, cached so
         # `refresh_permission_session_approvals()` can re-render EXACTLY
         # what is on screen with a fresh listing -- the caller would
@@ -1386,12 +1406,14 @@ class MCPInspector(Vertical):
         self._current_permission_goto = False
         # T7 (MCP Hub Phase 5): the raw execution-log entry dict
         # `#mcp-inspector-audit` currently describes, or `None` when
-        # hidden -- set by `show_audit_entry()`, the single writer. Read by
-        # the "Open tool"/"Adjust permission" button press handlers below
-        # to know which `(server_key, tool_name)` to post without
-        # re-querying the workbench.
+        # hidden -- set by `show_audit_entry()`, the single writer. Actions
+        # bind the rendered identity to their own controls instead of reading
+        # this mutable entry when a delayed press is delivered.
         self._current_audit_entry: dict[str, Any] | None = None
         self._current_audit_profile_context: PermissionProfileContext | None = None
+        self._audit_action_targets: dict[
+            Button, tuple[str, str, PermissionProfileContext | None]
+        ] = {}
         # T8 (MCP Hub Phase 5): the raw finding dict `#mcp-inspector-
         # finding` currently describes, or `None` when hidden -- set by
         # `show_finding()`, the single writer. No action buttons read this
@@ -1965,6 +1987,9 @@ class MCPInspector(Vertical):
         previous tool's permission facts on screen.
         """
         async with self._refresh_lock:
+            # Both jump controls belong to the view being retired, including
+            # the permission block that is pruned later in this refresh.
+            self._permission_navigation.clear()
             self._current_tool = tool
             self._current_tool_profile_context = (
                 profile_context if tool is not None else None
@@ -2087,6 +2112,7 @@ class MCPInspector(Vertical):
         show_goto_button: bool = False,
         arg_rules: Sequence[Mapping[str, Any]] = (),
         session_approvals: Sequence[tuple[str, str]] = (),
+        reviewed_definition_hash: str | None = None,
     ) -> None:
         """Rebuild `#mcp-inspector-permission` for one tool's resolved
         permission state, or hide it.
@@ -2123,7 +2149,15 @@ class MCPInspector(Vertical):
         were, until this group, invisible everywhere, so any open permission
         block is a place to find and drop them.
         """
+        # Capture before yielding; cached refreshes retain the original review.
+        if tool is not None and reviewed_definition_hash is None:
+            reviewed_definition_hash = definition_hash(tool.description, tool.input_schema)
+        self._current_permission_definition_hash = reviewed_definition_hash
         container = self.query_one("#mcp-inspector-permission", Vertical)
+        self._retire_permission_navigation("mcp-inspector-goto-permission")
+        self._session_approval_actions.clear()
+        self._permission_actions.clear()
+        self._permission_view = object()
         await container.remove_children()
         if tool is None or effective is None:
             container.display = False
@@ -2212,15 +2246,21 @@ class MCPInspector(Vertical):
                     markup=False,
                 )
             )
-            widgets.append(
-                Button(
-                    "Re-allow",
-                    id="mcp-inspector-reallow",
-                    classes="console-action-primary",
-                    compact=True,
-                    tooltip=_REALLOW_TOOLTIP,
-                )
+            button = Button(
+                "Re-allow",
+                id="mcp-inspector-reallow",
+                classes="console-action-primary",
+                compact=True,
+                tooltip=_REALLOW_TOOLTIP,
             )
+            self._permission_actions[button] = self.ReallowRequested(
+                tool.server_key,
+                tool.name,
+                self._current_permission_profile_context,
+                reviewed_definition_hash=reviewed_definition_hash,
+                permission_view=self._permission_view,
+            )
+            widgets.append(button)
         elif effective.risk_floored:
             widgets.append(
                 Static(
@@ -2231,9 +2271,8 @@ class MCPInspector(Vertical):
                 )
             )
         # task-32281 AC#1: one row per stored exact-input allow rule --
-        # a Static summary plus its own Remove button, index-aligned with
-        # `self._current_permission_arg_rules` so the press handler below
-        # can resolve `rule_id` without re-fetching.
+        # a Static summary plus its own Remove button. Capture the target
+        # now; reused row IDs cannot identify a queued gesture's rule.
         # R22: `permission_store.arg_rule_allows` refuses outright for a
         # tool whose tags intersect `HIGH_RISK_TAGS`, so a rule stored
         # against one is inert -- say so on the row instead of listing it
@@ -2272,15 +2311,26 @@ class MCPInspector(Vertical):
                     markup=False,
                 )
             )
-            widgets.append(
-                Button(
-                    "Remove",
-                    id=f"mcp-inspector-arg-rule-remove-{index}",
-                    classes="console-action-secondary",
-                    compact=True,
-                    tooltip=_ARG_RULE_REMOVE_TOOLTIP,
-                )
+            button = Button(
+                "Remove",
+                id=f"mcp-inspector-arg-rule-remove-{index}",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip=_ARG_RULE_REMOVE_TOOLTIP,
             )
+            rule_id = rule.get("rule_id")
+            if isinstance(rule_id, str) and rule_id:
+                self._permission_actions[button] = self.RemoveArgRuleRequested(
+                    tool.server_key,
+                    tool.name,
+                    rule_id,
+                    self._current_permission_profile_context,
+                    owner if isinstance(owner, str) and owner else None,
+                    permission_view=self._permission_view,
+                )
+            else:
+                button.disabled = True
+            widgets.append(button)
         # task-32291 AC#1: the live session grants, listed with a per-row
         # Revoke -- same index-aligned shape as the arg-rule rows above.
         if self._current_permission_session_approvals:
@@ -2303,36 +2353,43 @@ class MCPInspector(Vertical):
                     markup=False,
                 )
             )
-            widgets.append(
-                Button(
-                    "Revoke",
-                    id=f"mcp-inspector-session-approval-revoke-{index}",
-                    classes="console-action-secondary",
-                    compact=True,
-                    tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
-                )
+            button = Button(
+                "Revoke",
+                id=f"mcp-inspector-session-approval-revoke-{index}",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
             )
+            self._session_approval_actions[button] = (
+                server_key, tool_name, self._current_permission_profile_context
+            )
+            widgets.append(button)
         if show_goto_button:
-            widgets.append(
-                Button(
-                    "Change in Permissions",
-                    id="mcp-inspector-goto-permission",
-                    classes="console-action-secondary",
-                    compact=True,
-                    tooltip=_GOTO_PERMISSION_TOOLTIP,
-                )
+            button = Button(
+                "Change in Permissions",
+                id="mcp-inspector-goto-permission",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip=_GOTO_PERMISSION_TOOLTIP,
             )
+            self._permission_navigation[button] = (
+                tool.server_key,
+                tool.name,
+                self._current_permission_profile_context,
+            )
+            widgets.append(button)
         await container.mount_all(widgets)
 
     async def show_permission(
         self,
-        tool: HubTool,
-        effective: EffectiveToolState,
+        tool: HubTool | None,
+        effective: EffectiveToolState | None,
         *,
         cascade: tuple[str | None, str | None, str] | None = None,
         profile_context: PermissionProfileContext | None = None,
         arg_rules: Sequence[Mapping[str, Any]] = (),
         session_approvals: Sequence[tuple[str, str]] = (),
+        expected_view: object | None = None,
     ) -> None:
         """Render `#mcp-inspector-permission` standalone -- Permissions-mode's
         matrix tool-row selection entry point
@@ -2352,8 +2409,29 @@ class MCPInspector(Vertical):
         workbench already derives per tool while building the Permissions
         matrix (`MCPWorkbench._build_permission_rows()`) -- `None` (the
         default) falls back to the pre-Task-3 single origin sentence.
+        `expected_view` fences an action completion against navigation or refresh.
+
+        Args:
+            tool: Tool whose permission rule is displayed, or None to clear
+                the permission block.
+            effective: Resolved state for the displayed tool, or None to clear
+                the block even when a tool is supplied.
+            cascade: Raw tool, server and global policy values, or None to
+                display the single effective-origin explanation.
+            profile_context: Reviewed profile identity and epoch captured by
+                the controls, or None when no reviewed context is available.
+            arg_rules: Exact-input rule records applicable to this tool.
+            session_approvals: Live grants in the reviewed profile, represented
+                as (server_key, tool_name) pairs.
+            expected_view: Originating view token for an action completion.
+                It must match the current token by identity after locking;
+                otherwise this call does nothing. None means an unconditional
+                fresh selection. A matching token preserves the previously
+                reviewed definition fingerprint.
         """
         async with self._refresh_lock:
+            if expected_view is not None and expected_view is not self._permission_view:
+                return
             self._current_permission_profile_context = profile_context
             await self._render_permission_container(
                 tool,
@@ -2361,10 +2439,39 @@ class MCPInspector(Vertical):
                 cascade=cascade,
                 arg_rules=arg_rules,
                 session_approvals=session_approvals,
+                reviewed_definition_hash=(
+                    self._current_permission_definition_hash
+                    if expected_view is not None else None
+                ),
+            )
+
+    async def retry_permission_action(self, permission_view: object | None) -> None:
+        """Restore usable controls after a failed write if its view still owns them.
+
+        Args:
+            permission_view: View token captured by the failed action. Only
+                identity with the current token after locking permits a retry
+                render. None or an obsolete token does nothing. The render
+                preserves the cached selection and reviewed definition hash.
+        """
+        async with self._refresh_lock:
+            if permission_view is not self._permission_view:
+                return
+            await self._render_permission_container(
+                self._current_permission_tool,
+                self._current_permission_effective,
+                cascade=self._current_permission_cascade,
+                show_goto_button=self._current_permission_goto,
+                reviewed_definition_hash=self._current_permission_definition_hash,
+                arg_rules=self._current_permission_arg_rules,
+                session_approvals=self._current_permission_session_approvals,
             )
 
     async def refresh_permission_session_approvals(
-        self, session_approvals: Sequence[tuple[str, str]]
+        self,
+        session_approvals: Sequence[tuple[str, str]],
+        *,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Re-render the OPEN permission block with a fresh session-approval
         listing (task-32291) -- `MCPWorkbench`'s revoke handler.
@@ -2389,13 +2496,18 @@ class MCPInspector(Vertical):
                 own identities, not this block's tool: the listing spans
                 the whole profile, and the order is what the mounted Revoke
                 buttons are index-aligned with. Empty clears the group.
+            profile_context: The profile whose grants were fetched. An older
+                completion must not replace another profile's displayed list.
         """
         async with self._refresh_lock:
+            if profile_context != self._current_permission_profile_context:
+                return
             await self._render_permission_container(
                 self._current_permission_tool,
                 self._current_permission_effective,
                 cascade=self._current_permission_cascade,
                 show_goto_button=self._current_permission_goto,
+                reviewed_definition_hash=self._current_permission_definition_hash,
                 arg_rules=list(self._current_permission_arg_rules),
                 session_approvals=session_approvals,
             )
@@ -2421,9 +2533,15 @@ class MCPInspector(Vertical):
         metadata-only public schema. It contains categories, types, counts,
         and registered argument names, never argument values, result excerpts,
         or exception text.
+
+        Args:
+            entry: Metadata-only execution record to display, or None to clear it.
+            profile_context: Permission profile captured for this record's actions.
         """
         async with self._refresh_lock:
             container = self.query_one("#mcp-inspector-audit", Vertical)
+            # Invalidate retired controls before pruning yields to another task.
+            self._audit_action_targets.clear()
             await container.remove_children()
             if entry is None:
                 container.display = False
@@ -2469,6 +2587,11 @@ class MCPInspector(Vertical):
                     tooltip="Switch to Permissions mode and select this tool's row.",
                 ),
             ]
+            self._audit_action_targets = {
+                widget: (server_key, tool_name, profile_context)
+                for widget in widgets
+                if isinstance(widget, Button)
+            }
             await container.mount_all(widgets)
 
     async def show_finding(
@@ -2652,7 +2775,9 @@ class MCPInspector(Vertical):
             # once (this same tool selected, its permission block shown
             # below the detail, AND this panel open), and `query_one`
             # requires a unique id across the whole subtree.
-            self._build_test_goto_permission_button(),
+            self._build_test_goto_permission_button(
+                tool, self._current_tool_profile_context
+            ),
             id="mcp-inspector-test-panel",
         )
         await container.mount(panel)
@@ -2694,14 +2819,26 @@ class MCPInspector(Vertical):
         if self.query("#mcp-inspector-test-panel"):
             await self._close_test_tool_panel()
 
-    @staticmethod
-    def _build_test_goto_permission_button() -> Button:
+    def _retire_permission_navigation(self, button_id: str) -> None:
+        """Invalidate an owning view's controls before asynchronous removal."""
+        for button in list(self._permission_navigation):
+            if button.id == button_id:
+                del self._permission_navigation[button]
+
+    def _build_test_goto_permission_button(
+        self, tool: HubTool, profile_context: PermissionProfileContext | None
+    ) -> Button:
         button = Button(
             "Change in Permissions",
             id="mcp-inspector-goto-permission-test",
             classes="console-action-secondary",
             compact=True,
             tooltip=_GOTO_PERMISSION_TOOLTIP,
+        )
+        self._permission_navigation[button] = (
+            tool.server_key,
+            tool.name,
+            profile_context,
         )
         button.display = False
         return button
@@ -2804,6 +2941,7 @@ class MCPInspector(Vertical):
         return "opened"
 
     async def _close_test_tool_panel(self) -> None:
+        self._retire_permission_navigation("mcp-inspector-goto-permission-test")
         nonce = self.clear_test_preview()
         if nonce:
             self.post_message(self.ToolTestPreviewRevocationRequested(nonce))
@@ -3566,6 +3704,11 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-adv-result", Static).update("")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch inspector actions, validating control ownership where required.
+
+        Args:
+            event: Button press carrying the actual control that issued the action.
+        """
         button_id = event.button.id or ""
         if button_id == "mcp-inspector-advanced-reveal":
             event.stop()
@@ -3654,122 +3797,69 @@ class MCPInspector(Vertical):
                 exclusive=True,
             )
             return
-        if button_id == "mcp-inspector-reallow":
+        if button_id == "mcp-inspector-reallow" or button_id.startswith(
+            "mcp-inspector-arg-rule-remove-"
+        ):
             event.stop()
-            tool = self._current_permission_tool
-            if tool is not None:
-                self.post_message(
-                    self.ReallowRequested(
-                        tool.server_key,
-                        tool.name,
-                        self._current_permission_profile_context,
-                    )
-                )
-            return
-        if button_id.startswith("mcp-inspector-arg-rule-remove-"):
-            # task-32281: one Remove button per exact-input allow rule row,
-            # index-aligned with `_current_permission_arg_rules` (the SAME
-            # list `_render_permission_container()` just rendered from).
-            event.stop()
-            tool = self._current_permission_tool
-            if tool is None:
+            action = self._permission_actions.pop(event.button, None)
+            if action is None or not event.button.is_attached:
                 return
-            try:
-                index = int(button_id.rsplit("-", 1)[-1])
-                rule = self._current_permission_arg_rules[index]
-            except (ValueError, IndexError):
-                return
-            rule_id = rule.get("rule_id")
-            if not isinstance(rule_id, str) or not rule_id:
-                return
-            owner = rule.get("profile_id")
-            self.post_message(
-                self.RemoveArgRuleRequested(
-                    tool.server_key,
-                    tool.name,
-                    rule_id,
-                    self._current_permission_profile_context,
-                    # Qodo #2597 #1: delete where the rule actually LIVES.
-                    owner if isinstance(owner, str) and owner else None,
-                )
-            )
+            event.button.disabled = True
+            self.post_message(action)
             return
         if button_id.startswith("mcp-inspector-session-approval-revoke-"):
-            # task-32291: one Revoke per live session grant, index-aligned
-            # with `_current_permission_session_approvals`. The entry's own
-            # (server_key, tool_name) travels -- NOT the block's tool, which
-            # is usually a different one.
             event.stop()
-            try:
-                index = int(button_id.rsplit("-", 1)[-1])
-                server_key, tool_name = self._current_permission_session_approvals[
-                    index
-                ]
-            except (ValueError, IndexError):
+            action = self._session_approval_actions.pop(event.button, None)
+            if action is None or not event.button.is_attached:
                 return
+            server_key, tool_name, profile_context = action
+            event.button.disabled = True
             self.post_message(
                 self.RevokeSessionApprovalRequested(
                     server_key,
                     tool_name,
-                    self._current_permission_profile_context,
+                    profile_context,
                 )
             )
             return
-        if button_id == "mcp-inspector-goto-permission":
-            # Task 3: the Tools-mode permission block's own jump button --
-            # `_current_permission_tool` is the SAME tool `show_tool()`'s
-            # `effective` block is currently describing (set by
-            # `_render_permission_container()`, this button's own mount
-            # site).
+        if button_id in {
+            "mcp-inspector-goto-permission",
+            "mcp-inspector-goto-permission-test",
+        }:
             event.stop()
-            tool = self._current_permission_tool
-            if tool is not None:
-                self.post_message(
-                    self.ChangeInPermissionsRequested(
-                        tool.server_key,
-                        tool.name,
-                        self._current_permission_profile_context,
-                    )
-                )
+            target = self._permission_navigation.get(event.button)
+            if (
+                target is None
+                or not event.button.is_attached
+                or not event.button.display
+                or not event.button.visible
+                or any(not parent.display for parent in event.button.ancestors)
+                or event.button.is_disabled
+                or event.button.screen is not self.app.screen
+            ):
+                return
+            # Navigation stays retryable; each live press gets a fresh message.
+            self.post_message(self.ChangeInPermissionsRequested(*target))
             return
-        if button_id == "mcp-inspector-goto-permission-test":
-            # Task 3: the Test Tool panel's own jump button -- always
-            # describes `_current_tool` (the panel only ever exists for that
-            # tool; see `_mount_test_tool_panel()`).
+        if button_id in {"mcp-audit-open-tool", "mcp-audit-adjust-permission"}:
             event.stop()
-            tool = self._current_tool
-            if tool is not None:
-                self.post_message(
-                    self.ChangeInPermissionsRequested(
-                        tool.server_key,
-                        tool.name,
-                        self._current_tool_profile_context,
-                    )
-                )
-            return
-        if button_id == "mcp-audit-open-tool":
-            event.stop()
-            entry = self._current_audit_entry
-            if entry is not None:
-                self.post_message(
-                    self.AuditOpenToolRequested(
-                        str(entry.get("server_key") or ""),
-                        str(entry.get("tool_name") or ""),
-                        self._current_audit_profile_context,
-                    )
-                )
-            return
-        if button_id == "mcp-audit-adjust-permission":
-            event.stop()
-            entry = self._current_audit_entry
-            if entry is not None:
-                self.post_message(
-                    self.AuditAdjustPermissionRequested(
-                        str(entry.get("server_key") or ""),
-                        str(entry.get("tool_name") or ""),
-                        self._current_audit_profile_context,
-                    )
-                )
+            target = self._audit_action_targets.get(event.button)
+            if (
+                target is None
+                or not event.button.is_attached
+                or not event.button.display
+                or not event.button.visible
+                or any(not parent.display for parent in event.button.ancestors)
+                or event.button.is_disabled
+                or event.button.screen is not self.app.screen
+            ):
+                return
+            request = (
+                self.AuditOpenToolRequested
+                if button_id == "mcp-audit-open-tool"
+                else self.AuditAdjustPermissionRequested
+            )
+            self.post_message(request(*target))
             return
         if button_id.startswith("mcp-finding-action-"):
             event.stop()

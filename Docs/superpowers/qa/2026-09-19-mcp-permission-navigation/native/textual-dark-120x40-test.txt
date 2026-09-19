@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││                                                     ││                               │
+│ Source                       ││  Root: local MCP serving and Hub tests. Blank       ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  uses the serving process's current folder.         ││  Why · Off — enable it to     │
+│ ▊  Local                ▼  ▎ ││  Console uses Chat scratch and admitted Workspace   ││  let MCP clients use          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  folders.                                           ││  chatbook's tools.            │
+│                              ││                                                     ││  Add server                   │
+│ Servers                      ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▆ ││  search — review-docs         │
+│  ◌ stale · ◦ off · ⌂         ││  ▊  Filter tools…   ▎▊  All servers          ▼  ▎   ││                               │
+│  built-in                    ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  Search the disposable        │
+│    All servers               ││                                                     ││  review catalog.              │
+│  ◦ ⌂ tldw_chatbook (bu…      ││  Tool                                  State  Se    ││  Tags: —                      │
+│                              ││  watchlists_list_sources               Ask    Lo    ││                               │
+│  ◌ review-docs            1  ││  watchlists_search_items               Ask    Lo    ││  Parameters: form             │
+│                              ││  watchlists_set_briefing_schedule      Ask    Lo    ││                               │
+│                              ││  watchlists_update_collection_sources  Ask    Lo    ││  Stale — not currently        │
+│                              ││  web_crawl                             Ask    Lo    ││  connected.                   │
+│                              ││  web_fetch                             Ask    Lo    ││    Test Tool                  │
+│                              ││  web_search                            Ask    Lo    ││  Blocked by Permissions.      │
+│                              ││  shell_exec                            Ask    Ra    ││  Change this tool from Off    │
+│                              ││  cat                                   Ask    Vi    ││  to run it.                   │
+│                              ││  find                                  Ask    Vi    ││     Blocked                   │
+│                              ││  git_blame                             Ask    Vi    ││      Close                    │
+│                              ││  git_branches                          Ask    Vi    ││                               │
+│                              ││  git_diff                              Ask    Vi    ││                               │
+│                              ││  git_log                               Ask    Vi▅▅  ││  Change in Permissions        │
+│                              ││  git_status                            Ask    Vi    ││                               │
+│                              ││  grep                                  Ask    Vi    ││                               │
+│                              ││  ls                                    Ask    Vi    ││                               │
+│                              ││  stat                                  Ask    Vi    ││                               │
+│                              ││  search                                Off •  re    ││                               │
+│                              ││                           ▎                         ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

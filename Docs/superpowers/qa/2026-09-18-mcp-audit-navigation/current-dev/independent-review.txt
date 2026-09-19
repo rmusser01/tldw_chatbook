@@ -1,0 +1,4 @@
+Read-only review by mcp_server_action_review of PR2724 working tree against dev 29b0a31df4701160a3c805e1bf490c76b9353964.
+No blockers found. Control identity/profile capture, unavailable-view rejection, retirement before pruning, repeatable navigation, and missing-row clearing are coherent and meaningfully covered. QA validation precedes app imports, and the socket guard restores in finally. No tests or apps run by reviewer. Same-ID catalog freshness remains outside this review.
+
+Supplemental review: no blockers in the fixture-only diff to the two existing inspector test functions (three cases). Assertions and parameterization are preserved; the existing process wrapper handles synchronous and asynchronous bodies.

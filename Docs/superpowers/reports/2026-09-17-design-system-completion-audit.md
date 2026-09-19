@@ -301,3 +301,103 @@ The initial compact failures and harness-only native selection failure remain
 in the receipt. This closes the label clipping retained by TASK-32793; broader
 MCP server lifecycles, execution and remaining destination review stay open.
 PR2707 remains draft/unmerged, subject to its own visual approval.
+
+## Post-merge continuation: session-grant revocation
+
+PR2707 has merged; earlier open-PR statements are historical checkpoints and the
+continuation heartbeat is paused. TASK-32865 is an independent follow-up from dev,
+separate from drafts PR2727/2728/2730. A queued Revoke now retains the displayed
+grant/profile, replaced controls are rejected, duplicate delivery is suppressed,
+failed revocation can be retried, and old completion cannot replace a newer list.
+
+[26 passing targeted checks and eight inspected native captures](../qa/2026-09-19-mcp-session-revocation/README.md)
+qualify this repair. All seven derived guards pass. Native uses the real in-memory
+service and runtime gate; the selected grant clears, other tool/profile grants
+survive and the next calculator gate check asks again. No tool is executed.
+Shutdown, released lock, private database health, unchanged defaults and source
+hashes are verified. The draft still requires current-head CI/review and final
+visual approval. Exact-input rule removal, Re-allow and connected-runtime review
+remain; the wider work stream is not complete.
+
+## Post-merge continuation: exact-input Remove and Re-allow
+
+TASK-32866 follows PR2731 on a separate stacked branch, `codex/mcp-rule-action-review`.
+Both controls now capture their mounted target and submit once; obsolete controls
+are rejected. Re-allow retains the reviewed definition fingerprint across cached
+refreshes, retry and successful completion. Late completion preserves newer
+selections, and failed writes remain retryable. Existing permission policy and
+layout are preserved.
+
+[56 passing targeted checks and twelve inspected native captures](../qa/2026-09-19-mcp-rule-actions/README.md)
+qualify this bounded repair in both themes at 120×40 and 170×48. Real private
+store/service writes remove only the selected rule and persist the reviewed
+definition; another profile's rule survives. No connection or tool execution.
+Seven preflight guards, unchanged static-analysis baseline, independent review,
+normal shutdown, lock release, database health and source hashes pass.
+Current-head CI/review and owner visual approval remain merge gates. Other
+permission controls, connected runtime journeys and the wider review remain open.
+
+## Tool permission navigation continuation — TASK-32867
+
+PR2731 (session Revoke) and PR2734 (exact-input Remove/Re-allow) are now merged
+into dev, at `7a695b5e73` and `6095db2f5f` respectively. This continuation starts
+from that merged state on `codex/mcp-navigation-action-review`.
+
+Both Tools inspector and Test Tool “Change in Permissions” controls now retain
+the displayed tool/profile and reject retired, hidden, disabled or covered-screen
+presses. Live navigation remains retryable. [75 targeted passing cases, independent
+review and twelve inspected native captures](../qa/2026-09-19-mcp-permission-navigation/README.md)
+verify the repair. Eight native keyboard routes select the expected permission row
+without changing its record; no server connects or tool executes. All seven
+preflight guards and private lifecycle checks pass.
+
+Audit navigation is already saved in PR2724 / TASK-32837; it was not duplicated.
+That existing draft currently conflicts with dev and still requires integration
+review. Other saved MCP drafts, connected-runtime journeys and remaining screen
+reviews stay open. This new repair is a separate draft against dev and requires
+current-head CI/review plus its own final owner visual approval before merge.
+
+## Post-merge Audit navigation review — TASK-32837
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`;
+its unmerged checkpoints above are historical. Component reviews resumed on
+separate branches, and the resume heartbeat is paused.
+
+TASK-32837 binds Audit actions to their displayed record/profile and honors
+missing destination rows. [64 targeted cases, seven preflight guards, independent
+review and 16 native dark/light captures](../qa/2026-09-18-mcp-audit-navigation/README.md)
+qualify this bounded repair. The fresh-dev branch does not include separate
+Audit selection/filter or inspector-guidance PRs. No tool execution, external
+server or permission mutation was part of its native journey. Current-head CI
+and final visual approval remain required before merging the follow-up.
+
+Next review: same-ID catalog replacement during an in-flight Audit drilldown.
+The [MCP ledger](2026-09-18-mcp-review.md) retains that and the wider scope; this
+repair does not close the component review workstream.
+
+## Current-dev Audit integration — PR2724 / TASK-32837
+
+PR2731, PR2734 and PR2740 are merged. Existing PR2724 now builds on dev
+`29b0a31df4701160a3c805e1bf490c76b9353964`; both report conflicts retained the
+merged history and Audit-specific notes. Product source merged automatically.
+Held Audit events now also reject unavailable controls/views. [145 targeted
+checks, independent review, seven preflight guards and 24 inspected native
+captures](../qa/2026-09-18-mcp-audit-navigation/README.md) qualify this bounded
+integration. Three older inspector cases use the existing process-isolation
+wrapper after setup-only profile-binding errors; their assertions are unchanged.
+[Conflict choices and visual review](../qa/2026-09-18-mcp-audit-navigation/CURRENT-DEV-REVIEW.md)
+are ready for owner review. PR2724 remains draft pending current-head CI/review
+and its own visual approval. PR2726 retains same-ID catalog freshness; the wider
+component review remains open.
+
+
+### PR2724 approved closeout follow-up
+
+The owner approved PR2724's current-dev conflict choices and gallery. Qodo's
+five findings are addressed: structured method docs, test import grouping, and
+serialization of both destination row checks with the existing publication lock.
+The final targeted run passes 147 cases; all seven guards pass and independent
+review finds no blockers. The fresh native replay matches all 24 approved terminal
+captures except fixture timestamps. PR2724 is ready for review and awaits
+current-head CI/review before its authorized merge. Same-ID definition freshness
+remains in PR2726.
