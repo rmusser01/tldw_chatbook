@@ -344,3 +344,8 @@ qualification to cancellation ownership, truthful progress and retry after
 settlement. Real external-server connection, execution and broader recovery
 remain open. PR2711 and PR2712 have green applicable current-head Actions checks;
 remote review and owner visual approval remain open for each bounded follow-up.
+
+TASK-32829 is Done and saved as [draft PR #2713](https://github.com/rmusser01/tldw_chatbook/pull/2713).
+34 focused cases, seven preflight guards, four native cells and twelve inspected
+captures pass. Its current-head CI, remote review and owner visual approval remain
+open; broader external connection and execution reviews remain unfinished.

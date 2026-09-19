@@ -85,3 +85,8 @@ its own CI, remote review and owner visual approval gates.
 
 The [component completion ledger](2026-09-17-design-system-completion-audit.md)
 retains other destinations. PR2707 is merged; each follow-up PR retains its own visual review and merge gate.
+
+TASK-32829 is Done and saved as [draft PR #2713](https://github.com/rmusser01/tldw_chatbook/pull/2713).
+34 focused cases, seven preflight guards, four native cells and twelve inspected
+captures pass. Its current-head CI, remote review and owner visual approval remain
+open; broader external connection and execution reviews remain unfinished.

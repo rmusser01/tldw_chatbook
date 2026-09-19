@@ -8,7 +8,7 @@ and redraw work are created lazily so cancellation before startup leaks neither
 coroutine. Admission also stays reserved through final readiness collection.
 
 Base: merged dev `149acda36be8939fe8cd5e589bf77d13462257e7`.
-Branch: `codex/mcp-lifecycle-cancellation-review`. Saved PR: pending creation.
+Branch: `codex/mcp-lifecycle-cancellation-review`. Saved as [draft PR #2713](https://github.com/rmusser01/tldw_chatbook/pull/2713).
 Independent of the implementations in draft PR2711 and PR2712.
 ADR required: no; existing ADR-161 governs the component contract. Transport,
 timeout, permission and persistence contracts are unchanged; no CSS/token changes.
