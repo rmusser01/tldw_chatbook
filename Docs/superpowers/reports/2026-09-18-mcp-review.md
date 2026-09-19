@@ -73,3 +73,21 @@ its merge is confirmed.
 The [component completion ledger](2026-09-17-design-system-completion-audit.md)
 retains other destinations. Draft PR2707 remains open and subject to its own
 visual review and merge approval.
+
+## Post-merge continuation: exact-input Remove and Re-allow
+
+TASK-32866 follows PR2731 on a separate stacked branch, `codex/mcp-rule-action-review`.
+Both controls now capture their mounted target and submit once; obsolete controls
+are rejected. Re-allow retains the reviewed definition fingerprint across cached
+refreshes, retry and successful completion. Late completion preserves newer
+selections, and failed writes remain retryable. Existing permission policy and
+layout are preserved.
+
+[56 passing targeted checks and twelve inspected native captures](../qa/2026-09-19-mcp-rule-actions/README.md)
+qualify this bounded repair in both themes at 120×40 and 170×48. Real private
+store/service writes remove only the selected rule and persist the reviewed
+definition; another profile's rule survives. No connection or tool execution.
+Seven preflight guards, unchanged static-analysis baseline, independent review,
+normal shutdown, lock release, database health and source hashes pass.
+Current-head CI/review and owner visual approval remain merge gates. Other
+permission controls, connected runtime journeys and the wider review remain open.

@@ -1,0 +1,80 @@
+{
+  "cases": [
+    {
+      "id": "Tests.MCP.test_permission_store::test_builtin_allow_with_legacy_stored_hash_is_not_rug_pulled",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rule_allows_exact_args_and_still_prompts_otherwise",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rule_field_glob_patterns_match_one_field",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rules_participate_in_the_rug_pull_guard",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rules_never_quiet_high_risk_tools",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_service_arg_rule_round_trip",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_returns_rule_id_and_created_at",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_omits_hand_written_field_pattern_rules",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_empty_for_unknown_tool",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_remove_tool_arg_rule_round_trip_makes_the_next_call_ask_again",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_remove_tool_arg_rule_unknown_id_is_a_no_op",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_remove_tool_arg_rule_only_deletes_the_matching_rule",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_service_list_and_remove_tool_arg_rules_round_trip",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_strict_snapshot_accepts_an_arg_rule_only_tool_entry",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_strict_snapshot_rejects_a_non_list_arg_rules_value",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_lists_an_inherited_rule_with_its_owner",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rule_writes_route_through_the_guarded_mutation_path",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_concurrent_permission_writes_survive_arg_rule_churn",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_add_tool_arg_rule_still_seeds_a_missing_named_profile",
+      "status": "passed"
+    }
+  ]
+}
