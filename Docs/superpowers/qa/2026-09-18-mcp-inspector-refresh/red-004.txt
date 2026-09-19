@@ -33,7 +33,7 @@ change = 'removed'
             await _settle(pilot)
             assert field.value == "keep me"
             nonce = inspector._test_preview.nonce
-    
+
             fresh = replace(original)
             if change == "description":
                 fresh = replace(original, description="Search the current catalog.")
@@ -48,7 +48,7 @@ change = 'removed'
             await workbench._sync_children()
             await app.workers.wait_for_complete()
             await _settle(pilot)
-    
+
             if change == "unchanged":
                 assert inspector.query_one("#mcp-schema-field-0", Input) is field
                 assert field.value == "keep me" and field.has_focus

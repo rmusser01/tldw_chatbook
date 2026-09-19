@@ -35,7 +35,7 @@ persistence and execution authority are unchanged.
   the final compact button/form/focus repairs. The final runs above recheck the
   affected generated CSS, tokens and budgets on the final production sources.
 - The original four-case [red](red-results.json)/[green](green-results.json)
-  prototype evidence is historical. [Held mint/teardown and focus](race-red.txt),
+  prototype evidence is historical. Exported logs normalize trailing whitespace. [Held mint/teardown and focus](race-red.txt),
   [refused reopen](refused-reopen-red.txt), [compact overflow](overflow-red.txt)
   and [replacement-focus paint](refresh-focus-paint-red.txt) each failed before
   its repair. Intermediate failures are retained rather than counted as passes.
