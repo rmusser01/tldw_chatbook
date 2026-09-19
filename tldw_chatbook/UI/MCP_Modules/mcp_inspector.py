@@ -942,7 +942,8 @@ class MCPInspector(Vertical):
         min-height: 0;
         display: none;
     }
-    #mcp-inspector-tool Button {
+    #mcp-inspector-tool .console-action-primary,
+    #mcp-inspector-tool .console-action-secondary {
         min-width: $ds-size-0;
         max-width: $ds-width-full;
     }

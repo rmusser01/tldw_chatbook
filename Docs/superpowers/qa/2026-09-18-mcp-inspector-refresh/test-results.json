@@ -378,5 +378,39 @@
       "Tests.UI.test_widget_css_consolidation::test_class_level_css_stays_within_the_allowlist"
     ]
   },
-  "distinct_passed": 353
+  "distinct_passed": 354,
+  "ci-closeout": {
+    "passed": 29,
+    "cases": [
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_delayed_preview_is_revoked_before_retiring_panel_disappears[refresh]",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_delayed_preview_is_revoked_before_retiring_panel_disappears[close]",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_catalog_refresh_does_not_take_newer_focus_during_removal",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_unchanged_raw_form_preserves_editor_draft_focus_and_preview",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_waiting_catalog_refresh_cannot_replace_newer_tool_selection",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_queued_preview_request_for_retired_form_does_not_mint",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_refused_reopen_cannot_accept_previous_forms_pending_preview",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_tool_inspector_reveals_focused_actions_and_arguments[size0]",
+      "Tests.UI.test_mcp_inspector_catalog_refresh::test_tool_inspector_reveals_focused_actions_and_arguments[size1]",
+      "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+      "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+      "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+      "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+      "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+      "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+      "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+      "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+      "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_ignores_the_generated_timestamp",
+      "Tests.UI.test_css_bundle_sync_guard::test_drifted_modules_names_the_changed_module",
+      "Tests.UI.test_css_bundle_sync_guard::test_committed_bundle_reproduces_from_sources",
+      "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
+      "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_end_with_one_newline",
+      "Tests.Performance.test_boot_css_byte_budget::test_boot_parsed_css_bytes_stay_within_budget",
+      "Tests.Performance.test_textual_css_fastpath::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+      "Tests.UI.test_widget_css_consolidation::test_class_level_css_stays_within_the_allowlist"
+    ]
+  }
 }

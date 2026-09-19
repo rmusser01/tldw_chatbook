@@ -32,12 +32,22 @@ paused. This follow-up is bounded to selected-tool refresh, pending preview
 retirement and inspector keyboard reachability. Broader MCP lifecycle/execution
 and the remaining destinations retain their separate gates.
 
-TASK-32823 now has 353 distinct targeted passing cases and four final native
+TASK-32823 now has 354 distinct targeted passing cases and four final native
 theme/size journeys with twelve inspected captures. Its [QA receipt](../qa/2026-09-18-mcp-inspector-refresh/README.md)
 records retained drafts, current details, retired previews, visible focus and
 clean private-profile shutdown. TASK-32823 is Done and saved in
 [draft PR #2711](https://github.com/rmusser01/tldw_chatbook/pull/2711). Follow-up PR
 CI and visual approval remain open.
+
+
+PR2711's original-head latency guard found one excess bare-Button CSS candidate.
+The bounded selector repair uses existing action classes, preserves the 274 limit,
+and passes 29 targeted checks plus four refreshed native cells. New-head remote
+CI remains separate. TASK-32825's server action ownership and compact toolbar
+repair is independently saved in [draft PR2712](https://github.com/rmusser01/tldw_chatbook/pull/2712),
+with [109 distinct targeted checks and twelve native captures](https://github.com/rmusser01/tldw_chatbook/blob/2cd465c169582ff2a3c4bb0c6d18f4e16590176b/Docs/superpowers/qa/2026-09-18-mcp-server-actions/README.md).
+Both drafts retain their visual review and merge gates; broader MCP connection,
+execution, recovery and other destinations remain open.
 
 ## PR #2707 scope boundary — 2026-09-18
 

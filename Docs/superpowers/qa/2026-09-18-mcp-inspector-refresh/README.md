@@ -49,7 +49,7 @@ persistence and execution authority are unchanged.
 ## Native matrix
 
 The final run used real `TldwCli`, `LinuxDriver`, TTY output streams and a fresh
-private profile, PID 60183. A controlled projection changes one actual built-in
+private profile, PID 81128. A controlled projection changes one actual built-in
 `chat_with_llm` catalog definition; production selection, keyboard activation,
 form composition and the real permission-preview service remain in use.
 No tool was executed and no external server/provider was contacted by the journey.
@@ -74,7 +74,29 @@ Native runs 001 and 002 failed qualification and exited cleanly. The first
 exposed missing vertical scroll; the second exposed offscreen focus after the
 form's height shrank. Their result/lifecycle JSON files are retained. Mounted
 regressions also exposed narrow button clipping and fractional form height.
-Only run 003 qualifies the final native matrix.
+Run 003 qualified the initial implementation. Run 004 repeats and qualifies the
+final native matrix after the CI selector repair below; its twelve captures replace
+the gallery above. The earlier result/lifecycle/manifest remain in `ci-closeout/`,
+and the original captures remain available at PR head `80b2495e222a90ae0aa4f7c9a4691c96c68d01c5`.
+
+## CI selector-budget repair
+
+PR2711 head `80b2495e222a90ae0aa4f7c9a4691c96c68d01c5` passed Fast Lane and
+derived artifacts, but [UI latency guardrails](https://github.com/rmusser01/tldw_chatbook/actions/runs/35409412039)
+failed the ancestor bare-type selector ratchet at **275 versus 274**. The newly
+added `#mcp-inspector-tool Button` width rule was the extra candidate for every
+Button in the app. It now selects the existing primary/secondary action classes
+within the same tool container; declarations and the limit remain unchanged.
+
+[Local reproduction](ci-closeout/local-red.txt), [remote log](ci-closeout/remote-failure.txt)
+and [29 passing targeted checks](ci-closeout/targeted-green.txt) record the repair.
+The total is now **354 distinct cases** across the bounded implementation's runs.
+No introduced Ruff diagnostics (13 existing); the changed range is formatted
+([static receipt](ci-closeout/static.json)). Read-only independent review confirms
+Test Tool, Run, Retry preview, Close and Change in Permissions retain coverage,
+with no blocker or broader selector change. The final native matrix was rerun
+and all twelve refreshed captures inspected; clean lifecycle and source hashes
+are recorded above. New-head remote CI and owner visual approval remain gates.
 
 ## Remaining scope
 

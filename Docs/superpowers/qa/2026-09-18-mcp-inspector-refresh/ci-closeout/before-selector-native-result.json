@@ -1,5 +1,5 @@
 {
-  "pid": 81128,
+  "pid": 60183,
   "cells": [
     {
       "theme": "textual-dark",
@@ -55,12 +55,12 @@
     }
   ],
   "source_hashes": {
-    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "3fef9b7322dfc2eb1aa21080680c88e742617becad8a9bb3890bba497c84d927",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "cfb01a6ff59e9d818524e0250c499e209989a428cea985dbc41fd77a4b18e18d",
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "77b213b74987c2aa2399afa066ee6b4003bb8f2ccce7c247b7e7bc769560b72f",
     "tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py": "3eaaf1fbdd6acb8d5fa0785e51f30f88e45722f86172db355f20a7948b7552d2",
     "tldw_chatbook/UI/MCP_Modules/mcp_schema_form.py": "dca308c440a42956aebd28f4653ce9ad73c7272f794e531e02539276417c594f",
     "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
-    "tldw_chatbook/css/widget_defaults_scoped.tcss": "515396d0cc80ea180a66f74f89adc02bf2691a6f85749b6180f94b484ff9142b",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "23d1512a54daed17b6139896a5aa20dc2d032eec7aa0a0dab0135eccb90e6eb3",
     "tldw_chatbook/css/widget_defaults_self.tcss": "b90976073de9b494653b0e37d434cd1e0d67f8ccb64c644bf30d2fcfc97816e3",
     "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d"
   },

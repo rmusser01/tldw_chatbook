@@ -1,0 +1,399 @@
+
+[census] total=275 (Button=175, Input=29, Static=19, Select=17, Vertical=14, Checkbox=13, Horizontal=4, VerticalScroll=4)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_ancestor_scoped_bare_type_rule_count_is_a_ratchet ____________
+
+request = <FixtureRequest for <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>>
+
+    @pytest.mark.ui
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """New CSS must not grow the bare-type-subject candidate tax.
+
+        Counts, in the app's real parsed stylesheet, the rules that are (a)
+        indexed under one of the common bare type keys and (b) ancestor-scoped
+        (some selector set has a descendant/child hop, so the type is the
+        subject and the scope rides an ancestor). These are exactly the rules
+        the rightmost-selector index over-distributes.
+
+        Counting the PARSED stylesheet rather than grepping .tcss text is
+        deliberate: a 2026-08-29 dead-CSS sweep built on a text regex
+        mis-parsed every selector and would have deleted live CSS. The parser
+        is the only honest tokenizer for its own syntax.
+        """
+        from collections import Counter
+
+        from Tests.UI.app_factory import _build_test_app
+
+        app = _build_test_app()
+        async with app.run_test(size=(160, 45)) as pilot:
+            await pilot.pause()
+            rules_map = app.stylesheet.rules_map
+
+            per_key: Counter = Counter()
+            offenders: list[str] = []
+            counted: set[int] = set()
+            for key in _GUARDED_TYPE_KEYS:
+                for rule in rules_map.get(key, ()):
+                    if id(rule) in counted:
+                        continue  # a rule can index under several names
+                    if any(
+                        len(sset.selectors) > 1 for sset in rule.selector_set
+                    ):
+                        counted.add(id(rule))
+                        per_key[key] += 1
+                        if len(offenders) < 400:
+                            offenders.append(f"[{key}] {rule.selectors}")
+
+            total = sum(per_key.values())
+            breakdown = ", ".join(
+                f"{key}={count}" for key, count in per_key.most_common()
+            )
+
+            print(f"\n[census] total={total} ({breakdown})")
+            assert total >= MIN_ANCESTOR_SCOPED_BARE_TYPE_RULES, (
+                f"census found only {total} ancestor-scoped bare-type rules "
+                f"({breakdown}) -- below the anti-vacuity floor "
+                f"({MIN_ANCESTOR_SCOPED_BARE_TYPE_RULES}). The census is walking "
+                "a hollow stylesheet, not a real boot; a passing ratchet here "
+                "would prove nothing."
+            )
+>           assert total <= MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES, (
+                f"{total} ancestor-scoped bare-type-subject rules "
+                f"(ratchet limit {MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES}; "
+                f"{breakdown}).\n"
+                "Each of these is a style-apply candidate for EVERY widget of "
+                "its type in the app, because Textual indexes rules by their "
+                "rightmost selector only. Do not raise the constant (see the "
+                "constant's comment and ADR-097's ratchet discipline): re-key "
+                "the new rule instead -- give its subject a class carried only "
+                "by the intended widgets, e.g. `#panel Button` -> "
+                "`Button.panel-action` plus that class in compose().\n"
+                "Newest offenders are easiest to find with: git diff on "
+                "tldw_chatbook/css/ for selectors ending in a bare "
+                f"{'/'.join(_GUARDED_TYPE_KEYS[:3])}... type.\n"
+                "Sample of current offenders:\n  "
+                + "\n  ".join(offenders[:15])
+            )
+E           AssertionError: 275 ancestor-scoped bare-type-subject rules (ratchet limit 274; Button=175, Input=29, Static=19, Select=17, Vertical=14, Checkbox=13, Horizontal=4, VerticalScroll=4).
+E             Each of these is a style-apply candidate for EVERY widget of its type in the app, because Textual indexes rules by their rightmost selector only. Do not raise the constant (see the constant's comment and ADR-097's ratchet discipline): re-key the new rule instead -- give its subject a class carried only by the intended widgets, e.g. `#panel Button` -> `Button.panel-action` plus that class in compose().
+E             Newest offenders are easiest to find with: git diff on tldw_chatbook/css/ for selectors ending in a bare Button/Static/Input... type.
+E             Sample of current offenders:
+E               [Button] TraceFiltersDialog #trace-filter-dialog-actions Button
+E               [Button] ConsoleCapturePolicyDialog #capture-policy-actions Button
+E               [Button] ConsoleExchangeExportDialog #exchange-export-actions Button
+E               [Button] TraceExportDialog #trace-export-actions Button
+E               [Button] NoteSelectionDialog .button-row Button
+E               [Button] ConversationSelectionDialog .button-row Button
+E               [Button] FileExtractionDialog .dialog-buttons Button
+E               [Button] VoiceBlendDialog .button-row Button
+E               [Button] #tabs Button
+E               [Button] #tabs Button:hover
+E               [Button] #tabs Button
+E               [Button] #tabs Button:last-of-type
+E               [Button] #tabs Button:hover
+E               [Button] Button:disabled, Button.-style-default:disabled, Button.-style-flat:disabled
+E               [Button] .form-actions Button
+E           assert 275 <= 274
+
+Tests/Performance/test_textual_css_fastpath.py:403: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 17:59:44.268 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-18 17:59:44.306 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2858/test_ancestor_scoped_bare_type0/private-profile-process/profile/config/config.toml
+2026-09-18 17:59:44.307 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6158 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2858/test_ancestor_scoped_bare_type0/private-profile-process/profile/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-18 17:59:44.308 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6167 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2858/test_ancestor_scoped_bare_type0/private-profile-process/profile/config/config.toml
+2026-09-18 17:59:44.308 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6234 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-18 17:59:44.309 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-18 17:59:44.316 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 17:59:44.316 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 17:59:44.317 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 17:59:44.317 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 17:59:44.348 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2858/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 17:59:44.348 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 17:59:44.348 | INFO     | tldw_chatbook.config:<module>:9748 - Default API Endpoint (from config.py global scope): openai
+2026-09-18 17:59:44.349 | DEBUG    | tldw_chatbook.config:<module>:9771 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-18 17:59:44.451 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 17:59:44.461 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 17:59:44.543 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 17:59:44.594 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 17:59:44.594 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 17:59:44.595 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 17:59:44.756 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 17:59:45.153 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+2026-09-18 17:59:45.262 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+2026-09-18 17:59:45.287 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+2026-09-18 17:59:45.287 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+2026-09-18 17:59:45.288 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+2026-09-18 17:59:45.288 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+2026-09-18 17:59:45.367 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2858/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 17:59:45.433 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i1mr0qpw/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 17:59:45.609 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i1mr0qpw/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 17:59:45.623 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-09-18 17:59:45.624 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i1mr0qpw/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 17:59:45.624 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i1mr0qpw/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 17:59:45.742 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-09-18 17:59:45.783 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-09-18 17:59:45.829 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-09-18 17:59:45.870 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-09-18 17:59:45.910 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+2026-09-18 17:59:45.954 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-09-18 17:59:45.957 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i1mr0qpw/scheduled_tasks.sqlite [Client: default]
+2026-09-18 17:59:46.018 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-09-18 17:59:46.018 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-09-18 17:59:46.031 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+2026-09-18 17:59:46.116 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-09-18 17:59:46.117 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2858/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-09-18 17:59:46.117 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-09-18 17:59:46.231 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-09-18 17:59:46.232 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+2026-09-18 17:59:46.233 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+2026-09-18 17:59:46.234 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 1.046 seconds
+2026-09-18 17:59:46.235 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.097s (9.3%)
+2026-09-18 17:59:46.236 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+2026-09-18 17:59:46.236 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.002s (0.2%)
+2026-09-18 17:59:46.237 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+2026-09-18 17:59:46.237 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+2026-09-18 17:59:46.238 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.0% of parallel_init)
+2026-09-18 17:59:46.238 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+2026-09-18 17:59:46.239 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+2026-09-18 17:59:46.836 | INFO     | tldw_chatbook.Widgets.splash_screen:_select_card:245 - Randomly selected splash card: scrolling_credits
+2026-09-18 17:59:46.895 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:310 - Splash screen mounted - duration: 7.0s, card: scrolling_credits
+2026-09-18 17:59:46.896 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:330 - Starting splash screen - type: animated, card: scrolling_credits
+2026-09-18 17:59:46.896 | DEBUG    | tldw_chatbook.Widgets.splash_screen:_start_animation:362 - Starting animation with effect: scrolling_credits
+2026-09-18 17:59:46.897 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.glitch_reveal
+2026-09-18 17:59:46.899 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: glitch_reveal -> GlitchRevealEffect
+2026-09-18 17:59:46.900 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.pulse
+2026-09-18 17:59:46.901 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: pulse -> PulseEffect
+2026-09-18 17:59:46.902 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.retro_terminal
+2026-09-18 17:59:46.903 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: retro_terminal -> RetroTerminalEffect
+2026-09-18 17:59:46.904 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.spotlight
+2026-09-18 17:59:46.905 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: spotlight -> SpotlightEffect
+2026-09-18 17:59:46.906 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.old_film
+2026-09-18 17:59:46.907 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: old_film -> OldFilmEffect
+2026-09-18 17:59:46.908 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.typewriter
+2026-09-18 17:59:46.909 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: typewriter -> TypewriterEffect
+2026-09-18 17:59:46.910 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.ascii_morph
+2026-09-18 17:59:46.911 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_morph -> AsciiMorphEffect
+2026-09-18 17:59:46.912 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.blink
+2026-09-18 17:59:46.913 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: blink -> BlinkEffect
+2026-09-18 17:59:46.914 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.pixel_dissolve
+2026-09-18 17:59:46.915 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: pixel_dissolve -> PixelDissolveEffect
+2026-09-18 17:59:46.916 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.scrolling_credits
+2026-09-18 17:59:46.917 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: scrolling_credits -> ScrollingCreditsEffect
+2026-09-18 17:59:46.918 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.matrix_rain
+2026-09-18 17:59:46.919 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: matrix_rain -> MatrixRainEffect
+2026-09-18 17:59:46.920 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.loading_bar
+2026-09-18 17:59:46.921 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: loading_bar -> LoadingBarEffect
+2026-09-18 17:59:46.922 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.fade
+2026-09-18 17:59:46.923 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: fade -> FadeEffect
+2026-09-18 17:59:46.924 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.text_explosion
+2026-09-18 17:59:46.925 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: text_explosion -> TextExplosionEffect
+2026-09-18 17:59:46.926 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.glitch
+2026-09-18 17:59:46.928 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: glitch -> GlitchEffect
+2026-09-18 17:59:46.929 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.classic.pixel_zoom
+2026-09-18 17:59:46.930 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: pixel_zoom -> PixelZoomEffect
+2026-09-18 17:59:46.931 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.origami_folding
+2026-09-18 17:59:46.934 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: origami_folding -> OrigamiFoldingEffect
+2026-09-18 17:59:46.934 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.ant_colony
+2026-09-18 17:59:46.936 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ant_colony -> AntColonyEffect
+2026-09-18 17:59:46.936 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.constellation_map
+2026-09-18 17:59:46.938 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: constellation_map -> ConstellationMapEffect
+2026-09-18 17:59:46.938 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.plasma_field
+2026-09-18 17:59:46.940 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: plasma_field -> PlasmaFieldEffect
+2026-09-18 17:59:46.940 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.raindrops
+2026-09-18 17:59:46.942 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: raindrops -> RaindropsEffect
+2026-09-18 17:59:46.942 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.morphing_shape
+2026-09-18 17:59:46.944 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: morphing_shape -> MorphingShapeEffect
+2026-09-18 17:59:46.944 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.clock_mechanism
+2026-09-18 17:59:46.946 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: clock_mechanism -> ClockMechanismEffect
+2026-09-18 17:59:46.946 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.ascii_aquarium
+2026-09-18 17:59:46.948 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_aquarium -> ASCIIAquariumEffect
+2026-09-18 17:59:46.948 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.quantum_particles
+2026-09-18 17:59:46.949 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: quantum_particles -> QuantumParticlesEffect
+2026-09-18 17:59:46.950 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.dna_helix
+2026-09-18 17:59:46.951 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: dna_helix -> DNAHelixEffect
+2026-09-18 17:59:46.952 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.doom_fire
+2026-09-18 17:59:46.953 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: doom_fire -> DoomFireEffect
+2026-09-18 17:59:46.954 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.wave_ripple
+2026-09-18 17:59:46.956 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: wave_ripple -> WaveRippleEffect
+2026-09-18 17:59:46.956 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.train_journey
+2026-09-18 17:59:46.958 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: train_journey -> TrainJourneyEffect
+2026-09-18 17:59:46.959 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.zen_garden
+2026-09-18 17:59:46.960 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: zen_garden -> ZenGardenEffect
+2026-09-18 17:59:46.961 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.ascii_kaleidoscope
+2026-09-18 17:59:46.962 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_kaleidoscope -> ASCIIKaleidoscopeEffect
+2026-09-18 17:59:46.963 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.fireworks
+2026-09-18 17:59:46.965 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: fireworks -> FireworksEffect
+2026-09-18 17:59:46.966 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.ascii_fire
+2026-09-18 17:59:46.967 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_fire -> ASCIIFireEffect
+2026-09-18 17:59:46.967 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.bookshelf_browser
+2026-09-18 17:59:46.968 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: bookshelf_browser -> BookshelfBrowserEffect
+2026-09-18 17:59:46.969 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.ascii_wave
+2026-09-18 17:59:46.970 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_wave -> ASCIIWaveEffect
+2026-09-18 17:59:46.971 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.particle_swarm
+2026-09-18 17:59:46.973 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: particle_swarm -> ParticleSwarmEffect
+2026-09-18 17:59:46.973 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.starfield
+2026-09-18 17:59:46.975 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: starfield -> StarfieldEffect
+2026-09-18 17:59:46.975 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.spiral_galaxy
+2026-09-18 17:59:46.976 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: spiral_galaxy -> SpiralGalaxyEffect
+2026-09-18 17:59:46.977 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.environmental.weather_system
+2026-09-18 17:59:46.978 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: weather_system -> WeatherSystemEffect
+2026-09-18 17:59:46.979 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.rubiks_cube
+2026-09-18 17:59:46.980 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: rubiks_cube -> RubiksCubeEffect
+2026-09-18 17:59:46.981 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.fractal_zoom
+2026-09-18 17:59:46.982 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: fractal_zoom -> FractalZoomEffect
+2026-09-18 17:59:46.983 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.code_scroll
+2026-09-18 17:59:46.984 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: code_scroll -> CodeScrollEffect
+2026-09-18 17:59:46.984 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.terminal_boot
+2026-09-18 17:59:46.986 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: terminal_boot -> TerminalBootEffect
+2026-09-18 17:59:46.987 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.mining
+2026-09-18 17:59:46.988 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: mining -> MiningEffect
+2026-09-18 17:59:46.989 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.circuit_trace
+2026-09-18 17:59:46.990 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: circuit_trace -> CircuitTraceEffect
+2026-09-18 17:59:46.990 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.typewriter_news
+2026-09-18 17:59:46.992 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: typewriter_news -> TypewriterNewsEffect
+2026-09-18 17:59:46.992 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.phonebooths_dialing
+2026-09-18 17:59:46.994 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: phonebooths_dialing -> PhoneboothsDialingEffect
+2026-09-18 17:59:46.994 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.circuit_board
+2026-09-18 17:59:46.996 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: circuit_board -> CircuitBoardEffect
+2026-09-18 17:59:46.996 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.ascii_spinner
+2026-09-18 17:59:46.997 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_spinner -> ASCIISpinnerEffect
+2026-09-18 17:59:46.998 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.spy_vs_spy
+2026-09-18 17:59:46.999 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: spy_vs_spy -> SpyVsSpyEffect
+2026-09-18 17:59:47.000 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.quantum_tunnel
+2026-09-18 17:59:47.001 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: quantum_tunnel -> QuantumTunnelEffect
+2026-09-18 17:59:47.002 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.hacker_terminal
+2026-09-18 17:59:47.003 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: hacker_terminal -> HackerTerminalEffect
+2026-09-18 17:59:47.003 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.data_stream
+2026-09-18 17:59:47.004 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: data_stream -> DataStreamEffect
+2026-09-18 17:59:47.005 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.chaotic_typewriter
+2026-09-18 17:59:47.006 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: chaotic_typewriter -> ChaoticTypewriterEffect
+2026-09-18 17:59:47.007 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.neural_network
+2026-09-18 17:59:47.008 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: neural_network -> NeuralNetworkEffect
+2026-09-18 17:59:47.008 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.binary_matrix
+2026-09-18 17:59:47.009 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: binary_matrix -> BinaryMatrixEffect
+2026-09-18 17:59:47.010 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.cyberpunk_glitch
+2026-09-18 17:59:47.011 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: cyberpunk_glitch -> CyberpunkGlitchEffect
+2026-09-18 17:59:47.011 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.dna_sequence
+2026-09-18 17:59:47.013 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: dna_sequence -> DNASequenceEffect
+2026-09-18 17:59:47.013 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.music_visualizer
+2026-09-18 17:59:47.015 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: music_visualizer -> MusicVisualizerEffect
+2026-09-18 17:59:47.015 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.holographic_interface
+2026-09-18 17:59:47.016 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: holographic_interface -> HolographicInterfaceEffect
+2026-09-18 17:59:47.017 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.neon_sign_flicker
+2026-09-18 17:59:47.018 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: neon_sign_flicker -> NeonSignFlickerEffect
+2026-09-18 17:59:47.018 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.tech.digital_rain
+2026-09-18 17:59:47.019 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: digital_rain -> DigitalRainEffect
+2026-09-18 17:59:47.020 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.pacman
+2026-09-18 17:59:47.023 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: pacman -> PacmanEffect
+2026-09-18 17:59:47.023 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.maze_generator
+2026-09-18 17:59:47.025 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: maze_generator -> MazeGeneratorEffect
+2026-09-18 17:59:47.025 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.achievement_unlocked
+2026-09-18 17:59:47.026 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: achievement_unlocked -> AchievementUnlockedEffect
+2026-09-18 17:59:47.027 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.space_invaders
+2026-09-18 17:59:47.027 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: space_invaders -> SpaceInvadersEffect
+2026-09-18 17:59:47.028 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.character_select
+2026-09-18 17:59:47.029 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: character_select -> CharacterSelectEffect
+2026-09-18 17:59:47.030 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.tetris_block
+2026-09-18 17:59:47.032 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: tetris_block -> TetrisBlockEffect
+2026-09-18 17:59:47.032 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.retro_gaming_intro
+2026-09-18 17:59:47.033 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: retro_gaming_intro -> RetroGamingIntroEffect
+2026-09-18 17:59:47.034 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.game_of_life
+2026-09-18 17:59:47.035 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: game_of_life -> GameOfLifeEffect
+2026-09-18 17:59:47.035 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.level_up
+2026-09-18 17:59:47.036 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: level_up -> LevelUpEffect
+2026-09-18 17:59:47.037 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.versus_screen
+2026-09-18 17:59:47.038 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: versus_screen -> VersusScreenEffect
+2026-09-18 17:59:47.038 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.world_map
+2026-09-18 17:59:47.039 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: world_map -> WorldMapEffect
+2026-09-18 17:59:47.040 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.tetris
+2026-09-18 17:59:47.041 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: tetris -> TetrisEffect
+2026-09-18 17:59:47.041 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.gaming.sound_bars
+2026-09-18 17:59:47.042 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: sound_bars -> SoundBarsEffect
+2026-09-18 17:59:47.043 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.psychedelic_mandala
+2026-09-18 17:59:47.044 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: psychedelic_mandala -> PsychedelicMandalaEffect
+2026-09-18 17:59:47.045 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.kaleidoscope
+2026-09-18 17:59:47.046 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: kaleidoscope -> KaleidoscopeEffect
+2026-09-18 17:59:47.046 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.hypno_swirl
+2026-09-18 17:59:47.047 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: hypno_swirl -> HypnoSwirlEffect
+2026-09-18 17:59:47.048 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.electric_sheep
+2026-09-18 17:59:47.049 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: electric_sheep -> ElectricSheepEffect
+2026-09-18 17:59:47.049 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.shroom_vision
+2026-09-18 17:59:47.050 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: shroom_vision -> ShroomVisionEffect
+2026-09-18 17:59:47.051 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.trippy_tunnel
+2026-09-18 17:59:47.052 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: trippy_tunnel -> TrippyTunnelEffect
+2026-09-18 17:59:47.052 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.deep_dream
+2026-09-18 17:59:47.053 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: deep_dream -> DeepDreamEffect
+2026-09-18 17:59:47.054 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.melting_screen
+2026-09-18 17:59:47.055 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: melting_screen -> MeltingScreenEffect
+2026-09-18 17:59:47.056 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.lava_lamp
+2026-09-18 17:59:47.057 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: lava_lamp -> LavaLampEffect
+2026-09-18 17:59:47.058 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.psychedelic.ascii_mandala
+2026-09-18 17:59:47.059 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: ascii_mandala -> ASCIIMandalaEffect
+2026-09-18 17:59:47.060 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.custom.custom_image
+2026-09-18 17:59:47.061 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: custom_image -> CustomImageEffect
+2026-09-18 17:59:47.062 | DEBUG    | tldw_chatbook.Utils.Splash_Screens:load_all_effects:77 - Loading effect module: tldw_chatbook.Utils.Splash_Screens.custom.emoji_face
+2026-09-18 17:59:47.063 | DEBUG    | tldw_chatbook.Utils.Splash_Screens.base_effect:decorator:134 - Registered effect: emoji_face -> EmojiFaceEffect
+2026-09-18 17:59:47.063 | INFO     | tldw_chatbook.Utils.Splash_Screens:load_all_effects:84 - Loaded 87 effect modules, 87 effects registered
+2026-09-18 17:59:47.064 | DEBUG    | tldw_chatbook.Widgets.splash_screen:_start_animation:372 - Terminal size: 160x45
+2026-09-18 17:59:47.064 | DEBUG    | tldw_chatbook.Widgets.splash_screen:_start_animation:405 - Animation started successfully for scrolling_credits
+2026-09-18 17:59:47.065 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:324 - Splash screen auto-close timer set for 7.0s
+2026-09-18 17:59:47.238 | DEBUG    | tldw_chatbook.app:on_mount:15711 - Deferring logging setup until after splash screen closes
+2026-09-18 17:59:47.251 | DEBUG    | tldw_chatbook.app:on_mount:15865 - Applied default theme: textual-dark
+2026-09-18 17:59:47.251 | INFO     | tldw_chatbook.app:on_mount:15885 - on_mount completed in 0.019 seconds
+2026-09-18 17:59:47.602 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.PENDING)
+2026-09-18 17:59:47.605 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.PENDING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'})>
+2026-09-18 17:59:47.609 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.RUNNING)
+2026-09-18 17:59:47.610 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.RUNNING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'})>
+2026-09-18 17:59:47.611 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.PENDING)
+2026-09-18 17:59:47.614 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.PENDING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x1116cfe00>
+2026-09-18 17:59:47.634 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.RUNNING)
+2026-09-18 17:59:47.637 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x1116cfe00>
+2026-09-18 17:59:47.638 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.PENDING)
+2026-09-18 17:59:47.641 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.PENDING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x1115573d0>
+2026-09-18 17:59:47.642 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.RUNNING)
+2026-09-18 17:59:47.645 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x1115573d0>
+2026-09-18 17:59:47.646 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.PENDING)
+2026-09-18 17:59:47.649 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.PENDING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x111729ad0>
+2026-09-18 17:59:47.650 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.RUNNING)
+2026-09-18 17:59:47.653 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.RUNNING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x111729ad0>
+2026-09-18 17:59:47.664 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.SUCCESS)
+2026-09-18 17:59:47.665 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.SUCCESS | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x1115573d0>
+2026-09-18 17:59:47.760 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.SUCCESS)
+2026-09-18 17:59:47.761 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.SUCCESS | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x1116cfe00>
+2026-09-18 17:59:47.771 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryIngestJobsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2858/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_ingest_jobs.db [Client: default]
+2026-09-18 17:59:47.774 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.SUCCESS)
+2026-09-18 17:59:47.774 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.SUCCESS | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'})>
+2026-09-18 17:59:47.824 | INFO     | tldw_chatbook.Chat.console_runtime:dispose:4758 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-09-18 17:59:47.836 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.SUCCESS)
+2026-09-18 17:59:47.837 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.SUCCESS | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x111729ad0>
+2026-09-18 17:59:47.839 | INFO     | tldw_chatbook.app:on_unmount:19485 - Local MCP client sessions disconnected
+2026-09-18 17:59:47.840 | INFO     | tldw_chatbook.app:on_unmount:19495 - Artifact share stopped (if running)
+2026-09-18 17:59:47.841 | INFO     | tldw_chatbook.app:on_unmount:19509 - Server context provider cached client closed
+2026-09-18 17:59:47.844 | INFO     | tldw_chatbook.app:on_unmount:19524 - TTS resources cleaned up properly
+2026-09-18 17:59:47.845 | INFO     | tldw_chatbook.app:on_unmount:19555 - DB size update timer stopped during unmount.
+2026-09-18 17:59:47.846 | ERROR    | tldw_chatbook.app:on_unmount:19688 - Error checking active threads: [Errno 1] Operation not permitted (originated from sysctl() malloc 1/3)
+2026-09-18 17:59:47.848 | INFO     | tldw_chatbook.app:on_unmount:19707 - --- App Unmounted (Loguru) ---
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:12312 Splash screen enabled: True
+INFO     root:app.py:12325 Creating splash screen - duration: 7.0, card: random
+INFO     root:app.py:12340 Splash screen yielded, returning early from compose
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+INFO     root:app.py:19334 --- App Unmounting ---
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_stopping component=app
+============================= slowest 25 durations =============================
+3.25s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+1 failed in 4.05s

@@ -19,7 +19,7 @@ Token migration alone does not qualify a complete workflow.
 | Quiet table redraw and inspector clearing | TASK-32796, [275 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-table-selection/README.md) | Publication-time row/cell suppression, table-scoped gesture dedup and quiet external drills; real keyboard refresh/navigation, no schema/execution qualification |
 | Compact rail navigation | TASK-32812, [119 targeted cases and eight native captures](../qa/2026-09-18-mcp-rail-navigation/README.md) | Full All servers/Source paint, literal Unicode names/counts, ordinary-refresh/resize focus, exact row identity and scrollbars; structural catalog replacement focus is not qualified |
 | Complete tool-switch labels | TASK-32822, [37 targeted cases and eight native captures](../qa/2026-09-18-mcp-gate-labels/README.md) | All eleven gate labels, focus/scroll reveal, disabled dependencies and real private Deep research save/reversal; no broader save concurrency or execution qualification |
-| Selected-tool refresh, preview retirement and visible focus | TASK-32823, [353 distinct targeted cases and twelve native captures](../qa/2026-09-18-mcp-inspector-refresh/README.md) | Unchanged schema/raw drafts, changed/removed definitions, pending preview ownership, newer selection/focus and compact/wide control reachability; controlled catalog projection, no external server or tool execution |
+| Selected-tool refresh, preview retirement and visible focus | TASK-32823, [354 distinct targeted cases and twelve native captures](../qa/2026-09-18-mcp-inspector-refresh/README.md) | Unchanged schema/raw drafts, changed/removed definitions, pending preview ownership, newer selection/focus and compact/wide control reachability; controlled catalog projection, no external server or tool execution |
 
 ## Post-merge continuation
 
@@ -36,6 +36,16 @@ TASK-32823 is Done. Four final dark/light compact/wide native cells pass, with t
 captures and clean private-profile shutdown recorded in its receipt. Follow-up
 PR CI and owner visual approval remain separate gates.
 Server lifecycles, connected execution and the other remaining items stay open.
+
+
+PR2711's original-head latency guard found one excess bare-Button CSS candidate.
+The bounded selector repair uses existing action classes, preserves the 274 limit,
+and passes 29 targeted checks plus four refreshed native cells. New-head remote
+CI remains separate. TASK-32825's server action ownership and compact toolbar
+repair is independently saved in [draft PR2712](https://github.com/rmusser01/tldw_chatbook/pull/2712),
+with [109 distinct targeted checks and twelve native captures](https://github.com/rmusser01/tldw_chatbook/blob/2cd465c169582ff2a3c4bb0c6d18f4e16590176b/Docs/superpowers/qa/2026-09-18-mcp-server-actions/README.md).
+Both drafts retain their visual review and merge gates; broader MCP connection,
+execution, recovery and other destinations remain open.
 
 ## Remaining review
 
