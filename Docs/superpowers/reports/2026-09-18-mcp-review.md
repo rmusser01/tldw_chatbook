@@ -33,6 +33,32 @@ approval. Exact-input rule removal, Re-allow and other permission actions remain
 next; connected external runtime journeys and the wider destination review stay
 open.
 
+## Post-merge continuation
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`
+on 2026-09-18. The closeout checkpoint below is historical. Component review
+has resumed on independent, bounded follow-up branches; the resume heartbeat
+is paused. Separate draft PRs preserve Audit selection (#2720), filter layout
+(#2721), and inspector guidance (#2722). PR #2722 checks pass on saved head
+`4b77c4b33c21affd1f258b7c084490cd65e566c3`; that result does not qualify this
+branch. None of those changes is included in this fresh-dev follow-up.
+Current-head CI and final visual approval are required before its merge.
+
+## Audit navigation ownership — TASK-32837
+
+[64 targeted cases, seven preflight guards and 16 native captures](../qa/2026-09-18-mcp-audit-navigation/README.md)
+qualify mounted Audit action identity, profile capture, destination-filter
+reveal and missing-row handling. Retired controls cannot target replacement
+records; vanished destinations warn with detail cleared. Dark/light journeys
+at 120×40 and 170×48 use the real private catalog and two synthetic metadata
+records, without execution or policy mutation. Independent review found no
+blocker; the private app exited cleanly with defaults unchanged.
+
+Next: tool-definition freshness when a catalog replaces a same-ID target during
+an in-flight drilldown. Missing rows are qualified here; catalog revisions,
+80×24 action reachability and connected-runtime behavior are separate bounds.
+This follow-up remains subject to current-head CI and final visual approval.
+
 ## Qualified
 
 | Surface | Evidence | Bounds |

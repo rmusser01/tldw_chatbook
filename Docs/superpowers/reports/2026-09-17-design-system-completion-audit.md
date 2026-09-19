@@ -356,3 +356,21 @@ That existing draft currently conflicts with dev and still requires integration
 review. Other saved MCP drafts, connected-runtime journeys and remaining screen
 reviews stay open. This new repair is a separate draft against dev and requires
 current-head CI/review plus its own final owner visual approval before merge.
+
+## Post-merge Audit navigation review — TASK-32837
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`;
+its unmerged checkpoints above are historical. Component reviews resumed on
+separate branches, and the resume heartbeat is paused.
+
+TASK-32837 binds Audit actions to their displayed record/profile and honors
+missing destination rows. [64 targeted cases, seven preflight guards, independent
+review and 16 native dark/light captures](../qa/2026-09-18-mcp-audit-navigation/README.md)
+qualify this bounded repair. The fresh-dev branch does not include separate
+Audit selection/filter or inspector-guidance PRs. No tool execution, external
+server or permission mutation was part of its native journey. Current-head CI
+and final visual approval remain required before merging the follow-up.
+
+Next review: same-ID catalog replacement during an in-flight Audit drilldown.
+The [MCP ledger](2026-09-18-mcp-review.md) retains that and the wider scope; this
+repair does not close the component review workstream.
