@@ -1,0 +1,875 @@
+{
+  "total": 145,
+  "cases": [
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_handles_destination_row_removed_during_clear[tool]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_handles_destination_row_removed_during_clear[permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[invisible-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[invisible-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[disabled-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[disabled-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[covered-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_ignores_an_unavailable_owning_view[covered-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_is_invalid_before_pruning_yields[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_audit_navigation_is_invalid_before_pruning_yields[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_current_audit_navigation_is_repeatable[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_audit_navigation",
+      "name": "test_current_audit_navigation_is_repeatable[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[hidden]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[disabled]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[closed]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permission_navigation",
+      "name": "test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission-test]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-revoke]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-rule-actions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-permission-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-revoke]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-rule-actions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-permission-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-revoke]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-rule-actions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-permission-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-revoke]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-rule-actions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-permission-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-revoke]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-rule-actions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-permission-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-revoke]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-rule-actions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-permission-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-revoke]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-rule-actions]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-permission-navigation]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_tmux_names_reject_trailing_newlines[names0]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_tmux_names_reject_trailing_newlines[names1]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[outside]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[alias]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[traversal]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[tmp-base]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[escaped-home]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_unsafe_profile_is_rejected_before_output[escaped-db]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[native.log]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[launch.json]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[evidence]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_existing_output_is_preserved_and_rejected[dangling-log]",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.Utils.test_mcp_native_qa_args",
+      "name": "test_missing_tmux_is_reported_before_output",
+      "outcome": "passed",
+      "run": "green"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_queued_audit_navigation_rejects_profile_switch_during_await[tool]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_queued_audit_navigation_rejects_profile_switch_during_await[permission]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_queued_audit_action_rejects_profile_switch_before_handler[tool]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_queued_audit_action_rejects_profile_switch_before_handler[permission]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_audit_open_tool_missing_tool_notifies_instead_of_crashing",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_audit_adjust_permission_missing_tool_notifies_instead_of_crashing",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_switching_mode_away_from_audit_clears_entry_detail",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_switching_mode_clears_tool_detail",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_both_sub_view_selections_do_not_stack_visible_detail_panels",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_tools_mode_permission_block_change_button_jumps_to_permissions_row",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_test_tool_blocked_change_button_jumps_to_permissions_row",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_workbench",
+      "name": "test_tools_mode_permission_block_change_button_clears_stale_tool_detail",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_select_tool_row_moves_cursor_to_matching_row",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_select_tool_row_returns_false_for_unknown_tool_id",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_tools_mode",
+      "name": "test_select_tool_row_clears_an_active_filter_hiding_the_target",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permissions_mode",
+      "name": "test_select_tool_row_moves_cursor_to_matching_tool_row",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permissions_mode",
+      "name": "test_select_tool_row_returns_false_for_tool_not_in_matrix",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_permissions_mode",
+      "name": "test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_all_referenced_ds_tokens_are_defined",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_defined_tokens_have_no_orphans_in_catalog",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_documented_design_vocabulary_is_available",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_hex_literals_are_ratcheted_outside_token_definitions",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_hex_ratchet_ignores_comments",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_new_sheets_must_use_spacing_tokens",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_active_css_extension_is_in_hex_floor",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_design_token_governance",
+      "name": "test_section_header_preserves_global_and_stats_computed_geometry",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_canonical_classes_defined_only_in_owning_sheet",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_canonical_owning_sheets_are_bundled",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_deprecated_names_ratchet_down",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_catalog_and_gallery_sync",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_no_new_local_ds_fallbacks",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_literal_ratchet",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_python_style_ratchet",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_sheet_size_ceiling",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_ratchet_regexes_match_pin_script",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_dimension_floor_ignores_tokens_and_token_definitions",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_active_css_extension_is_in_dimension_floor",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_component_pattern_governance",
+      "name": "test_pin_rejects_active_css_extension_without_writing_baseline",
+      "outcome": "passed",
+      "run": "adjacent"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_inspector",
+      "name": "test_profile_scoped_inspector_requests_preserve_captured_context",
+      "outcome": "passed",
+      "run": "setup-fix"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_inspector",
+      "name": "test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "outcome": "passed",
+      "run": "setup-fix"
+    },
+    {
+      "classname": "Tests.UI.test_mcp_inspector",
+      "name": "test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "outcome": "passed",
+      "run": "setup-fix"
+    }
+  ]
+}

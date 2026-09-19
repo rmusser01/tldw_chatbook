@@ -1,0 +1,6 @@
+Ruff check and format pass for Audit navigation tests, shared runner argument tests, native_check.py and native_journey.py.
+All changed production ranges relative to dev pass ruff format --check --range.
+Inspector: 1409-1411,1414-1416,2539-2540,2586-2590,3835,3837-3853.
+Workbench: 4866-4872,4986-4993.
+No new diagnostics relative to dev (inspector 13, workbench 65).
+Existing inspector test file retains 9 baseline diagnostics; changed ranges are formatted.

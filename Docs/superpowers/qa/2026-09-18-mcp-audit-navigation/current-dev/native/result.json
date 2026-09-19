@@ -1,0 +1,84 @@
+{
+  "pid": 72951,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "tool_identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_filtered_targets_selected": true,
+      "both_missing_targets_warn_without_mode_change": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "tool_identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_filtered_targets_selected": true,
+      "both_missing_targets_warn_without_mode_change": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "tool_identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_filtered_targets_selected": true,
+      "both_missing_targets_warn_without_mode_change": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "tool_identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_filtered_targets_selected": true,
+      "both_missing_targets_warn_without_mode_change": true
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "6d0e78e415b3c660ac67693fc95d9b8063166fd39673d9f75f65ac9dfd2478d9",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "cb970736c7033370b3c0d773e5bff064d106c9a5041104289c96666b7aa1e725",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "f5474b1f4fb0fc11811100f8eec7c532a009999c3081ac2d3bf14e75b2490541",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "5d97f124f1fcfaaf4f4fc79ba4624eeac24f26899a00461372dff584694bdeef",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "2d5387eb572fbb82d53de4e3766ce72ac80378677a5aeda36df9a52902fc2322",
+    "tldw_chatbook/css/core/_variables.tcss": "134124fb32a187c7279ac6b02ceed338e85bbb4a64b56d6617063b23c538f709",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c",
+    "tldw_chatbook/MCP/execution_log.py": "2103254e8a62bf671ed236ff36feff9363a443d42cea3b58b2dba9ded6105891",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86"
+  },
+  "journey_sha256": "a2a6b7e63510fb7ffb1979f27393bb5a74dc42a7b56856b773440bea6d17eaa8",
+  "fixture_scope": "Real private catalog and two synthetic Audit metadata records. No tool executes, no external server connects, no permission changes.",
+  "runner_sha256": "9e3fcda3d1bf4bfec4ae3a3d6e3244c45f0f2d26cbee730aeb6fe393b265e858",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "button ready",
+  "permission_profiles_unchanged": true,
+  "record_count": 2,
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

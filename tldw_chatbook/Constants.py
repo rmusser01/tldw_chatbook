@@ -190,6 +190,15 @@ ALL_TLDW_API_OPTION_CONTAINERS = [
 ]
 
 
+# --- Responsive layout ---
+#: Viewport width (terminal columns) at which the App gains the
+#: ``-wide-viewport`` CSS class (``WideViewportTierMixin`` in app.py) and
+#: the repo-wide modal wide tier engages. Single source of truth shared
+#: with the test registry (Tests/UI/modal_wide_tier_registry.py) so the
+#: production breakpoint and the test contract cannot drift.
+WIDE_VIEWPORT_COLUMNS = 150
+
+
 # --- CSS definition ---
 # (Keep your CSS content here, make sure IDs match widgets)
 css_content = """

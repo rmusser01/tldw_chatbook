@@ -1,0 +1,31 @@
+..............                                                           [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02ad8459-aae9-43c0-9771-123066850dfd/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02ad8459-aae9-43c0-9771-123066850dfd/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02ad8459-aae9-43c0-9771-123066850dfd
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-02ad8459-aae9-43c0-9771-123066850dfd'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+8.33s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]
+8.27s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]
+8.01s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]
+7.91s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]
+3.11s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[permission]
+3.01s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[tool]
+2.92s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.87s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.87s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]
+2.84s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.77s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]
+2.70s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]
+2.64s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]
+2.61s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+
+(11 durations < 1s hidden.)
+14 passed, 2 warnings in 63.27s (0:01:03)
