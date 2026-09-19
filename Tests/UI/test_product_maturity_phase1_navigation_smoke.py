@@ -228,3 +228,81 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
                     and app.screen.__class__.__name__ == "SettingsScreen"
                 ),
             )
+
+
+@pytest.mark.asyncio
+async def test_ce007_reused_console_nav_bar_resyncs_active_after_warm_return(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """CE-007 (TASK-32534): warm returns must re-sync the reused screen's nav bar.
+
+    A navigation click optimistically highlights the clicked destination on
+    the OUTGOING screen's own bar. Reusable routes survive navigation as
+    suspended instances, so returning to the Console reinstated its bar
+    still claiming the destination the user clicked away to -- and the
+    bar's already-active guard then swallowed every later press of that
+    destination (UAT re-run 2026-09-13: four nav-settings presses, zero
+    "Navigation requested" lines, while palette routes still worked because
+    they post NavigateToScreen directly). After a completed navigation the
+    visible screen's nav bar must reflect its own route.
+    """
+    app = _build_clean_navigation_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 50)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                ),
+            )
+
+            await pilot.click("#nav-console")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
+            )
+            console = app.screen
+            console_settings_tab = console.query_one("#nav-settings", Button)
+            assert "is-active" not in console_settings_tab.classes
+
+            # Navigate away via the Console's own bar (the optimistic set).
+            await pilot.click("#nav-settings")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
+            )
+
+            # Warm return: the reused Console's bar must no longer claim the
+            # destination the departure click highlighted (pre-fix: it did,
+            # and the already-active guard ate every later nav-settings press).
+            await pilot.click("#nav-console")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
+            )
+            assert app.screen is console
+            assert "is-active" not in console_settings_tab.classes
+
+            # The exact CE-007 symptom: nav-settings must still navigate.
+            await pilot.click("#nav-settings")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
+            )
