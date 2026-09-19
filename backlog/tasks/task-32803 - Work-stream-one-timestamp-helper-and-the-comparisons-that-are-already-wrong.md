@@ -1,9 +1,10 @@
 ---
 id: TASK-32803
 title: 'Work stream: one timestamp helper, and the comparisons that are already wrong'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-18 16:46'
+updated_date: '2026-09-19 20:41'
 labels:
   - core-review
   - review-time
@@ -18,3 +19,9 @@ Twelve UTC string shapes are produced by 55 helper copies, SQLite's `CURRENT_TIM
 
 This is a work-stream parent from the core-runtime code review of 2026-09-17 (`qa/core-code-review-2026-09-17/report.md`, all 29 slices, 887,855 lines). Its child tasks are the individual units of work; close this one when they are all closed. Findings are quoted in each child with the file and line they were verified at, and each slice's full evidence is in `qa/core-code-review-2026-09-17/slices/`.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+.2/.3/.4 done (PR #2735). .1 (shared Utils time module + format guard + ADR) and .5 (adopt it across remaining writers) pending — foundational refactor.
+<!-- SECTION:NOTES:END -->
