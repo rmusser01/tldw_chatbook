@@ -36,8 +36,9 @@ Existing ADR-150/161/170 apply; no new ADR is required.
   verify normal app return, process exit, lock release, healthy private databases,
   zero conversations/messages, unchanged user defaults and no app error logs.
   Permission profiles and execution logs remain unchanged; no tool executes and
-  no network connection occurs. App, runner and journey hashes identify the captured source versions.
-  The later QA-only constant extraction is qualified in [review follow-up](review-followup.json).
+  no network connection occurs. App, runner and journey hashes identify the
+  captured source versions. The later QA-only constant extraction is qualified
+  in [review follow-up](review-followup.json).
 - [Visual comparisons](visual-comparison.json) isolate every before/after terminal
   difference to the header row. Final fixed PNGs are pixel-identical to the four
   inspected fixed views from the initial pair. [Gallery](GALLERY.md).
@@ -50,6 +51,13 @@ about its frequency under every runtime load. Native captures qualify the two
 named viewport sizes; narrower 80/100-column full-app checks are automated.
 The Textual private measurement/cache API remains a dependency of this local
 workaround, guarded by the behavioral regressions.
+
+PR2749 was rebased onto dev `495b2c4522` without conflicts.
+[Rebase verification](rebased/verification.json) records a fresh 152-case targeted
+pass, all seven artifact guards and a fresh native journey/lifecycle check. All
+four rebased views are pixel-identical to this gallery, including the reviewed
+QA-script constant extraction. Final visual approval and current-head CI/review
+remain pending.
 
 ## Reproduce
 

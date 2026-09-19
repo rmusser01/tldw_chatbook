@@ -1,8 +1,8 @@
 {
   "base": "ad0f76e23b8737904f24eb34760bbee9ac01a04c",
   "files": {
-    "GALLERY.md": "7b84c5a6e75db894b8e1eccec937c495ebc93c09cf58d66dfdda107e5040849b",
-    "README.md": "8cc2730402302e31602ef76af1a9fc9dce03c94b7190221511589c1321e8b5c5",
+    "GALLERY.md": "5bd431565dfc5b5e1996b3f1419805c32ae3fc782f16eba17505c8c1ddc513e9",
+    "README.md": "038953f8a9fe69c7d84c618e05bafc48ad29de528b875cbd71a0ee85027c60d8",
     "after/lifecycle.json": "cfd079fa9c691c4be90304611b924965026a9d670473a902b3ee1da51b8182c9",
     "after/result.json": "351ba79301b9a094661926a36396dfbd8ee507d1e470efae3aee75b75f0ec1a5",
     "after/textual-dark-120x40-tools.svg": "1d3e5fd3ed39872016fcc858fa86903bd808da20815fd2eda6fed0772d457c78",
@@ -36,7 +36,13 @@
     "targeted-tests.json": "f6c9ccbdbd9dfec18e9d83f822efdb4713d1387c7ba9a5516e427f6101155ca3",
     "targeted-tests.txt": "0458b62645eb8f63c773efdb4c0cfb1f9515ee19e4d404c0ade9926984971384",
     "visual-comparison.json": "201f5fd7002f04e68bbc13c6e6762a3550177875ba63538e86cd154986c47b04",
-    "review-followup.json": "33df510f43575bc0c84caa9f1ddd22f031619d668a6c00567cbeede45254c881"
+    "review-followup.json": "33df510f43575bc0c84caa9f1ddd22f031619d668a6c00567cbeede45254c881",
+    "rebased/lifecycle.json": "60e973dc2574b2e55142ba292c590518efe105e5ccff8f86fae393eb0ea1f0e0",
+    "rebased/mermaid-retry.txt": "96875c87d12bfbdb5f17d16b6d61b68cf1c503158e7228385e0c1040d7d0bca7",
+    "rebased/native-result.json": "633ae6dc35008b4c44451ac07f984496125432ce6c7d4b8a2c49302792063897",
+    "rebased/preflight.txt": "47f697ebfcb6a05070b549f2917d00b57a91e7f76bd9cacd82dffac6d42c3b8f",
+    "rebased/targeted-tests.txt": "6f5a0660004f2c9119eedf587e4a448f90122f98bf770beebc073022558780f1",
+    "rebased/verification.json": "b7531d9c2562abf600b0ef7567276297e27482069ba0b05fb647d026f53fe191"
   },
   "changed_source_hashes": {
     "tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py": "9d87f728978e66bca3f4458f4e3006eff1bb039fa7f09c11a9563b82364222d8",

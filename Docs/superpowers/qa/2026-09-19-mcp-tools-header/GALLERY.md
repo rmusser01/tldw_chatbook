@@ -24,3 +24,6 @@ The Schema column retains its existing horizontal-scroll behavior.
 
 Final owner visual approval is pending for this follow-up; approval of PR2726
 does not stand in for reviewing these new captures.
+
+[Rebased validation](rebased/verification.json) confirms all four views remain
+pixel-identical on dev `495b2c4522`; the rebase required no conflict choices.
