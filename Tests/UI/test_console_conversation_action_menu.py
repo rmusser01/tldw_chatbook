@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_left_rail import make_console_pilot
 from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
     ConsoleConversationActionMenu,
@@ -23,13 +24,14 @@ def _opener(screen) -> Button:
 
 
 @pytest.mark.asyncio
-async def test_row_carries_a_one_row_asterisk_not_a_full_height_star() -> None:
+@private_profile_test
+async def test_row_carries_one_right_conversation_icon(request) -> None:
     """The control must not reserve the row's whole height any more."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
         opener = _opener(screen)
 
-        assert str(opener.label).strip() == "*"
+        assert str(opener.label).strip() == "💬"
         assert opener.disabled is False
         assert opener.region.height == 1, (
             "the action opener is still reserving full row height"
@@ -40,7 +42,8 @@ async def test_row_carries_a_one_row_asterisk_not_a_full_height_star() -> None:
 
 
 @pytest.mark.asyncio
-async def test_local_stars_unavailable_jargon_is_gone() -> None:
+@private_profile_test
+async def test_local_stars_unavailable_jargon_is_gone(request) -> None:
     """The developer-facing line must not appear in the rail at all."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -55,7 +58,8 @@ async def test_local_stars_unavailable_jargon_is_gone() -> None:
 
 
 @pytest.mark.asyncio
-async def test_asterisk_opens_the_menu_with_the_expected_entries() -> None:
+@private_profile_test
+async def test_asterisk_opens_the_menu_with_the_expected_entries(request) -> None:
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
         _opener(screen).press()
@@ -65,16 +69,19 @@ async def test_asterisk_opens_the_menu_with_the_expected_entries() -> None:
         labels = [str(button.label).strip() for button in menu.query(Button)]
         assert labels == [
             "Favourite",
+            "Mark as unread",
             "Change status ▸",
             "Archive",
             "Rename…",
             "Copy as ▸",
+            "Icon and colour…",
             "More ▸",
         ]
 
 
 @pytest.mark.asyncio
-async def test_every_disabled_entry_states_its_precondition() -> None:
+@private_profile_test
+async def test_every_disabled_entry_states_its_precondition(request) -> None:
     """A greyed control with no explanation is the defect being removed."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -84,13 +91,12 @@ async def test_every_disabled_entry_states_its_precondition() -> None:
         menu = screen.query_one(ConsoleConversationActionMenu)
         for button in menu.query(Button):
             if button.disabled:
-                assert button.tooltip, (
-                    f"{button.id} is disabled with no stated reason"
-                )
+                assert button.tooltip, f"{button.id} is disabled with no stated reason"
 
 
 @pytest.mark.asyncio
-async def test_more_opens_delete_and_back_returns() -> None:
+@private_profile_test
+async def test_more_opens_delete_and_back_returns(request) -> None:
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
         _opener(screen).press()
@@ -116,7 +122,8 @@ async def test_more_opens_delete_and_back_returns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_escape_steps_out_of_a_submenu_before_closing() -> None:
+@private_profile_test
+async def test_escape_steps_out_of_a_submenu_before_closing(request) -> None:
     """Escape in a submenu returns to the root rather than dropping the row."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -145,7 +152,8 @@ async def test_escape_steps_out_of_a_submenu_before_closing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_menu_focuses_its_first_actionable_entry_on_open() -> None:
+@private_profile_test
+async def test_menu_focuses_its_first_actionable_entry_on_open(request) -> None:
     """Keyboard users must land on something they can actually choose."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -160,7 +168,10 @@ async def test_menu_focuses_its_first_actionable_entry_on_open() -> None:
 
 
 @pytest.mark.asyncio
-async def test_click_outside_closes_the_menu_without_dispatching(monkeypatch) -> None:
+@private_profile_test
+async def test_click_outside_closes_the_menu_without_dispatching(
+    request, monkeypatch
+) -> None:
     """ADR-068 dismiss contract: a click elsewhere folds the menu, no actions.
 
     Clicking the composer is the canonical stranding path: Textual moves
@@ -194,7 +205,8 @@ async def test_click_outside_closes_the_menu_without_dispatching(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_click_on_menu_chrome_keeps_the_menu_open() -> None:
+@private_profile_test
+async def test_click_on_menu_chrome_keeps_the_menu_open(request) -> None:
     """A click on the menu's border must not fold it mid-inspection.
 
     Targets the top border row (offset y=0) -- menu chrome, not a button --
@@ -216,7 +228,8 @@ async def test_click_on_menu_chrome_keeps_the_menu_open() -> None:
 
 
 @pytest.mark.asyncio
-async def test_escape_with_focus_outside_the_menu_closes_it() -> None:
+@private_profile_test
+async def test_escape_with_focus_outside_the_menu_closes_it(request) -> None:
     """Escape must reach a stranded menu even after focus moved elsewhere.
 
     Focus is moved to the composer without a mouse press (the screen seam
@@ -245,7 +258,8 @@ async def test_escape_with_focus_outside_the_menu_closes_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pressing_the_asterisk_again_replaces_rather_than_stacks() -> None:
+@private_profile_test
+async def test_pressing_the_asterisk_again_replaces_rather_than_stacks(request) -> None:
     """The opener's press path still ends with exactly one menu mounted."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -256,9 +270,7 @@ async def test_pressing_the_asterisk_again_replaces_rather_than_stacks() -> None
         await pilot.pause(0.3)
 
         mounted = screen.query(ConsoleConversationActionMenu)
-        assert len(mounted) == 1, (
-            f"expected one replaced menu, found {len(mounted)}"
-        )
+        assert len(mounted) == 1, f"expected one replaced menu, found {len(mounted)}"
 
 
 @pytest.mark.unit
@@ -313,7 +325,8 @@ def _copy_target(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_root_menu_offers_copy_as_with_disclosure_glyph() -> None:
+@private_profile_test
+async def test_root_menu_offers_copy_as_with_disclosure_glyph(request) -> None:
     """The Copy as opener carries the ▸ like the other page openers."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -323,11 +336,12 @@ async def test_root_menu_offers_copy_as_with_disclosure_glyph() -> None:
             str(button.label).strip()
             for button in screen.query_one(ConsoleConversationActionMenu).query(Button)
         ]
-        assert labels[4] == "Copy as ▸"
+        assert labels[5] == "Copy as ▸"
 
 
 @pytest.mark.asyncio
-async def test_copy_page_offers_clean_full_and_save() -> None:
+@private_profile_test
+async def test_copy_page_offers_clean_full_and_save(request) -> None:
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
         _opener(screen).press()
@@ -340,9 +354,7 @@ async def test_copy_page_offers_clean_full_and_save() -> None:
         ).press()
         await pilot.pause(0.5)
         assert menu.page == "copy"
-        actions = [
-            getattr(b, "console_action_id", "") for b in menu.query(Button)
-        ]
+        actions = [getattr(b, "console_action_id", "") for b in menu.query(Button)]
         assert actions == [
             "page:root",
             "copy-markdown:clean",
@@ -352,8 +364,9 @@ async def test_copy_page_offers_clean_full_and_save() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_copy_clean_routes_to_clipboard_with_markdown(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ) -> None:
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -396,7 +409,9 @@ async def test_copy_clean_routes_to_clipboard_with_markdown(
         )
 
         screen.on_conversation_action_chosen(
-            ConversationActionChosen("copy-markdown:clean", _copy_target(conversation_id=conv_id))
+            ConversationActionChosen(
+                "copy-markdown:clean", _copy_target(conversation_id=conv_id)
+            )
         )
         await pilot.pause(1.0)
 
@@ -415,7 +430,9 @@ async def test_copy_empty_chat_is_gated_and_copies_nothing(monkeypatch) -> None:
 
     items = {
         item.action_id: item
-        for item in build_conversation_menu(_copy_target(has_messages=False), page="copy")
+        for item in build_conversation_menu(
+            _copy_target(has_messages=False), page="copy"
+        )
     }
     assert items["copy-markdown:clean"].enabled is False
     assert items["copy-markdown:clean"].disabled_reason == (
@@ -424,7 +441,10 @@ async def test_copy_empty_chat_is_gated_and_copies_nothing(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> None:
+@private_profile_test
+async def test_save_writes_validated_markdown_file(
+    request, monkeypatch, tmp_path
+) -> None:
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -460,7 +480,9 @@ async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> Non
 
         monkeypatch.setattr(screen, "_save_console_conversation_markdown", _fake_save)
         screen.on_conversation_action_chosen(
-            ConversationActionChosen("save-markdown", _copy_target(conversation_id=conv_id))
+            ConversationActionChosen(
+                "save-markdown", _copy_target(conversation_id=conv_id)
+            )
         )
         await pilot.pause(1.0)
 
@@ -470,8 +492,9 @@ async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_copy_follows_the_active_branch_not_every_sibling(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ) -> None:
     """Regenerated branches must not bleed into the export (PR #2262)."""
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -534,7 +557,8 @@ async def test_copy_follows_the_active_branch_not_every_sibling(
 
 
 @pytest.mark.asyncio
-async def test_transcript_click_folds_the_menu(monkeypatch) -> None:
+@private_profile_test
+async def test_transcript_click_folds_the_menu(request, monkeypatch) -> None:
     """ADR-068 completion: transcript presses own the biggest screen area.
 
     The screen-level outside-click dismissal returns early for transcript
@@ -557,7 +581,10 @@ async def test_transcript_click_folds_the_menu(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fold_helper_dismisses_both_registries_without_focus_restore() -> None:
+@private_profile_test
+async def test_fold_helper_dismisses_both_registries_without_focus_restore(
+    request,
+) -> None:
     """Unit seam for _fold_row_action_menus_for_pointer (PR #2593 review).
 
     Mounts one menu of EACH registry directly (no UI open path), parks
@@ -603,3 +630,26 @@ async def test_fold_helper_dismisses_both_registries_without_focus_restore() -> 
         assert pilot.app.focused is composer, (
             "fold restored opener focus instead of honouring the press"
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_ascii_attention_indicators_fit_painted_action_cells(request) -> None:
+    from rich.text import Text
+    from textual.geometry import Region
+
+    from tldw_chatbook.Workspaces.conversation_attention import ATTENTION_PRESENTATIONS
+
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        control = _opener(pilot.app.screen)
+        control.add_class("conversation-actions-ascii")
+        for _unicode, ascii_icon, _status in ATTENTION_PRESENTATIONS.values():
+            control.label = Text(ascii_icon)
+            await pilot.pause()
+            painted = "".join(
+                strip.text
+                for strip in control.render_lines(
+                    Region(0, 0, control.size.width, control.size.height)
+                )
+            )
+            assert ascii_icon in painted, (ascii_icon, painted)

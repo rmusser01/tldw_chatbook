@@ -123,3 +123,15 @@ def test_truncate_is_cell_aware_for_wide_characters() -> None:
     result = truncate_console_row_cells("日" * 12, 10)
     assert cell_len(result) <= 10
     assert result.endswith("…")
+
+
+def test_compact_title_respects_narrow_wide_character_budget():
+    from tldw_chatbook.Widgets.Console.conversation_row_presentation import (
+        conversation_title_cells,
+    )
+
+    title = conversation_title_cells("日本語の長い会話タイトル", 7)
+    assert "\n" not in title
+    assert cell_len(title) <= 7
+    assert title.endswith("…")
+    assert conversation_title_cells("Chat", 0) == ""

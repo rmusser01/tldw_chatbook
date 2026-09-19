@@ -8,6 +8,10 @@ from functools import total_ordering
 from typing import Iterable, Mapping, Protocol
 
 from .models import DEFAULT_WORKSPACE_ID
+from .conversation_attention import (
+    ConversationAttentionFact,
+    present_conversation_attention,
+)
 
 
 CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT = 75
@@ -272,6 +276,8 @@ class ConsoleConversationBrowserInputRow:
     #: the caller building this row, so the display layer needs no enum/model
     #: import to render it.
     run_marker: str = ""
+    attention: tuple[ConversationAttentionFact, ...] = ()
+    manual_unread: bool | None = None
     #: Content-free count of unsent prompts for a live native session.
     queued_count: int = 0
     #: task-31207: sanitized custom icon glyph for this conversation ("" when
@@ -331,6 +337,8 @@ class ConsoleConversationBrowserRow:
     openable: bool = True
     #: Parallel-agents spec PA-T8: resolved fleet run-marker glyph, or "".
     run_marker: str = ""
+    attention: tuple[ConversationAttentionFact, ...] = ()
+    manual_unread: bool | None = None
     #: Content-free count of unsent prompts for a live native session.
     queued_count: int = 0
     #: task-31207: sanitized custom icon glyph ("" when unset). Part of row
@@ -381,6 +389,7 @@ class ConsoleConversationBrowserGroup:
     #: renders this on the group HEADER when `collapsed` is True; an
     #: expanded group already shows every row's own marker.
     run_marker: str = ""
+    attention: tuple[ConversationAttentionFact, ...] = ()
     #: TASK-912 AC#2: the single most-urgent `run_marker` glyph among the
     #: rows beyond `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` (i.e. the
     #: rows a non-collapsed group's cap still hides). An expanded group with
@@ -435,6 +444,7 @@ class ConsoleConversationBrowserSection:
     hidden_count: int = 0
     empty_copy: str = ""
     run_marker: str = ""
+    attention: tuple[ConversationAttentionFact, ...] = ()
     capped_run_marker: str = ""
 
 
@@ -594,6 +604,8 @@ def _normalize_input_row(
         updated_sort=str(row.updated_sort or ""),
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
+        attention=row.attention,
+        manual_unread=row.manual_unread,
         queued_count=max(0, int(row.queued_count)),
         icon=str(row.icon or ""),
         color=str(row.color or ""),
@@ -628,6 +640,8 @@ def _to_browser_row(
         ),
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
+        attention=row.attention,
+        manual_unread=row.manual_unread,
         queued_count=max(0, int(row.queued_count)),
         icon=str(row.icon or ""),
         color=str(row.color or ""),
@@ -663,6 +677,7 @@ def _build_row_section(
         # TASK-912 AC#1: computed from `rows` -- the full pre-cap set --
         # so a marker on a row hidden by collapse or capping is never lost.
         run_marker=_most_urgent_run_marker(rows),
+        attention=tuple(fact for row in rows for fact in row.attention),
         # TASK-912 review fix round 1: mirrors the group fix exactly -- same
         # helper, same `rows[group_row_limit:]` slice source `_visible_rows`
         # uses, computed unconditionally regardless of collapse state.
@@ -727,6 +742,12 @@ def _most_urgent_run_marker(rows: Iterable[RunMarkerBearer]) -> str:
     ``rows`` carries a marker. ``rows`` may be input rows, browser rows, or
     `ConsoleConversationBrowserGroup`s -- anything with a `.run_marker: str`.
     """
+    rows = tuple(rows)
+    facts = tuple(fact for row in rows for fact in getattr(row, "attention", ()))
+    if facts:
+        from ..Widgets.glyph_fallback import ascii_glyph_mode
+
+        return present_conversation_attention(facts, ascii_mode=ascii_glyph_mode()).icon
     markers = {str(row.run_marker or "").strip() for row in rows}
     markers.discard("")
     if not markers:
@@ -804,6 +825,7 @@ def _build_workspace_groups(
                 # collapsed group -- so a marker on a hidden row is never
                 # lost.
                 run_marker=_most_urgent_run_marker(group_rows),
+                attention=tuple(fact for row in group_rows for fact in row.attention),
                 # TASK-912 AC#2: computed from the same FULL `group_rows`
                 # regardless of collapse state -- cheap, and it is the
                 # rendering layer's job to pick which of `run_marker` /

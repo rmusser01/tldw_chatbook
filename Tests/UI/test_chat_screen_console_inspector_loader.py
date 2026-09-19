@@ -20,14 +20,14 @@ from unittest.mock import Mock
 import pytest
 from loguru import logger as loguru_logger
 
+from tldw_chatbook.Chat.console_chat_controller import CapturePolicyMutationStatus
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_chat_controller import CapturePolicyMutationStatus
-from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureCorruptError,
+    CaptureDetail,
     ExchangeCapture,
     capture_from_storage,
     capture_to_blob,
@@ -367,7 +367,9 @@ async def test_corrupt_blob_diagnostic_omits_traceback_and_blob_bytes() -> None:
 
 def test_inspector_push_captures_immutable_revision_target() -> None:
     session = SimpleNamespace(
-        id="session-at-open", persisted_conversation_id="conversation-at-open"
+        id="session-at-open",
+        persisted_conversation_id="conversation-at-open",
+        title="Original title",
     )
     quiescent = SimpleNamespace(value=False)
     store = SimpleNamespace(
@@ -385,6 +387,9 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
     )
     pushed = Mock()
     screen = SimpleNamespace(
+        _workspace=SimpleNamespace(
+            _console_switcher_authority=lambda: ("profile", "authority")
+        ),
         _build_console_inspector_cost_data=lambda: (
             [],
             SimpleNamespace(),
@@ -425,3 +430,40 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
 
 async def _empty_loader(_native_message_id: str):
     return []
+
+
+@pytest.mark.parametrize(
+    "entry", ["action_view_chat_context", "_open_console_cost_breakdown"]
+)
+def test_both_inspector_routes_estimate_the_captured_prepared_request(
+    monkeypatch, entry
+):
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    monkeypatch.setattr(
+        chat_screen.project_instruction_ui,
+        "project_instruction_context_kwargs",
+        lambda *args: {},
+    )
+    controller = SimpleNamespace(store=SimpleNamespace(active_session_id="original"))
+    pushed = Mock()
+    estimator = Mock(return_value=4200)
+    screen = SimpleNamespace(
+        _console_setup_modal_blocking=lambda: False,
+        _ensure_console_chat_controller=lambda: controller,
+        _console_inspector_next_send_factories=lambda *args: (
+            _empty_loader,
+            lambda: 3,
+            3,
+            False,
+        ),
+        _push_console_inspector=pushed,
+        _console_next_send_token_estimate=estimator,
+    )
+    getattr(ChatScreen, entry)(screen)
+    controller.store.active_session_id = "different"
+    payload = SimpleNamespace(
+        payload={"messages": [{"role": "system", "content": "long context"}]}
+    )
+    assert pushed.call_args.kwargs["payload_estimate"](payload) == 4200
+    estimator.assert_called_once_with(payload, session_id="original")

@@ -63,6 +63,9 @@ ACTION_BACK = "page:root"
 ACTION_COPY_CLEAN = "copy-markdown:clean"
 ACTION_COPY_FULL = "copy-markdown:full"
 ACTION_SAVE_MARKDOWN = "save-markdown"
+ACTION_MARK_UNREAD = "mark_unread"
+ACTION_MARK_READ = "mark_read"
+ACTION_CHANGE_APPEARANCE = "change_appearance"
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +120,11 @@ class ConversationMenuTarget:
     favorites_available: bool = True
     native_session_id: str = ""
     has_messages: bool = False
+    manual_unread: bool | None = False
+    attention_summary: str = ""
+    icon: str = ""
+    color: str = ""
+    profile_authority: tuple[str, str] | None = None
 
     @property
     def is_saved(self) -> bool:
@@ -210,6 +218,22 @@ def _root_page(
     return (
         favorite,
         ConversationMenuItem(
+            action_id=ACTION_MARK_READ if target.manual_unread else ACTION_MARK_UNREAD,
+            label="Mark as read" if target.manual_unread else "Mark as unread",
+            enabled=saved
+            and target.manual_unread is not None
+            and target.favorites_available,
+            disabled_reason=(
+                ""
+                if saved
+                and target.manual_unread is not None
+                and target.favorites_available
+                else _UNSAVED_REASON
+                if not saved
+                else "Read state is unavailable. Try reopening this menu."
+            ),
+        ),
+        ConversationMenuItem(
             action_id=f"{ACTION_PAGE_PREFIX}status",
             label="Change status",
             enabled=saved,
@@ -227,6 +251,12 @@ def _root_page(
             action_id=f"{ACTION_PAGE_PREFIX}copy",
             label="Copy as",
             opens_page="copy",
+        ),
+        ConversationMenuItem(
+            action_id=ACTION_CHANGE_APPEARANCE,
+            label="Icon and colour…",
+            enabled=saved,
+            disabled_reason="" if saved else _UNSAVED_REASON,
         ),
         ConversationMenuItem(
             action_id=f"{ACTION_PAGE_PREFIX}more",

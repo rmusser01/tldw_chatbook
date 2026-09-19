@@ -12892,6 +12892,14 @@ both resolved to white. Switching this local host to the existing
 the combined targeted gate then passed635. No production styling changed. Extending
 the shared authority does not repair local hosts that continue to bypass it.
 
+Recurrence, TASK-32828 (2026-09-18): the Inspector modal's default-only harness
+kept its footer visible while production TabPane/ContentSwitcher height rules
+pushed it below the viewport. Loading `list(APP_STYLESHEETS)` exposed the error;
+scoped fractional heights and retained list/detail readers passed the 80x24,
+120x40, and 160x48 geometry checks. A Textual `CSS_PATH` sequence must be a list,
+not a tuple. Headless screenshots remain separate evidence from native terminal
+rendering, which was unavailable in this session.
+
 ## A "settled geometry" assertion bounded by WALL CLOCK is load-sensitive — run the base arm N times before blaming a diff (TASK-31663, 2026-09-05)
 
 The covering batch for TASK-31663 failed intermittently on the branch —

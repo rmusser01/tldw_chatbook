@@ -371,6 +371,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
+    from ..Workspaces.conversation_attention import ConversationAttentionFact
+
 from tldw_chatbook.Agents.builtin_tool_gate import (
     DENIAL_POLICY,
     LOCAL_TOOLS_DEFAULT_ENABLED,
@@ -6310,6 +6312,35 @@ class ConsoleChatController:
                 visited).
         """
         self._unvisited_outcomes.pop(session_id, None)
+
+    def conversation_attention_for(
+        self, session_id: str
+    ) -> tuple[ConversationAttentionFact, ...]:
+        """Expose simultaneous facts without altering operational acknowledgement.
+
+        Args:
+            session_id: Native session whose live state and outcomes are inspected.
+
+        Returns:
+            Content-free attention facts for the specified session.
+        """
+        from ..Workspaces.conversation_attention import ConversationAttentionFact
+
+        facts = []
+        if self.run_state_for(session_id).status is ConsoleRunStatus.BLOCKED:
+            facts.append(ConversationAttentionFact("blocked", "Blocked"))
+        if session_id in self._pending_approvals:
+            facts.append(ConversationAttentionFact("approval", "Approval required"))
+        if session_id in self._live_busy_session_ids():
+            facts.append(ConversationAttentionFact("running", "Running"))
+        if self.activity_for(session_id).queue_paused:
+            facts.append(ConversationAttentionFact("paused", "Prompt queue paused"))
+        outcome = self._unvisited_outcomes.get(session_id)
+        if outcome is ConsoleRunMarker.FINISHED_FAILED:
+            facts.append(ConversationAttentionFact("failed", "Failed"))
+        elif outcome is ConsoleRunMarker.FINISHED_OK:
+            facts.append(ConversationAttentionFact("ready", "New result ready"))
+        return tuple(facts)
 
     def run_marker_for(self, session_id: str) -> ConsoleRunMarker:
         """Fleet-visible marker for ``session_id`` (parallel-agents spec §6).
@@ -13311,7 +13342,7 @@ class ConsoleChatController:
             raise RuntimeError("Console session close generation changed.")
         _stored_ticket, owns_active_stream, repair_session, previous_active_id = state
         session_id = ticket.session_id
-        # ADR-150: session-scoped chat-create remember grants die with the session.
+        # Session-scoped grants die only after the close ticket is validated.
         self._chat_create_session_grants.pop(session_id, None)
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)

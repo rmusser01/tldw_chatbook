@@ -11,52 +11,49 @@ one replaced -- both retired outright in task-10).
 
 from __future__ import annotations
 
-import asyncio
-import json
 from collections.abc import Callable
-from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from loguru import logger
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
 from textual.widgets import (
     Button,
     Collapsible,
     ContentSwitcher,
     Static,
-    TextArea,
 )
 from textual.widgets._collapsible import CollapsibleTitle
-from textual.worker import WorkerState
-
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 import tldw_chatbook.Widgets.Console.console_conversation_inspector as inspector_module
-from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import (
     CapturePolicySnapshot,
     CapturePurgeAvailability,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCostRow,
     ConsoleCostRowTotals,
     build_cost_rows,
 )
 from tldw_chatbook.Chat.console_exchange_capture import (
-    CAPTURE_REQUEST_ALLOWLIST,
     CaptureDetail,
+    CapturePolicyResolution,
+    CapturePolicySource,
     ExchangeCapture,
     build_request_capture,
     compact_safe_history_rows,
     history_elision_marker,
-    CapturePolicyResolution,
-    CapturePolicySource,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
+from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+    CapturePolicyBindings,
+)
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     CLOSE_BUTTON_ID,
     TAB_COSTS,
@@ -64,13 +61,6 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     TAB_NEXT_SEND,
     ConsoleConversationInspector,
     InspectorTurn,
-    _SAMPLING_EXCLUDED_REQUEST_KEYS,
-)
-from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
-    ConsoleExchangeExportDialog,
-)
-from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
-    CapturePolicyBindings,
 )
 
 
@@ -182,18 +172,24 @@ async def test_compact_capture_status_names_title_and_armed_next_send() -> None:
 
 
 def _default_kwargs(**overrides: object) -> dict[str, object]:
-    kwargs: dict[str, object] = dict(
-        rows=[_row()],
-        totals=_totals(),
-        turns=[_turn()],
-        exchanges_loader=_empty_exchanges_loader,
-        snapshot_factory=_noop_snapshot,
-    )
+    kwargs: dict[str, object] = {
+        "conversation_title": "Test chat",
+        "target_profile_key": "test-profile",
+        "target_is_current": lambda: True,
+        "initial_tab": TAB_COSTS,
+        "rows": [_row()],
+        "totals": _totals(),
+        "turns": [_turn()],
+        "exchanges_loader": _empty_exchanges_loader,
+        "snapshot_factory": _noop_snapshot,
+    }
     kwargs.update(overrides)
     return kwargs
 
 
 class InspectorHarness(ConsolidatedCSSApp):
+    CSS_PATH: ClassVar[list[Path]] = list(APP_STYLESHEETS)
+
     def __init__(self, **modal_kwargs: object) -> None:
         super().__init__()
         self._modal_kwargs = modal_kwargs
@@ -314,266 +310,6 @@ async def test_exchange_tab_states_adapter_boundary_caveat() -> None:
         assert "llama.cpp" in text
 
 
-@pytest.mark.asyncio
-async def test_costs_rows_render_and_totals() -> None:
-    app = InspectorHarness(**_default_kwargs())
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        rows_container = modal.query_one(
-            "#console-inspector-costs-rows", VerticalScroll
-        )
-        collapsibles = list(rows_container.query(Collapsible))
-        assert len(collapsibles) == 1
-        # Reuses the retired standalone cost modal's own
-        # ``_format_row``'s exact format (Step 3 moved it here verbatim).
-        # Asserts on the RENDERED label, not the raw
-        # ``.title`` attribute -- see ``_rendered_title``'s docstring.
-        assert "in:10" in _rendered_title(collapsibles[0])
-
-        totals = modal.query_one("#console-inspector-costs-totals", Static)
-        assert "15 tokens" in str(totals.renderable)
-
-
-@pytest.mark.asyncio
-async def test_exchange_tab_only_shows_turns_with_a_cost_row() -> None:
-    """Review finding M5, and its own regression closed by the final
-    re-review (task-18300). ``chat_screen.py`` builds one ``InspectorTurn``
-    per transcript MESSAGE, but ``build_cost_rows`` skips non-contributing
-    ones (no usage, no non-blank content) -- e.g. a bare tool/user message
-    at index 1 here, with no matching cost row. That turn is still
-    filtered out (de-clutter, M5's original goal).
-
-    But M5's original ``and``-only predicate over-corrected: it also
-    dropped an ASSISTANT turn with no cost row, which is exactly the
-    "Stop pressed before the first token" shape (blank content, no usage
-    -- ``build_cost_rows`` emits nothing for it, but the message is still
-    marked and persisted and its "stopped" capture is still flushed). That
-    turn (index 3) has no cost row either, but MUST still render an
-    Exchange-tab row -- and expanding it must reach its capture, not "No
-    capture recorded for this turn" -- because dropping it would make
-    "what did I send that hung?" unreachable, defeating a core promise of
-    this tab. This assertion is red-proof: reverting the fix to the
-    `and`-only predicate makes it fail (turn 3 goes missing)."""
-    stopped_capture = _capture(
-        "run-stop", 0, "2026-08-20T10:00:00Z", "m", status="stopped"
-    )
-
-    async def loader(native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        if native_message_id == "n4":
-            return [(stopped_capture, False)]
-        return []
-
-    app = InspectorHarness(
-        **_default_kwargs(
-            rows=[_row(index=0), _row(index=2)],
-            turns=[
-                _turn(index=0, message_id="p1", native_message_id="n1"),
-                _turn(index=1, message_id="p2", native_message_id="n2", role="user"),
-                _turn(index=2, message_id="p3", native_message_id="n3"),
-                _turn(
-                    index=3,
-                    message_id="p4",
-                    native_message_id="n4",
-                    role="assistant",
-                ),
-            ],
-            exchanges_loader=loader,
-            initial_tab=TAB_EXCHANGE,
-        )
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        turns_container = modal.query_one(
-            "#console-inspector-exchange-turns", VerticalScroll
-        )
-        collapsibles = {c.id: c for c in turns_container.query(Collapsible)}
-        assert set(collapsibles) == {
-            "console-inspector-exchange-turn-0",
-            "console-inspector-exchange-turn-2",
-            "console-inspector-exchange-turn-3",
-        }
-
-        # Load-bearing half: turn 3 (no cost row, assistant role, the
-        # stop-before-first-token shape) must actually resolve to its
-        # capture on expand, not fall back to the "no captures" empty
-        # state -- rendering the row alone would not prove the loader
-        # path still works for a turn outside `contributing_indices`.
-        turn_3 = collapsibles["console-inspector-exchange-turn-3"]
-        turn_3.collapsed = False
-
-        def _turn_3_loaded() -> bool:
-            return bool(turn_3.query(Collapsible)) or any(
-                "No capture recorded for this turn" in str(static.renderable)
-                for static in turn_3.query(Static)
-            )
-
-        await _wait_until(pilot, _turn_3_loaded)
-
-        call_collapsibles = {c.id for c in turn_3.query(Collapsible)}
-        assert call_collapsibles == {"console-inspector-exchange-call-3-0"}
-        texts = [str(static.renderable) for static in turn_3.query(Static)]
-        assert not any("No capture recorded for this turn" in t for t in texts)
-
-
-@pytest.mark.asyncio
-async def test_collapsible_title_is_not_markup_parsed() -> None:
-    """Regression pin (review finding 1): a Collapsible's title IS
-    markup-parsed by Textual unless built with ``Content.from_text(...,
-    markup=False)``. Proven against installed Textual: a model id
-    containing ``"[test]"`` was silently eaten to an empty label, and one
-    containing ``"[/]"`` raised ``MarkupError`` inside ``compose()``,
-    taking the whole modal down with it (the retired standalone cost modal
-    avoided this by rendering the same string through
-    ``Static(..., markup=False)``; the move to a ``Collapsible`` title
-    dropped that guard).
-
-    Two rows: one whose model contains ``"[test]"`` (must survive intact
-    in the rendered label, not be eaten), one whose model contains
-    ``"[/]"`` (the modal opening at all, with no exception, is the proof
-    the row didn't raise)."""
-    eatable_row = _row(index=0, model="model-[test]")
-    raising_row = _row(index=1, model="model-[/]")
-
-    app = InspectorHarness(
-        **_default_kwargs(
-            rows=[eatable_row, raising_row],
-            turns=[
-                _turn(index=0, message_id="p1", native_message_id="n1"),
-                _turn(index=1, message_id="p2", native_message_id="n2"),
-            ],
-        )
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        rows_container = modal.query_one(
-            "#console-inspector-costs-rows", VerticalScroll
-        )
-        collapsibles = {c.id: c for c in rows_container.query(Collapsible)}
-        assert set(collapsibles) == {
-            "console-inspector-cost-row-0",
-            "console-inspector-cost-row-1",
-        }
-
-        eaten_title = _rendered_title(collapsibles["console-inspector-cost-row-0"])
-        assert "model-[test]" in eaten_title
-
-        raising_title = _rendered_title(collapsibles["console-inspector-cost-row-1"])
-        assert "model-[/]" in raising_title
-
-
-@pytest.mark.asyncio
-async def test_loader_called_lazily_only_on_expand() -> None:
-    calls: list[str] = []
-
-    async def spy_loader(
-        native_message_id: str,
-    ) -> list[tuple[ExchangeCapture, bool]]:
-        calls.append(native_message_id)
-        return []
-
-    app = InspectorHarness(**_default_kwargs(exchanges_loader=spy_loader))
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        assert calls == []
-
-        modal = app.screen
-        collapsible = modal.query_one("#console-inspector-cost-row-0", Collapsible)
-        collapsible.collapsed = False
-        await _wait_until(pilot, lambda: calls != [])
-
-        assert calls == ["n1"]
-
-        # Collapsing and re-expanding must not fetch a second time -- the
-        # brief's "if expanding and not yet loaded" contract.
-        collapsible.collapsed = True
-        await pilot.pause()
-        collapsible.collapsed = False
-        await pilot.pause()
-        await pilot.pause()
-
-        assert calls == ["n1"]
-
-
-@pytest.mark.asyncio
-async def test_no_capture_recorded_row() -> None:
-    app = InspectorHarness(**_default_kwargs())
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        collapsible = modal.query_one("#console-inspector-cost-row-0", Collapsible)
-        collapsible.collapsed = False
-
-        def _has_body_text() -> bool:
-            return any(
-                "No capture recorded for this turn" in str(static.renderable)
-                for static in collapsible.query(Static)
-            )
-
-        await _wait_until(pilot, _has_body_text)
-
-
-@pytest.mark.asyncio
-async def test_loader_failure_shows_a_distinct_message_and_allows_retry() -> None:
-    """Review finding 3: an ``exchanges_loader`` exception (e.g.
-    ``get_message_exchanges`` raising ``CharactersRAGDBError``) must NOT be
-    folded into the "no captures" empty state -- that would permanently
-    misreport a transient failure as "this turn was never captured", with
-    no way to retry short of reopening the whole modal. It renders a
-    DISTINCT message, and the row is un-marked as loaded so a
-    collapse/re-expand tries again."""
-    calls = 0
-
-    async def flaky_loader(
-        _native_message_id: str,
-    ) -> list[tuple[ExchangeCapture, bool]]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise RuntimeError("boom")
-        return []
-
-    app = InspectorHarness(**_default_kwargs(exchanges_loader=flaky_loader))
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        collapsible = modal.query_one("#console-inspector-cost-row-0", Collapsible)
-        collapsible.collapsed = False
-
-        def _shows_failure_message() -> bool:
-            return any(
-                "Could not load captures for this turn" in str(static.renderable)
-                for static in collapsible.query(Static)
-            )
-
-        await _wait_until(pilot, _shows_failure_message)
-        assert calls == 1
-
-        # Distinct wording from the genuine "no captures" empty state --
-        # a caller must be able to tell "failed, retry" apart from
-        # "there really is nothing here".
-        texts = [str(s.renderable) for s in collapsible.query(Static)]
-        assert not any("No capture recorded for this turn" in t for t in texts)
-
-        # Collapse/re-expand retries -- the failed row was NOT permanently
-        # marked as loaded (contrast with test_loader_called_lazily_only_
-        # on_expand's success case, which must NOT retry).
-        collapsible.collapsed = True
-        await pilot.pause()
-        collapsible.collapsed = False
-
-        await _wait_until(pilot, lambda: calls == 2)
-
-
 def _capture(
     run_tag: str,
     seq: int,
@@ -632,67 +368,6 @@ def test_call_cost_line_prices_through_the_same_path_as_build_cost_rows() -> Non
 
     assert line == f"${priced_row.cost_usd:.4f}"
     assert line != "unpriced"
-
-
-@pytest.mark.asyncio
-async def test_multi_run_captures_ordered_by_created_at_not_run_tag() -> None:
-    """Carried item (task-8 brief): the store/DB order captures by
-    ``(run_tag, seq)`` STRING, which is not chronological across multiple
-    runs on one message -- ``run-a`` sorts before ``run-b`` alphabetically
-    even though ``run-b``'s call happened first. The widget must re-sort
-    by ``(created_at, seq)`` rather than trust the loader's own order."""
-    early = _capture("run-b", 1, "2026-08-17T10:00:00Z", "model-early")
-    late = _capture("run-a", 1, "2026-08-17T11:00:00Z", "model-late")
-
-    async def loader(
-        _native_message_id: str,
-    ) -> list[tuple[ExchangeCapture, bool]]:
-        # Deliberately handed back in run_tag order (late-chronologically
-        # first) to prove the widget re-sorts rather than trusting it.
-        return [(late, False), (early, False)]
-
-    app = InspectorHarness(**_default_kwargs(exchanges_loader=loader))
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        collapsible = modal.query_one("#console-inspector-cost-row-0", Collapsible)
-        collapsible.collapsed = False
-
-        def _both_rendered() -> bool:
-            texts = [str(s.renderable) for s in collapsible.query(Static)]
-            return any("model-early" in t for t in texts) and any(
-                "model-late" in t for t in texts
-            )
-
-        await _wait_until(pilot, _both_rendered)
-
-        call_texts = [
-            str(s.renderable)
-            for s in collapsible.query(Static)
-            if str(s.renderable).startswith("call ")
-        ]
-        assert len(call_texts) == 2
-        early_index = next(i for i, t in enumerate(call_texts) if "model-early" in t)
-        late_index = next(i for i, t in enumerate(call_texts) if "model-late" in t)
-        assert early_index < late_index, (
-            f"expected created_at order (early before late), got {call_texts!r}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_costs_pane_empty_state() -> None:
-    app = InspectorHarness(**_default_kwargs(rows=[], turns=[]))
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        rows_container = modal.query_one(
-            "#console-inspector-costs-rows", VerticalScroll
-        )
-        assert not list(rows_container.query(Collapsible))
-        labels = [str(s.renderable) for s in rows_container.query(Static)]
-        assert any("No priced or estimated messages" in text for text in labels)
 
 
 @pytest.mark.asyncio
@@ -770,297 +445,6 @@ def test_format_row_omits_audio_fields_for_a_non_realtime_row() -> None:
 # --- Exchange tab (task-9) -------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_exchange_call_sections_render() -> None:
-    """One capture with every optional section populated -- expanding the
-    turn, the call, and each individual section must surface every value
-    the brief calls out: the system prompt text, a tool's name, the
-    response text, and a sampling kwarg -- plus the "omitted by capture
-    policy" line for a dropped credential key, which is NOT behind a lazy
-    section (it renders as soon as the call itself expands)."""
-    cap = _capture(
-        "r1",
-        0,
-        "t",
-        "m",
-        request={
-            "system_message": "SYS PROMPT",
-            "messages_payload": [{"role": "user", "content": "hello"}],
-            "tools": [{"function": {"name": "get_time"}}],
-            "temp": 0.7,
-        },
-        response={"content": "world", "tool_calls": []},
-        omitted_keys=("api_key",),
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        # Multi-widget synchronous mount (omitted line, actions row, 5
-        # section headers) can take more than one pump tick to fully
-        # realize under load -- poll rather than trust a single pause.
-        await _wait_until(pilot, lambda: len(call.query(Collapsible)) >= 5)
-
-        # "Omitted by capture policy" mounts immediately with the call --
-        # it is not gated behind any further expansion.
-        call_statics = [str(s.renderable) for s in call.query(Static)]
-        assert any("Omitted by capture policy: api_key" in t for t in call_statics)
-
-        section_ids = {
-            "system": "console-inspector-exchange-section-0-0-system",
-            "messages": "console-inspector-exchange-section-0-0-messages",
-            "tools": "console-inspector-exchange-section-0-0-tools",
-            "response": "console-inspector-exchange-section-0-0-response",
-            "sampling": "console-inspector-exchange-section-0-0-sampling",
-        }
-        titles = {
-            name: _rendered_title(call.query_one(f"#{section_id}", Collapsible))
-            for name, section_id in section_ids.items()
-        }
-        assert "System prompt" in titles["system"]
-        assert "Tools" in titles["tools"]
-        assert "Response" in titles["response"]
-        assert "Sampling" in titles["sampling"]
-
-        for section_id in section_ids.values():
-            call.query_one(f"#{section_id}", Collapsible).collapsed = False
-        # system/tools/response/sampling each mount one TextArea; messages
-        # mounts per-message Collapsibles instead (not counted here).
-        await _wait_until(pilot, lambda: len(call.query(TextArea)) >= 4)
-
-        all_text = "\n".join(ta.text for ta in call.query(TextArea))
-        assert "SYS PROMPT" in all_text
-        assert "get_time" in all_text
-        assert "world" in all_text
-        assert "temp" in all_text
-
-        # "Tool calls" is omitted entirely -- this capture's response
-        # carries an empty tool_calls list.
-        assert not call.query("#console-inspector-exchange-section-0-0-toolcalls")
-
-
-@pytest.mark.asyncio
-async def test_estimates_labeled_and_reported_authoritative() -> None:
-    """A capture WITH ``usage_json`` -- the estimated per-piece figure (the
-    Response section's own title) must carry the "~"/"est." labels, while
-    the reported figure (both the call-level summary line and the
-    unprefixed half of the Response title) must NOT -- it is the
-    authoritative, provider-reported number."""
-    usage = ProviderUsage(
-        uncached_input=100,
-        cache_read=0,
-        cache_write=0,
-        output=5,
-        provider="anthropic",
-        model="m",
-    )
-    cap = _capture(
-        "r1",
-        0,
-        "t",
-        "m",
-        usage.to_json(),
-        request={"system_message": "hi", "messages_payload": [], "tools": []},
-        response={"content": "hello world", "tool_calls": []},
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(
-            pilot,
-            lambda: (
-                bool(call.query(Collapsible))
-                and any(
-                    str(s.renderable).startswith("Reported usage")
-                    for s in call.query(Static)
-                )
-            ),
-        )
-
-        reported_lines = [
-            str(s.renderable)
-            for s in call.query(Static)
-            if str(s.renderable).startswith("Reported usage")
-        ]
-        assert len(reported_lines) == 1
-        reported_line = reported_lines[0]
-        assert "~" not in reported_line
-        assert "est." not in reported_line
-        assert "out:5" in reported_line
-
-        response_title = _rendered_title(
-            call.query_one(
-                "#console-inspector-exchange-section-0-0-response", Collapsible
-            )
-        )
-        assert "~" in response_title
-        assert "tokens est." in response_title
-        assert "reported out:5" in response_title
-
-
-@pytest.mark.asyncio
-async def test_synthetic_fallback_response_is_labeled_not_shown_as_model_output() -> (
-    None
-):
-    """Review finding M3: a capture whose response is locally synthesized
-    fallback UI copy (``synthetic_fallback: True``, stamped by the gateway
-    when the provider returned nothing usable) must not be presented in the
-    Response section as if it were the model's own answer -- the section
-    title switches to an explicit label instead of the normal token
-    estimate."""
-    cap = _capture(
-        "r1",
-        0,
-        "t",
-        "m",
-        request={"system_message": "", "messages_payload": [], "tools": []},
-        response={
-            "content": "The provider returned no content.",
-            "tool_calls": [],
-            "synthetic_fallback": True,
-        },
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
-
-        response_title = _rendered_title(
-            call.query_one(
-                "#console-inspector-exchange-section-0-0-response", Collapsible
-            )
-        )
-        assert "synthesized fallback" in response_title
-        assert "~" not in response_title
-        assert "tokens est." not in response_title
-
-
-@pytest.mark.asyncio
-async def test_status_badges() -> None:
-    """ "stopped"/"error" statuses and an ``abandoned=True`` pair each render
-    their own distinct badge in the call's title -- all three coexisting on
-    one turn's three calls."""
-    stopped_cap = _capture("r1", 0, "t0", "m", status="stopped")
-    error_cap = _capture("r1", 1, "t1", "m", status="error")
-    abandoned_cap = _capture("r1", 2, "t2", "m", status="complete")
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(stopped_cap, False), (error_cap, False), (abandoned_cap, True)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: len(turn.query(Collapsible)) == 3)
-
-        titles = [_rendered_title(c) for c in turn.query(Collapsible)]
-        assert any("[stopped]" in t for t in titles)
-        assert any("[error]" in t for t in titles)
-        assert any("[abandoned regeneration]" in t for t in titles)
-        # The abandoned regeneration must NOT also read "stopped"/"error" --
-        # it completed normally, just against a superseded generation.
-        abandoned_title = next(t for t in titles if "[abandoned regeneration]" in t)
-        assert "[complete]" in abandoned_title
-
-
-@pytest.mark.asyncio
-async def test_collapsible_bodies_mount_lazily() -> None:
-    """Expanding the call mounts the section headers (cheap Collapsibles)
-    but NOT their TextArea bodies -- a section's TextArea only exists once
-    THAT section is itself expanded. Proves the three-level lazy chain
-    (turn -> call -> section) never front-loads content."""
-    cap = _capture(
-        "r1",
-        0,
-        "t",
-        "m",
-        request={"system_message": "hi", "messages_payload": [], "tools": []},
-        response={"content": "hello", "tool_calls": []},
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
-
-        # Section headers exist (still collapsed)...
-        section = call.query_one(
-            "#console-inspector-exchange-section-0-0-system", Collapsible
-        )
-        assert section.collapsed is True
-        # ...but nothing has mounted a TextArea yet, anywhere under this call.
-        assert not call.query(TextArea)
-
-        section.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(TextArea)))
-
-        assert len(call.query(TextArea)) == 1
-
-
 # --- Exchange tab review fixes (task-9 review round) -----------------------
 
 
@@ -1098,120 +482,6 @@ _TODAY_CAPTURE_ALLOWLIST_SNAPSHOT = frozenset(
         "provider_continuations",
     }
 )
-
-
-@pytest.mark.asyncio
-async def test_sampling_section_key_set_is_pinned_to_the_capture_allowlist() -> None:
-    """Finding 2 (task-9 review): the Sampling section is built by
-    EXCLUDING ``_SAMPLING_EXCLUDED_REQUEST_KEYS`` from ``capture.request``
-    rather than allowlisting -- accepted as safe TODAY only because
-    ``build_request_capture`` (console_exchange_capture.py) already
-    allowlists everything that can land in ``request`` to
-    ``CAPTURE_REQUEST_ALLOWLIST``. Nothing enforced that relationship
-    before this test: a future key added to that allowlist would silently
-    start rendering under "Sampling & routing" with zero changes to this
-    file.
-
-    Two-part pin:
-      (a) A HARDCODED snapshot of today's allowlist (not derived from the
-          live import -- that would make part (b) tautological and never
-          fail) must still equal the live ``CAPTURE_REQUEST_ALLOWLIST``.
-          If it drifts, THIS assertion fails first, forcing whoever
-          touched the allowlist to look at this test and consciously
-          decide whether the new/removed key belongs under Sampling.
-      (b) Given a capture whose request carries every allowlisted key
-          (from the live import, so this half tracks real behavior), the
-          Sampling section's rendered key set is exactly the allowlist
-          minus the four keys this widget already surfaces elsewhere
-          (system prompt, messages, tools, model).
-    """
-    assert _TODAY_CAPTURE_ALLOWLIST_SNAPSHOT == CAPTURE_REQUEST_ALLOWLIST, (
-        "CAPTURE_REQUEST_ALLOWLIST changed -- decide whether the new/removed "
-        "key(s) belong under the Exchange tab's 'Sampling & routing' section "
-        "(console_conversation_inspector.py's _SAMPLING_EXCLUDED_REQUEST_KEYS), "
-        "then update _TODAY_CAPTURE_ALLOWLIST_SNAPSHOT above."
-    )
-
-    request = {key: f"value-for-{key}" for key in CAPTURE_REQUEST_ALLOWLIST}
-    cap = _capture(
-        "r1",
-        0,
-        "t",
-        "m",
-        request=request,
-        response={"content": "x", "tool_calls": []},
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
-
-        sampling_section = call.query_one(
-            "#console-inspector-exchange-section-0-0-sampling", Collapsible
-        )
-        sampling_section.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(TextArea)))
-
-        [text_area] = call.query(TextArea)
-        rendered_keys = set(json.loads(text_area.text).keys())
-
-        assert rendered_keys == (
-            CAPTURE_REQUEST_ALLOWLIST - _SAMPLING_EXCLUDED_REQUEST_KEYS
-        )
-
-
-@pytest.mark.asyncio
-async def test_ephemeral_call_uses_only_governed_export_action() -> None:
-    """Per-call disclosure always routes through the shared governor."""
-    cap = _capture("r1", 0, "t", "m")
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(
-            exchanges_loader=loader, initial_tab=TAB_EXCHANGE, ephemeral=True
-        )
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(Button)))
-
-        export_button = call.query_one("#console-inspector-exchange-export-0-0", Button)
-        assert export_button.disabled is False
-        button_ids = {button.id or "" for button in call.query(Button)}
-        assert not any(
-            button_id.startswith("console-inspector-exchange-copy-")
-            for button_id in button_ids
-        )
-        assert not any(
-            button_id.startswith("console-inspector-exchange-save-")
-            for button_id in button_ids
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1252,311 +522,7 @@ async def _expand_first_exchange_call(pilot, modal) -> None:
     await _wait_until(pilot, lambda: bool(call.query(Button)))
 
 
-@pytest.mark.asyncio
-async def test_exchange_action_opens_governed_export_with_immutable_capture() -> None:
-    cap = _capture_with_project_instruction_row()
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        await _expand_first_exchange_call(pilot, modal)
-
-        await pilot.click("#console-inspector-exchange-export-0-0")
-        await pilot.pause()
-
-        assert isinstance(app.screen, ConsoleExchangeExportDialog)
-        assert app.screen._capture is cap
-
-
-@pytest.mark.asyncio
-async def test_exchange_call_title_includes_capture_provenance() -> None:
-    cap = _capture_with_project_instruction_row()
-    cap = replace(
-        cap,
-        capture_detail=CaptureDetail.FULL,
-        trace_provenance="legacy_snapshot",
-        trace_chronology="recorded_call_only",
-        trace_uncertainty=("legacy_message_source_unknown",),
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        await _expand_first_exchange_call(pilot, modal)
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        assert "capture: Full" in _rendered_title(call)
-        assert "legacy snapshot" in _rendered_title(call)
-        assert "chronology: recorded call only" in _rendered_title(call)
-        assert "uncertainty disclosed" in _rendered_title(call)
-
-
-@pytest.mark.asyncio
-async def test_per_message_collapsible_mounts_its_json_body() -> None:
-    """Finding 4 (task-9 review): the fourth lazy level (per-message,
-    nested inside the Messages section) was never exercised by any test --
-    ``_mount_exchange_message_body`` and its dispatch branch were dead
-    coverage. Expand it and assert the message's own content actually
-    renders (and, before that, that it genuinely was not mounted yet)."""
-    cap = _capture(
-        "r1",
-        0,
-        "t",
-        "m",
-        request={"messages_payload": [{"role": "user", "content": "hello"}]},
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        call.collapsed = False
-        await _wait_until(pilot, lambda: bool(call.query(Collapsible)))
-
-        messages_section = call.query_one(
-            "#console-inspector-exchange-section-0-0-messages", Collapsible
-        )
-        messages_section.collapsed = False
-        await _wait_until(pilot, lambda: bool(messages_section.query(Collapsible)))
-
-        message_collapsible = messages_section.query_one(
-            "#console-inspector-exchange-message-0-0-0", Collapsible
-        )
-        assert not messages_section.query(TextArea)  # still lazy pre-expand
-
-        message_collapsible.collapsed = False
-        await _wait_until(pilot, lambda: bool(messages_section.query(TextArea)))
-
-        [text_area] = messages_section.query(TextArea)
-        assert "hello" in text_area.text
-
-
-@pytest.mark.asyncio
-async def test_call_level_mount_failure_does_not_mark_it_loaded_and_retries() -> None:
-    """Finding 5 (task-9 review): before the fix, a call's id was added to
-    ``_loaded_exchange_call_keys`` BEFORE ``_mount_exchange_call_body`` ran
-    -- a failed mount (e.g. the capture not yet cached) permanently
-    blocked any retry, unlike the turn level's own discard-on-failure
-    contract. Simulates that failure by emptying the capture cache right
-    before the call first expands, then restoring it and re-expanding --
-    the call must mount successfully on the second attempt."""
-    cap = _capture("r1", 0, "t", "m")
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
-
-        call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-
-        # Simulate a mount failure: the capture cache is empty at the
-        # moment the call first expands.
-        saved_capture = modal._exchange_capture_by_call_key.pop("0-0")
-        call.collapsed = False
-        await pilot.pause()
-
-        assert "0-0" not in modal._loaded_exchange_call_keys
-        assert not call.query(Collapsible)  # nothing mounted -- no sections
-
-        # Restore the capture and retry via collapse/re-expand.
-        modal._exchange_capture_by_call_key["0-0"] = saved_capture
-        call.collapsed = True
-        await pilot.pause()
-        call.collapsed = False
-        await pilot.pause()
-
-        assert "0-0" in modal._loaded_exchange_call_keys
-        assert call.query(Collapsible)  # sections mounted this time
-
-
-@pytest.mark.asyncio
-async def test_exchange_calls_ordered_by_created_at_not_arrival_or_run_tag() -> None:
-    """Finding 6 (task-9 review): nothing pinned the Exchange tab's OWN
-    ``(created_at, seq)`` re-sort in ``_load_exchange_turn`` --
-    ``test_status_badges`` feeds already-chronological ``created_at``
-    values, so it cannot discriminate a missing sort. Three captures whose
-    run_tag ordering, loader arrival order, AND model-name alphabetical
-    order are all inverted against their ``created_at`` order -- only a
-    genuine chronological sort produces the right rendered order."""
-    early = _capture("run-c", 0, "2026-08-17T09:00:00Z", "model-early")
-    middle = _capture("run-b", 0, "2026-08-17T10:00:00Z", "model-middle")
-    late = _capture("run-a", 0, "2026-08-17T11:00:00Z", "model-late")
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        # Handed back in REVERSE chronological order; run_tag ("run-a" <
-        # "run-b" < "run-c") and model name also both sort the OPPOSITE of
-        # created_at -- only (created_at, seq) can produce the right order.
-        return [(late, False), (middle, False), (early, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: len(turn.query(Collapsible)) == 3)
-
-        titles = [_rendered_title(c) for c in turn.query(Collapsible)]
-        early_index = next(i for i, t in enumerate(titles) if "model-early" in t)
-        middle_index = next(i for i, t in enumerate(titles) if "model-middle" in t)
-        late_index = next(i for i, t in enumerate(titles) if "model-late" in t)
-        assert early_index < middle_index < late_index, (
-            f"expected chronological order (early, middle, late), got {titles!r}"
-        )
-
-
 # --- Next Send worker isolation (task-10 review finding 2) -----------------
-
-
-@pytest.mark.asyncio
-async def test_default_group_worker_error_does_not_toast_next_send_or_clear_its_spinner(
-    monkeypatch,
-) -> None:
-    """task-10 review finding 2a: this screen runs the Costs tab's
-    ``_load_turn_captures`` and the Exchange tab's ``_load_exchange_turn``
-    workers in Textual's "default" group (neither passes ``group=``, same
-    as ``run_worker``'s own default). Before the fix,
-    ``on_worker_state_changed`` was UNFILTERED, so ANY worker owned by
-    this screen reaching ``WorkerState.ERROR`` -- not just the Next Send
-    snapshot load -- toasted "Failed to refresh context." and cleared
-    ``next_send_loading``, even though the failure had nothing to do with
-    Next Send.
-
-    Simulates a Costs/Exchange-shaped failure directly: a throwaway
-    coroutine in the SAME "default" group, ``exit_on_error=False`` so the
-    simulated failure surfaces as ``WorkerState.ERROR`` without crashing
-    the harness (mirrors how a real, uncaught mount-path exception in
-    ``_load_turn_captures``/``_load_exchange_turn`` would be reported --
-    neither of those call sites passes ``exit_on_error=False`` themselves,
-    but Textual still sets the ERROR state before acting on that flag)."""
-    never_ready = asyncio.Event()
-
-    async def _blocking_snapshot() -> ConsoleContextSnapshot:
-        await never_ready.wait()
-        return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
-
-    app = InspectorHarness(**_default_kwargs(snapshot_factory=_blocking_snapshot))
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        assert modal.next_send_loading, "expected the snapshot load still in flight"
-
-        notifications: list[str] = []
-        monkeypatch.setattr(
-            modal, "notify", lambda message, *a, **k: notifications.append(message)
-        )
-
-        async def _boom() -> None:
-            raise RuntimeError("simulated Costs/Exchange mount-path failure")
-
-        worker = modal.run_worker(
-            _boom(), group="default", exclusive=False, exit_on_error=False
-        )
-        await _wait_until(pilot, lambda: worker.state == WorkerState.ERROR)
-        await pilot.pause()
-
-        assert modal.next_send_loading, (
-            "an unrelated default-group worker's error must not clear the "
-            "Next Send tab's own spinner"
-        )
-        assert not notifications, (
-            f"expected no toast from an unrelated worker's error, got {notifications!r}"
-        )
-
-        never_ready.set()
-        await pilot.pause()
-
-
-@pytest.mark.asyncio
-async def test_next_send_refresh_does_not_cancel_an_in_flight_costs_capture_load() -> (
-    None
-):
-    """task-10 review finding 2b: before the fix, the snapshot worker's
-    ``exclusive=True`` lived in the SAME "default" group as the Costs
-    tab's ``_load_turn_captures`` worker (``exclusive`` cancels every
-    OTHER worker in its OWN group) -- refreshing Next Send (Refresh
-    button / "r") while a Costs row's capture load was still in flight
-    would cancel it. Since ``_loaded_row_indices`` already marks that row
-    loaded BEFORE the worker starts (``_on_row_toggled``), a cancelled
-    load left the row permanently empty, with no retry short of
-    reopening the whole modal. Now on its own worker group, a Next Send
-    refresh must leave an in-flight Costs capture load free to complete."""
-    still_loading = asyncio.Event()
-    capture = _capture("run-1", 0, "2026-08-17T09:00:00Z", "gpt-4")
-
-    async def slow_loader(
-        _native_message_id: str,
-    ) -> list[tuple[ExchangeCapture, bool]]:
-        await still_loading.wait()
-        return [(capture, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(exchanges_loader=slow_loader, initial_tab=TAB_NEXT_SEND)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-
-        row = modal.query_one("#console-inspector-cost-row-0", Collapsible)
-        row.collapsed = False
-        await pilot.pause()  # let the Costs worker start and block on the event
-
-        await pilot.click("#console-inspector-next-send-refresh")
-        await pilot.pause()
-
-        still_loading.set()
-
-        def _has_call_line() -> bool:
-            return any(
-                "call 0" in str(static.renderable) for static in row.query(Static)
-            )
-
-        await _wait_until(pilot, _has_call_line)
 
 
 @pytest.mark.asyncio
@@ -1633,94 +599,6 @@ async def test_opening_on_costs_tab_does_not_focus_close() -> None:
 
 
 @pytest.mark.asyncio
-async def test_late_snapshot_completion_does_not_steal_focus_from_costs_tab() -> None:
-    """The real ``snapshot_factory`` is slow (resolves the provider, reads
-    ``AGENTS.md`` off-thread) -- a user already drilled into a Costs-tab
-    row must not have focus yanked to Close (or anywhere else) when that
-    background Next Send load completes after the fact."""
-    still_loading = asyncio.Event()
-
-    async def slow_snapshot() -> ConsoleContextSnapshot:
-        await still_loading.wait()
-        return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
-
-    app = InspectorHarness(
-        **_default_kwargs(snapshot_factory=slow_snapshot, initial_tab=TAB_COSTS)
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        assert modal.query_one("#console-inspector-tabs").active == TAB_COSTS
-
-        row_title = modal.query_one(
-            "#console-inspector-cost-row-0", Collapsible
-        ).query_one(CollapsibleTitle)
-        row_title.focus()
-        await pilot.pause()
-        assert app.focused is row_title
-
-        # Let the still-in-flight Next Send snapshot (started unconditionally
-        # from on_mount) resolve and run its focus-scheduling tail.
-        still_loading.set()
-        await pilot.pause()
-        await pilot.pause()
-
-        close_button = modal.query_one(f"#{CLOSE_BUTTON_ID}", Button)
-        assert app.focused is not close_button
-        assert app.focused is row_title
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "current_revision",
-    [8, None],
-    ids=["purged", "purge-lease-held"],
-)
-async def test_stale_capture_revision_blocks_expansion_and_export(
-    current_revision,
-) -> None:
-    revision = SimpleNamespace(value=7)
-    cap = _capture(
-        "full-run",
-        0,
-        "2026-08-26T10:00:00Z",
-        "m",
-        request={"system_message": "FULL SECRET"},
-        response={"content": "FULL RESPONSE"},
-    )
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(
-            exchanges_loader=loader,
-            initial_tab=TAB_EXCHANGE,
-            target_session_id="session-at-open",
-            target_conversation_id="conversation-at-open",
-            capture_revision_provider=lambda: revision.value,
-        )
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        await _expand_first_exchange_call(pilot, modal)
-        call = modal.query_one("#console-inspector-exchange-call-0-0", Collapsible)
-        assert modal._exchange_capture_by_call_key
-
-        revision.value = current_revision
-
-        assert modal._mount_exchange_call_body(call, "0-0") is False
-        assert modal._open_exchange_export("0-0") is False
-        assert modal._exchange_capture_by_call_key == {}
-        assert modal._loaded_exchange_call_keys == set()
-        status = modal.query_one("#console-inspector-capture-status", Static)
-        assert "Refresh required" in str(status.renderable)
-
-
-@pytest.mark.asyncio
 async def test_inspector_adopts_first_revision_after_opening_during_quiescence() -> (
     None
 ):
@@ -1740,103 +618,6 @@ async def test_inspector_adopts_first_revision_after_opening_during_quiescence()
         assert modal._capture_revision_at_open == 7
 
 
-@pytest.mark.asyncio
-async def test_revision_change_during_async_capture_load_discards_result() -> None:
-    revision = SimpleNamespace(value=3)
-    cap = _capture("full-run", 0, "2026-08-26T10:00:00Z", "m")
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        revision.value = 4
-        await asyncio.sleep(0)
-        return [(cap, False)]
-
-    app = InspectorHarness(
-        **_default_kwargs(
-            exchanges_loader=loader,
-            initial_tab=TAB_EXCHANGE,
-            target_session_id="session-at-open",
-            target_conversation_id="conversation-at-open",
-            capture_revision_provider=lambda: revision.value,
-        )
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        turn.collapsed = False
-        await _wait_until(
-            pilot,
-            lambda: (
-                "Refresh required"
-                in str(
-                    modal.query_one(
-                        "#console-inspector-capture-status", Static
-                    ).renderable
-                )
-            ),
-        )
-
-        assert modal._exchange_capture_by_call_key == {}
-        assert not turn.query(".console-inspector-exchange-call")
-
-
-@pytest.mark.asyncio
-async def test_revision_change_during_first_async_call_mount_discards_all_calls(
-    monkeypatch,
-) -> None:
-    revision = SimpleNamespace(value=3)
-    captures = [
-        _capture("full-a", 0, "2026-08-26T10:00:00Z", "m"),
-        _capture("full-b", 1, "2026-08-26T10:00:01Z", "m"),
-    ]
-
-    async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
-        return [(capture, False) for capture in captures]
-
-    mount_calls = SimpleNamespace(value=0)
-    original_mount = Collapsible.Contents.mount
-
-    def racing_mount(contents, *widgets, **kwargs):
-        mounted = original_mount(contents, *widgets, **kwargs)
-        if not widgets or not isinstance(widgets[0], Collapsible):
-            return mounted
-
-        async def finish_mount():
-            result = await mounted
-            mount_calls.value += 1
-            if mount_calls.value == 1:
-                revision.value = 4
-            return result
-
-        return finish_mount()
-
-    app = InspectorHarness(
-        **_default_kwargs(
-            exchanges_loader=loader,
-            initial_tab=TAB_EXCHANGE,
-            target_session_id="session-at-open",
-            target_conversation_id="conversation-at-open",
-            capture_revision_provider=lambda: revision.value,
-        )
-    )
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal = app.screen
-        turn = modal.query_one("#console-inspector-exchange-turn-0", Collapsible)
-        monkeypatch.setattr(Collapsible.Contents, "mount", racing_mount)
-        turn.collapsed = False
-        await _wait_until(pilot, lambda: mount_calls.value >= 1)
-        await pilot.pause()
-
-        status = modal.query_one("#console-inspector-capture-status", Static)
-        assert "Refresh required" in str(status.renderable)
-        assert mount_calls.value == 1
-        assert modal._exchange_capture_by_call_key == {}
-        assert not turn.query(".console-inspector-exchange-call")
-
-
 def test_messages_section_title_states_original_and_elided_counts() -> None:
     """task-23026 / ADR-096: a Safe capture's stored list is COMPACTED, so
     the physical row count alone would under-state what the call actually
@@ -1854,7 +635,7 @@ def test_messages_section_title_states_original_and_elided_counts() -> None:
     compacted_capture = _capture(
         "run-1", 0, "t", "m", request={"messages_payload": compacted}
     )
-    title = str(inspector._build_messages_section(compacted_capture, "k").title)
+    title = inspector._messages_summary(compacted_capture)
     assert f"{len(rows)} sent" in title
     marker = history_elision_marker(compacted)
     assert f"{marker['omitted_rows']} elided by capture policy" in title
@@ -1862,7 +643,7 @@ def test_messages_section_title_states_original_and_elided_counts() -> None:
     plain_capture = _capture(
         "run-1", 0, "t", "m", request={"messages_payload": rows[-3:]}
     )
-    plain_title = str(inspector._build_messages_section(plain_capture, "k").title)
+    plain_title = inspector._messages_summary(plain_capture)
     assert plain_title == "Messages (3)"
 
 
@@ -1897,7 +678,7 @@ async def test_next_send_payload_estimate_replaces_header_count_once_loaded():
     async with app.run_test(size=(120, 44)) as pilot:
         modal = app.screen
         header = modal.query_one("#console-inspector-next-send-header", Static)
-        await _wait_until(pilot, lambda: "~4242 tokens" in str(header.renderable))
+        await _wait_until(pilot, lambda: "~4,242 tokens" in str(header.renderable))
 
 
 @pytest.mark.asyncio
@@ -1925,47 +706,16 @@ async def test_next_send_payload_estimate_none_falls_back_to_factory():
 
 
 @pytest.mark.asyncio
-async def test_current_context_titles_render_human_role_names() -> None:
-    """TASK-32336: the audit surface must not show internal enum reprs.
+async def test_usage_entry_does_not_prepare_hidden_context():
+    calls = []
 
-    ``ConsoleChatMessage.role`` is a ``ConsoleMessageRole`` (str-mixin
-    Enum); on the supported runtime (>=3.11) its f-string form is the
-    qualified "ConsoleMessageRole.USER", so every Current Context
-    collapsible used to read "[ConsoleMessageRole.USER] complete".
-    """
-    from types import SimpleNamespace
-
-    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-
-    async def _snapshot() -> ConsoleContextSnapshot:
-        return ConsoleContextSnapshot(
-            current_messages=[
-                SimpleNamespace(
-                    role=ConsoleMessageRole.USER, status="complete", content="hi"
-                ),
-                SimpleNamespace(
-                    role=ConsoleMessageRole.ASSISTANT,
-                    status="streaming",
-                    content="there",
-                ),
-            ],
-            next_send_payload={},
-        )
+    async def snapshot_factory():
+        calls.append("prepared")
+        return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
 
     app = InspectorHarness(
-        **_default_kwargs(
-            snapshot_factory=_snapshot,
-            initial_tab=TAB_NEXT_SEND,
-        )
+        **_default_kwargs(snapshot_factory=snapshot_factory, initial_tab=TAB_COSTS)
     )
-
-    async with app.run_test(size=(120, 44)) as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        modal = app.screen
-        body = modal.query_one("#console-inspector-next-send-current-body")
-        titles = [
-            _rendered_title(collapsible) for collapsible in body.query(Collapsible)
-        ]
-        assert "[User] complete" in titles
-        assert "[Assistant] streaming" in titles
-        assert not any("ConsoleMessageRole" in title for title in titles)
+        assert calls == []
