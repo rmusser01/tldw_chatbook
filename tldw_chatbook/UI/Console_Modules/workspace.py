@@ -125,6 +125,7 @@ from ..character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController
+    from ...Chat.console_conversation_actions import ConversationMenuTarget
     from ...Chat.console_conversation_activation import (
         CharacterConversationActivationRequest,
         ConsoleActivationCommit,
@@ -2583,7 +2584,16 @@ class ConsoleWorkspaceController:
     async def conversation_menu_presentation(
         self, conversation_id: str | None, session_id: str = ""
     ) -> dict[str, Any]:
-        """Capture current read state and saved appearance for either row menu."""
+        """Capture current read state and saved appearance for either row menu.
+
+        Args:
+            conversation_id: Persisted conversation ID, or None for an unsaved chat.
+            session_id: Native session ID used for live attention facts.
+
+        Returns:
+            Menu target fields including read state, appearance, attention, and
+            profile authority. Read state is None when unavailable.
+        """
         from ...Workspaces.conversation_attention import present_conversation_attention
 
         authority = self._console_switcher_authority()
@@ -2627,7 +2637,15 @@ class ConsoleWorkspaceController:
             "profile_authority": authority,
         }
 
-    def set_conversation_manual_unread(self, target, *, unread: bool) -> None:
+    def set_conversation_manual_unread(
+        self, target: ConversationMenuTarget, *, unread: bool
+    ) -> None:
+        """Schedule a profile-fenced reminder mutation for a persisted chat.
+
+        Args:
+            target: Captured menu target including conversation and profile identity.
+            unread: True to set a reminder; False to clear only the manual mark.
+        """
         service = getattr(self.app_instance, "conversation_local_marks_service", None)
         db = getattr(self.app_instance, "chachanotes_db", None)
         if service is None or db is None or not target.conversation_id:

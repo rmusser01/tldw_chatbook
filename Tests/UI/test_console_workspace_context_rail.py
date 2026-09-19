@@ -478,6 +478,10 @@ async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar(
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-tree")
+        # Let initial reminder/persisted-row refreshes finish before installing
+        # this test's synthetic projection for the help-panel assertion.
+        await console.workers.wait_for_complete()
+        await pilot.pause()
         rail = console.query_one("#console-left-rail")
         state = replace(
             _base_grouped_workspace_state(),
@@ -1589,6 +1593,8 @@ async def test_console_workspace_selector_is_compact_plain_status_row(request) -
                 break
             await pilot.pause(0.01)
 
+        # Opening the section recomposes its children asynchronously.
+        await _wait_for_selector(console, pilot, "#console-active-workspace-value")
         active_workspace = console.query_one("#console-active-workspace")
         value = active_workspace.query_one("#console-active-workspace-value", Static)
         rendered_label = str(value.renderable)

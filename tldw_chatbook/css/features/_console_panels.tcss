@@ -2361,8 +2361,7 @@ ConsoleConversationInspector #console-inspector-next-send-warning { color: $ds-s
 ConsoleConversationInspector #console-inspector-project-recovery { height: auto; max-height: $ds-inspector-recovery-max-height; }
 ConsoleConversationInspector #console-inspector-actions,
 ConsoleConversationInspector #console-inspector-next-send-actions { height: $ds-control-height-compact; margin: $ds-space-0; }
-ConsoleConversationInspector Button,
-ConsoleConversationInspector Checkbox { height: $ds-control-height-compact; min-height: $ds-control-height-compact; border: none; padding: $ds-space-0 $ds-space-inline; min-width: 0; }
+.inspector-modal-control { height: $ds-control-height-compact; min-height: $ds-control-height-compact; border: none; padding: $ds-space-0 $ds-space-inline; min-width: 0; }
 ConsoleConversationInspector #console-inspector-costs-totals { margin: $ds-space-0; }
 ConsoleConversationInspector #console-inspector-exchange-caveat { margin: $ds-space-0; max-height: 2; color: $ds-text-muted; }
 ConsoleConversationInspector .inspector-view-note { height: auto; color: $ds-text-muted; }

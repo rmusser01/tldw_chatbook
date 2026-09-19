@@ -136,7 +136,14 @@ class ConsoleConversationActionMenu(VerticalScroll):
 
     @staticmethod
     def root_page_height(target: ConversationMenuTarget) -> int:
-        """One line per action, title and state, plus the frame."""
+        """Reserve one line per action, title and state, plus the frame.
+
+        Args:
+            target: Captured conversation target used to build root actions.
+
+        Returns:
+            Desired menu height in terminal rows before viewport clamping.
+        """
         return len(build_conversation_menu(target)) + 4
 
     #: Anchoring clamps against this; the stylesheet below must declare the

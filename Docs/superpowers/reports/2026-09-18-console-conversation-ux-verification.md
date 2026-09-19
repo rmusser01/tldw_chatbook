@@ -107,4 +107,30 @@ cannot establish client font, pixel, hover or physical pointer behavior.
 
 ## Outstanding qualification
 
-Native terminal verification is **not complete**. Computer-use access to iTerm was explicitly rejected as disallowed, and no Windows Terminal environment was available. Headless geometry/screenshots are not presented as native glyph, pointer, or restart evidence. The Backlog tasks remain In Progress under the approved plans until that qualification is completed. No merge or push was performed.
+Native terminal verification is **not complete**. Computer-use access to iTerm was explicitly rejected as disallowed, and no Windows Terminal environment was available. Headless geometry/screenshots are not presented as native glyph, pointer, or restart evidence. The Backlog tasks remain In Progress under the approved plans until that qualification is completed. The subsequent PR follow-up is recorded below.
+
+
+## Rebase and PR review follow-up
+
+Rebased the seven Console-specific commits onto dev `cef6bd2a3e`, preserving its
+new CSS source split and profile-recovery lifecycle. Full-app fixtures use the
+existing private-profile subprocess helper, and cost arithmetic fixtures use a
+seeded pricing catalog. Async menu/recompose tests wait for their actual targets.
+
+PR #2725 Qodo review identified six issues, addressed together: public API
+contracts, the unread target annotation, a shared narrow-layout breakpoint,
+retained abandoned-call labels in individual readers, disabling unavailable usage
+drill-in, and exact shared action widths in workspace trees. Regression coverage
+selects missing/ambiguous usage identities, individual abandoned calls, and both
+Unicode and ASCII action widths.
+
+The post-review targeted run passed 318 cases and exposed one synthetic F1
+projection fixture racing startup refresh. Waiting for the owning workers before
+injecting the projection resolves that case; its focused rerun passed. The full
+suite was not run. Changed-line Ruff and `git diff --check` pass.
+
+CI follow-up defers Inspector imports to opening the modal, replaces broad
+Inspector control selectors with a dedicated class, and records the off-loop
+unread batch worker needed for restored reminder indicators in the boot census.
+No boot module or CSS budget ceiling was raised. Final remote checks and review
+completion are tracked on the PR. Native client rendering limitations above remain.

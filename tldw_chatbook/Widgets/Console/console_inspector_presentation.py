@@ -18,6 +18,15 @@ MAX_DETAIL_BYTES = 1024 * 1024
 
 @dataclass(frozen=True, slots=True)
 class InspectorSection:
+    """Metadata for one section without disclosing its body.
+
+    Args:
+        key: Stable selection identifier.
+        group: Display group name.
+        label: Content-free section label.
+        item_count: Optional count displayed alongside the label.
+    """
+
     key: str
     group: str
     label: str
@@ -26,6 +35,15 @@ class InspectorSection:
 
 @dataclass(frozen=True, slots=True)
 class InspectorDetail:
+    """Bounded content for the selected section.
+
+    Args:
+        key: Section identifier.
+        text: Human-readable detail or size-limit explanation.
+        raw_json: Serialized detail, or None when unavailable.
+        truncated: Whether the full content exceeds the reader limit.
+    """
+
     key: str
     text: str
     raw_json: str | None
@@ -34,13 +52,28 @@ class InspectorDetail:
 
 @dataclass(frozen=True, slots=True)
 class InspectorUsageItem:
+    """Usage row with a validated drill-in identity.
+
+    Args:
+        message_key: Unique native message ID, or empty when ambiguous/missing.
+        row: Original cost accounting row.
+        title: Human-readable list label.
+    """
+
     message_key: str
     row: ConsoleCostRow
     title: str
 
 
 def context_sections(snapshot: ConsoleContextSnapshot) -> tuple[InspectorSection, ...]:
-    """Enumerate metadata only; prompt bodies never enter section labels."""
+    """Enumerate metadata only; prompt bodies never enter section labels.
+
+    Args:
+        snapshot: Current conversation and next-send preview snapshot.
+
+    Returns:
+        Ordered descriptors for retained messages and preview fields.
+    """
     sections = [
         InspectorSection(
             "current:messages",
@@ -62,7 +95,15 @@ def context_sections(snapshot: ConsoleContextSnapshot) -> tuple[InspectorSection
 
 
 def context_detail(snapshot: ConsoleContextSnapshot, key: str) -> InspectorDetail:
-    """Format only the chosen section; callers perform this work off-loop."""
+    """Format only the chosen section; callers perform this work off-loop.
+
+    Args:
+        snapshot: Snapshot authorized for this Inspector instance.
+        key: Section identifier from ``context_sections``.
+
+    Returns:
+        Bounded readable/JSON content, or an unavailable/size-limit explanation.
+    """
     if key == "current:messages":
         value = [
             {
@@ -103,7 +144,15 @@ def context_detail(snapshot: ConsoleContextSnapshot, key: str) -> InspectorDetai
 def usage_items(
     rows: Sequence[ConsoleCostRow], turns: Sequence[InspectorTurn]
 ) -> tuple[InspectorUsageItem, ...]:
-    """Resolve a display index once, refusing missing or ambiguous identities."""
+    """Resolve a display index once, refusing missing or ambiguous identities.
+
+    Args:
+        rows: Cost rows in display order.
+        turns: Historical turns carrying native message identities.
+
+    Returns:
+        Usage items with empty message keys when a safe drill-in is unavailable.
+    """
     by_index = Counter(turn.index for turn in turns)
     by_id = Counter(turn.native_message_id for turn in turns)
     unique = {

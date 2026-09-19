@@ -6316,7 +6316,14 @@ class ConsoleChatController:
     def conversation_attention_for(
         self, session_id: str
     ) -> tuple[ConversationAttentionFact, ...]:
-        """Expose simultaneous facts without altering operational acknowledgement."""
+        """Expose simultaneous facts without altering operational acknowledgement.
+
+        Args:
+            session_id: Native session whose live state and outcomes are inspected.
+
+        Returns:
+            Content-free attention facts for the specified session.
+        """
         from ..Workspaces.conversation_attention import ConversationAttentionFact
 
         facts = []

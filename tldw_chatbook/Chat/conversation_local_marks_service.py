@@ -30,7 +30,13 @@ class ConversationLocalMark:
 
 @dataclass(frozen=True, slots=True)
 class ManualUnreadToken:
-    """Process-local revision of a durable manual unread mark."""
+    """Process-local revision of a durable manual unread mark.
+
+    Args:
+        service_epoch: Identity of the marks service that issued this token.
+        conversation_id: Conversation owning the durable reminder.
+        generation: Monotonic revision within the service epoch.
+    """
 
     service_epoch: str
     conversation_id: str
@@ -196,7 +202,11 @@ class ConversationLocalMarksService:
 
     @property
     def manual_revision(self) -> int:
-        """Cheap cache invalidation revision; no I/O or token disclosure."""
+        """Expose the cache invalidation revision without I/O or token disclosure.
+
+        Returns:
+            Current process-local manual mark generation.
+        """
         return self._manual_generation
 
     def _new_unread_token(self, conversation_id: str) -> ManualUnreadToken:
@@ -208,7 +218,18 @@ class ConversationLocalMarksService:
         return token
 
     def mark_unread(self, conversation_id: str) -> ManualUnreadToken:
-        """Persist a reminder, publishing its new revision only after commit."""
+        """Persist a reminder, publishing its new revision only after commit.
+
+        Args:
+            conversation_id: Nonempty conversation identifier.
+
+        Returns:
+            Token identifying the newly committed reminder revision.
+
+        Raises:
+            ValueError: The conversation identifier is empty.
+            Exception: The database transaction fails; no revision is published.
+        """
         conversation_id = self._conversation_id(conversation_id)
         with self._manual_lock:
             now = self._now()
@@ -225,7 +246,18 @@ class ConversationLocalMarksService:
             return token
 
     def unread_token(self, conversation_id: str) -> ManualUnreadToken | None:
-        """Capture a revision for a deliberate visit; restoration never clears it."""
+        """Capture a revision for a deliberate visit; restoration never clears it.
+
+        Args:
+            conversation_id: Nonempty conversation identifier.
+
+        Returns:
+            Current reminder token, or None when the conversation is read.
+
+        Raises:
+            ValueError: The conversation identifier is empty.
+            Exception: Reading the persisted mark fails.
+        """
         conversation_id = self._conversation_id(conversation_id)
         with self._manual_lock:
             if not self.has_mark(conversation_id, self.MANUAL_UNREAD):
@@ -242,6 +274,17 @@ class ConversationLocalMarksService:
 
         Comparison and deletion serialize with all manual writers. Operational
         receipts and timestamps are deliberately independent of this revision.
+
+        Args:
+            conversation_id: Nonempty conversation identifier.
+            expected: Optional token that must match before clearing the mark.
+
+        Returns:
+            True only when a durable reminder was cleared.
+
+        Raises:
+            ValueError: The conversation identifier is empty.
+            Exception: The database transaction fails.
         """
         conversation_id = self._conversation_id(conversation_id)
         with self._manual_lock:
@@ -265,7 +308,18 @@ class ConversationLocalMarksService:
             return cleared
 
     def unread_ids_for(self, conversation_ids: Sequence[str]) -> frozenset[str]:
-        """Read all requested IDs in bounded SQL chunks, without a result cap."""
+        """Read all requested IDs in bounded SQL chunks, without a result cap.
+
+        Args:
+            conversation_ids: Nonempty identifiers to check, allowing duplicates.
+
+        Returns:
+            The subset of requested identifiers with durable unread reminders.
+
+        Raises:
+            ValueError: Any supplied identifier is empty.
+            Exception: Reading the persisted marks fails.
+        """
         ids = tuple(
             dict.fromkeys(self._conversation_id(cid) for cid in conversation_ids)
         )

@@ -717,7 +717,16 @@ def _visual_identity_options_for_db(
 
 @dataclass(frozen=True, slots=True)
 class ConsoleManualReadVisit:
-    """A deliberate navigation, fenced to its owner and reminder revision."""
+    """A deliberate navigation, fenced to its owner and reminder revision.
+
+    Args:
+        profile_key: Profile authority captured before navigation.
+        marks: Marks service owning the reminder.
+        conversation_id: Persisted conversation being visited.
+        session_id: Native session expected to paint the conversation.
+        token: Reminder revision, or None when no unread mark existed.
+        navigation_generation: Navigation attempt superseded by later visits.
+    """
 
     profile_key: str
     marks: ConversationLocalMarksService
@@ -2551,7 +2560,16 @@ class ConsoleSessionController:
         *,
         allow_current: bool = False,
     ) -> ConsoleManualReadVisit | None:
-        """Capture intent before navigation; same-conversation tabs are a no-op."""
+        """Capture intent before navigation; same-conversation tabs are a no-op.
+
+        Args:
+            session_id: Native session being deliberately opened.
+            conversation_id: Persisted ID, or None to resolve it from the session.
+            allow_current: Permit the app's explicit return to the active chat.
+
+        Returns:
+            Fenced visit intent, or None when no eligible visit can be captured.
+        """
         self._manual_navigation_generation += 1
         generation = self._manual_navigation_generation
         self._pending_manual_read_visit = None
@@ -2586,7 +2604,12 @@ class ConsoleSessionController:
     def complete_manual_read_visit(
         self, visit: ConsoleManualReadVisit | None, session_id: str | None = None
     ) -> None:
-        """Arm acknowledgement only after the explicit route reports success."""
+        """Arm acknowledgement only after the explicit route reports success.
+
+        Args:
+            visit: Captured intent; missing or superseded visits are ignored.
+            session_id: Actual destination session if navigation created one.
+        """
         if visit is None or visit.token is None:
             return
         if session_id is not None:
@@ -2597,6 +2620,7 @@ class ConsoleSessionController:
         self.schedule_manual_read_acknowledgement()
 
     def schedule_manual_read_acknowledgement(self) -> None:
+        """Schedule at most one pending reminder acknowledgement after painting."""
         if self._pending_manual_read_visit is None or self._manual_read_scheduled:
             return
         self._manual_read_scheduled = True
@@ -2652,7 +2676,10 @@ class ConsoleSessionController:
         return cleared
 
     async def acknowledge_explicit_console_return(self) -> None:
-        """Only the app's successful destination-navigation route calls this."""
+        """Acknowledge a deliberate return after synchronizing the active chat.
+
+        Only the app's successful destination-navigation route calls this.
+        """
         store = self._ensure_console_chat_store()
         if store.active_session_id:
             visit = await self.begin_manual_read_visit(

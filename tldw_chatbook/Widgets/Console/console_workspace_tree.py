@@ -747,8 +747,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         if data.kind == "conversation":
             icon = data.action_icon or ("[chat]" if ascii_glyph_mode() else "💬")
             return (
-                " "
-                + icon
+                icon
                 + " "
                 * max(
                     0,

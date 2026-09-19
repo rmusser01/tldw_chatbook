@@ -431,7 +431,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         except Exception:  # noqa: BLE001 - injected authority/loaders fail closed
             self._capture_revision_at_open = None
         self._initial_tab = initial_tab or TAB_NEXT_SEND
-        self._exchange_capture_by_call_key: dict[str, ExchangeCapture] = {}
+        self._exchange_capture_by_call_key: dict[str, tuple[ExchangeCapture, bool]] = {}
         self._save_blocked_reason = blocked_reason("save-context", ephemeral=ephemeral)
 
     def _capture_revision_is_current(self) -> bool:
@@ -530,23 +530,27 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                                 "Raw JSON",
                                 id="console-inspector-next-send-raw",
                                 compact=True,
+                                classes="inspector-modal-control",
                             )
                             yield Button(
                                 "Refresh",
                                 id="console-inspector-next-send-refresh",
                                 disabled=self._in_progress,
                                 compact=True,
+                                classes="inspector-modal-control",
                             )
                             yield Button(
                                 "Copy payload",
                                 id="console-inspector-next-send-copy",
                                 compact=True,
+                                classes="inspector-modal-control",
                             )
                             save = Button(
                                 "Save payload",
                                 id="console-inspector-next-send-save",
                                 disabled=self._save_blocked_reason is not None,
                                 compact=True,
+                                classes="inspector-modal-control",
                             )
                             save.tooltip = (
                                 self._save_blocked_reason
@@ -576,6 +580,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         "Inspect calls in Exchange history",
                         id="console-inspector-show-exchanges",
                         compact=True,
+                        classes="inspector-modal-control",
                         disabled=True,
                     )
                 with TabPane("Exchange history", id=TAB_EXCHANGE):
@@ -597,6 +602,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         "Export selected call…",
                         id="console-inspector-export-call",
                         compact=True,
+                        classes="inspector-modal-control",
                         disabled=True,
                     )
             with Horizontal(id="console-inspector-actions"):
@@ -604,11 +610,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     f"View: {self._viewer_profile.value.title()}",
                     id=VIEWER_PROFILE_BUTTON_ID,
                     compact=True,
+                    classes="inspector-modal-control",
                 )
                 yield Button(
                     "Capture settings…",
                     id="console-inspector-capture-settings",
                     compact=True,
+                    classes="inspector-modal-control",
                     disabled=self._capture_policy_bindings is None,
                 )
                 yield Button(
@@ -684,6 +692,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
 
     async def _show_trace_detail(self, pane_id: str, key: str) -> None:
+        if pane_id == "console-inspector-usage-detail":
+            self.query_one("#console-inspector-show-exchanges", Button).disabled = True
         if not self._capture_revision_is_current():
             return
         generation = self._disclosure_generation
@@ -691,10 +701,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._selected_export_key = None
         self.query_one("#console-inspector-export-call", Button).disabled = True
         if key.startswith("call:"):
-            capture = self._exchange_capture_by_call_key.get(key[5:])
-            if capture is None:
+            call = self._exchange_capture_by_call_key.get(key[5:])
+            if call is None:
                 return
-            text = await asyncio.to_thread(self._call_detail_text, capture)
+            capture, abandoned = call
+            text = await asyncio.to_thread(self._call_detail_text, capture, abandoned)
             if (
                 generation != self._disclosure_generation
                 or not self.is_mounted
@@ -702,7 +713,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 or self._trace_selections.get(pane_id) != key
             ):
                 return
-            pane.set_detail(key, self._exchange_call_title(capture, False), text)
+            pane.set_detail(key, self._exchange_call_title(capture, abandoned), text)
             self._selected_export_key = key[5:]
             self.query_one("#console-inspector-export-call", Button).disabled = False
             return
@@ -747,7 +758,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     )
                     call_key = f"{message_id}:{ordinal}"
                     calls.append((call_key, projected, abandoned))
-                    self._exchange_capture_by_call_key[call_key] = projected
+                    self._exchange_capture_by_call_key[call_key] = (
+                        projected,
+                        abandoned,
+                    )
                 self._trace_calls[message_id] = tuple(calls)
             if self._trace_selections.get(pane_id) != key:
                 return
@@ -807,14 +821,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return f"Messages ({marker['original_rows']} sent; {marker['omitted_rows']} elided by capture policy)"
         return f"Messages ({len(messages) if isinstance(messages, list) else 0})"
 
-    def _call_detail_text(self, capture: ExchangeCapture) -> str:
+    def _call_detail_text(self, capture: ExchangeCapture, abandoned: bool) -> str:
         response_heading = (
             "Locally synthesized fallback (not model output)"
             if capture.response and capture.response.get("synthetic_fallback")
             else "Response"
         )
         text = (
-            self._exchange_call_title(capture, False)
+            self._exchange_call_title(capture, abandoned)
             + "\n"
             + self._call_cost_line(capture)
             + "\n\nRequest (adapter boundary) · "
@@ -1196,9 +1210,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         """Open the governor for the exact loaded call and capture revision."""
         if not self._capture_revision_is_current():
             return False
-        capture = self._exchange_capture_by_call_key.get(call_key)
-        if capture is None:
+        call = self._exchange_capture_by_call_key.get(call_key)
+        if call is None:
             return False
+        capture, _ = call
         expected = self._capture_revision_at_open
         source_revision = self._capture_revision_provider
         if expected is None or source_revision is None:

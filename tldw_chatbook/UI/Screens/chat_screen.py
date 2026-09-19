@@ -614,12 +614,6 @@ from ...Widgets.Console.console_selection_menu import (
     selection_menus_on_screen,
 )
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
-from ...Widgets.Console.console_conversation_inspector import (
-    TAB_COSTS,
-    TAB_NEXT_SEND,
-    ConsoleConversationInspector,
-    InspectorTurn,
-)
 from ...Widgets.Console.console_citation_sources_modal import (
     selected_valid_evidence_ordinals,
 )
@@ -699,16 +693,12 @@ FeedbackRequested = ConsoleSelectionFeedbackRequested
 NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
-    from ...Chat.console_conversation_activation import (
-        CharacterConversationActivationRequest,
-        ConsoleConversationActivationResult,
-    )
+    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
         ConsoleEnvironmentController,
         UnknownRoot,
     )
-    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         ConsoleSettingsCredentialRequest,
         ConsoleSettingsDraftSnapshot,
@@ -722,6 +712,12 @@ if TYPE_CHECKING:
     from tldw_chatbook.Widgets.Console.console_workspace_tree import (
         WorkspaceTreeMenuRequested,
     )
+
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+        ConsoleConversationActivationResult,
+    )
+    from ...Widgets.Console.console_conversation_inspector import InspectorTurn
 
 logger = logger.bind(module="ChatScreen")
 
@@ -6276,6 +6272,8 @@ class ChatScreen(BaseAppScreen):
         if not session_id:
             self.notify("No active conversation.", severity="warning")
             return
+
+        from ...Widgets.Console.console_conversation_inspector import TAB_NEXT_SEND
 
         factory, estimate_factory, token_estimate, in_progress = (
             self._console_inspector_next_send_factories(controller, session_id)
@@ -12236,6 +12234,8 @@ class ChatScreen(BaseAppScreen):
         send_factories``) so switching to that tab after opening from the
         chip renders real content, not stale/empty data.
         """
+        from ...Widgets.Console.console_conversation_inspector import TAB_COSTS
+
         controller = self._ensure_console_chat_controller()
         session_id = controller.store.active_session_id
         if not session_id:
@@ -12291,6 +12291,10 @@ class ChatScreen(BaseAppScreen):
         supplies them, via ``project_instruction_ui.
         project_instruction_context_kwargs``.
         """
+        from ...Widgets.Console.console_conversation_inspector import (
+            ConsoleConversationInspector,
+        )
+
         rows, totals, turns, exchanges_loader = (
             self._build_console_inspector_cost_data()
         )
@@ -12367,7 +12371,7 @@ class ChatScreen(BaseAppScreen):
     ) -> tuple[
         list[ConsoleCostRow],
         ConsoleCostRowTotals,
-        list[InspectorTurn],
+        list["InspectorTurn"],
         Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]],
     ]:
         """Shared Costs-tab inputs for ``ConsoleConversationInspector``
@@ -12399,6 +12403,8 @@ class ChatScreen(BaseAppScreen):
             ``_abandoned_exchange_run_tags`` bookkeeping) rather than
             always reporting ``False``.
         """
+        from ...Widgets.Console.console_conversation_inspector import InspectorTurn
+
         store = self._console_chat_store
         messages: list[Any] = []
         if store is not None and store.active_session_id is not None:

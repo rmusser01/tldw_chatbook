@@ -131,6 +131,36 @@ async def test_capture_failure_keeps_usage_and_can_retry():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["", "n1"])
+async def test_usage_drill_in_disables_after_selecting_missing_or_ambiguous_identity(
+    identity,
+):
+    async def loader(_):
+        return [(_capture("r", 0, "t", "m"), False)]
+
+    rows = [_row(), _row(1), _row(2)]
+    app = InspectorHarness(
+        **_default_kwargs(
+            rows=rows,
+            totals=build_cost_rows_totals(rows),
+            turns=[
+                _turn(0, native_message_id="valid"),
+                _turn(1, native_message_id=identity),
+                _turn(2, native_message_id="n1"),
+            ],
+            exchanges_loader=loader,
+        )
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = app.screen
+        await choose(pilot, modal, "usage", "usage:0", "m")
+        button = modal.query_one("#console-inspector-show-exchanges", Button)
+        await _wait_until(pilot, lambda: not button.disabled)
+        await choose(pilot, modal, "usage", "usage:1", "missing or ambiguous")
+        assert button.disabled
+
+
+@pytest.mark.asyncio
 async def test_exchange_calls_are_chronological_lazy_literal_and_export_governed():
     later = _capture(
         "aaa",
@@ -197,6 +227,15 @@ async def test_call_status_is_explicit(status, abandoned):
             "abandoned" if abandoned else status,
         )
         assert ("abandoned" if abandoned else status) in text
+        expected = "abandoned" if abandoned else status
+        text = await choose(
+            pilot, app.screen, "exchange", "call:n1:0", "Request (adapter boundary)"
+        )
+        assert expected in text
+        title = pane(app.screen, "exchange").query_one(
+            ".inspector-detail-title", Static
+        )
+        assert expected in str(title.render())
 
 
 @pytest.mark.asyncio
