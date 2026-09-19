@@ -52,8 +52,15 @@ class RecentLocations:
     def __init__(self, max_items: int = 20, context: str = "default"):
         self.max_items = max_items
         self.context = context  # Context for different file picker uses
-        self._recent: List[Dict[str, Any]] = []
-        self.load_from_config()
+        # TASK-32804.12: lazy, like the sibling BookmarksManager (task-261).
+        # Loading in __init__ read config synchronously on every picker
+        # construction (~5.5 ms) on the click handler; defer to first use.
+        self._recent: Optional[List[Dict[str, Any]]] = None
+
+    def _ensure_loaded(self) -> None:
+        """Load recent locations from config on first actual use."""
+        if self._recent is None:
+            self.load_from_config()
 
     def load_from_config(self):
         """Load recent locations from config"""
@@ -69,6 +76,8 @@ class RecentLocations:
 
     def save_to_config(self):
         """Save recent locations to config"""
+        if self._recent is None:
+            return
         try:
             save_setting_to_cli_config("filepicker", f"recent_{self.context}", self._recent)
         except Exception as e:
@@ -87,6 +96,7 @@ class RecentLocations:
                 reproduces the exact bug that round found (a config
                 rewrite still firing on the click path).
         """
+        self._ensure_loaded()
         path_str = str(path.resolve())
 
         # Remove if already exists
@@ -107,6 +117,7 @@ class RecentLocations:
 
     def get_recent(self) -> List[Dict[str, Any]]:
         """Get recent locations"""
+        self._ensure_loaded()
         return self._recent
 
     def clear(self):
