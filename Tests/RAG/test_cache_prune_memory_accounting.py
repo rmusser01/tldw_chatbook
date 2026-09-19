@@ -84,3 +84,27 @@ def test_the_cache_still_accepts_writes_after_many_prune_cycles():
     # And a fresh put still lands.
     _put(cache, "final")
     assert any(k for k in cache._cache), "the cache stopped accepting writes"
+
+
+@pytest.mark.asyncio
+async def test_a_partial_async_prune_keeps_deep_accounting_for_survivors():
+    """Qodo (#2733): put_async deep-sizes entries, so a partial async prune must
+    subtract the pruned entry's DEEP size, not re-estimate every survivor
+    shallowly. A full _update_memory_sync() recompute undercounted deep
+    survivors and let the cache exceed its cap."""
+    cache = _make_cache()
+    await cache.put_async(
+        "old", "semantic", 5, [{"id": "o", "text": "x" * 5000}], "ctx"
+    )
+    await asyncio.sleep(0.1)  # 'old' is now past the 0.05s TTL
+    await cache.put_async(
+        "new", "semantic", 5, [{"id": "n", "text": "x" * 3000}], "ctx"
+    )
+
+    await cache._prune_expired_async()
+
+    assert len(cache._cache) == 1, "only the fresh entry should survive"
+    (survivor,) = cache._cache.values()
+    # The counter must equal the survivor's DEEP size (what put_async added),
+    # not a shallow re-estimate and not the leaked pre-prune total.
+    assert cache._current_memory_bytes == cache._deep_getsizeof(survivor)

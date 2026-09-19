@@ -1072,17 +1072,23 @@ class SimpleRAGCache:
                 total_age += age
                 total_accesses += entry.access_count
 
+        # TASK-32811.6 / Qodo: subtract each pruned entry using the SAME
+        # deep sizer put_async added it with. A full _update_memory_sync()
+        # recompute here re-estimates every SURVIVOR shallowly
+        # (_estimate_entry_size), discarding the deep accounting of
+        # async-inserted survivors and letting the cache exceed its cap.
+        # (Not updating at all left the counter pinned at the pruned size --
+        # dead at prune cycle 42 in the review's repro.)
         for key in expired_keys:
-            del self._cache[key]
+            entry = self._cache.pop(key)
+            self._current_memory_bytes = max(
+                0, self._current_memory_bytes - self._deep_getsizeof(entry)
+            )
 
         if expired_keys:
-            # TASK-32811.6: recompute the memory counter from the surviving
-            # entries, the way `_prune_expired_sync` already does. Deleting
-            # from `self._cache` without this left `_current_memory_bytes`
-            # pinned at the pruned entries' size; it ratcheted to the cap
-            # and the cache silently stopped accepting writes -- dead at
-            # prune cycle 42 in the review's repro, every later search cold.
-            self._update_memory_sync()
+            log_gauge(
+                "cache_memory_mb", self._current_memory_bytes / 1024 / 1024
+            )
             avg_age = total_age / len(expired_keys)
             avg_accesses = total_accesses / len(expired_keys)
             log_counter("cache_entries_expired", value=len(expired_keys))
