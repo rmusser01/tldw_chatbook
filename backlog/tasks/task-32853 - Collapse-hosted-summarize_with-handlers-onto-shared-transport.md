@@ -1,0 +1,38 @@
+---
+id: TASK-32853
+title: Collapse the nine hosted summarize_with handlers onto shared transport
+status: To Do
+assignee: []
+created_date: '2026-09-19 08:24'
+labels:
+  - core-review
+  - review-cascade
+dependencies:
+  - TASK-19642.10
+parent_task_id: TASK-32850
+references:
+  - qa/cascade-review-2026-09-19/report.md
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+The summarization layer never received the transport collapse: `LLM_Calls/Summarization_General_Lib.py` carries nine hosted `summarize_with_*` handlers (openai :904, anthropic :1109, cohere :1381, groq :1631, openrouter :1813, huggingface :2046, deepseek :2236, mistral :2424, google :2646 — 1,936 LOC of handlers), each re-rolling "session + Retry adapter + post + stream_generator". The 2026-09-17 review documented the drift: only 2 of 16 total copies close the response on abandon; `summarize_with_deepseek` hardcodes `https://api.deepseek.com/chat/completions` (:2257, :2316) ignoring `api_base_url`; three handlers double-yield the accumulated text after the deltas; retry loops are hand-rolled per handler.
+
+Summarization is a chat call + prompt template + `choices[0]` extraction — ~15-30 provider-specific LOC survive per provider. OpenAI-compatible providers should route through `hosted_chat.py`; the non-OpenAI wire shapes (anthropic, google, cohere) get one shared `_post_with_retry` helper with their payload assembly kept.
+
+Constraint: `test_summarization_diagnostic_privacy.py` freezes per-function log call sites, so consolidation re-keys the diagnostic ledger — do it coherently per the task-17387 pattern, not by deleting assertions. Error-STRING return shape is a caller contract; preserve it. ADR required: no — ADR-062-consistent; the ledger re-key follows task-17387's precedent.
+
+Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-17`-adjacent evidence in `slices/LLM.md`; cascade framing in `qa/cascade-review-2026-09-19/report.md`.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 The nine hosted handlers share one transport path (hosted_chat for OpenAI-compatible providers; one `_post_with_retry` for the anthropic/google/cohere wire shapes); each handler is a profile + prompt assembly
+- [ ] #2 No hardcoded endpoint URLs remain; `api_base_url` is honored everywhere it exists for chat
+- [ ] #3 Abandoned streaming consumers close the response in all nine; the double-yield defect class is gone and pinned
+- [ ] #4 Retry-After honoring goes through the shared, bounded policy (no uncapped sleeps)
+- [ ] #5 The diagnostic ledger is re-keyed coherently and its tests updated to the new call sites
+- [ ] #6 Caller-visible error-string returns are unchanged; ingest analysis paths still work
+<!-- AC:END -->
