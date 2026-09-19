@@ -727,7 +727,20 @@ class FileProcessor:
 
 
 def format_size_bytes(size_bytes: int) -> str:
-    """Return ``size_bytes`` as a human-readable B/KB/MB/GB string."""
+    """Format a byte count as a human-readable B/KB/MB/GB string.
+
+    Uses binary (1024) divisors and thresholds so the scale is monotonic.
+
+    Args:
+        size_bytes: A non-negative byte count. Negative values are clamped
+            to 0 (a byte count is never negative; TASK-32808.1 / Qodo #3).
+
+    Returns:
+        A string such as ``"512 B"``, ``"1.0 KB"``, ``"3.5 MB"`` or
+        ``"2.0 GB"`` (capped at GB).
+    """
+    if size_bytes < 0:
+        size_bytes = 0
     if size_bytes < 1024:
         return f"{size_bytes} B"
     size_kb = size_bytes / 1024

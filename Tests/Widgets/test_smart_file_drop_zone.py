@@ -449,10 +449,6 @@ async def test_file_removed_message():
     assert message.file_path == test_file
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_format_file_size_binary_thresholds_no_decimal_jump():
     """TASK-32808.1 regression: the decimal thresholds (1_000_000) with binary
     divisors (1024**2) made 999,999 B read as KB but 1,000,000 B jump straight
@@ -472,3 +468,9 @@ def test_canonical_public_byte_formatter_exists():
     assert format_size_bytes(512) == "512 B"
     assert format_size_bytes(1024) == "1.0 KB"
     assert format_size_bytes(1024 * 1024) == "1.0 MB"
+    # Qodo #3: a negative byte count is clamped to 0, never "-5 B".
+    assert format_size_bytes(-5) == "0 B"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
