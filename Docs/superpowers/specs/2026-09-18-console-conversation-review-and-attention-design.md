@@ -218,6 +218,12 @@ of Chat-layer imports. Hidden/capped-row and collapsed-workspace indicators
 use the same semantic priority, preserving existing unseen-activity visibility.
 The first three refine the approved action-required/failure priority. Use
 actual operational state and outcome, never infer state from title or glyph.
+The existing row projection carries a resolved run glyph and cannot express
+all simultaneous states. Enrich it with content-free semantic attention data
+from current runtime/receipt owners before applying this display precedence;
+do not decode glyphs to fabricate missing state. Keep the projection independent
+of Chat-layer imports. Hidden/capped-row and collapsed-workspace indicators
+use the same semantic priority, preserving existing unseen-activity visibility.
 An ordinary old failure does not remain attention-worthy after its existing
 acknowledgement policy says it is handled. Paused states use the pause symbol
 only when an authoritative producer actually reports a resumable paused state;
@@ -343,14 +349,17 @@ Run targeted checks only; a full suite requires a separate user request.
   handling and independence from sync/receipts.
 - Activation tests cover mark-current, leave/return, same-row click, modal
   close, explicit vs automatic restore, cancelled/failed navigation, stale
-  callbacks, rapid re-marking, and native/Ctrl+K/workspace opening paths.
+  callbacks, rapid re-marking with identical clock timestamps, duplicate tabs
+  for one conversation, and native/Ctrl+K/workspace opening paths.
 - Pure presentation tests cover each state, overlaps, representative glyphs,
   ASCII mapping, custom appearance restoration and unknown-state honesty.
 - Mounted row tests exercise pointer targeting, focus, keyboard menus,
-  long/wide titles, updates while pressed, paging and scroll stability.
+  long/wide titles, updates while pressed, paging, hidden-state aggregation,
+  growing menu height at bottom-edge anchors, and scroll stability.
 - Modal tests cover entry-point selection, context/preview separation,
   token/cost bases, unavailable pricing, partial totals, freshness, empty/error
-  states, lazy large-history detail, privacy and export guards.
+  states, lazy large-history detail, on-demand preview preparation, cross-view
+  disclosure invalidation, privacy, stale-target and export guards.
 - Render the production stylesheet at 80x24, 120x40 and a wide viewport;
   exercise Back/Close and all important actions with keyboard and pointer.
   Compare representative glyph rendering in iTerm2 and Windows Terminal under
