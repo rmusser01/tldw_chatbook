@@ -18,7 +18,7 @@ ADR required: no. Existing ADR-150/161 define the language and migration;
 ADR-031 governs interaction and ADR-097 governs startup budgets. This document
 records evidence and remaining review work, without changing those boundaries.
 
-## PR #2707 scope boundary — 2026-09-18
+## PR #2707 scope boundary — historical 2026-09-18 checkpoint
 
 The owner approved closing the current PR before reviewing additional screens.
 The remaining eleven destinations, Settings categories and Console subflows below
@@ -33,6 +33,29 @@ before retiring its panel, followed by a deterministic regression and native che
 After merge is confirmed, resume in this task on a fresh branch from merged `dev`,
 beginning with MCP server lifecycle/inspector work and reusing that investigation.
 The separately configured backup heartbeat must not duplicate active work.
+
+**Current status:** PR2707 merged into dev at
+`149acda36be8939fe8cd5e589bf77d13462257e7`; the heartbeat is paused and the same
+task has resumed. The incomplete TASK-32823 statement above describes its earlier
+prototype; its completed follow-up is draft PR2711. PR2712 covers server-action
+ownership, PR2713 cancellation, and PR2714 connected catalog refresh. All are
+independent dev-based drafts with their own merge/visual approval gates.
+
+TASK-32831 now repairs stdio tool errors being reported as successful results.
+[Eleven targeted cases and four inspected dark/light native captures](../qa/2026-09-18-mcp-tool-errors/README.md)
+qualify visible failure, accurate audit outcomes and success on the same connection
+at 170×48. The real baseline showed false `OK`; current isolated regression and
+native evidence show the correction. Seven preflight guards pass; scoped lint
+adds no diagnostics. Two older profile-setup tests fail identically on dev.
+Native app/fixture exit, released lock, ten healthy private databases and unchanged
+defaults are verified. ADR-111/161 apply; no new ADR, CSS or tokens are needed.
+
+The attempted compact journey exposed an unreachable inspector argument field
+at 80×24, even after scroll reveal. Its failed receipts are retained, and compact
+Test Tool reachability is the next bounded review. This repair does not qualify
+compact execution or the remaining schema, permission, Audit and destination
+workflows. See the [MCP ledger](2026-09-18-mcp-review.md) for the current queue;
+later PR2707 draft/open statements in this document are historical checkpoints.
 
 ## Original migration requirements
 
