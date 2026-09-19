@@ -1,0 +1,18 @@
+{
+  "source_sha256": "55d0294bc5cf8101cb079075e2c9338741cc91b91161fd59b8c61b552806f140",
+  "sole_expected_edit": true,
+  "embedded_scripts_compile": true,
+  "other_scripts_and_all_test_bodies_unchanged": true,
+  "path_proof": {
+    "PureWindowsPath": {
+      "native_text_matches": false,
+      "posix_text_matches": true,
+      "same_native_relative_path": true
+    },
+    "PurePosixPath": {
+      "native_text_matches": true,
+      "posix_text_matches": true,
+      "same_native_relative_path": true
+    }
+  }
+}

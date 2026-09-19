@@ -110,13 +110,14 @@ async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_
         assert right.region.width == ConsoleRailHandle.VERTICAL_WIDTH
         assert left.region.height == host.content_region.height
         assert right.region.height == host.content_region.height
-        assert left.content_region.width == ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+        # This host mounts unframed handles; the screen separately owns frame edges.
+        assert left.content_region.width == ConsoleRailHandle.VERTICAL_WIDTH
         assert right.content_region.width > ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
         for button in (left_button, right_button):
             assert button.styles.min_height.value == 7
             assert button.styles.max_height.value == 100
             assert button.styles.max_height.unit.name == "HEIGHT"
-        assert left.styles.border.top[0] == "solid"
+        assert left.styles.border.top[0] == ""
         assert right.styles.border.top[0] in {"", "none"}
         _assert_content_column_contained(left, left_button)
         _assert_content_column_contained(right, right_button)
@@ -253,12 +254,11 @@ def test_vertical_compose_marks_handle_and_children_and_uses_content_width() -> 
     assert handle.has_class("console-rail-handle-vertical")
     assert isinstance(button, Button)
     assert button.has_class("console-rail-handle-button-vertical")
-    assert button.styles.width.value == ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
-    assert button.styles.height.value == 1
-    assert button.styles.height.unit.name == "FRACTION"
+    assert button.has_class("w-1")
+    assert button.has_class("h-fill")
     assert isinstance(badge, Static)
     assert badge.has_class("console-rail-handle-badge-vertical")
-    assert badge.styles.width.value == ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+    assert badge.has_class("w-1")
 
 
 # --- TASK-31665 AC#4: one arrow vocabulary, open and collapsed --------------

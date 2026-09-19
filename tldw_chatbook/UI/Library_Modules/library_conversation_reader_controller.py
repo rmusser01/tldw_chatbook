@@ -107,7 +107,7 @@ from ...Library.library_conversation_reader_state import (
     settle_conversation_unavailable,
 )
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
-from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
+from ...Utils.adaptive_reader_state import PaneName, resolve_adaptive_reader_layout
 from ...Widgets.Library import LibraryAdaptiveReaderShell, LibraryConversationReader
 from .library_conversations_state import (
     CONVERSATIONS_PLURAL_STATE_FIELDS,
@@ -148,6 +148,7 @@ class LibraryConversationReaderController:
         selected_row_id_accessor: Callable[[], str],
         selected_conversation_id_accessor: Callable[[], str],
         library_conversation_workspace_block: Callable[[], tuple[str, bool, str]],
+        visible_link_receipt: Callable[[], str],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -216,6 +217,8 @@ class LibraryConversationReaderController:
                 link_resolves_it, detail)`` for the open conversation's
                 workspace refusal, or ``("", False, "")`` when it can be
                 staged (task-32056).
+            visible_link_receipt: Projects the retained link receipt into
+                its owning active workspace, or returns an empty string.
             selected_conversation_id_accessor: Reads ``LibraryScreen.
                 _selected_conversation_id`` -- a per-source "currently
                 selected" field parallel to ``_media_state.selected_media_id``/
@@ -246,6 +249,7 @@ class LibraryConversationReaderController:
         self._library_conversation_workspace_block = (
             library_conversation_workspace_block
         )
+        self._visible_link_receipt = visible_link_receipt
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -386,6 +390,7 @@ class LibraryConversationReaderController:
             metadata["_workspace_block_linkable"],
             metadata["_workspace_block_detail"],
         ) = self._library_conversation_workspace_block()
+        metadata["_workspace_link_receipt"] = self._visible_link_receipt()
         reader.sync_state(
             self._library_conversation_reader_state,
             loaded_metadata=metadata,
@@ -820,6 +825,8 @@ class LibraryConversationReaderController:
     def _sync_library_conversation_reader_layout_from_shell(
         self,
         priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
     ) -> None:
         """Resolve the settled Conversations shell and patch it in place."""
         try:
@@ -850,7 +857,7 @@ class LibraryConversationReaderController:
             reader_has_item=self._library_conversation_reader_state.selected_id
             is not None,
         )
-        shell.sync_layout(layout)
+        shell.sync_layout(layout, manual_reopen=manual_reopen)
         self._library_conversation_reader_layout = layout
         self._sync_library_conversation_reader()
 

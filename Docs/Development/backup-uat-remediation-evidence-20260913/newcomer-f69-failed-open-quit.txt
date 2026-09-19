@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Failed: opening profile
+  Review the selected file and local folders, then try again. Open the detailed recovery evidence if the problem continues. (backup_operation_failed)
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ Restored profiles                                                                                                                                            │
+│                                                                                                                                                              │
+│ Current profile                                                                                                                                              │
+│ /private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/newcomer/home/.config/tldw_cli/config.toml                                                         │
+│ No verified recovery generation for this current profile. Optional features may still require setup.                                                         │
+│  Recovered media details                                                                                                                                     │
+│                                                                                                                                                              │
+│ 26c4691935a647c38237112490d51540                                                                                                                             │
+│ /private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/newcomer/restores/first-note/config/config.toml                                                    │
+│ /private/tmp/chatbook-backup-uat-repeat-20260913-kk6_dews/newcomer/restores/first-note/data                                                                  │
+│ recovery_required                                                                                                                                            │
+│ Setup requirements unavailable. Recover this profile before opening it.                                                                                      │
+│  Open in new process                                                                                                                                         │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+
+                                Cancel operation                                                                     Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

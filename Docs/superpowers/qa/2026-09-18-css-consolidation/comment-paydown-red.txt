@@ -1,0 +1,35 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_widget_streams_omit_source_prose_but_keep_provenance_and_tokens _____
+
+    def test_widget_streams_omit_source_prose_but_keep_provenance_and_tokens():
+        source = '''/* Widget rationale stays in Python. */
+    Sample/* self compound */.active { height: auto; }
+    Sample /* descendant boundary */ .child {
+        border-title: "/* literal marker */  "; /* do not publish this prose */
+    }
+    .scoped { padding: 0 1; }
+    '''
+        block = widget_css.BundledBlock("sample.py", "Sample", 1, source)
+        expected = widget_css.split_scoped_css(source, "Sample", scope_every_selector=True)
+        actual = widget_css.render_stylesheets([block], "test", scope_every_selector=True)
+        for before, after in zip(expected, actual, strict=True):
+>           assert "Widget rationale" not in after
+E           AssertionError: assert 'Widget rationale' not in '/* ========...se */\n}\n\n'
+E             
+E             'Widget rationale' is contained here:
+E               === */
+E               /* Widget rationale stays in Python. */
+E             ?    ++++++++++++++++
+E               Sample/* self compound */.active { height: auto; }
+E               Sample /* descendant boundary */ .child {...
+E             
+E             ...Full output truncated (3 lines hidden), use '-vv' to show
+
+Tests/UI/test_css_generated_comments.py:86: AssertionError
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_css_generated_comments.py::test_widget_streams_omit_source_prose_but_keep_provenance_and_tokens
+1 failed in 0.22s

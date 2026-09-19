@@ -57,6 +57,10 @@ from textual.worker import Worker, get_current_worker
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import get_runtime_config_snapshot
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_RADIO_SELECTED,
+    LIBRARY_GLYPH_RADIO_UNSELECTED,
+)
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     PARAKEET_PRECISIONS,
     active_managed_parakeet_dir,
@@ -128,10 +132,15 @@ class SetupRadioButton(RadioButton):
     TASK-1497: stock ToggleButton renders one constant BUTTON_INNER glyph and
     conveys on/off purely through the glyph's color, which is invisible in a
     monochrome capture and fails WCAG 1.4.1 (use of color). The inner glyph
-    itself switches here — ● selected, ○ unselected — so state survives any
-    palette; a bold text-style on the selected row (see _wizards.tcss) is the
-    second cue. BUTTON_INNER is set as an instance attribute right before the
-    parent property renders, shadowing the class attribute per-state.
+    itself switches here — the Library legend's radio pair — so state survives
+    any palette; a bold text-style on the selected row (see _wizards.tcss) is
+    the second cue. BUTTON_INNER is set as an instance attribute right before
+    the parent property renders, shadowing the class attribute per-state.
+
+    task-32464 fix round 1: the pair used to be two literals here, the same
+    duplication that surface's twin (``ConsoleAccessRadioButton``) carried.
+    Both now read the one definition in ``Library.library_shell_state``, so a
+    legend change cannot pass either of them by.
     """
 
     @property
@@ -143,7 +152,11 @@ class SetupRadioButton(RadioButton):
         # test_selected_and_unselected_glyphs_differ_structurally, so a
         # Textual upgrade that changes the mechanism fails loudly in CI
         # instead of silently regressing to color-only state.
-        self.BUTTON_INNER = "●" if self.value else "○"
+        self.BUTTON_INNER = (
+            LIBRARY_GLYPH_RADIO_SELECTED
+            if self.value
+            else LIBRARY_GLYPH_RADIO_UNSELECTED
+        )
         return super()._button
 
 
@@ -272,7 +285,7 @@ class SetupWizardProgress(WizardProgress):
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.styles.width = "100%"
+        self.add_class("w-full")
         self.items = items
         self._sync_compatibility_state()
 
@@ -1193,6 +1206,7 @@ class ProviderStep(SetupStep):
         self._credential_observation_key = os.urandom(32)
         self._sensitive_key_input: Input | None = None
         self._sensitive_endpoint_input: Input | None = None
+        self._subscription_readiness_status: str | None = None
         self._credential_observations: dict[str, _CredentialObservation] = {}
         self.probe_generation = 0
         self._discovery_visible = False
@@ -1516,6 +1530,22 @@ class ProviderStep(SetupStep):
         self._sensitive_endpoint_input = self.query_one(
             "#setup-provider-endpoint", Input
         )
+        self.set_interval(0.25, self._refresh_subscription_readiness)
+
+    def _refresh_subscription_readiness(self) -> None:
+        """Refresh only the visible selection from the bounded credential cache."""
+        if (
+            not self.is_attached
+            or not self._discovery_visible
+            or self.screen not in self.app.screen_stack
+            or self.selected_provider_key != "anthropic"
+        ):
+            return
+        status = self._current_provider_readiness().subscription_status
+        # Compare state, not just completion revision: credentials may expire
+        # during the cache lifetime without another file or Keychain read.
+        if status != self._subscription_readiness_status:
+            self._refresh_auth_readiness()
 
     def prepare_retry_after_failed_save(self) -> None:
         """Release the failed draft, then restore live boundary resolvers."""
@@ -1783,11 +1813,18 @@ class ProviderStep(SetupStep):
 
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         return get_provider_readiness(
-            provider_key, app_config, environ=self._environment()
+            provider_key,
+            app_config,
+            environ=self._environment(),
+            background_credentials=True,
         ).requires_api_key
 
     def _credential_at_request_boundary(self) -> tuple[str, str | None, object]:
-        """Resolve a credential once, immediately before a live request."""
+        """Resolve the current API key and nonblocking readiness snapshot.
+
+        Borrowed subscription tokens remain owned by the actual send path;
+        they never enter a first-run credential draft or saved config.
+        """
 
         from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
         from tldw_chatbook.config import is_valid_provider_api_key
@@ -1802,7 +1839,10 @@ class ProviderStep(SetupStep):
             else (ui_draft.api_key.strip() if ui_draft is not None else "")
         )
         base_readiness = get_provider_readiness(
-            provider_key, app_config, environ=self._environment()
+            provider_key,
+            app_config,
+            environ=self._environment(),
+            background_credentials=True,
         )
         if typed:
             if is_valid_provider_api_key(typed):
@@ -1903,7 +1943,10 @@ class ProviderStep(SetupStep):
         staged_config = dict(app_config)
         staged_config["api_settings"] = staged_api_settings
         return get_provider_readiness(
-            provider_key, staged_config, environ=self._environment()
+            provider_key,
+            staged_config,
+            environ=self._environment(),
+            background_credentials=True,
         )
 
     def _probe_target(self) -> str:
@@ -2079,6 +2122,7 @@ class ProviderStep(SetupStep):
         if not self.selected_provider_key or not self.is_mounted:
             return
         readiness = self._current_provider_readiness()
+        self._subscription_readiness_status = readiness.subscription_status
         auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
         auth.title = (
             "Authentication"
@@ -2091,6 +2135,11 @@ class ProviderStep(SetupStep):
         test_available = bool(target and identity is not None)
         test_button.disabled = not readiness.ready or not test_available
         status = self.query_one("#setup-provider-key-status", Static)
+        if readiness.subscription_status is not None:
+            status.update(
+                readiness.reason if readiness.ready else readiness.user_message
+            )
+            return
         if not readiness.ready:
             # TASK-21149 (UAT P-3): the input right above is the primary
             # path — lead with it and where to get a key; the env-var route
@@ -2105,6 +2154,11 @@ class ProviderStep(SetupStep):
                     f"(Already exported {env_var}? It's picked up "
                     "automatically.)"
                 )
+            # task-32555 AC#3: the skip is visible where the key goes.
+            parts.append(
+                "No key yet? Enter skips this step — you can add a provider "
+                "later in Settings."
+            )
             status.update(" ".join(parts))
             return
         if self._clear_requested:
@@ -2873,6 +2927,24 @@ class ProviderStep(SetupStep):
         self._provider_choice_interacted = True
         self._select_provider_option(event.option)
 
+    def skip_without_key(self) -> None:
+        """Forget the provider choice so ``commit`` takes its skip path.
+
+        task-32555 AC#3: Enter in the empty key field. Nothing was staged
+        for this provider (a stage needs a ready credential), so clearing
+        the choice loses nothing; the highlighted list row re-selects on
+        the next interaction if the user comes Back.
+
+        A provider that is ALREADY ready without a typed key (an exported
+        env var, a local server) is the exception -- commit() would stage
+        it, and the key field's hint never offered the skip in that state
+        (``_refresh_auth_readiness`` adds it only under "not ready").
+        """
+        if self.selected_provider_key and self._current_provider_readiness().ready:
+            return
+        self.selected_provider_key = ""
+        self._provider_choice_interacted = False
+
     def _effective_provider_key(self) -> str:
         """Return the selected key, falling back to the highlighted option."""
         if self.selected_provider_key:
@@ -3169,6 +3241,8 @@ class ProviderStep(SetupStep):
             self._credential_semantics_changed()
         readiness = self._current_provider_readiness()
         if not readiness.ready:
+            if readiness.subscription_status is not None:
+                return False, readiness.user_message
             recovery = readiness.recovery or "Add a provider credential."
             return False, f"API key required. {recovery}"
         typed_key = bool(
@@ -6916,6 +6990,14 @@ class WelcomeStep(SetupStep):
                 yield SetupRadioButton(
                     "Full setup — configure everything", id="setup-track-full"
                 )
+            yield Button("Restore a backup", id="setup-backup-restore")
+            yield Static("", classes="setup-step-error")
+
+    @on(Button.Pressed, "#setup-backup-restore")
+    def open_backup_restore(self, event: Button.Pressed) -> None:
+        """Keep setup choices intact while the app owns the recovery view."""
+        event.stop()
+        self.app.action_backup_restore()
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"track": self.chosen_track()}
@@ -7512,11 +7594,21 @@ class SetupWizardContainer(WizardContainer):
     @on(Input.Submitted)
     def _advance_on_input_submit(self, event: Input.Submitted) -> None:
         """Enter in a step Input means "continue" (UAT N-1) — with one
-        exception: the provider key field, where Enter launches the
-        credential probe (TASK-1506's live-but-never-blocking check).
+        exception: the provider key field, where Enter with a key launches
+        the credential probe (TASK-1506's live-but-never-blocking check).
+
+        task-32555 AC#3: Enter with NO key used to do nothing at all — no
+        probe, no advance, no message. It now skips the provider (the field's
+        own hint says so): the choice is cleared so the step's commit takes
+        its skip-safe path, and the Summary reports the provider as not
+        configured.
         """
         if event.input.id == "setup-provider-api-key":
-            return
+            if event.value.strip():
+                return
+            step = self.steps[self.current_step]
+            if isinstance(step, ProviderStep):
+                step.skip_without_key()
         event.stop()
         self.action_next()
 

@@ -1902,6 +1902,11 @@ async def test_conversations_global_f6_cycles_visible_destination_roles() -> Non
         assert work.has_focus
         shell.library_grip.press()
         await pilot.pause()
+        # Explicit reopen restores the last Library descendant before F6.
+        assert rail.has_focus
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        assert work.has_focus
         screen.action_focus_next_workbench_pane()
         await pilot.pause()
         assert rail.has_focus
@@ -1986,6 +1991,7 @@ async def test_conversations_escape_moves_to_nearest_visible_prior_role() -> Non
         shell.library_grip.press()
         await pilot.pause()
         work.focus()
+        await pilot.pause()
         shortcuts = screen._library_route_shortcuts_for_current_state()
         assert ("esc", "focus Library") in shortcuts
         await pilot.press("escape")

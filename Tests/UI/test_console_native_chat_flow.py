@@ -2726,6 +2726,12 @@ class _ReadyResolutionGateway:
     rather than hand-built, so the double cannot silently drift from it again.
     """
 
+    def cached_context_window(self, settings):
+        """Provide the real gateway's offline metadata fallback to mounted UI."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
         resolution = SimpleNamespace(
             provider=selection.provider,
@@ -3903,6 +3909,9 @@ class RestoredConsoleHarness(ConsolidatedCSSApp):
         restored_state: Serialized screen state passed to ``ChatScreen.restore_state``.
     """
 
+    # Recreated screens need the same app-level layout as the initial mount.
+    CSS_PATH = ConsoleHarness.CSS_PATH
+
     def __init__(self, app_instance: object, restored_state: dict) -> None:
         """Initialize the restore harness with the target app and state payload.
 
@@ -3939,6 +3948,16 @@ class CapturingGateway(_ReadyResolutionGateway):
     def __init__(self, chunks=("accepted",)) -> None:
         self.chunks = chunks
         self.sent_messages = []
+
+    def cached_context_window(self, settings):
+        """Use catalog/fallback capacity without inventing server metadata."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
+    async def resolve_context_window(self, settings):
+        """This deterministic stream fixture has no remote metadata probe."""
+        return self.cached_context_window(settings)
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.sent_messages.append(list(messages))
@@ -6076,8 +6095,7 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
 async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
     """Verify Console chat tabs, transcript, and draft restore after recreation."""
     app = _build_console_send_test_app()
-    app.chat_api_provider_value = "llama_cpp"
-    app.chat_api_model_value = "test-model"
+    _configure_native_ready_console(app, model="test-model")
     app.console_provider_gateway_factory = lambda: CapturingGateway(
         chunks=("assistant return",)
     )
@@ -6178,7 +6196,15 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         assert "\n" in row_text
         # TASK-374 removes the redundant workspace/group label from grouped
         # conversation rows while retaining a non-default state differentiator.
-        assert "active session" in row_text
+        # The rail cell-truncates metadata; retain its visible state cue and
+        # check the complete status on the exact row that supplied the label.
+        assert row_text.splitlines()[-1].startswith("active")
+        state_row = next(
+            item
+            for item in _console_conversation_browser_rows(console)
+            if item.row_key == row.row_key
+        )
+        assert state_row.status == "active session"
         assert "workspace-thread" not in row_text
         assert not re.search(r"\[[0-9a-f]{8}\]", row_text)
         # The row metadata also carries a relative age label appended after
@@ -6195,8 +6221,7 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
 @pytest.mark.asyncio
 async def test_console_send_after_workspace_switch_persists_to_selected_workspace():
     app = _build_console_send_test_app()
-    app.chat_api_provider_value = "llama_cpp"
-    app.chat_api_model_value = "test-model"
+    _configure_native_ready_console(app, model="test-model")
     app.console_provider_gateway_factory = lambda: CapturingGateway(
         chunks=("accepted",)
     )

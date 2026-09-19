@@ -1,0 +1,5 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+CSS destination tour: ['home', 'console', 'library', 'personas', 'watchlists_collections', 'artifacts', 'schedules', 'workflows', 'mcp', 'acp', 'lab', 'logs', 'settings', 'research', 'meetings']
+.

@@ -1,0 +1,31 @@
+{
+  "task": "TASK-32778",
+  "base_commit": "2671067a5e75467013021742ba93618db4e94500",
+  "scope": "Mounted regression evidence; no new native visual claim",
+  "tests": {
+    "lifecycle": 12,
+    "cold_provisioning": 10,
+    "token_component_governance": 26,
+    "existing_tool_profiles": 30,
+    "distinct_total": 78
+  },
+  "initial_existing_run": "15 profile-source fixture failures, 15 passes",
+  "isolated_existing_run": "28 passes; 2 offscreen click failures",
+  "corrected_click_run": "2 passes; original workflow assertions retained",
+  "existing_assertion_count": 137,
+  "ruff_baseline": {
+    "settings_screen": 114,
+    "tool_profiles_panel": 1,
+    "existing_tests": 3,
+    "introduced": 0
+  },
+  "new_tests_ruff": "pass",
+  "changed_method_and_small_files_format": "pass",
+  "backlog_guard": "4129 unique tasks; Windows-compatible paths",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "e1062e3ce5eb09d0f561c175873d3f79af7878771efd177504b0b7b8f0de3a8f",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "8d78f5919b441f7ce09898027e8b02f295b7c47b5ca081b11896329f9a0fe1c1",
+    "Tests/UI/test_tool_profiles_lifecycle.py": "b13be790db9471dfa3c4a3201ede6527c9b2794172a24f8f66eee917a3d64cfe",
+    "Tests/UI/test_settings_tool_profiles.py": "cbf46e265b2b16e6b1676149bfce5d2c2584a25587e4696f3072586037d493fa"
+  }
+}

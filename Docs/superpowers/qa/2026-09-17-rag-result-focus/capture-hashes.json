@@ -1,0 +1,50 @@
+{
+  "textual-dark-80-newer-focus.svg": {
+    "raw": "b73b9a02caa2b6888972db065b42ef592a62a977acbb928eb25dd52b8f1d9d10",
+    "stored": "6f8f466f711804a7c009e8ab2c3d76c5179d2b31b8f2e68f612a8af223d7bb42"
+  },
+  "textual-dark-170-query-focus.svg": {
+    "raw": "5d3dd467964b09c2aa8be53b04191eea52eeaec7fcfc5feee827c4d0ecb98ac8",
+    "stored": "6c7b854b3a12999e0ba0e6523a60f1e9138707605ff92e3ff53e1981f505c31e"
+  },
+  "textual-light-170-newer-focus.svg": {
+    "raw": "272c87008cb3ae58735ac97bf16ccc70521a99bc73d44b16dc857252e6433dbd",
+    "stored": "fb6a12bbfef56191a76abb60e02673c7ef4d4ebd1b9685be33a22dc9c588233a"
+  },
+  "textual-dark-80-evidence-focus.svg": {
+    "raw": "d0f8ffcafd1ac7ca050b35c7faebf3bdb1dc1d6b81fcd01c9c59d391aed80d22",
+    "stored": "714e0e1d9c59e7d4e944af48822230eff3ce5e13cee0f3c62881d3a243d7a8de"
+  },
+  "textual-light-80-query-focus.svg": {
+    "raw": "3d9c3db14474c910e8ed9f46767266364b0febd214ed1aa5b58f1df8ce938434",
+    "stored": "d4dd34cee07a5265d139acba3640411521b1ddf26879402a3ea967a80138d568"
+  },
+  "textual-dark-170-evidence-focus.svg": {
+    "raw": "e71715b7b637b9cf19020a6bfb99d105c834694b3c3a9dab173b56cc959b4a79",
+    "stored": "d0c45ca02eb5697b459245f0b47aff3433b7be98c1b2fc566ac4836de1e302cb"
+  },
+  "textual-light-170-query-focus.svg": {
+    "raw": "f053fa1d923651e404ed1f1e521399f5185fd06c19f551eda796d42a09e45349",
+    "stored": "e330f8007cecbcccb00bdf2b52b13fb0ca05e133960cd5826312c2dc640816bd"
+  },
+  "textual-light-80-newer-focus.svg": {
+    "raw": "d9fb07c0c8e3a76c2cc5baeb5f3145ff36fff1083f749ac3c1849abba62c2339",
+    "stored": "140d3d258bd8a2586ba8017cbcf35648a7fef24929d0cf68a0a2107e325ed289"
+  },
+  "textual-light-80-evidence-focus.svg": {
+    "raw": "c08cf7a06a7fd399878aeb8ec0cb71e9fec3c8a9841a67d4124c5c460603e51b",
+    "stored": "9a543a290599c061ea94c90c47405b2694ddd4a536525599ebad13f4695fe0aa"
+  },
+  "textual-dark-170-newer-focus.svg": {
+    "raw": "6a6b050198b2e9db6d6ca05d2e72351ad496fc234ef30a079c5f01d6f35e2544",
+    "stored": "0c01b90350508fb2c731609f77b440bc29de1193b6fd75d01f1718171e19b350"
+  },
+  "textual-light-170-evidence-focus.svg": {
+    "raw": "d9438e3689b3f007af0032b641cde94b7d8a038231da8cfaf87fe9edc10b5a82",
+    "stored": "07401476390d56f4f53a22ac6ead1f1e022968041337c61257b8a417a36e772c"
+  },
+  "textual-dark-80-query-focus.svg": {
+    "raw": "79461c789e6e37960f394663a5a9092ec0cf562a8ac92457f0d2722b0d13d5f7",
+    "stored": "92ddee8370b1847c56b42972759b7e904cf018c1bd7bd8cef27b99422eb63ddc"
+  }
+}

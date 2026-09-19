@@ -1,0 +1,57 @@
+{
+  "private_database_integrity": {
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ]
+  },
+  "default_profile_hashes_unchanged": true,
+  "default_profile_files_checked": [
+    "/Users/macbook-dev/.config/tldw_cli/config.toml",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json"
+  ],
+  "persisted_sidebar": {
+    "search_query": "saved search",
+    "last_active_section": "notes",
+    "collapsible_states": {
+      "notes": true,
+      "chat": false,
+      "restart-check": true
+    }
+  },
+  "error_lines": [],
+  "traceback_headers": 0,
+  "faulthandler_bytes": 0,
+  "app_stopping_mentions": 2,
+  "content_counts": {
+    "conversations": 0,
+    "messages": 0
+  }
+}

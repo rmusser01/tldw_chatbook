@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 
 import pytest
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
@@ -151,6 +152,7 @@ def test_projection_never_invents_ready_for_incomplete_ownership() -> None:
 
 
 class _SummaryHarness(App):
+    CSS_PATH = str(BUNDLED_STYLESHEET)
     def __init__(self, state: ConsoleInspectorState) -> None:
         super().__init__()
         self.state = state

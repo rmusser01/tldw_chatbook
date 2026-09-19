@@ -1,0 +1,20 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-9.1.1, pluggy-1.6.0 -- /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library
+configfile: pyproject.toml
+plugins: mock-3.15.1, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, asyncio-1.4.0, anyio-4.15.1, hypothesis-6.168.0
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+Tests/UI/test_library_notes_w4_sync_review.py::test_sixty_creates_collapse_to_one_summary_row_with_a_disclosure PASSED [ 50%]
+Tests/Backup_Recovery/test_config_participant_lifetimes.py::test_config_selector_change_cannot_demote_installed_source PASSED [100%]
+
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+============================== 2 passed in 2.54s ===============================

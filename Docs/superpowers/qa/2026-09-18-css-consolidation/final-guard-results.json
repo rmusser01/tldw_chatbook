@@ -1,0 +1,1062 @@
+{
+  "executed_cases": 37,
+  "cases": [
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/001",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-budget-005/001",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_every_class_level_css_block_parses_as_a_stylesheet",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_every_class_level_css_block_parses_as_a_stylesheet",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_every_class_level_css_block_parses_as_a_stylesheet",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_every_class_level_css_block_parses_as_a_stylesheet",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/003",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_self.tcss]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_self.tcss]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_self.tcss]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_self.tcss]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/004",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_scoped.tcss]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_scoped.tcss]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_scoped.tcss]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[widget_defaults_scoped.tcss]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/005",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_self.tcss]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_self.tcss]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_self.tcss]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_self.tcss]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/006",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_scoped.tcss]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_scoped.tcss]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_scoped.tcss]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_generated_stylesheet_parses[screen_css_scoped.tcss]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/007",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_widget_css_consolidation.py::test_base_class_blocks_precede_their_subclasses",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_base_class_blocks_precede_their_subclasses",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_base_class_blocks_precede_their_subclasses",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_widget_css_consolidation.py::test_base_class_blocks_precede_their_subclasses",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/008",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-budget-005/002",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-budget-005/004",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/Performance/test_textual_css_fastpath.py::test_upstream_apply_still_has_the_shape_the_fastpath_assumes",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_upstream_apply_still_has_the_shape_the_fastpath_assumes",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_upstream_apply_still_has_the_shape_the_fastpath_assumes",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_upstream_apply_still_has_the_shape_the_fastpath_assumes",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/011",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/012",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_requirements_only_claims_what_it_can_prove",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_requirements_only_claims_what_it_can_prove",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_requirements_only_claims_what_it_can_prove",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_requirements_only_claims_what_it_can_prove",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/013",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/014",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-budget-005/003",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_class_attr_override_still_loads_screen_sheets",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_class_attr_override_still_loads_screen_sheets",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_class_attr_override_still_loads_screen_sheets",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_class_attr_override_still_loads_screen_sheets",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/016",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_kwarg_override_loads_screen_sheets_and_keeps_own_entry",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_kwarg_override_loads_screen_sheets_and_keeps_own_entry",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_kwarg_override_loads_screen_sheets_and_keeps_own_entry",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_css_path_kwarg_override_loads_screen_sheets_and_keeps_own_entry",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/017",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_of_a_consolidated_class_keeps_its_geometry",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_of_a_consolidated_class_keeps_its_geometry",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_of_a_consolidated_class_keeps_its_geometry",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_of_a_consolidated_class_keeps_its_geometry",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/018",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_tie_aware_stylesheet_arms_reparse_when_a_tie_breaker_lowers",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_tie_aware_stylesheet_arms_reparse_when_a_tie_breaker_lowers",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_tie_aware_stylesheet_arms_reparse_when_a_tie_breaker_lowers",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_tie_aware_stylesheet_arms_reparse_when_a_tie_breaker_lowers",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/019",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_keeps_inherited_base_defaults",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_keeps_inherited_base_defaults",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_keeps_inherited_base_defaults",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_dynamic_first_mount_keeps_inherited_base_defaults",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/020",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_selector_tokens_ignore_multiline_source_comments",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_selector_tokens_ignore_multiline_source_comments",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_selector_tokens_ignore_multiline_source_comments",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_selector_tokens_ignore_multiline_source_comments",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/021",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-import-008/002",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/023",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_creation.py::test_default_modal_cancel_preserves_and_apply_clears",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_creation.py::test_default_modal_cancel_preserves_and_apply_clears",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_creation.py::test_default_modal_cancel_preserves_and_apply_clears",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_creation.py::test_default_modal_cancel_preserves_and_apply_clears",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/024",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/004",
+      "classes": [
+        "WorkspacePersonaDefaultModal",
+        "WorkspacePersonaPicker"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/005",
+      "classes": [
+        "WorkspacePersonaDefaultModal",
+        "WorkspacePersonaPicker"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/006",
+      "classes": [
+        "WorkspacePersonaPicker"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/007",
+      "classes": [
+        "WorkspacePersonaPicker"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/008",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/009",
+      "classes": [
+        "WorkspaceChangeReviewPanel"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/010",
+      "classes": [
+        "WorkspacePersonaDefaultModal",
+        "WorkspacePersonaPicker"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/011",
+      "classes": [
+        "WorkspacePersonaDefaultModal",
+        "WorkspacePersonaPicker"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/012",
+      "classes": [
+        "WorkspaceChangeReviewPanel"
+      ],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_primary_content_reachable",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_primary_content_reachable",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_primary_content_reachable",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_primary_content_reachable",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-final-004/034",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_consolidated_css_harness.py::test_harness_scan_resolves_real_library_sheet_sequence",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_harness_scan_resolves_real_library_sheet_sequence",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_harness_scan_resolves_real_library_sheet_sequence",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_consolidated_css_harness.py::test_harness_scan_resolves_real_library_sheet_sequence",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/001",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_the_commit_form_traps_tab_and_reaches_its_terminal_actions",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_the_commit_form_traps_tab_and_reaches_its_terminal_actions",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_the_commit_form_traps_tab_and_reaches_its_terminal_actions",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_the_commit_form_traps_tab_and_reaches_its_terminal_actions",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-harness-007/003",
+      "classes": [],
+      "mismatches": 0
+    },
+    {
+      "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_info_delete_reads_as_destructive_rather_than_disabled",
+      "returncode": 0,
+      "qualified": true,
+      "outcomes": [
+        {
+          "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_info_delete_reads_as_destructive_rather_than_disabled",
+          "phase": "setup",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_info_delete_reads_as_destructive_rather_than_disabled",
+          "phase": "call",
+          "outcome": "passed",
+          "wasxfail": null
+        },
+        {
+          "node": "Tests/UI/test_library_notes_w5_kbd_focus.py::test_info_delete_reads_as_destructive_rather_than_disabled",
+          "phase": "teardown",
+          "outcome": "passed",
+          "wasxfail": null
+        }
+      ],
+      "directory": "/private/tmp/32813-import-008/001",
+      "classes": [],
+      "mismatches": 0
+    }
+  ],
+  "note": "Newest exact case result wins; initial failures retained separately. Serial private-profile runs."
+}

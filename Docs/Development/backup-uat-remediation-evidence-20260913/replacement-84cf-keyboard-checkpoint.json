@@ -1,0 +1,11 @@
+{
+  "artifact_revision": "84cf0c341458f869d667b8297dec650bf7dd951f",
+  "replacement_operation": "9c7b9c8a38b54d00867f222025411c7a",
+  "replacement_validated": true,
+  "ordinary_quit_completed": true,
+  "incoming_note_and_new_write_verified": true,
+  "binding_matches_after_quit": true,
+  "later_rollback_review": "failed: backup_operation_failed",
+  "review_evidence": "atime-power-132-after.txt",
+  "library_overview": "5-second timeout; native Notes list/read/write successful; separate diagnosis pending"
+}

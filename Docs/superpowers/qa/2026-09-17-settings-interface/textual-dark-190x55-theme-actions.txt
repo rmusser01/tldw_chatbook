@@ -1,0 +1,55 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Theme
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Managed in editor | Use the editor's Apply/Save/Reset buttons below.                                │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │                                                                                                             │  │  │                                   │
+│  category search             │  │  │  Theme                                                                                                      │  │  │ Selected category: Theme          │
+│                              │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                │
+│  Core                        │  │  │ │                                                                                                        │  │  │  │  Use the editor's                 │
+│     Overview (view)          │  │  │ │  Theme Library                                                                                         │  │  │  │  Apply/Save/Reset buttons to      │
+│     Providers & Models       │  │  │ │ Name                    │ review_textual_dark_190                                                      │  │  │  │  manage themes.                   │
+│     Web Search               │  │  │ │ Dark theme              ▐X▌ Off                                                                        │  │  │  │ Local-only: Save stores a theme   │
+│     Speech & TTS             │  │  │ │       New             Clone            Delete           Export                                         │  │  │  │ file; Set as launch default       │
+│  Interface                   │  │  │ │                                                                                                        │  │  │  │ updates your config.              │
+│     Appearance               │  │  │ │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ Affects app colors and saved      │
+│   > Theme                    │  │  │ │ │▼ Themes                                                                                            │ │  │  │  │ custom themes.                    │
+│     Splash Screen            │  │  │ │ │├── ▼ Your themes                                                                                   │ │  │  │  │ Focused field guide               │
+│     Console Behavior         │  │  │ │ ││   └── review_textual_dark_190                                                                     │ │  │  │  │  Save target: /private/tmp/       │
+│  Data & Privacy              │  │  │ │ │├── ▼ Built-in                                                                                      │ │  │  │  │    tldw-32757-native-004/         │
+│     Storage                  │  │  │ │ ││   ├── textual-dark                                                                                │ │  │  │  │    themes/                        │
+│     Workspaces               │  │  │ │ ││   └── textual-light                                                                               │ │  │  │  │                                   │
+│     Tool Profiles            │  │  │ │ │└── ▶ Shipped themes                                                                                │ │  │  │  │  Save: editor-owned - use the     │
+│     Privacy & Security       │  │  │ │ │                                                                                                    │ │  │  │  │  editor's Apply/Save/Reset        │
+│     Network                  │  │  │ │ │                                                                                                    │ │  │  │  │  buttons                          │
+│     My Profile               │  │  │ │ │                                                                                                    │ │  │  │  │                                   │
+│  Troubleshooting             │  │  │ │ └────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Unsaved theme changes: No        │
+│     Diagnostics (view)       │  │  │ │  Your themes come first; expand Shipped themes to browse the catalog. New starts a theme from the      │  │  │  │                                   │
+│     About (view)             │  │  │ │  current palette.                                                                                      │  │  │  │  Runtime owner: Theme editor      │
+│     Agents                   │  │  │ │                                                                                                        │  │  │  │                                   │
+│  Expert                      │  │  │ │  Actions                                                                                               │  │  │  │  Writes allowed: Yes              │
+│     Internal Prompts         │  │  │ │ Apply applies immediately - no Save needed; Save stores the theme; Set as launch default makes it load │  │  │  │                                   │
+│     Advanced Config          │  │  │ │ at startup.                                                                                            │▁ │  │  │  Owns: custom theme files         │
+│   Domain Defaults ▸ (11)     │  │  │ │      Apply             Save            Reset        Generate from Primary   Set as launch default      │  │  │  │  general.default_theme            │
+│                              │  │  │ │                                                                                                        │  │  │  │                                   │
+│                              │  │  │ │  Color Palette                                                                                         │  │  │  │  Affected config: custom theme    │
+│                              │  │  │ │ Primary                 │ #2277AA                                                             #2277AA  │  │  │  │  files under /private/tmp/        │
+│                              │  │  │ │ Secondary               │ #0178D4                                                             #0178D4  │  │  │  │    tldw-32757-native-004/         │
+│                              │  │  │ │ Accent                  │ #FFA62B                                                             #FFA62B  │  │  │  │    themes/                        │
+│                              │  │  │ │ Background              │ #E0E0E0                                                             #E0E0E0  │  │  │  │                                   │
+│                              │  │  │ │ Surface                 │ #D8D8D8                                                             #D8D8D8  │  │  │  │  Recovery: use the editor's       │
+│                              │  │  │ │ Panel                   │ #D0D0D0                                                             #D0D0D0  │  │  │  │  Apply/Save/Reset buttons;        │
+│                              │  │  │ │ Foreground              │ #1F1F1F                                                             #1F1F1F  │  │  │  │  delete a theme file to remove    │
+│                              │  │  │ │ Success                 │ #4EBF71                                                             #4EBF71  │  │  │  │  it                               │
+│                              │  │  │ │ Warning                 │ #FFA62B                                                             #FFA62B  │  │  │  │                                   │
+│                              │  │  │ │ Error                   │ #BA3C5B                                                             #BA3C5B  │  │  │  │  Boundary: Apply changes this     │
+│                              │  │  │ │                                                                                                        │  │  │  │  session; Save stores a theme   ▇ │
+│                              │  │  │ │  Color Presets                                                                                         │  │  │  │  file; Set as launch default      │
+│                              │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

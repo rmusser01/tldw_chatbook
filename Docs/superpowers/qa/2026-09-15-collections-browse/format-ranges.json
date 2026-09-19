@@ -1,0 +1,32 @@
+[
+  {
+    "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "formatted_changed_ranges": 1,
+    "lines": 689
+  },
+  {
+    "path": "Tests/UI/test_library_collections_capture_reader.py",
+    "formatted_changed_ranges": 2,
+    "lines": 1056
+  },
+  {
+    "path": "tldw_chatbook/Library/collections_capture_service.py",
+    "formatted_changed_ranges": 1,
+    "lines": 942
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+    "formatted_changed_ranges": 11,
+    "lines": 1687
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_collections_state.py",
+    "formatted_changed_ranges": 1,
+    "lines": 162
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_collections_capture_reader.py",
+    "formatted_changed_ranges": 7,
+    "lines": 1165
+  }
+]

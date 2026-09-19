@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+7.41s call     Tests/UI/test_workspace_cold_provisioning.py::test_pending_creation_revalidates_ownership_and_form[explicit_none]
+6.22s call     Tests/UI/test_workspace_cold_provisioning.py::test_pending_creation_revalidates_ownership_and_form[nested_screen]
+
+(4 durations < 1s hidden.)
+2 passed, 8 deselected in 15.77s

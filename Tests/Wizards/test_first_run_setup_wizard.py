@@ -1,5 +1,6 @@
 """Pilot tests for the first-run setup wizard skeleton."""
 
+import inspect
 import json
 from copy import deepcopy
 from dataclasses import fields, replace
@@ -11224,6 +11225,19 @@ class TestSetupRadioButtonStructuralState:
                 f"({on_glyph!r}) — state is color-only"
             )
             assert "●" in on_glyph and "○" in off_glyph
+            # task-32464 fix round 1: one definition for both radio surfaces.
+            # The characters are unchanged, so only a source check can tell a
+            # re-introduced literal from the shared constant.
+            from tldw_chatbook.Library.library_shell_state import (
+                LIBRARY_GLYPH_RADIO_SELECTED,
+                LIBRARY_GLYPH_RADIO_UNSELECTED,
+            )
+
+            assert LIBRARY_GLYPH_RADIO_SELECTED in on_glyph
+            assert LIBRARY_GLYPH_RADIO_UNSELECTED in off_glyph
+            wizard_source = inspect.getsource(SetupRadioButton)
+            assert "●" not in wizard_source, "radio glyph is a local literal again"
+            assert "○" not in wizard_source, "radio glyph is a local literal again"
 
     @pytest.mark.asyncio
     async def test_wizard_choice_lists_use_structural_radio(self):

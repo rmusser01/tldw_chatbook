@@ -1,0 +1,27 @@
+TASK-32757 independent read-only review
+
+Reviewer: interface_layout_review, against working changes from
+11155c15c1ec4ded85d8a8fd63b6f8b2204773b1.
+
+Findings addressed: distinguish file replacement from cache refresh, preserve
+Appearance's explicit draft while rebasing its launch-default baseline, retain
+control focus during pending Splash writes, ignore stale status publication and
+detached view updates, preserve newer Input text during save completion.
+
+The final Input finding reproduced in success and failure cases: pressing Enter
+on 2.0 while 1.5 was pending replaced the field with 1.5. The fix retains newer
+text, gives Enter guidance after settlement, and permits the next submission.
+
+Final reviewer assessment: no remaining important correctness issues found.
+The reviewer made no edits. Test results and native qualification are recorded
+separately in README.md and their receipts.
+
+Follow-up visual finding: compact Default card clipped even Random to Rand.
+Reviewer confirmed the three new selectors only stack compact Splash Select
+rows and their labels; the four size/theme cases pass. No actionable findings.
+
+Incoming dev review found a semantic automatic-merge issue: compose-only Select
+errors remained visible after Auto repaired state via sync_option_group. The
+fix keeps Select errors and placeholder options synchronized without replacing
+editors. Final independent review found no remaining important issue. The
+documentation conflict preserves both branches' guidance.

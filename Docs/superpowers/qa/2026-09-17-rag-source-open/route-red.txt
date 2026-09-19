@@ -1,0 +1,60 @@
+F.FFFF.F                                                                 [100%]
+=================================== FAILURES ===================================
+_______ test_result_open_resolves_exact_local_record[button-{id}-media] ________
+Tests/UI/test_library_rag_open_source_ids.py:111: in test_result_open_resolves_exact_local_record
+    assert (
+E   AssertionError: assert '17' == 17
+____ test_result_open_resolves_exact_local_record[button-{kind}_{id}-media] ____
+Tests/UI/test_library_rag_open_source_ids.py:101: in test_result_open_resolves_exact_local_record
+    await _until(
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_result_open_resolves_exact_local_record.<locals>.<lambda> at 0x117be3240>()
+___ test_result_open_resolves_exact_local_record[button-{kind}_{id}-prompt] ____
+Tests/UI/test_library_rag_open_source_ids.py:115: in test_result_open_resolves_exact_local_record
+    await _until(
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_result_open_resolves_exact_local_record.<locals>.<lambda> at 0x1186b3420>()
+____ test_result_open_resolves_exact_local_record[button-{kind}-{id}-media] ____
+Tests/UI/test_library_rag_open_source_ids.py:101: in test_result_open_resolves_exact_local_record
+    await _until(
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_result_open_resolves_exact_local_record.<locals>.<lambda> at 0x1176f1da0>()
+___ test_result_open_resolves_exact_local_record[button-{kind}-{id}-prompt] ____
+Tests/UI/test_library_rag_open_source_ids.py:115: in test_result_open_resolves_exact_local_record
+    await _until(
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_result_open_resolves_exact_local_record.<locals>.<lambda> at 0x11594e520>()
+_ test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-prompt] _
+Tests/UI/test_library_rag_open_source_ids.py:115: in test_result_open_resolves_exact_local_record
+    await _until(
+Tests/UI/test_library_rag_open_source_ids.py:35: in _until
+    assert predicate()
+E   assert False
+E    +  where False = <function test_result_open_resolves_exact_local_record.<locals>.<lambda> at 0x117903560>()
+============================= slowest 25 durations =============================
+5.50s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-media]
+5.46s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-prompt]
+5.45s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-prompt]
+5.38s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-media]
+5.37s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-prompt]
+2.05s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-media]
+2.03s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-media]
+1.80s call     Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-prompt]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}_{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-media]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-{kind}-{id}-prompt]
+FAILED Tests/UI/test_library_rag_open_source_ids.py::test_result_open_resolves_exact_local_record[button-local:{kind}:{id}-prompt]
+6 failed, 2 passed, 14 deselected in 35.75s

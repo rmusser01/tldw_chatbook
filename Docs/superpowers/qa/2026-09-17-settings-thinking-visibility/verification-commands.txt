@@ -1,0 +1,10 @@
+.venv/bin/python -m pytest Tests/UI/test_settings_thinking_visibility_journeys.py Tests/UI/test_settings_context_memory_controls.py Tests/UI/test_settings_console_storage_journeys.py Tests/UI/test_console_thinking_disclosures.py::test_visibility_gate_hides_only_thinking_and_restores_it_collapsed Tests/UI/test_console_thinking_disclosures.py::test_hidden_live_thinking_resumes_its_pending_expanded_lifecycle -k 'thinking or console_instant' -q --tb=short -o addopts='' --basetemp=/private/tmp/thinking-final-004
+Result: 49 passed, 25 deselected; exit 0.
+
+.venv/bin/python -m pytest Tests/UI/test_design_token_governance.py Tests/UI/test_component_pattern_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/Performance/test_boot_css_byte_budget.py -q --tb=short -o addopts=''
+Result: 32 passed; exit 0.
+
+PYTHON=.venv/bin/python scripts/preflight.sh
+Result: all seven derived-artifact checks passed; exit 0.
+
+The final affected test run supersedes the interrupted /private/tmp/thinking-final-003 selection. A basename filter would have selected all transcript tests; it was stopped and narrowed to the two intended node IDs before the final complete run.

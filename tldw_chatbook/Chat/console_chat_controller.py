@@ -371,6 +371,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
+    from ..Workspaces.conversation_attention import ConversationAttentionFact
+
 from tldw_chatbook.Agents.builtin_tool_gate import (
     DENIAL_POLICY,
     LOCAL_TOOLS_DEFAULT_ENABLED,
@@ -3417,6 +3419,47 @@ class ImpersonateResult:
     detail: str = ""
 
 
+_MAINTENANCE_REFUSAL = "Console generation is paused for backup maintenance."
+
+
+def _maintenance_boundary(kind="turn"):
+    """Retain one controller call through nested preflight/publication awaits."""
+    def decorate(function):
+        @functools.wraps(function)
+        async def admitted(self, *args, **kwargs):
+            task = asyncio.current_task()
+            depth = self._maintenance_calls.get(task, 0)
+            if self._maintenance_paused and not depth:
+                if kind == "bool":
+                    return False
+                if kind == "compact":
+                    return False, _MAINTENANCE_REFUSAL
+                if kind == "impersonate":
+                    return ImpersonateResult("", "maintenance", _MAINTENANCE_REFUSAL)
+                if kind in ("queue", "queue_message"):
+                    if kind == "queue_message":
+                        message_id = args[0] if args else kwargs["message_id"]
+                        session_id = self.store.session_id_for_message(message_id)
+                    else:
+                        session_id = args[0] if args else kwargs["session_id"]
+                    return PromptQueueMutationResult(
+                        QueueMutationStatus.INVALID,
+                        self.prompt_queue_registry.snapshot(session_id),
+                        detail=_MAINTENANCE_REFUSAL,
+                    )
+                return ConsoleSubmitResult(False, False, _MAINTENANCE_REFUSAL)
+            self._maintenance_calls[task] = depth + 1
+            try:
+                return await function(self, *args, **kwargs)
+            finally:
+                if depth:
+                    self._maintenance_calls[task] = depth
+                else:
+                    self._maintenance_calls.pop(task, None)
+        return admitted
+    return decorate
+
+
 @dataclass(frozen=True, slots=True)
 class _CharacterEmoteAuthority:
     """Captured character ownership fence for one provider dispatch."""
@@ -3767,6 +3810,7 @@ class ConsoleChatController:
         staged_evidence_provider: Callable[[str], bool] | None = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
+        canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
     ) -> None:
@@ -3812,6 +3856,7 @@ class ConsoleChatController:
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
+        self._canvas_disabled_reader = canvas_disabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
@@ -4073,6 +4118,9 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        self._maintenance_paused = False
+        self._maintenance_calls: dict[asyncio.Task, int] = {}
+        self._maintenance_background: set[asyncio.Task] = set()
         self._pending_dispatch_transitions: dict[str, asyncio.Task[None]] = {}
         self._deferred_user_stop_markers: set[str] = set()
         # Physical SQLite maintenance sets this process-local gate before its
@@ -5129,6 +5177,105 @@ class ConsoleChatController:
         pii_redaction_enabled: bool | None = None,
         viewer_profile: str | None = None,
     ) -> CapturePolicyMutationResult:
+        prepared = self._prepare_global_capture_settings(expected_policy_revision)
+        if isinstance(prepared, CapturePolicyMutationResult):
+            return prepared
+        before, reservation = prepared
+        try:
+            config_result = apply_console_capture_settings(
+                enabled=enabled,
+                detail=detail,
+                expected_generation=expected_config_generation,
+                pii_redaction_enabled=pii_redaction_enabled,
+                viewer_profile=viewer_profile,
+            )
+        except BaseException:
+            self.store.abandon_capture_policy_mutation(reservation)
+            raise
+        return self._finish_global_capture_settings(
+            before,
+            reservation,
+            config_result,
+            enabled=enabled,
+            detail=detail,
+            pii_redaction_enabled=pii_redaction_enabled,
+            viewer_profile=viewer_profile,
+        )
+
+    async def apply_global_capture_settings_async(
+        self,
+        *,
+        enabled: bool,
+        detail: CaptureDetail,
+        expected_config_generation: int,
+        expected_policy_revision: int,
+        pii_redaction_enabled: bool | None = None,
+        viewer_profile: str | None = None,
+    ) -> CapturePolicyMutationResult:
+        """Save off-thread while reserving and publishing policy on its owner loop.
+
+        Cancellation is deferred until the admitted write settles and releases
+        its reservation. The synchronous entry remains for existing callers.
+        """
+        prepared = self._prepare_global_capture_settings(expected_policy_revision)
+        if isinstance(prepared, CapturePolicyMutationResult):
+            return prepared
+        before, reservation = prepared
+        settled = asyncio.Event()
+        results: list[ConfigMutationResult] = []
+        errors: list[BaseException] = []
+        loop = asyncio.get_running_loop()
+
+        def write_config() -> None:
+            try:
+                results.append(
+                    apply_console_capture_settings(
+                        enabled=enabled,
+                        detail=detail,
+                        expected_generation=expected_config_generation,
+                        pii_redaction_enabled=pii_redaction_enabled,
+                        viewer_profile=viewer_profile,
+                    )
+                )
+            except BaseException as exc:  # noqa: BLE001 - transport worker failure to its owner
+                errors.append(exc)
+            finally:
+                loop.call_soon_threadsafe(settled.set)
+
+        cancelled = False
+        try:
+            threading.Thread(
+                target=write_config, name="console-global-capture-write"
+            ).start()
+            while not settled.is_set():
+                try:
+                    await settled.wait()
+                except asyncio.CancelledError:
+                    cancelled = True
+            if errors:
+                raise errors[0]
+            config_result = results[0]
+        except BaseException:
+            self.store.abandon_capture_policy_mutation(reservation)
+            if cancelled:
+                raise asyncio.CancelledError from None
+            raise
+        result = self._finish_global_capture_settings(
+            before,
+            reservation,
+            config_result,
+            enabled=enabled,
+            detail=detail,
+            pii_redaction_enabled=pii_redaction_enabled,
+            viewer_profile=viewer_profile,
+        )
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    def _prepare_global_capture_settings(
+        self, expected_policy_revision: int
+    ) -> tuple[CapturePolicySnapshot, object] | CapturePolicyMutationResult:
         session_id = self.store.active_session_id
         if session_id is None:
             raise KeyError("No active Console session")
@@ -5151,17 +5298,19 @@ class ConsoleChatController:
                 True,
                 "stale_policy_revision",
             )
-        try:
-            config_result = apply_console_capture_settings(
-                enabled=enabled,
-                detail=detail,
-                expected_generation=expected_config_generation,
-                pii_redaction_enabled=pii_redaction_enabled,
-                viewer_profile=viewer_profile,
-            )
-        except BaseException:
-            self.store.abandon_capture_policy_mutation(reservation)
-            raise
+        return before, reservation
+
+    def _finish_global_capture_settings(
+        self,
+        before: CapturePolicySnapshot,
+        reservation: object,
+        config_result: ConfigMutationResult,
+        *,
+        enabled: bool,
+        detail: CaptureDetail,
+        pii_redaction_enabled: bool | None,
+        viewer_profile: str | None,
+    ) -> CapturePolicyMutationResult:
         if config_result.conflict:
             self.store.abandon_capture_policy_mutation(reservation)
             return CapturePolicyMutationResult(
@@ -5199,11 +5348,16 @@ class ConsoleChatController:
             reservation,
             disarm_next=not enabled,
         )
+        # A global save remains committed if its opening session was closed.
+        try:
+            snapshot = self.capture_policy_snapshot(before.session_id)
+        except KeyError:
+            snapshot = before
         return CapturePolicyMutationResult(
             CapturePolicyMutationStatus.SAFE_SESSION_ONLY
             if config_result.failure_phase == "before_replace"
             else CapturePolicyMutationStatus.APPLIED,
-            self.capture_policy_snapshot(session_id),
+            snapshot,
             config_result.failure_phase == "before_replace",
             "save_failed"
             if config_result.failure_phase == "before_replace"
@@ -5496,6 +5650,66 @@ class ConsoleChatController:
                 return self._lifecycle_revision
             return self._session_lifecycle_revisions.get(session_id, 0)
 
+    def maintenance_close_admission(self) -> None:
+        """Fence new turns without cancelling admitted work or changing drafts."""
+        self._maintenance_paused = True
+        self.prompt_queue_coordinator.maintenance_close_admission()
+
+    async def maintenance_drain(self, deadline: float) -> bool:
+        """Wait for preflight, publication and retained native agent calls."""
+        if not self._maintenance_paused:
+            raise RuntimeError("console_maintenance_not_paused")
+        while (
+            self._maintenance_calls
+            or self._maintenance_background
+            or self._fleet_wake._delivery_tasks
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(remaining, 0.02))
+        return True
+
+    def _retain_maintenance_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._maintenance_background.add(task)
+        task.add_done_callback(self._maintenance_task_finished)
+        return task
+
+    def _maintenance_task_finished(self, task):
+        self._maintenance_background.discard(task)
+        if not task.cancelled():
+            # A cancelled caller may no longer await the shielded native call.
+            # Retrieve failures without changing normal await propagation.
+            task.exception()
+
+    def maintenance_resume(self) -> None:
+        """Reopen intake and only restart queues suspended by maintenance."""
+        if not self._maintenance_paused:
+            return
+        self._maintenance_paused = False
+        for session_id, revision in self.prompt_queue_coordinator.maintenance_resume():
+            self._retain_maintenance_task(
+                self._resume_maintenance_queue(session_id, revision)
+            )
+        self._fleet_wake.retry_soon()
+
+    @_maintenance_boundary("queue")
+    async def _resume_maintenance_queue(self, session_id, revision):
+        return await self.prompt_queue_coordinator.resume_after_maintenance(
+            session_id, revision
+        )
+
+    async def _run_maintenance_agent_call(self, function, **kwargs):
+        # The native bridge call survives caller cancellation. Keep its task
+        # until it really returns, while the existing caller handles Stop.
+        from tldw_chatbook.Agents.activation import worker_guard
+
+        owned_call = functools.partial(self._run_owned_chat_db_operation, function)
+        worker = worker_guard(self._agent_bridge)(owned_call)
+        task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
+        return await asyncio.shield(task)
+
     def lifecycle_impact(
         self, *, session_id: str | None = None
     ) -> ConsoleLifecycleImpact:
@@ -5719,6 +5933,7 @@ class ConsoleChatController:
             self.prompt_queue_coordinator.publish_registry_change(session_id)
         return result
 
+    @_maintenance_boundary("turn")
     async def run_prompt_chain(
         self,
         draft: str | None = None,
@@ -6098,6 +6313,35 @@ class ConsoleChatController:
         """
         self._unvisited_outcomes.pop(session_id, None)
 
+    def conversation_attention_for(
+        self, session_id: str
+    ) -> tuple[ConversationAttentionFact, ...]:
+        """Expose simultaneous facts without altering operational acknowledgement.
+
+        Args:
+            session_id: Native session whose live state and outcomes are inspected.
+
+        Returns:
+            Content-free attention facts for the specified session.
+        """
+        from ..Workspaces.conversation_attention import ConversationAttentionFact
+
+        facts = []
+        if self.run_state_for(session_id).status is ConsoleRunStatus.BLOCKED:
+            facts.append(ConversationAttentionFact("blocked", "Blocked"))
+        if session_id in self._pending_approvals:
+            facts.append(ConversationAttentionFact("approval", "Approval required"))
+        if session_id in self._live_busy_session_ids():
+            facts.append(ConversationAttentionFact("running", "Running"))
+        if self.activity_for(session_id).queue_paused:
+            facts.append(ConversationAttentionFact("paused", "Prompt queue paused"))
+        outcome = self._unvisited_outcomes.get(session_id)
+        if outcome is ConsoleRunMarker.FINISHED_FAILED:
+            facts.append(ConversationAttentionFact("failed", "Failed"))
+        elif outcome is ConsoleRunMarker.FINISHED_OK:
+            facts.append(ConversationAttentionFact("ready", "New result ready"))
+        return tuple(facts)
+
     def run_marker_for(self, session_id: str) -> ConsoleRunMarker:
         """Fleet-visible marker for ``session_id`` (parallel-agents spec §6).
 
@@ -6426,6 +6670,7 @@ class ConsoleChatController:
             "Wait for one to finish or interrupt it."
         )
 
+    @_maintenance_boundary("bool")
     async def recover_provider_continuation(
         self,
         action: str,
@@ -8431,6 +8676,7 @@ class ConsoleChatController:
             requires_pre_dispatch_authority=requires_pre_dispatch_authority,
         )
 
+    @_maintenance_boundary("turn")
     async def submit_draft(
         self,
         draft: str,
@@ -12547,10 +12793,10 @@ class ConsoleChatController:
     ) -> ConsoleSettingsDraftState:
         """Rebase one settings draft onto an exact provider/model target.
 
-        Untouched values always come from the target's established default chain.
-        Only dirty fields exposed by the calling surface and supported by the
-        target survive a switch. A remembered exact target draft takes precedence
-        over carried values from the provider/model being left.
+        The current or remembered exact target retains its conversation snapshot,
+        including fields hidden by the calling surface. An unseen target starts
+        from its established default chain and carries only supported dirty
+        fields. Explicit Inherit edits resolve current lower-precedence defaults.
 
         Args:
             state: The draft being switched away from; never mutated.
@@ -12563,7 +12809,7 @@ class ConsoleChatController:
             app_config: The live application configuration snapshot the
                 target's default chain resolves against.
             exposed_fields: Exact field names the calling surface can carry;
-                dirty drafts outside this set are dropped.
+                only exposed dirty fields carry to an unseen target.
 
         Returns:
             A new ``ConsoleSettingsDraftState`` rebased onto the target:
@@ -12602,6 +12848,12 @@ class ConsoleChatController:
         restoring_remembered_target = (
             current_key != target_key and remembered_target is not None
         )
+        preserve_snapshot = current_key == target_key or restoring_remembered_target
+        source_settings = (
+            remembered_target.settings
+            if restoring_remembered_target
+            else state.settings
+        )
         source_fields = (
             remembered_target.field_drafts
             if restoring_remembered_target
@@ -12635,6 +12887,7 @@ class ConsoleChatController:
                 target_model,
                 excluded_model_profile_fields=inherited_dirty_fields,
             )
+        settings_base = source_settings if preserve_snapshot else target_defaults
 
         supported_fields = _supported_console_settings_fields(
             target_provider,
@@ -12650,7 +12903,7 @@ class ConsoleChatController:
         for name in _CONSOLE_SETTINGS_FIELD_ORDER:
             if name not in exposed_supported_fields:
                 continue
-            effective_value = getattr(target_defaults, name)
+            effective_value = getattr(settings_base, name)
             has_profile_override = name in profile
             rebased_fields[name] = ConsoleSettingsFieldDraft(
                 name=name,
@@ -12670,25 +12923,35 @@ class ConsoleChatController:
                 dirty=False,
             )
 
-        dirty_values: dict[str, object | None] = {}
+        field_values: dict[str, object | None] = {}
         carrying_to_unseen_target = (
             current_key != target_key and remembered_target is None
         )
         for source_field in source_fields:
-            if not source_field.dirty or source_field.name not in exposed_supported_fields:
+            if source_field.name not in exposed_supported_fields or (
+                not preserve_snapshot and not source_field.dirty
+            ):
                 continue
             if quick_surface and source_field.effective_value is None:
+                effective_value = getattr(target_defaults, source_field.name)
+                field_values[source_field.name] = effective_value
+                rebased_fields[source_field.name] = replace(
+                    rebased_fields[source_field.name],
+                    effective_value=effective_value,
+                    profile_override=effective_value,
+                )
                 continue
             inherits_target_default = (
-                not quick_surface and source_field.profile_override is None
+                source_field.dirty
+                and not quick_surface
+                and source_field.profile_override is None
             )
             effective_value = (
                 getattr(target_defaults, source_field.name)
                 if inherits_target_default
                 else source_field.effective_value
             )
-            if not inherits_target_default:
-                dirty_values[source_field.name] = effective_value
+            field_values[source_field.name] = effective_value
             rebased_fields[source_field.name] = replace(
                 source_field,
                 effective_value=effective_value,
@@ -12700,7 +12963,7 @@ class ConsoleChatController:
                     if carrying_to_unseen_target
                     else source_field.provenance
                 ),
-                dirty=True,
+                dirty=source_field.dirty,
             )
 
         unsupported_provider_fields = FULL_MODEL_DEFAULT_FIELDS - supported_fields
@@ -12712,23 +12975,35 @@ class ConsoleChatController:
             "source": state.settings.source,
             "pinned_prefill": state.settings.pinned_prefill,
             **{name: None for name in unsupported_provider_fields},
-            **dirty_values,
+            **field_values,
         }
 
         endpoint_draft: ConsoleEndpointDraft | None = None
         target_base_url = target_defaults.base_url
+        if preserve_snapshot and (
+            source_endpoint is None
+            or (
+                not source_endpoint.dirty
+                and source_endpoint.bound_provider_config_key
+                == provider_config_key(target_provider)
+            )
+        ):
+            target_base_url = source_settings.base_url
         if (
             exposed_fields == FULL_MODEL_DEFAULT_FIELDS
             and source_endpoint is not None
             and source_endpoint.dirty
-            and source_endpoint.bound_provider_config_key == target_provider
+            and source_endpoint.bound_provider_config_key
+            == provider_config_key(target_provider)
         ):
             endpoint_draft = source_endpoint
             target_base_url = source_endpoint.value or None
-        elif target_base_url is not None:
+        elif target_base_url is not None and not (
+            preserve_snapshot and source_endpoint is None
+        ):
             endpoint_draft = ConsoleEndpointDraft(
                 value=target_base_url,
-                bound_provider_config_key=target_provider,
+                bound_provider_config_key=provider_config_key(target_provider),
                 dirty=False,
                 checked=False,
             )
@@ -12736,7 +13011,7 @@ class ConsoleChatController:
 
         return replace(
             state,
-            settings=replace(target_defaults, **settings_changes),
+            settings=replace(settings_base, **settings_changes),
             field_drafts=tuple(
                 rebased_fields[name]
                 for name in _CONSOLE_SETTINGS_FIELD_ORDER
@@ -13067,7 +13342,7 @@ class ConsoleChatController:
             raise RuntimeError("Console session close generation changed.")
         _stored_ticket, owns_active_stream, repair_session, previous_active_id = state
         session_id = ticket.session_id
-        # ADR-150: session-scoped chat-create remember grants die with the session.
+        # Session-scoped grants die only after the close ticket is validated.
         self._chat_create_session_grants.pop(session_id, None)
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
@@ -18183,6 +18458,7 @@ class ConsoleChatController:
                 return message.id
         return None
 
+    @_maintenance_boundary("turn")
     async def retry_message(
         self,
         message_id: str,
@@ -18279,6 +18555,7 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    @_maintenance_boundary("queue")
     async def resume_prompt_queue(self, session_id: str) -> PromptQueueMutationResult:
         """Resume next queued prompt after visibly reacquiring one agent slot."""
 
@@ -18302,6 +18579,7 @@ class ConsoleChatController:
             session_id, expected_revision=expected_revision
         )
 
+    @_maintenance_boundary("queue")
     async def skip_and_resume_prompt_queue(
         self, session_id: str
     ) -> PromptQueueMutationResult:
@@ -18309,6 +18587,7 @@ class ConsoleChatController:
 
         return await self.prompt_queue_coordinator.resume_and_drain(session_id)
 
+    @_maintenance_boundary("queue_message")
     async def retry_failed_queue_turn(
         self, message_id: str
     ) -> PromptQueueMutationResult:
@@ -18322,6 +18601,7 @@ class ConsoleChatController:
             ),
         )
 
+    @_maintenance_boundary("queue_message")
     async def retry_stopped_queue_turn(
         self, message_id: str
     ) -> PromptQueueMutationResult:
@@ -18335,6 +18615,7 @@ class ConsoleChatController:
             ),
         )
 
+    @_maintenance_boundary("queue")
     async def use_current_context_and_resume_prompt_queue(
         self,
         session_id: str,
@@ -18350,6 +18631,7 @@ class ConsoleChatController:
             reviewed_context_epoch=reviewed_context_epoch,
         )
 
+    @_maintenance_boundary("turn")
     async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
         """Continue from a selected message by streaming a new assistant turn."""
         active_rejection = self._active_run_rejection()
@@ -18433,6 +18715,7 @@ class ConsoleChatController:
             turn_context=turn_context,
         )
 
+    @_maintenance_boundary("turn")
     async def regenerate_message(
         self,
         message_id: str,
@@ -18643,6 +18926,7 @@ class ConsoleChatController:
         )
         return result
 
+    @_maintenance_boundary("turn")
     async def summarize_up_to(
         self, message_id: str, focus: str = ""
     ) -> ConsoleSubmitResult:
@@ -18651,6 +18935,7 @@ class ConsoleChatController:
             message_id, from_here=False, focus=focus
         )
 
+    @_maintenance_boundary("turn")
     async def summarize_from(
         self, message_id: str, focus: str = ""
     ) -> ConsoleSubmitResult:
@@ -19241,6 +19526,7 @@ class ConsoleChatController:
         )
         return ConsoleNoteDraft(title=title, content=content)
 
+    @_maintenance_boundary("impersonate")
     async def impersonate_user_reply(self, session_id: str) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
@@ -19413,6 +19699,7 @@ class ConsoleChatController:
                 chunks.append(chunk)
         return "".join(chunks)
 
+    @_maintenance_boundary("turn")
     async def edit_and_resend_message(
         self, message_id: str, new_content: str
     ) -> ConsoleSubmitResult:
@@ -23293,6 +23580,9 @@ class ConsoleChatController:
             return None
 
     def _global_context_policy_overrides(self):
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.config_participants import operation
+
         keys = (
             "conversation_budget_mode",
             "conversation_budget_tokens",
@@ -23304,7 +23594,8 @@ class ConsoleChatController:
             "compaction_failure_behavior",
             "compaction_carry_forward_mode",
         )
-        values = {key: get_cli_setting("console", key, None) for key in keys}
+        with operation(config):
+            values = {key: get_cli_setting("console", key, None) for key in keys}
         return context_policy_overrides_from_console_config(values)
 
     def _validated_legacy_memory(
@@ -23576,6 +23867,7 @@ class ConsoleChatController:
         # dropped in _run's finally alongside the in-flight guard.
         self._micro_compaction_tasks[session_id] = loop.create_task(_run())
 
+    @_maintenance_boundary("compact")
     async def compact_context_now(
         self, session_id: str, *, micro: bool = False
     ) -> tuple[bool, str]:
@@ -23861,6 +24153,7 @@ class ConsoleChatController:
         resolved = resolve_context_policy(
             capacity=ConsoleContextCapacity(
                 model_context_window_tokens=capacity.context_window_tokens,
+                model_window_verified=capacity.safety_verified,
                 provider_input_cap_tokens=capacity.provider_input_cap_tokens,
                 response_reservation_tokens=capacity.effective_response_tokens,
                 safety_margin_tokens=capacity.safety_margin_tokens,
@@ -26766,14 +27059,14 @@ class ConsoleChatController:
                     canvas_run,
                     scope=canvas_scope,
                     enabled_reader=self._canvas_enabled_reader,
+                    disabled_reader=self._canvas_disabled_reader,
                 )
                 canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
-            run_id, outcome = await asyncio.to_thread(
-                self._run_owned_chat_db_operation,
+            run_id, outcome = await self._run_maintenance_agent_call(
                 self._agent_bridge.run_reply,
                 work_origin=work_origin,
                 work_chain_id=work_chain_id,

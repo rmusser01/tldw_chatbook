@@ -29,6 +29,7 @@ from tldw_chatbook.Agents.agent_models import (
     validate_agent_definition,
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
+from tldw_chatbook.Chat.sampling_params import params_to_dict
 from .base_db import BaseDB
 
 if TYPE_CHECKING:
@@ -145,6 +146,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_operation,
+    _core_transaction,
+    _register_core_connection,
+)
+
 # SQLite caps host parameters per statement. The ceiling is build-dependent:
 # 32766 on SQLite >= 3.32, but 999 on older builds, and this project's floor
 # is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
@@ -243,7 +254,15 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 20
+    # Numbering note (v21): the routing snapshot was planned as v16 when this
+    # branch forked (ADR-147, TASK-32477); dev landed its own v16
+    # (budget_tokens), v17 (automatic_work), v18 (runtime_owner) via #2641,
+    # then v19 (definition_wall_seconds) and v20 (worktree_recovery) via
+    # #2665 while this PR awaited merge, so the routing migration renumbers
+    # to v21 and chains after v20. The guarded ALTERs below are idempotent
+    # either way, and the from-now-on contract only requires the constant to
+    # equal the HIGHEST recorded version.
+    _CURRENT_SCHEMA_VERSION = 21
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -274,40 +293,51 @@ class AgentRunsDB(BaseDB):
 
         return AutomaticWorkLedger(self)
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         conn = super()._get_connection()
-        conn.execute("PRAGMA foreign_keys = ON")
-        # busy_timeout FIRST: the journal_mode=WAL conversion below is the
-        # one PRAGMA here that can itself contend (switching a rollback-
-        # journal file to WAL briefly needs an exclusive lock), so it must
-        # not run while busy_timeout is still 0 -- a contended cross-process
-        # first conversion would otherwise raise 'database is locked'
-        # immediately instead of waiting. busy_timeout is harmless to set
-        # for in-memory DBs too, so it's unconditional (kept for
-        # uniformity); WAL itself is unavailable for in-memory DBs, so that
-        # one stays guarded on is_memory_db.
-        conn.execute("PRAGMA busy_timeout = 5000")
-        if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL")
-        # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-        # lose the last commit or two, acceptable for this local agent-run
-        # ledger) and avoids an fsync on every commit -- the default FULL was
-        # fsyncing the WAL on every commit despite WAL already being enabled,
-        # on a per-agent-step persistence path. See Library_Ingest_Jobs_DB.py:
-        # 57-61 for the original template (task-15465).
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.row_factory = sqlite3.Row
-        # task-3012: the held (long-lived) connection needs true autocommit.
-        # Python's default isolation mode auto-BEGINs on any DML, and an
-        # implicit transaction accumulated outside `transaction()` makes the
-        # explicit `BEGIN IMMEDIATE` there fail with "cannot start a
-        # transaction within a transaction" (per-call connections masked
-        # this — and silently ROLLED BACK any bare DML on close). Audited:
-        # every `connection()` site is read-only except `_initialize_schema`,
-        # whose `executescript` self-commits under either mode.
-        conn.isolation_level = None
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.execute("PRAGMA foreign_keys = ON")
+            # busy_timeout FIRST: the journal_mode=WAL conversion below is the
+            # one PRAGMA here that can itself contend (switching a rollback-
+            # journal file to WAL briefly needs an exclusive lock), so it must
+            # not run while busy_timeout is still 0 -- a contended cross-process
+            # first conversion would otherwise raise 'database is locked'
+            # immediately instead of waiting. busy_timeout is harmless to set
+            # for in-memory DBs too, so it's unconditional (kept for
+            # uniformity); WAL itself is unavailable for in-memory DBs, so that
+            # one stays guarded on is_memory_db.
+            conn.execute("PRAGMA busy_timeout = 5000")
+            if not self.is_memory_db:
+                conn.execute("PRAGMA journal_mode = WAL")
+            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
+            # lose the last commit or two, acceptable for this local agent-run
+            # ledger) and avoids an fsync on every commit -- the default FULL was
+            # fsyncing the WAL on every commit despite WAL already being enabled,
+            # on a per-agent-step persistence path. See Library_Ingest_Jobs_DB.py:
+            # 57-61 for the original template (task-15465).
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.row_factory = sqlite3.Row
+            # task-3012: the held (long-lived) connection needs true autocommit.
+            # Python's default isolation mode auto-BEGINs on any DML, and an
+            # implicit transaction accumulated outside `transaction()` makes the
+            # explicit `BEGIN IMMEDIATE` there fail with "cannot start a
+            # transaction within a transaction" (per-call connections masked
+            # this — and silently ROLLED BACK any bare DML on close). Audited:
+            # every `connection()` site is read-only except `_initialize_schema`,
+            # whose `executescript` self-commits under either mode.
+            conn.isolation_level = None
+            _core_access(self)
+        except BaseException:
+            # Registration retains uncertain native close; never drop its lease.
+            conn.close()
+            raise
         return conn
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
 
@@ -316,7 +346,9 @@ class AgentRunsDB(BaseDB):
         — WAL, busy_timeout, foreign keys, row factory — is applied by
         ``_get_connection`` when the held connection is (re)opened.
         """
+        _core_access(self)
         conn = getattr(self._thread_local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -326,10 +358,13 @@ class AgentRunsDB(BaseDB):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    # A failed probe does not retire a live native borrower.
                     try:
-                        conn.close()
-                    except Exception:  # noqa: BLE001 - already unusable
-                        pass
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        conn.close()  # Positively closed; failure retains cache.
+                    else:
+                        raise
                     conn = None
         if conn is None:
             conn = self._get_connection()
@@ -337,6 +372,7 @@ class AgentRunsDB(BaseDB):
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield the calling thread's held read connection.
@@ -352,13 +388,17 @@ class AgentRunsDB(BaseDB):
         """Close the current thread's held connection, if any."""
 
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - preserve explicit retirement route
+                    return
+                self._thread_local.conn = None
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield a write connection inside an immediate transaction.
@@ -430,7 +470,20 @@ class AgentRunsDB(BaseDB):
                     budget_tokens INTEGER CHECK (
                         budget_tokens IS NULL OR
                         (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)
-                    )
+                    ),
+                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered
+                    -- past dev's v16-v20 via #2641 and #2665): the
+                    -- resolved-target snapshot -- where this run's agent
+                    -- ACTUALLY went after preset routing resolved
+                    -- (provider, model, base_url, and the merged params as
+                    -- a raw JSON object string). Written once at spawn
+                    -- (Task 6); read back verbatim on resume/continuation
+                    -- (Task 8). NULL for every pre-v21 row and for runs
+                    -- spawned without routing resolution.
+                    resolved_provider TEXT,
+                    resolved_model TEXT,
+                    resolved_base_url TEXT,
+                    resolved_params_json TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -512,6 +565,12 @@ class AgentRunsDB(BaseDB):
                     instructions TEXT NOT NULL DEFAULT '',
                     tool_allowlist TEXT NOT NULL DEFAULT '[]',
                     model TEXT NOT NULL DEFAULT '',
+                    -- v21 (ADR-147, TASK-32477): preset routing -- the
+                    -- provider this definition pins ('' = inherit the
+                    -- caller's provider at spawn) and its sampling-param
+                    -- overrides as a JSON object string ('{}' = none).
+                    provider TEXT NOT NULL DEFAULT '',
+                    params_json TEXT NOT NULL DEFAULT '{}',
                     enabled INTEGER NOT NULL DEFAULT 1,
                     max_wall_seconds REAL,
                     deleted INTEGER NOT NULL DEFAULT 0,
@@ -744,7 +803,39 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
                 )
             if "diff_line_text" not in note_columns:
-                conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
+                )
+            # v20->v21 (ADR-147, TASK-32477): preset routing fields on
+            # agent_definitions; resolved-target snapshot on agent_runs.
+            # Same idempotent-ALTER mechanism as every column above.
+            # (Numbering: planned as v16; renumbered past dev's v16-v20
+            # landed via #2641 and #2665 -- see the note at
+            # _CURRENT_SCHEMA_VERSION.)
+            definition_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_definitions)"
+                ).fetchall()
+            }
+            if "provider" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN provider "
+                    "TEXT NOT NULL DEFAULT ''"
+                )
+            if "params_json" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN params_json "
+                    "TEXT NOT NULL DEFAULT '{}'"
+                )
+            for column in (
+                "resolved_provider", "resolved_model",
+                "resolved_base_url", "resolved_params_json",
+            ):
+                if column not in existing_columns:
+                    conn.execute(
+                        f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT"
+                    )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -793,6 +884,10 @@ class AgentRunsDB(BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (18)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (19)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (20)")
+            # v21 (ADR-147, TASK-32477): agent_definitions provider/params_json
+            # + agent_runs resolved-target snapshot (planned as v16;
+            # renumbered past dev's v16-v20, landed via #2641 and #2665).
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (21)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -1718,6 +1813,10 @@ class AgentRunsDB(BaseDB):
         spawn_event_id: str | None = None,
         run_id: str | None = None,
         work_chain_id: str | None = None,
+        resolved_provider: str | None = None,
+        resolved_model: str | None = None,
+        resolved_base_url: str | None = None,
+        resolved_params_json: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1749,6 +1848,15 @@ class AgentRunsDB(BaseDB):
             run_id: Preallocated stable identity; generated when omitted.
             work_chain_id: Immutable accepted-work lineage. Children inherit
                 their parent's chain when omitted; legacy roots remain NULL.
+            resolved_provider: v21 (ADR-147, TASK-32477): the provider the
+                spawn actually routed to after preset resolution; ``None``
+                when routing was not resolved at spawn time.
+            resolved_model: The resolved model id; ``None`` likewise.
+            resolved_base_url: The resolved endpoint base URL; ``None``
+                likewise.
+            resolved_params_json: The resolved sampling params as a raw
+                JSON object string, stored verbatim for resume to reuse;
+                ``None`` likewise.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -1780,8 +1888,10 @@ class AgentRunsDB(BaseDB):
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
                     assistant_message_id, agent_definition, definition_fingerprint,
-                    resumed_from_run_id, spawn_event_id, work_chain_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    resumed_from_run_id, spawn_event_id, work_chain_id,
+                    resolved_provider, resolved_model,
+                    resolved_base_url, resolved_params_json)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1797,6 +1907,10 @@ class AgentRunsDB(BaseDB):
                     resumed_from_run_id,
                     spawn_event_id,
                     work_chain_id,
+                    resolved_provider,
+                    resolved_model,
+                    resolved_base_url,
+                    resolved_params_json,
                 ),
             )
         return run_id
@@ -1820,9 +1934,9 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     """INSERT INTO agent_definitions
                        (id, name, description, instructions, tool_allowlist,
-                        model, enabled, max_wall_seconds, deleted, created_at,
-                        updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                        model, provider, params_json, enabled,
+                        max_wall_seconds, deleted, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
                     (
                         definition_id,
                         defn.name,
@@ -1830,6 +1944,8 @@ class AgentRunsDB(BaseDB):
                         defn.instructions,
                         json.dumps(list(defn.tool_allowlist)),
                         defn.model,
+                        defn.provider,
+                        json.dumps(params_to_dict(defn.params)),
                         1 if defn.enabled else 0,
                         wall_cap,
                         now,
@@ -1863,7 +1979,8 @@ class AgentRunsDB(BaseDB):
                 cursor = conn.execute(
                     """UPDATE agent_definitions
                        SET name = ?, description = ?, instructions = ?,
-                           tool_allowlist = ?, model = ?, enabled = ?,
+                           tool_allowlist = ?, model = ?, provider = ?,
+                           params_json = ?, enabled = ?,
                            max_wall_seconds = ?, updated_at = ?
                        WHERE id = ? AND deleted = 0""",
                     (
@@ -1872,6 +1989,8 @@ class AgentRunsDB(BaseDB):
                         defn.instructions,
                         json.dumps(list(defn.tool_allowlist)),
                         defn.model,
+                        defn.provider,
+                        json.dumps(params_to_dict(defn.params)),
                         1 if defn.enabled else 0,
                         wall_cap,
                         _now_iso(),
@@ -1893,6 +2012,11 @@ class AgentRunsDB(BaseDB):
     def _definition_row_to_dict(self, row: sqlite3.Row) -> dict:
         data = {key: row[key] for key in row.keys()}
         data["tool_allowlist"] = json.loads(data["tool_allowlist"] or "[]")
+        # v21 (ADR-147, TASK-32477): hand ``definition_from_row`` a decoded
+        # params mapping under the ``params`` key -- the same contract
+        # ``tool_allowlist`` above follows (JSON text in, decoded value
+        # out). ``provider`` needs no decoding and flows through as-is.
+        data["params"] = json.loads(data.pop("params_json") or "{}")
         data.pop("deleted", None)
         return data
 
@@ -2506,14 +2630,15 @@ class AgentRunsDB(BaseDB):
         """
         if self.is_memory_db:
             return self.get_run(run_id)
-        conn = self._get_connection()
-        try:
-            row = conn.execute(
-                "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            return self._row_to_dict(conn, row) if row else None
-        finally:
-            conn.close()
+        with _core_operation(self):
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
+                ).fetchone()
+                return self._row_to_dict(conn, row) if row else None
+            finally:
+                conn.close()
 
     def get_run_metadata_fresh(self, run_id: str) -> dict | None:
         """``get_run_metadata`` through the same dedicated-connection
@@ -2537,15 +2662,50 @@ class AgentRunsDB(BaseDB):
         """
         if self.is_memory_db:
             return self.get_run_metadata(run_id)
-        conn = self._get_connection()
-        try:
+        with _core_operation(self):
+            conn = self._get_connection()
+            try:
+                row = conn.execute(
+                    f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                return self._metadata_row_to_dict(row) if row else None
+            finally:
+                conn.close()
+
+    def get_run_resolved_target(self, run_id: str) -> dict | None:
+        """Fetch the v21 resolved-target snapshot for ``run_id``.
+
+        ADR-147 (TASK-32477, Task 8): the spawn resolver's frozen target --
+        where this run ACTUALLY ran -- which a resume/continuation reuses
+        instead of re-resolving the (possibly edited) preset live.
+
+        Args:
+            run_id: The run to fetch the snapshot for.
+
+        Returns:
+            ``{"provider", "model", "base_url", "params_json"}`` with the
+            raw column values (``params_json`` kept as the raw JSON object
+            string, exactly as stored), or ``None`` when the row does not
+            exist or carries no snapshot (NULL ``resolved_provider`` --
+            every legacy pre-v21 row), so callers fall back to live
+            re-resolution.
+        """
+        with self.connection() as conn:
             row = conn.execute(
-                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
+                "SELECT resolved_provider, resolved_model,"
+                " resolved_base_url, resolved_params_json"
+                " FROM agent_runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
-            return self._metadata_row_to_dict(row) if row else None
-        finally:
-            conn.close()
+        if row is None or row[0] is None:
+            return None
+        return {
+            "provider": row[0],
+            "model": row[1],
+            "base_url": row[2],
+            "params_json": row[3],
+        }
 
     def latest_primary_run(self, conversation_id: str) -> dict | None:
         """Fetch the newest non-superseded PRIMARY run for a conversation.

@@ -1,0 +1,9 @@
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py: 48 -> 47 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 0
+
+- REMOVED -- these statements no longer exist:
+  - warning 9722893a05ff94aa (was line 4155)
+      | logger.warning(
+      |     "MCP Tools-mode workspace root save failed (error_type={}).",
+      |     type(exc).__name__,
+      | )

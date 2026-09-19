@@ -1,0 +1,103 @@
+{
+  "database_integrity": {
+    "data/db/agent_runs.db": [
+      "ok"
+    ],
+    "data/db/chachanotes.db": [
+      "ok"
+    ],
+    "data/db/evals.db": [
+      "ok"
+    ],
+    "data/db/library_collections.db": [
+      "ok"
+    ],
+    "data/db/media.db": [
+      "ok"
+    ],
+    "data/db/prompts.db": [
+      "ok"
+    ],
+    "data/db/subscriptions.db": [
+      "ok"
+    ],
+    "data/db/workspaces.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      "ok"
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      "ok"
+    ]
+  },
+  "conversations": [
+    {
+      "id": "583cef86-437f-5614-a611-62b3ac863707",
+      "title": "Export audit Alpha",
+      "archived": 0,
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": "1b854051-47b5-5467-a6e8-e21a52e10e13",
+      "title": "Export audit Beta",
+      "archived": 0,
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": "61b83b8e-2221-5ce8-a758-31af529b26be",
+      "title": "Export audit Gamma",
+      "archived": 1,
+      "version": 2,
+      "deleted": 0
+    }
+  ],
+  "messages": [
+    {
+      "id": "2f9da641-ccf4-450c-920a-924fc82bc9e1",
+      "conversation_id": "1b854051-47b5-5467-a6e8-e21a52e10e13",
+      "content_sha256": "673f04a97a77e77844cc6550d84c968b90ebafc04333bed2e2934a9c46a8405c"
+    },
+    {
+      "id": "c28a489b-fe4f-449a-bd96-9f889a498c59",
+      "conversation_id": "1b854051-47b5-5467-a6e8-e21a52e10e13",
+      "content_sha256": "58aaa3599cf8543b7ad5ffea3a048ebb8b39d7d9945ec73e89524274bd5fa829"
+    },
+    {
+      "id": "abdfe8a1-10f5-4cc7-bcb4-7419023ec4ae",
+      "conversation_id": "583cef86-437f-5614-a611-62b3ac863707",
+      "content_sha256": "e78343112c8e610e4eca82609333249beae42bb558d7607b60fea993a1e2f715"
+    },
+    {
+      "id": "7ec4c105-4666-4855-b055-772c92269a47",
+      "conversation_id": "583cef86-437f-5614-a611-62b3ac863707",
+      "content_sha256": "5030d8023bd8e6328e6bcfac09a1410586f3900a3536c449ceaa5e351ed95059"
+    },
+    {
+      "id": "501f6bde-3159-467e-a088-a45802c59d2c",
+      "conversation_id": "61b83b8e-2221-5ce8-a758-31af529b26be",
+      "content_sha256": "b52c954ffe8c4fe2a34a007a461e2a04fe50e49925d566948a2fd5a1b25b934b"
+    },
+    {
+      "id": "4b10d373-677d-41c2-afa3-f650e988a9e0",
+      "conversation_id": "61b83b8e-2221-5ce8-a758-31af529b26be",
+      "content_sha256": "5faa05c9a1fcc97788d9a37019199412ff412164f220a828f573795c38d6e56c"
+    }
+  ],
+  "source_message_ids_bodies_and_owners_match": true,
+  "unrelated_note_unchanged": true,
+  "default_profile_hashes_unchanged": true,
+  "default_profile_files_checked": [
+    "/Users/macbook-dev/.config/tldw_cli/config.toml",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json"
+  ],
+  "error_lines": [],
+  "traceback_headers": 0,
+  "faulthandler_bytes": 0,
+  "app_stopping_mentions": 1,
+  "sqlite_connection_mode": "ro",
+  "sqlite_version": "3.49.1"
+}

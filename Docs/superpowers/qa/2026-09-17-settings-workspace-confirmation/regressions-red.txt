@@ -1,0 +1,805 @@
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_______ test_navigation_requires_fresh_memory_acknowledgement[workspace] _______
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______ test_navigation_requires_fresh_memory_acknowledgement[workspace] _______
+E
+E   request = <FixtureRequest for <Coroutine test_navigation_requires_fresh_memory_acknowledgement[workspace]>>
+E   navigation = 'workspace'
+E
+E       @pytest.mark.parametrize("navigation", ["workspace", "category", "modal"])
+E       @private_profile_test
+E       async def test_navigation_requires_fresh_memory_acknowledgement(request, navigation):
+E           app, registry, defaults = _fixture()
+E           host = _StyledDestinationHarness(app, "settings")
+E           async with host.run_test(size=(170, 48)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               await _arm(host, pilot, registry, defaults)
+E               if navigation == "workspace":
+E                   await _press(host, pilot, "#settings-workspace-row-ws-other")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               elif navigation == "category":
+E                   await _category(host, pilot, "Overview")
+E                   await _category(host, pilot, "Workspaces")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               else:
+E                   await host.push_screen(ModalScreen())
+E                   await pilot.pause()
+E                   await host.pop_screen()
+E                   await _settle(host, pilot)
+E   >           assert str(host.screen.query_one("#settings-workspace-memory-toggle").label) == (
+E                   "Set memory: read_write"
+E               )
+E   E           AssertionError: assert 'Confirm read_write?' == 'Set memory: read_write'
+E   E
+E   E             - Set memory: read_write
+E   E             + Confirm read_write?
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:99: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:28:00.841 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:28:00.847 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:28:00.847 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:28:00.848 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:28:00.931 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:28:00.956 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:28:00.956 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:28:00.956 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:28:00.957 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:28:01.028 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:01.090 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-whmwscfn/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:01.245 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-whmwscfn/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:01.258 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:01.258 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-whmwscfn/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:01.259 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-whmwscfn/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:01.362 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:28:01.401 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:28:01.439 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:28:01.473 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:28:01.507 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:28:01.541 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:28:01.541 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-whmwscfn/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:28:01.589 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:28:01.589 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:28:01.597 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:28:01.668 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:28:01.669 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:28:01.669 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:28:01.735 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:28:01.736 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:28:01.736 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:28:01.736 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.876 seconds
+E   2026-09-17 22:28:01.737 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.092s (10.6%)
+E   2026-09-17 22:28:01.737 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:28:01.737 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 22:28:01.738 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:01.738 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:01.738 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:01.738 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:01.739 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:28:01.967 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:28:02.057 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:28:05.280 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.43s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]
+E   1 failed in 6.21s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 22:27:59.051 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 22:27:59.059 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 22:27:59.059 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 22:27:59.059 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_______ test_navigation_requires_fresh_memory_acknowledgement[category] ________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______ test_navigation_requires_fresh_memory_acknowledgement[category] ________
+E
+E   request = <FixtureRequest for <Coroutine test_navigation_requires_fresh_memory_acknowledgement[category]>>
+E   navigation = 'category'
+E
+E       @pytest.mark.parametrize("navigation", ["workspace", "category", "modal"])
+E       @private_profile_test
+E       async def test_navigation_requires_fresh_memory_acknowledgement(request, navigation):
+E           app, registry, defaults = _fixture()
+E           host = _StyledDestinationHarness(app, "settings")
+E           async with host.run_test(size=(170, 48)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               await _arm(host, pilot, registry, defaults)
+E               if navigation == "workspace":
+E                   await _press(host, pilot, "#settings-workspace-row-ws-other")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               elif navigation == "category":
+E                   await _category(host, pilot, "Overview")
+E                   await _category(host, pilot, "Workspaces")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               else:
+E                   await host.push_screen(ModalScreen())
+E                   await pilot.pause()
+E                   await host.pop_screen()
+E                   await _settle(host, pilot)
+E   >           assert str(host.screen.query_one("#settings-workspace-memory-toggle").label) == (
+E                   "Set memory: read_write"
+E               )
+E   E           AssertionError: assert 'Confirm read_write?' == 'Set memory: read_write'
+E   E
+E   E             - Set memory: read_write
+E   E             + Confirm read_write?
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:99: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:28:08.243 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:28:08.249 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:28:08.249 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:28:08.249 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:28:08.327 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:28:08.350 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:28:08.350 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:28:08.350 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:28:08.351 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:28:08.418 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:08.479 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-0tbr0xjm/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:08.658 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-0tbr0xjm/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:08.673 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:08.674 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-0tbr0xjm/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:08.675 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-0tbr0xjm/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:08.798 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:28:08.843 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:28:08.881 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:28:08.921 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:28:08.959 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:28:08.996 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:28:08.997 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-0tbr0xjm/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:28:09.056 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:28:09.057 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:28:09.068 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:28:09.179 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:28:09.179 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:28:09.179 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:28:09.280 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:28:09.280 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:28:09.281 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:28:09.281 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 1.021 seconds
+E   2026-09-17 22:28:09.281 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.088s (8.7%)
+E   2026-09-17 22:28:09.281 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:28:09.282 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.001s (0.1%)
+E   2026-09-17 22:28:09.282 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:09.282 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:09.283 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:09.283 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:09.283 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:28:09.506 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:28:09.598 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:28:15.313 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   7.06s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]
+E   1 failed in 8.89s
+_________ test_navigation_requires_fresh_memory_acknowledgement[modal] _________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _________ test_navigation_requires_fresh_memory_acknowledgement[modal] _________
+E
+E   request = <FixtureRequest for <Coroutine test_navigation_requires_fresh_memory_acknowledgement[modal]>>
+E   navigation = 'modal'
+E
+E       @pytest.mark.parametrize("navigation", ["workspace", "category", "modal"])
+E       @private_profile_test
+E       async def test_navigation_requires_fresh_memory_acknowledgement(request, navigation):
+E           app, registry, defaults = _fixture()
+E           host = _StyledDestinationHarness(app, "settings")
+E           async with host.run_test(size=(170, 48)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               await _arm(host, pilot, registry, defaults)
+E               if navigation == "workspace":
+E                   await _press(host, pilot, "#settings-workspace-row-ws-other")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               elif navigation == "category":
+E                   await _category(host, pilot, "Overview")
+E                   await _category(host, pilot, "Workspaces")
+E                   await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               else:
+E                   await host.push_screen(ModalScreen())
+E                   await pilot.pause()
+E                   await host.pop_screen()
+E                   await _settle(host, pilot)
+E   >           assert str(host.screen.query_one("#settings-workspace-memory-toggle").label) == (
+E                   "Set memory: read_write"
+E               )
+E   E           AssertionError: assert 'Confirm read_write?' == 'Set memory: read_write'
+E   E
+E   E             - Set memory: read_write
+E   E             + Confirm read_write?
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:99: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:28:18.402 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:28:18.407 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:28:18.408 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:28:18.408 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:28:18.492 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:28:18.517 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:28:18.517 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:28:18.518 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:28:18.518 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:28:18.603 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:18.671 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-em4b82s4/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:18.852 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-em4b82s4/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:18.867 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:18.868 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-em4b82s4/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:18.868 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-em4b82s4/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:19.004 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:28:19.042 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:28:19.087 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:28:19.129 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:28:19.171 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:28:19.208 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:28:19.209 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-em4b82s4/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:28:19.259 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:28:19.260 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:28:19.269 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:28:19.352 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:28:19.352 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_navigation_requires_fresh2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:28:19.353 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:28:19.420 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:28:19.420 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:28:19.421 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:28:19.421 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 1.002 seconds
+E   2026-09-17 22:28:19.421 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.096s (9.6%)
+E   2026-09-17 22:28:19.422 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:28:19.422 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.001s (0.1%)
+E   2026-09-17 22:28:19.422 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:19.422 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:19.423 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:19.423 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:19.423 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:28:19.651 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:28:19.751 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:28:22.813 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.41s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]
+E   1 failed in 6.40s
+___ test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona] ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ___ test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona] ___
+E
+E   request = <FixtureRequest for <Coroutine test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]>>
+E   changed_field = 'persona'
+E
+E       @pytest.mark.parametrize("changed_field", ["persona", "profile", "memory", "clear"])
+E       @private_profile_test
+E       async def test_changed_saved_defaults_reject_stale_memory_acknowledgement(
+E           request, changed_field
+E       ):
+E           app, registry, defaults = _fixture()
+E           host = _StyledDestinationHarness(app, "settings")
+E           async with host.run_test(size=(170, 48)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               await _arm(host, pilot, registry, defaults)
+E               changed = {
+E                   "persona": replace(defaults, assistant_id="other"),
+E                   "profile": replace(defaults, tool_policy_profile_id="other"),
+E                   "memory": replace(defaults, persona_memory_mode="read_write"),
+E                   "clear": None,
+E               }[changed_field]
+E               if changed is None:
+E                   registry.clear_assistant_defaults("ws-review")
+E               else:
+E                   registry.set_assistant_defaults("ws-review", changed, confirm_read_write=True)
+E               await _press(host, pilot, "#settings-workspace-memory-toggle")
+E   >           assert registry.get_workspace("ws-review").assistant_defaults == changed
+E   E           AssertionError: assert WorkspaceAssi...id='research') == WorkspaceAssi...id='research')
+E   E
+E   E             Omitting 5 identical items, use -vv to show
+E   E             Differing attributes:
+E   E             ['persona_memory_mode']
+E   E
+E   E             Drill down into differing attribute persona_memory_mode:
+E   E               persona_memory_mode: 'read_write' != 'read_only'
+E   E               - read_only
+E   E               + read_write
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:133: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:28:25.714 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:28:25.720 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:28:25.720 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:28:25.721 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:28:25.807 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:28:25.833 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:28:25.834 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:28:25.834 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:28:25.835 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:28:25.906 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:25.982 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-g80e17b7/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:26.150 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-g80e17b7/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:26.165 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:26.166 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-g80e17b7/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:26.166 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-g80e17b7/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:26.286 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:28:26.321 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:28:26.359 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:28:26.400 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:28:26.445 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:28:26.486 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:28:26.487 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-g80e17b7/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:28:26.536 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:28:26.536 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:28:26.544 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:28:26.617 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:28:26.618 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:28:26.618 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:28:26.683 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:28:26.683 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:28:26.684 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:28:26.684 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.952 seconds
+E   2026-09-17 22:28:26.684 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.100s (10.5%)
+E   2026-09-17 22:28:26.685 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:28:26.685 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 22:28:26.685 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:26.686 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:26.686 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:26.686 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:26.687 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:28:26.917 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:28:27.006 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:28:30.011 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.29s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]
+E   1 failed in 6.15s
+___ test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile] ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ___ test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile] ___
+E
+E   request = <FixtureRequest for <Coroutine test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]>>
+E   changed_field = 'profile'
+E
+E       @pytest.mark.parametrize("changed_field", ["persona", "profile", "memory", "clear"])
+E       @private_profile_test
+E       async def test_changed_saved_defaults_reject_stale_memory_acknowledgement(
+E           request, changed_field
+E       ):
+E           app, registry, defaults = _fixture()
+E           host = _StyledDestinationHarness(app, "settings")
+E           async with host.run_test(size=(170, 48)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               await _arm(host, pilot, registry, defaults)
+E               changed = {
+E                   "persona": replace(defaults, assistant_id="other"),
+E                   "profile": replace(defaults, tool_policy_profile_id="other"),
+E                   "memory": replace(defaults, persona_memory_mode="read_write"),
+E                   "clear": None,
+E               }[changed_field]
+E               if changed is None:
+E                   registry.clear_assistant_defaults("ws-review")
+E               else:
+E                   registry.set_assistant_defaults("ws-review", changed, confirm_read_write=True)
+E               await _press(host, pilot, "#settings-workspace-memory-toggle")
+E   >           assert registry.get_workspace("ws-review").assistant_defaults == changed
+E   E           AssertionError: assert WorkspaceAssi...le_id='other') == WorkspaceAssi...le_id='other')
+E   E
+E   E             Omitting 5 identical items, use -vv to show
+E   E             Differing attributes:
+E   E             ['persona_memory_mode']
+E   E
+E   E             Drill down into differing attribute persona_memory_mode:
+E   E               persona_memory_mode: 'read_write' != 'read_only'
+E   E               - read_only
+E   E               + read_write
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:133: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:28:32.816 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:28:32.822 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:28:32.822 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:28:32.823 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:28:32.902 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:28:32.925 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:28:32.925 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:28:32.926 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:28:32.926 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:28:32.997 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:33.058 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv69ynq4/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:33.215 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv69ynq4/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:33.229 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:33.230 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv69ynq4/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:33.231 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv69ynq4/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:33.336 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:28:33.370 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:28:33.406 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:28:33.439 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:28:33.474 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:28:33.509 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:28:33.509 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-nv69ynq4/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:28:33.554 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:28:33.554 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:28:33.563 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:28:33.634 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:28:33.634 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:28:33.635 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:28:33.700 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:28:33.701 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:28:33.701 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:28:33.701 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.869 seconds
+E   2026-09-17 22:28:33.702 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.090s (10.3%)
+E   2026-09-17 22:28:33.702 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:28:33.702 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 22:28:33.703 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:33.703 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:33.703 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:33.703 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:33.704 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:28:33.922 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:28:34.015 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:28:36.873 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.05s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]
+E   1 failed in 5.84s
+___ test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory] ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ___ test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory] ____
+E
+E   request = <FixtureRequest for <Coroutine test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]>>
+E   changed_field = 'memory'
+E
+E       @pytest.mark.parametrize("changed_field", ["persona", "profile", "memory", "clear"])
+E       @private_profile_test
+E       async def test_changed_saved_defaults_reject_stale_memory_acknowledgement(
+E           request, changed_field
+E       ):
+E           app, registry, defaults = _fixture()
+E           host = _StyledDestinationHarness(app, "settings")
+E           async with host.run_test(size=(170, 48)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               await _arm(host, pilot, registry, defaults)
+E               changed = {
+E                   "persona": replace(defaults, assistant_id="other"),
+E                   "profile": replace(defaults, tool_policy_profile_id="other"),
+E                   "memory": replace(defaults, persona_memory_mode="read_write"),
+E                   "clear": None,
+E               }[changed_field]
+E               if changed is None:
+E                   registry.clear_assistant_defaults("ws-review")
+E               else:
+E                   registry.set_assistant_defaults("ws-review", changed, confirm_read_write=True)
+E               await _press(host, pilot, "#settings-workspace-memory-toggle")
+E               assert registry.get_workspace("ws-review").assistant_defaults == changed
+E               assert host.screen._settings_workspace_memory_armed is None
+E   >           _receipt(host, "changed")
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:135:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   host = _StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'})
+E   needle = 'changed'
+E
+E       def _receipt(host, needle):
+E           receipt = host.screen.query_one("#settings-workspace-assistant-result", Static)
+E   >       assert needle in str(receipt.renderable)
+E   E       AssertionError: assert 'changed' in 'Default assistant applied (memory: read_write).'
+E   E        +  where 'Default assistant applied (memory: read_write).' = str('Default assistant applied (memory: read_write).')
+E   E        +    where 'Default assistant applied (memory: read_write).' = _SettingsWorkspaceAssistantResult(id='settings-workspace-assistant-result', classes='settings-status-row').renderable
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:71: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:28:39.917 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:28:39.924 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:28:39.924 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:28:39.924 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:28:40.025 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:28:40.061 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:28:40.061 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:28:40.062 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:28:40.062 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:28:40.164 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:40.247 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wkjzle6w/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:40.431 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wkjzle6w/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:40.447 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:40.448 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wkjzle6w/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:40.448 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wkjzle6w/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:40.579 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:28:40.625 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:28:40.670 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:28:40.708 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:28:40.745 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:28:40.784 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:28:40.785 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-wkjzle6w/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:28:40.836 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:28:40.836 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:28:40.844 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:28:40.927 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:28:40.927 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:28:40.928 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:28:40.998 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:28:40.999 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:28:40.999 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:28:40.999 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 1.063 seconds
+E   2026-09-17 22:28:41.000 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.123s (11.6%)
+E   2026-09-17 22:28:41.000 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:28:41.000 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 22:28:41.001 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:41.001 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:41.001 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:41.002 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:41.002 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:28:41.239 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:28:41.338 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:28:44.248 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.32s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]
+E   1 failed in 6.27s
+____ test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear] ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re3/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear] ____
+E
+E   request = <FixtureRequest for <Coroutine test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]>>
+E   changed_field = 'clear'
+E
+E       @pytest.mark.parametrize("changed_field", ["persona", "profile", "memory", "clear"])
+E       @private_profile_test
+E       async def test_changed_saved_defaults_reject_stale_memory_acknowledgement(
+E           request, changed_field
+E       ):
+E           app, registry, defaults = _fixture()
+E           host = _StyledDestinationHarness(app, "settings")
+E           async with host.run_test(size=(170, 48)) as pilot:
+E               await _category(host, pilot, "Workspaces")
+E               await _press(host, pilot, "#settings-workspace-row-ws-review")
+E               await _arm(host, pilot, registry, defaults)
+E               changed = {
+E                   "persona": replace(defaults, assistant_id="other"),
+E                   "profile": replace(defaults, tool_policy_profile_id="other"),
+E                   "memory": replace(defaults, persona_memory_mode="read_write"),
+E                   "clear": None,
+E               }[changed_field]
+E               if changed is None:
+E                   registry.clear_assistant_defaults("ws-review")
+E               else:
+E                   registry.set_assistant_defaults("ws-review", changed, confirm_read_write=True)
+E               await _press(host, pilot, "#settings-workspace-memory-toggle")
+E               assert registry.get_workspace("ws-review").assistant_defaults == changed
+E               assert host.screen._settings_workspace_memory_armed is None
+E   >           _receipt(host, "changed")
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:135:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   host = _StyledDestinationHarness(title='_StyledDestinationHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'focus', 'dark'})
+E   needle = 'changed'
+E
+E       def _receipt(host, needle):
+E           receipt = host.screen.query_one("#settings-workspace-assistant-result", Static)
+E   >       assert needle in str(receipt.renderable)
+E   E       AssertionError: assert 'changed' in 'Select a persona first.'
+E   E        +  where 'Select a persona first.' = str('Select a persona first.')
+E   E        +    where 'Select a persona first.' = _SettingsWorkspaceAssistantResult(id='settings-workspace-assistant-result', classes='settings-status-row').renderable
+E
+E   Tests/UI/test_settings_workspace_memory_confirmation.py:71: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 22:28:47.146 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 22:28:47.151 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 22:28:47.152 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 22:28:47.152 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 22:28:47.235 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 22:28:47.258 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 22:28:47.259 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 22:28:47.259 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 22:28:47.260 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 22:28:47.335 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:47.399 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-62o4iued/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:47.564 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-62o4iued/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:47.577 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:47.578 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-62o4iued/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:47.578 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-62o4iued/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 22:28:47.687 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 22:28:47.727 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 22:28:47.764 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 22:28:47.799 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 22:28:47.836 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 22:28:47.877 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 22:28:47.878 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-62o4iued/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 22:28:47.926 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 22:28:47.926 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 22:28:47.934 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 22:28:48.010 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 22:28:48.011 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1695/test_changed_saved_defaults_re3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 22:28:48.011 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 22:28:48.078 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 22:28:48.079 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E   2026-09-17 22:28:48.079 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 22:28:48.079 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 0.917 seconds
+E   2026-09-17 22:28:48.080 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.094s (10.3%)
+E   2026-09-17 22:28:48.080 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 22:28:48.080 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 22:28:48.081 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:48.081 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:48.081 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 22:28:48.081 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 22:28:48.082 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E   2026-09-17 22:28:48.303 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 22:28:48.393 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 22:28:51.358 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   4.21s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]
+E   1 failed in 6.06s
+============================= slowest 25 durations =============================
+9.93s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]
+7.36s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]
+7.26s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]
+7.21s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]
+7.11s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]
+7.02s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]
+6.85s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]
+
+(14 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]
+FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]
+FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]
+FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]
+FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]
+FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]
+FAILED Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]
+7 failed in 55.47s

@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 A  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Saved · Next: Keep editing; changes save automatically.
+  a    o
+  v    t    ‹ Back to list    Design review [draft] — café    Library notes
+       e   Saved
+       s      Edit     Preview     Info
+              Save     Use in Console
+--->       Title     Design review [draft] — café
+           Body
+     ---> ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+          ┃ # Review                                                           ┃
+          ┃                                                                    ┃
+--->      ┃ The library must keep source context visible.                      ┃
+          ┃                                                                    ┃
+          ┃                                                                    ┃
+          ┃                                                                    ┃
+          ┃                                                                    ┃
+          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                                                                  9 words · 1:1
+   typing in field | esc back to list | F1 · F6 · Ctrl+P · Ctrl+Q

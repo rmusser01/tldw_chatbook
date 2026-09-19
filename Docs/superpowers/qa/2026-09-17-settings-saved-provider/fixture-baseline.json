@@ -1,0 +1,10 @@
+{
+  "Tests/UI/test_console_session_settings.py": {
+    "head_matches_worktree": true,
+    "sha256": "3fc1be169859450622fb75bea64ed9f5d38b708549e4a8e3cf3580bcc1ac63e3"
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "head_matches_worktree": true,
+    "sha256": "2753a64eb9e7efb9713002fb8ef220a390364b9c21dc57bd19aeb80af06cee81"
+  }
+}

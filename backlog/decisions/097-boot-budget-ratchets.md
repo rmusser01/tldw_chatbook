@@ -109,6 +109,9 @@ commit, with the owner's explicit sign-off recorded in the PR.
 | date | guard | constant | old → new | named cause | owner sign-off |
 |---|---|---|---|---|---|
 | 2026-08-29 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 970 → 972 | `tls_trust` | Owner commit `6fac5dbf95`, "perf: raise ui-ready census ratchet 970->972 for tls_trust (PR #2223, ADR-097 deliberate refresh)" |
+| 2026-09-12 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 973 → 975 | agent provider routing (`Agents.agent_routing` + `Chat.sampling_params`, pure modules on the already-resident AgentService import path) | Owner directive on PR #2651 ("address all issues... approved for all of it"); commit "perf: raise ui-ready census ratchet 973->975 for agent provider routing (PR #2651, ADR-097 exception)" |
+| 2026-09-14 | boot import weight | `MAX_TLDW_MODULE_COUNT` | 660 → 686 | Python backup startup admission/activation: dev `4631b60f8d` measured 643 modules; PR #2642 `9e5914fca1` measured 669 (+26). Preserves dev's existing headroom. | Owner answered "approved" to the explicit 660→686 and 975→1022 exception request in the PR #2642 work session (TASK-32562). Timing limits and backup safety checks remain unchanged. |
+| 2026-09-14 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 975 → 1022 | Python backup startup admission/activation and registered storage participants: same-probe dev/current warm boot measured 975/1022 (+47). Preserves dev's existing headroom. | Same explicit owner approval for PR #2642 (TASK-32562); optional recovery UI/archive services remain deferred. |
 
 Row added retroactively on 2026-08-31 (TASK-25813), found while taking the
 ratchet baseline for the 2026-08-30 holistic review. **The decision was the
@@ -184,3 +187,17 @@ The `boot_import_modules.txt` snapshot was pinned at the `c6218918d1` set so
 the guard's failure message kept naming exactly these modules until the debt
 was cleared; it is now re-pinned at the post-repayment 646-module set. The
 repayment is **TASK-23112** (see above).
+
+## Component-pattern migration paydown — 2026-09-14
+
+TASK-32596's resumed tree measured 841,903 boot CSS bytes against the 768,000
+limit. Generated module payloads now omit authoring comments while editable
+sources retain their rationale and generated MODULE markers retain provenance.
+Quoted strings, token values and selector whitespace are covered by regressions.
+The initial census was **609,050 B**, tightening the limit to **634,050 B**
+(measured + 25,000 B standard slack). Completing the active Statistics source
+migration brings the final census to **609,446 B**; the tightened limit stays
+unchanged with 24,604 B headroom. The snapshot was refreshed by
+`scripts/update_boot_budget_snapshots.py --only css`. No exception or budget
+increase was used. This pays the CSS-byte debt; it does not claim a measured
+startup-time improvement or complete TASK-31500's separate modal deferrals.

@@ -1,0 +1,71 @@
+{
+  "rounds": 1,
+  "render_method": "macOS QuickLook SVG at 1400px, viewed in three batches of four",
+  "normalization": "Only whitespace-only SVG source lines emptied",
+  "finding": "No actionable Export defect in the captured whole-source receipts, overwrite notices and selected receipts",
+  "wide_observation": "Scope, destination, overwrite notice, artifact-derived receipt and focused submit control are readable in both themes. The prior successful receipt remains until replacement finishes.",
+  "compact_observation": "The form scrolls vertically to reveal the focused submit control. Destination/receipt paths wrap and overwrite notice remains visible; scope/header may be above the viewport at that scroll position.",
+  "full_tab_traversal_claimed": false,
+  "captures": [
+    {
+      "file": "bundle-textual-dark-170-overwrite.svg",
+      "raw_sha256": "3bd3a68fe79695d7be63d08c421bad9f3bb54b3f2efc2fdc0903ee76628db30d",
+      "stored_sha256": "dc3931b38d661bc1f0816b93026cb4189d2b4d9790ec1dc0ae0cbc95497c9a46"
+    },
+    {
+      "file": "bundle-textual-dark-170-selected-receipt.svg",
+      "raw_sha256": "dd8392cd5017e3246a4785a4b25fbd67c39a3af4c98ac15bb7e08948ccb0a464",
+      "stored_sha256": "39b285d295e9afda3f3ea442bf0ae6a50c6ff60617b022580d976c94ec128ce1"
+    },
+    {
+      "file": "bundle-textual-dark-170-whole-receipt.svg",
+      "raw_sha256": "aaa912e428f0fb24b2a46844bf631f0368b0ec9903914594285bd5bb6e5d6349",
+      "stored_sha256": "25a4235f2e26928cf3e680d131765532f393b05738a2dfebec41cc7fad94480f"
+    },
+    {
+      "file": "bundle-textual-dark-80-overwrite.svg",
+      "raw_sha256": "90a6debc4b1afd78cce59c610c6b979c10e3624a3c826c114af49fb2b3c94f93",
+      "stored_sha256": "db9636cdfab40edad36390e652a235d4cbbb9c45c0faa261b7160b9e28b9dda4"
+    },
+    {
+      "file": "bundle-textual-dark-80-selected-receipt.svg",
+      "raw_sha256": "22e9338203be9051215259ec41ada849f54e33ce8da73eb4df0f97f25378e04e",
+      "stored_sha256": "4d0227bf13687b5f3ebc393b98ca2bfd850f71a4b430e4cd89881e48132da964"
+    },
+    {
+      "file": "bundle-textual-dark-80-whole-receipt.svg",
+      "raw_sha256": "628f1e57477f3ded9620dcecd5bcd16a496ead0d454783a49ef10a9c11cb5ee8",
+      "stored_sha256": "4c7fa1507120c6ecd37c500653f20f001251d0ad84bc16ed638fdcac69fb4a12"
+    },
+    {
+      "file": "bundle-textual-light-170-overwrite.svg",
+      "raw_sha256": "8102bb3729232ca9490b83182267bc03f178642ee65cec3f15379a4bc0c7dea9",
+      "stored_sha256": "11436da2c651e5369bf3358875a686d468670a4e54ff077eccfe271e8dbb3b14"
+    },
+    {
+      "file": "bundle-textual-light-170-selected-receipt.svg",
+      "raw_sha256": "aa78826ff08291b6215eb802adbea1f4d7d2d3bc0ad2c4ecfdfb6366a91ea96c",
+      "stored_sha256": "94465e90656317ad0655ac4cfeea684fa1a5caaf4b19bfe3efa57434e712c614"
+    },
+    {
+      "file": "bundle-textual-light-170-whole-receipt.svg",
+      "raw_sha256": "169de30d45dc387bbea6e96586f9bc9ce241eae3418fcda2d8ec2f4655844da8",
+      "stored_sha256": "1d287e56dbc927721b73ed1645ad4240bee68916265a1155b89be042caf1a5f9"
+    },
+    {
+      "file": "bundle-textual-light-80-overwrite.svg",
+      "raw_sha256": "f7ccf586c2080f215d9343e5a2b7117d57ea9a7d9d11b4b26d664df7b5b5171a",
+      "stored_sha256": "37bcdad6fb294f59fbeb1d26147312c953f20914e867ca58e4fc108dd9e26ce6"
+    },
+    {
+      "file": "bundle-textual-light-80-selected-receipt.svg",
+      "raw_sha256": "ea96c1ff55c611437e8ac6f83167ce8b358689a7775b5f587e969b92e5737bfa",
+      "stored_sha256": "4c42541a4cd35b0c3ade94035c52923e3dcbf7215102544f440de47cf3a48a85"
+    },
+    {
+      "file": "bundle-textual-light-80-whole-receipt.svg",
+      "raw_sha256": "559ea2eda9b65104e8a707fb6e11a3caccd94aec49068425041cac4e42042f2c",
+      "stored_sha256": "c7da9d836ccec72317b4d9bbb408485630928cd6cba18f33e0303885d665bd83"
+    }
+  ]
+}

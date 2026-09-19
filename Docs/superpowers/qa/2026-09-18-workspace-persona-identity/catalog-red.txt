@@ -1,0 +1,210 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_settings_keeps_readable_saved_choice_when_catalog_fails _________
+
+self = <Coroutine test_settings_keeps_readable_saved_choice_when_catalog_fails>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_settings_keeps_readable_saved_choice_when_catalog_fails>>, 'tmp_path':...te/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1795/test_settings_keeps_readable_s0')}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1795/test_settings_keeps_readable_s0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________ test_settings_keeps_readable_saved_choice_when_catalog_fails _________
+E
+E           request = <FixtureRequest for <Coroutine test_settings_keeps_readable_saved_choice_when_catalog_fails>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1795/test_settings_keeps_readable_s0/private-profile-process/pytest/test_settings_keeps_readable_s0')
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_settings_keeps_readable_saved_choice_when_catalog_fails(
+E                   request, tmp_path
+E               ):
+E                   from Tests.UI.app_factory import _build_test_app
+E                   from Tests.UI.test_settings_overview_search_journeys import _category
+E                   from Tests.UI.test_settings_provider_keyboard_journeys import _settle
+E                   from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
+E
+E                   personas = _personas(tmp_path, ["saved"])
+E                   app = _build_test_app()
+E                   app.local_character_persona_service = personas
+E                   registry = app.workspace_registry_service
+E                   defaults = WorkspaceAssistantDefaults(assistant_id="saved")
+E                   registry.create_workspace(
+E                       workspace_id="chosen", name="Chosen", assistant_defaults=defaults
+E                   )
+E
+E                   def unavailable_list(**_kwargs):
+E                       raise RuntimeError("private list failure")
+E
+E                   personas.list_persona_profiles = unavailable_list
+E                   host = _StyledDestinationHarness(app, "settings")
+E                   async with host.run_test(size=(80, 24)) as pilot:
+E                       await _category(host, pilot, "Workspaces")
+E                       await _press(host, pilot, "#settings-workspace-row-chosen")
+E                       await _settle(host, pilot)
+E                       picker = host.screen.query_one("#settings-workspace-persona-picker", OptionList)
+E           >           assert picker.option_count == 1
+E           E           AssertionError: assert 0 == 1
+E           E            +  where 0 = OptionList(id='settings-workspace-persona-picker', classes='-textual-compact').option_count
+E
+E           Tests/UI/test_workspace_persona_picker_identity.py:259: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 01:10:20.589 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 01:10:20.618 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 01:10:20.804 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 01:10:20.911 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 01:10:20.912 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 01:10:20.913 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 01:10:21.107 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 01:10:22.423 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 01:10:22.665 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ pydub dependency not found. Feature 'pydub' will be disabled. Reason: No module named 'pydub'
+E           2026-09-18 01:10:22.665 | WARNING  | tldw_chatbook.TTS.audio_stitch:<module>:83 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+E           2026-09-18 01:10:26.201 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 01:10:26.253 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 01:10:26.254 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 01:10:26.255 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 01:10:26.255 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 01:10:26.434 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1795/test_settings_keeps_readable_s0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:10:26.576 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-gdsb7bwi/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:10:27.137 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-gdsb7bwi/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:10:27.165 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:10:27.166 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-gdsb7bwi/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:10:27.167 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-gdsb7bwi/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 01:10:27.464 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 01:10:27.534 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 01:10:27.663 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 01:10:27.723 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 01:10:27.819 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 01:10:27.977 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 01:10:27.977 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-gdsb7bwi/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 01:10:28.183 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 01:10:28.183 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 01:10:28.195 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 01:10:28.492 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 01:10:28.493 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1795/test_settings_keeps_readable_s0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 01:10:28.494 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 01:10:29.027 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 01:10:29.027 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E           2026-09-18 01:10:29.028 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 01:10:29.028 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 3.057 seconds
+E           2026-09-18 01:10:29.029 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.278s (9.1%)
+E           2026-09-18 01:10:29.029 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 01:10:29.030 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.005s (0.2%)
+E           2026-09-18 01:10:29.031 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-18 01:10:29.031 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:10:29.032 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:10:29.032 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 01:10:29.033 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E           2026-09-18 01:10:29.690 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-18 01:10:30.286 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-18 01:10:35.148 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           12.70s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+E           2.76s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+E           1 failed in 17.02s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 01:10:17.355 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 01:10:17.368 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 01:10:17.664 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 01:10:18.178 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 01:10:18.195 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 01:10:18.196 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+20.52s call     Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+1.12s setup    Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+
+(1 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails
+1 failed, 8 deselected in 23.96s

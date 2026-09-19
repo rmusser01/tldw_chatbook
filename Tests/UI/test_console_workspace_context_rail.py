@@ -11,23 +11,30 @@ import pytest
 from textual.content import Content
 from textual.widgets import Button, Input, Static
 
-from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import _build_test_app
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_console_workspace_action_row_geometry import (
     StyledConsoleHarness,
 )
+from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
-)
-from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.Widgets.Console import (
-    ConsoleBoundedSection,
-    ConsoleWorkspaceContextTray,
-    ConsoleWorkspaceSwitcherModal,
 )
 from tldw_chatbook.Chat.console_conversation_actions import (
     ACTION_FAVORITE,
     ConversationMenuTarget,
     build_conversation_menu,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+from tldw_chatbook.Widgets.Console import (
+    ConsoleBoundedSection,
+    ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceSwitcherModal,
 )
 from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
     ConversationActionChosen,
@@ -35,19 +42,17 @@ from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
 )
-from tldw_chatbook.Widgets.Console.console_workspace_tree import (
-    ConsoleWorkspaceTree,
-)
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+from tldw_chatbook.Widgets.Console.console_workspace_tree import (
+    ConsoleWorkspaceTree,
+)
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
-    ConsoleWorkspaceACPHandoffState,
-    ConsoleConversationBrowserInputRow,
     DEFAULT_WORKSPACE_ID,
+    ConsoleConversationBrowserInputRow,
+    ConsoleWorkspaceACPHandoffState,
     RuntimeBindingKind,
     RuntimeBindingStatus,
     WorkspaceAuthority,
@@ -66,10 +71,6 @@ from tldw_chatbook.Workspaces.display_state import (
     console_workspace_conversation_visible_rows,
 )
 from tldw_chatbook.Workspaces.workspace_tree_state import WorkspaceTreeWorkspace
-
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 
 def _visible_text(screen) -> str:
@@ -390,7 +391,8 @@ def test_conversation_row_secondary_drops_boilerplate_keeps_differentiator() -> 
 
 
 @pytest.mark.asyncio
-async def test_flat_conversations_has_no_cross_owner_starred_aggregate() -> None:
+@private_profile_test
+async def test_flat_conversations_has_no_cross_owner_starred_aggregate(request) -> None:
     """Default/unassigned rows are flat; stars only affect local ordering."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -442,9 +444,10 @@ def test_console_workspace_conversation_section_state_defaults() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_mounts_native_tree_without_legacy_groups() -> (
-    None
-):
+@private_profile_test
+async def test_console_workspace_context_mounts_native_tree_without_legacy_groups(
+    request,
+) -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -463,9 +466,10 @@ async def test_console_workspace_context_mounts_native_tree_without_legacy_group
 
 
 @pytest.mark.asyncio
-async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar() -> (
-    None
-):
+@private_profile_test
+async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar(
+    request,
+) -> None:
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -474,6 +478,10 @@ async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar(
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-tree")
+        # Let initial reminder/persisted-row refreshes finish before installing
+        # this test's synthetic projection for the help-panel assertion.
+        await console.workers.wait_for_complete()
+        await pilot.pause()
         rail = console.query_one("#console-left-rail")
         state = replace(
             _base_grouped_workspace_state(),
@@ -512,7 +520,10 @@ async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar(
 
 
 @pytest.mark.asyncio
-async def test_console_f1_renders_markup_looking_selected_label_literally() -> None:
+@private_profile_test
+async def test_console_f1_renders_markup_looking_selected_label_literally(
+    request,
+) -> None:
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -550,7 +561,8 @@ async def test_console_f1_renders_markup_looking_selected_label_literally() -> N
 
 
 @pytest.mark.asyncio
-async def test_console_f1_tolerates_missing_tree_context_snapshot() -> None:
+@private_profile_test
+async def test_console_f1_tolerates_missing_tree_context_snapshot(request) -> None:
     """Workbench help remains available during a context-tray transition."""
 
     app = _build_test_app()
@@ -592,7 +604,9 @@ async def test_console_f1_tolerates_missing_tree_context_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_zero_result_workspace_search_stays_editable_and_initializes_without_echo(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _build_test_app()
@@ -683,7 +697,10 @@ def _chat_rows_with_marker_at(index: int, marker: str, *, count: int):
 
 
 @pytest.mark.asyncio
-async def test_expanded_chats_section_capped_row_marker_surfaces_on_header() -> None:
+@private_profile_test
+async def test_expanded_chats_section_capped_row_marker_surfaces_on_header(
+    request,
+) -> None:
     """TASK-912 review fix round 1: an expanded Chats section (the default
     once it has rows) with more rows than the cap surfaces the marker on a
     row pushed past the cap -- otherwise it renders nowhere at all."""
@@ -720,7 +737,10 @@ async def test_expanded_chats_section_capped_row_marker_surfaces_on_header() -> 
 
 
 @pytest.mark.asyncio
-async def test_expanded_chats_section_visible_row_marker_has_no_header_echo() -> None:
+@private_profile_test
+async def test_expanded_chats_section_visible_row_marker_has_no_header_echo(
+    request,
+) -> None:
     """A marked row still within the visible cap already shows its own
     glyph -- the header must not also echo it (no double marker)."""
     app = _build_test_app()
@@ -750,7 +770,10 @@ async def test_expanded_chats_section_visible_row_marker_has_no_header_echo() ->
 
 
 @pytest.mark.asyncio
-async def test_collapsed_chats_section_header_shows_aggregate_unchanged() -> None:
+@private_profile_test
+async def test_collapsed_chats_section_header_shows_aggregate_unchanged(
+    request,
+) -> None:
     """Collapsed-section rendering (`section.run_marker`, the full
     aggregate) is unchanged by this fix -- it still wins over
     `capped_run_marker` while collapsed."""
@@ -784,7 +807,8 @@ async def test_collapsed_chats_section_header_shows_aggregate_unchanged() -> Non
 
 
 @pytest.mark.asyncio
-async def test_rail_title_budget_scales_with_terminal_width() -> None:
+@private_profile_test
+async def test_rail_title_budget_scales_with_terminal_width(request) -> None:
     """TASK-374 AC#1: titles get the available width instead of a fixed cap.
 
     The review saw 17-char titles on a wide terminal (pre-width-aware code). The
@@ -822,7 +846,8 @@ async def test_rail_title_budget_scales_with_terminal_width() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_resize_alone_regrows_wrap_budget_within_one_pause() -> None:
+@private_profile_test
+async def test_on_resize_alone_regrows_wrap_budget_within_one_pause(request) -> None:
     """TASK-1191 fast-follow: `on_resize` must regrow the row-wrap budget on
     its OWN, isolated from any caller also driving an explicit
     `sync_state()`.
@@ -881,7 +906,10 @@ async def test_on_resize_alone_regrows_wrap_budget_within_one_pause() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_state_schedules_exactly_one_deferred_fit_pass(monkeypatch) -> None:
+@private_profile_test
+async def test_sync_state_schedules_exactly_one_deferred_fit_pass(
+    request, monkeypatch
+) -> None:
     """TASK-1191 regression guard for `_schedule_recomposed_content_fit`'s
     scheduling shape, not just its outcome.
 
@@ -970,7 +998,8 @@ async def test_sync_state_schedules_exactly_one_deferred_fit_pass(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_star_uses_recognizable_star_glyphs():
+@private_profile_test
+async def test_console_conversation_star_uses_recognizable_star_glyphs(request):
     """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
     near-invisible one-cell '*'/'.' distinction."""
     app = _build_test_app()
@@ -995,7 +1024,8 @@ async def test_console_conversation_star_uses_recognizable_star_glyphs():
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_star_press_confirms_the_toggle():
+@private_profile_test
+async def test_console_conversation_star_press_confirms_the_toggle(request):
     """TASK-357: starring must confirm the change ('Starred "<title>"') rather
     than toggle state silently (the review saw an accidental star go unnoticed)."""
     app = _build_test_app()
@@ -1049,7 +1079,8 @@ async def test_console_conversation_star_press_confirms_the_toggle():
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_star_confirms_an_untitled_conversation():
+@private_profile_test
+async def test_console_conversation_star_confirms_an_untitled_conversation(request):
     """task-3024: an empty title must still confirm, not crash after the write.
 
     `"".splitlines()` is `[]`, so the first-line read raised `IndexError` on an
@@ -1107,9 +1138,10 @@ async def test_console_conversation_star_confirms_an_untitled_conversation():
 
 
 @pytest.mark.asyncio
-async def test_row_actions_stay_reachable_when_local_marks_are_unavailable() -> (
-    None
-):
+@private_profile_test
+async def test_row_actions_stay_reachable_when_local_marks_are_unavailable(
+    request,
+) -> None:
     """TASK-23200: an unavailable marks service must not disable the row.
 
     This replaces a test that asserted the opposite -- that every star
@@ -1144,16 +1176,17 @@ async def test_row_actions_stay_reachable_when_local_marks_are_unavailable() -> 
 
         # Favourite is the only entry that needs marks, and it says why.
         favourite = build_conversation_menu(
-            ConversationMenuTarget(
-                conversation_id="conv-1", favorites_available=False
-            )
+            ConversationMenuTarget(conversation_id="conv-1", favorites_available=False)
         )[0]
         assert not favourite.enabled
         assert favourite.disabled_reason
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_search_controls_keep_stable_ids() -> None:
+@private_profile_test
+async def test_console_workspace_context_search_controls_keep_stable_ids(
+    request,
+) -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1181,38 +1214,41 @@ async def test_console_workspace_context_search_controls_keep_stable_ids() -> No
 
 
 def test_console_workspace_context_grouped_browser_styles_are_declared() -> None:
-    # TASK-25812: the console-owned browser rules were split out of the
-    # boot bundle into the console screen sheet.
-    for css_path in (
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
-        Path("tldw_chatbook/css/screen_agentic_console.tcss"),
-    ):
-        css = css_path.read_text(encoding="utf-8")
+    # ADR-161 task 10: the console-owned browser rules live in the console
+    # source sheets (union: each rule exists in exactly one of the pair),
+    # which ride the boot bundle.
+    css = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
+    )
 
-        assert ".console-conversation-browser-section-header {" in css
-        assert ".console-conversation-browser-section-title {" in css
-        assert ".console-conversation-browser-group-header {" in css
-        assert ".console-conversation-browser-group-title {" in css
-        assert ".console-conversation-browser-row-line {" in css
-        assert ".console-conversation-star {" in css
-        list_selector = "#console-workspace-conversations {"
-        assert list_selector in css
-        list_block = css.split(list_selector, 1)[1].split("}", 1)[0]
-        assert "overflow-y: auto" not in list_block
-        assert "scrollbar-size:" not in list_block
-        assert "#console-workspace-conversations:focus {" in css
+    assert ".console-conversation-browser-section-header {" in css
+    assert ".console-conversation-browser-section-title {" in css
+    assert ".console-conversation-browser-group-header {" in css
+    assert ".console-conversation-browser-group-title {" in css
+    assert ".console-conversation-browser-row-line {" in css
+    assert ".console-conversation-star {" in css
+    list_selector = "#console-workspace-conversations {"
+    assert list_selector in css
+    list_block = css.split(list_selector, 1)[1].split("}", 1)[0]
+    assert "overflow-y: auto" not in list_block
+    assert "scrollbar-size:" not in list_block
+    assert "#console-workspace-conversations:focus {" in css
 
-        # Row lines must size to their explicitly-heighted buttons; Textual's
-        # Horizontal defaults to `height: 1fr`, which divides the list height
-        # equally and breaks mixed wrapped/badge row heights.
-        row_line_block = css.split(".console-conversation-browser-row-line {", 1)[
-            1
-        ].split("}", 1)[0]
-        assert "height: auto" in row_line_block
-        # Reserve the scrollbar cell permanently so row-wrap width does not
-        # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
-        rail_body_block = css.split("#console-left-rail-body {", 1)[1].split("}", 1)[0]
-        assert "scrollbar-gutter: stable" in rail_body_block
+    # Row lines must size to their explicitly-heighted buttons; Textual's
+    # Horizontal defaults to `height: 1fr`, which divides the list height
+    # equally and breaks mixed wrapped/badge row heights.
+    row_line_block = css.split(".console-conversation-browser-row-line {", 1)[1].split(
+        "}", 1
+    )[0]
+    assert "height: auto" in row_line_block
+    # Reserve the scrollbar cell permanently so row-wrap width does not
+    # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
+    rail_body_block = css.split("#console-left-rail-body {", 1)[1].split("}", 1)[0]
+    assert "scrollbar-gutter: stable" in rail_body_block
 
 
 def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
@@ -1287,7 +1323,6 @@ def _render_screen_lines(console) -> list[str]:
         "".join(seg.text for seg in strip._segments)
         for strip in compositor.render_strips()
     ]
-
 
 
 class _StyledConsoleHarness(ConsoleHarness):
@@ -1373,7 +1408,10 @@ def test_console_workspace_readiness_detail_preserves_error_copy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_narrow_details_rail_truncates_cleanly_and_keeps_the_full_value() -> None:
+@private_profile_test
+async def test_narrow_details_rail_truncates_cleanly_and_keeps_the_full_value(
+    request,
+) -> None:
     """The authority value degrades by ELLIPSIS, never by letter-stacking.
 
     This replaces `test_narrow_details_rail_paints_full_private_scratch_value`,
@@ -1450,7 +1488,10 @@ async def test_narrow_details_rail_truncates_cleanly_and_keeps_the_full_value() 
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_splits_staged_context_from_workspace_context() -> None:
+@private_profile_test
+async def test_console_left_rail_splits_staged_context_from_workspace_context(
+    request,
+) -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1499,9 +1540,10 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_exposes_new_conversation_for_default_workspace() -> (
-    None
-):
+@private_profile_test
+async def test_console_workspace_context_exposes_new_conversation_for_default_workspace(
+    request,
+) -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1534,7 +1576,8 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
+@private_profile_test
+async def test_console_workspace_selector_is_compact_plain_status_row(request) -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1550,6 +1593,8 @@ async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
                 break
             await pilot.pause(0.01)
 
+        # Opening the section recomposes its children asynchronously.
+        await _wait_for_selector(console, pilot, "#console-active-workspace-value")
         active_workspace = console.query_one("#console-active-workspace")
         value = active_workspace.query_one("#console-active-workspace-value", Static)
         rendered_label = str(value.renderable)
@@ -1564,7 +1609,8 @@ async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
+@private_profile_test
+async def test_session_tray_shows_workspace_scope_and_new_button(request) -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
@@ -1602,7 +1648,10 @@ async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
 
 
 @pytest.mark.asyncio
-async def test_conversation_row_shows_placeholder_when_no_active_conversation() -> None:
+@private_profile_test
+async def test_conversation_row_shows_placeholder_when_no_active_conversation(
+    request,
+) -> None:
     """RAG-45: no bare "Conversation" label with an empty value body.
 
     TASK-23199 made that structurally impossible rather than merely correct:
@@ -1767,7 +1816,8 @@ async def test_status_pair_value_tooltip_escapes_markup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_renders_active_workspace() -> None:
+@private_profile_test
+async def test_console_workspace_context_renders_active_workspace(request) -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(
@@ -1804,9 +1854,10 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts() -> (
-    None
-):
+@private_profile_test
+async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts(
+    request,
+) -> None:
     app = _build_test_app()
     app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
         available=False,
@@ -1890,7 +1941,10 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_renders_markup_titles_literally() -> None:
+@private_profile_test
+async def test_console_workspace_context_renders_markup_titles_literally(
+    request,
+) -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="[bold red]Research[/]")
@@ -1914,9 +1968,10 @@ async def test_console_workspace_context_renders_markup_titles_literally() -> No
 
 
 @pytest.mark.asyncio
-async def test_console_change_workspace_switches_active_context_and_conversation_rows() -> (
-    None
-):
+@private_profile_test
+async def test_console_change_workspace_switches_active_context_and_conversation_rows(
+    request,
+) -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
@@ -1976,8 +2031,13 @@ async def test_console_change_workspace_switches_active_context_and_conversation
 
 
 def test_console_workspace_conversation_subsection_styles_are_declared() -> None:
-    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
-        encoding="utf-8"
+    # ADR-161 task 10: the console vocabulary lives in the console sheets.
+    css = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
     )
 
     assert "#console-workspace-conversations-header {" in css
@@ -2017,8 +2077,7 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     )
 
     # At budget 20 every title here is a single name line, so:
-    # Plain row (no subagent_count): costs 3px (1 name + 1 metadata + 1 margin).
-    # Badge row (subagent_count > 0): costs 4px (plus a dedicated badge line).
+    # Compact plain rows use one line; subagent badges add one line.
     plain_rows = tuple(
         ConsoleConversationBrowserRow(
             row_key=f"plain-{i}",
@@ -2057,13 +2116,13 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     )
     mixed_rows = plain_rows + badge_rows
 
-    # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
-    expected_height = 3 * 3 + 2 * 4
+    # Three plain rows and two rows with a dedicated badge line.
+    expected_height = 3 * 1 + 2 * 2
     actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
         mixed_rows, 20
     )
 
-    assert actual_height == expected_height == 17
+    assert actual_height == expected_height == 7
     assert (
         actual_height
         == ConsoleWorkspaceContextTray._conversation_browser_rows_height(plain_rows, 20)
@@ -2109,13 +2168,13 @@ def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
     a mounted harness resolves the widget default (height 3) and stays green
     even when the shipped rule is broken.
     """
-    css = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "components"
-        / "_agentic_terminal.tcss"
-    ).read_text()
+    css = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            Path("tldw_chatbook/css/features/_console.tcss"),
+            Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        )
+    )
 
     block_start = css.index("#console-workspace-conversation-search {")
     block = css[block_start : css.index("}", block_start)]
@@ -2126,21 +2185,33 @@ def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
     ]
 
     assert heights, "search input declares no height"
-    # A bordered Input needs 3 rows: border, content, border.
-    assert heights[0] == "3", (
+    # A bordered Input needs 3 rows: border, content, border. The rule was
+    # tokenized on arrival (ADR-161 task 10): $ds-size-3 resolves to 3.
+    assert heights[0] in ("3", "$ds-size-3"), (
         f"search input height {heights[0]!r} leaves no content row for its value"
     )
 
 
 @pytest.mark.asyncio
-
-
-@pytest.mark.asyncio
-async def test_conversation_row_renders_colored_icon_left_of_the_name():
-    """task-31207: the icon control is the row's leftmost element and shows
-    the colored custom icon; unset rows show the dim placeholder."""
-    decorated = _browser_row("conv-icon", "Lab chat", icon="🧪", color="#f87171", scope_type="global", workspace_id=None, workspace_label="Chats")
-    plain = _browser_row("conv-plain", "Plain chat", scope_type="global", workspace_id=None, workspace_label="Chats")
+@private_profile_test
+async def test_conversation_row_renders_custom_icon_in_right_action_slot(request):
+    """The single trailing action uses saved appearance in the resting state."""
+    decorated = _browser_row(
+        "conv-icon",
+        "Lab chat",
+        icon="🧪",
+        color="#f87171",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+    )
+    plain = _browser_row(
+        "conv-plain",
+        "Plain chat",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+    )
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2154,12 +2225,10 @@ async def test_conversation_row_renders_colored_icon_left_of_the_name():
         # open it so the row geometry is actually laid out.
         console._set_console_rail_preference(left_open=True)
         await pilot.pause()
-        tray.sync_state(
-            _base_grouped_workspace_state(rows=(decorated, plain))
-        )
+        tray.sync_state(_base_grouped_workspace_state(rows=(decorated, plain)))
         await pilot.pause()
 
-        controls = list(console.query(".console-conversation-appearance"))
+        controls = list(console.query(".console-conversation-actions"))
         assert len(controls) == 2
         by_conversation = {
             str(getattr(control, "conversation_id", "") or ""): control
@@ -2172,6 +2241,7 @@ async def test_conversation_row_renders_colored_icon_left_of_the_name():
         # style span); unset renders the placeholder glyph dim.
         decorated_label = decorated_control.label
         assert "🧪" in str(decorated_label)
+
         # The Button's internal conversion produces a textual Style whose
         # str() renders as "rgb(248,113,113)"; a plain string style would
         # carry the literal "#f87171". Match either form.
@@ -2181,35 +2251,27 @@ async def test_conversation_row_renders_colored_icon_left_of_the_name():
 
         assert any(_tinted(span) for span in getattr(decorated_label, "spans", []))
         plain_label = plain_control.label
-        assert "▢" in str(plain_label)
+        assert "💬" in str(plain_label)
 
-        # The icon control is the leftmost child of its row line, left of
-        # the conversation name button; the row's trailing control is the
-        # actions menu (TASK-23200 replaced the star column with it).
         row_line = decorated_control.parent
         children = list(row_line.children)
-        assert children[0] is decorated_control
-        title_button = console.query_one(
-            "#console-workspace-conversation-0", Button
-        )
-        assert children.index(decorated_control) < children.index(title_button)
-        assert isinstance(children[-1], Button) and children[-1].has_class(
-            "console-conversation-actions"
-        )
+        title_button = console.query_one("#console-workspace-conversation-0", Button)
+        assert children == [title_button, decorated_control]
+        assert not console.query(".console-conversation-appearance")
 
 
 @pytest.mark.asyncio
-async def test_conversation_row_appearance_control_geometry_stays_contained():
-    """task-31207 + lessons-testing-evidence: a new widget in a shared row
-    needs neighbor geometry assertions, not just display/text. The title
-    button and the star must stay fully on-screen with the icon control
-    mounted at a narrow rail width."""
+@private_profile_test
+async def test_conversation_right_action_geometry_stays_contained(request):
+    """Both compact title and trailing action stay visible without overlap."""
     row = _browser_row(
         "conv-geometry",
         "A reasonably long conversation title that used to fit exactly",
         icon="🧪",
         color="#22d3ee",
-        scope_type="global", workspace_id=None, workspace_label="Chats",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
     )
     app = _build_test_app()
     # StyledConsoleHarness loads the production CSS bundle -- a bare harness
@@ -2232,9 +2294,6 @@ async def test_conversation_row_appearance_control_geometry_stays_contained():
         await pilot.pause()
 
         screen_width = console.size.width
-        icon_region = console.query_one(
-            "#console-conversation-appearance-0", Button
-        ).region
         title_region = console.query_one(
             "#console-workspace-conversation-0", Button
         ).region
@@ -2242,30 +2301,41 @@ async def test_conversation_row_appearance_control_geometry_stays_contained():
             "#console-conversation-actions-0", Button
         ).region
         for name, region in (
-            ("icon", icon_region),
             ("title", title_region),
             ("trailing control", trailing_region),
         ):
             assert region.width > 0, f"{name} collapsed to zero width"
-            assert (
-                region.x >= 0 and region.x + region.width <= screen_width
-            ), f"{name} escapes the screen: {region}"
-        # Left-to-right ordering with no overlap: icon, then title, then
-        # star — the icon is left of the name and steals no title cells.
-        assert icon_region.x < title_region.x
-        assert icon_region.right <= title_region.x
+            assert region.x >= 0 and region.x + region.width <= screen_width, (
+                f"{name} escapes the screen: {region}"
+            )
         assert title_region.right <= trailing_region.x
+        assert title_region.height == trailing_region.height == 1
 
 
 @pytest.mark.asyncio
-async def test_conversation_row_appearance_control_ascii_mode_substitutes():
+@private_profile_test
+async def test_conversation_action_ascii_mode_substitutes(request):
     """task-31207: ASCII-glyph mode replaces both set icons and the
     placeholder with fixed pure-ASCII glyphs (emoji are exactly what that
     mode exists to avoid)."""
     from tldw_chatbook.Widgets import glyph_fallback
 
-    decorated = _browser_row("conv-ascii", "Lab chat", icon="🧪", color="#f87171", scope_type="global", workspace_id=None, workspace_label="Chats")
-    plain = _browser_row("conv-ascii-plain", "Plain chat", scope_type="global", workspace_id=None, workspace_label="Chats")
+    decorated = _browser_row(
+        "conv-ascii",
+        "Lab chat",
+        icon="🧪",
+        color="#f87171",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+    )
+    plain = _browser_row(
+        "conv-ascii-plain",
+        "Plain chat",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+    )
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2274,33 +2344,27 @@ async def test_conversation_row_appearance_control_ascii_mode_substitutes():
     try:
         async with host.run_test(size=(160, 44)) as pilot:
             console = host.screen_stack[-1]
-            await _wait_for_selector(
-                console, pilot, "#console-workspace-context"
-            )
+            await _wait_for_selector(console, pilot, "#console-workspace-context")
             tray = console.query_one(
                 "#console-workspace-context", ConsoleWorkspaceContextTray
             )
-            tray.sync_state(
-                _base_grouped_workspace_state(rows=(decorated, plain))
-            )
+            tray.sync_state(_base_grouped_workspace_state(rows=(decorated, plain)))
             await pilot.pause()
 
             labels = {
-                str(getattr(control, "conversation_id", "") or ""): str(
-                    control.label
-                )
-                for control in console.query(".console-conversation-appearance")
+                str(getattr(control, "conversation_id", "") or ""): str(control.label)
+                for control in console.query(".console-conversation-actions")
             }
-            assert labels["conv-ascii"].strip() == "*"
-            assert labels["conv-ascii-plain"].strip() == "+"
+            assert labels["conv-ascii"].strip() == "[icon]"
+            assert labels["conv-ascii-plain"].strip() == "[chat]"
     finally:
         glyph_fallback.set_ascii_glyph_mode(previous_mode)
 
 
 @pytest.mark.asyncio
-async def test_unpersisted_native_row_disables_appearance_control():
-    """task-31207: an unsaved native session has no conversations row to
-    carry metadata, so its icon control is disabled like its star."""
+@private_profile_test
+async def test_unpersisted_native_row_keeps_combined_menu_available(request):
+    """An unsaved chat keeps its menu; saved-only actions are gated inside it."""
     native = _browser_row(
         "native:session-1",
         "Draft chat",
@@ -2308,7 +2372,9 @@ async def test_unpersisted_native_row_disables_appearance_control():
         native_session_id="session-1",
         source_kind="native",
         star_enabled=False,
-        scope_type="global", workspace_id=None, workspace_label="Chats",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
     )
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2322,16 +2388,27 @@ async def test_unpersisted_native_row_disables_appearance_control():
         tray.sync_state(_base_grouped_workspace_state(rows=(native,)))
         await pilot.pause()
 
-        for control in console.query(".console-conversation-appearance"):
-            if str(getattr(control, "conversation_id", "") or "") == "":
-                assert control.disabled
+        control = console.query_one("#console-conversation-actions-0", Button)
+        assert not control.disabled
+        assert control.native_session_id == "session-1"
+        assert not console.query(".console-conversation-appearance")
 
 
 @pytest.mark.asyncio
-async def test_appearance_control_press_opens_the_picker():
-    """task-31207: pressing the icon control routes to the workspace
-    controller's picker-open with the row's identity and appearance."""
-    decorated = _browser_row("conv-route", "Routed chat", icon="🎨", color="#a78bfa", scope_type="global", workspace_id=None, workspace_label="Chats")
+@private_profile_test
+async def test_combined_menu_change_appearance_opens_picker_with_saved_identity(
+    request,
+):
+    """Appearance editing routes through the combined menu with captured identity."""
+    decorated = _browser_row(
+        "conv-route",
+        "Routed chat",
+        icon="🎨",
+        color="#a78bfa",
+        scope_type="global",
+        workspace_id=None,
+        workspace_label="Chats",
+    )
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2344,16 +2421,20 @@ async def test_appearance_control_press_opens_the_picker():
         tray.sync_state(_base_grouped_workspace_state(rows=(decorated,)))
         await pilot.pause()
 
-        control = console.query_one(
-            "#console-conversation-appearance-0", Button
-        )
+        control = console.query_one("#console-conversation-actions-0", Button)
         opened: list[dict[str, object]] = []
 
         def _capture(conversation_id, **kwargs):
             opened.append({"conversation_id": conversation_id, **kwargs})
 
         console._workspace._open_console_conversation_appearance_picker = _capture
-        await console.on_button_pressed(Button.Pressed(control))
+        console._workspace._console_conversation_appearance_map = lambda _: {
+            "conv-route": ("🎨", "#a78bfa")
+        }
+        await console._open_console_conversation_action_menu(control)
+        await pilot.pause()
+        menu = console.query_one("ConsoleConversationActionMenu")
+        menu.query_one("#console-conversation-action-change_appearance", Button).press()
         await pilot.pause()
 
         assert opened == [

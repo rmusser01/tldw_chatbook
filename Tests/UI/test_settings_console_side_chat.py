@@ -6,6 +6,7 @@ import pytest
 from textual.widgets import Input, Static
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -25,7 +26,8 @@ SIDECAT_TEMPLATE_INPUT = "#settings-console-sidechat-prompt-template"
 
 
 @pytest.mark.asyncio
-async def test_console_side_chat_settings_render_loaded_values_and_stage_edits():
+@private_profile_test
+async def test_console_side_chat_settings_render_loaded_values_and_stage_edits(request):
     """Both inputs show the saved values; typing stages without mutating config."""
     app = _build_test_app()
     app.app_config["console"] = {
@@ -70,7 +72,10 @@ async def test_console_side_chat_settings_render_loaded_values_and_stage_edits()
 
 
 @pytest.mark.asyncio
-async def test_console_side_chat_settings_are_searchable_and_have_focused_guidance():
+@private_profile_test
+async def test_console_side_chat_settings_are_searchable_and_have_focused_guidance(
+    request,
+):
     """The side-chat model field is findable via "/" and explains its contract."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -83,7 +88,9 @@ async def test_console_side_chat_settings_are_searchable_and_have_focused_guidan
         search = screen.query_one("#settings-category-search", Input)
         assert search.has_focus
         await pilot.press(*"side chat model")
-        await _wait_for_settings_text(screen, pilot, "Console Behavior › Side chat model")
+        await _wait_for_settings_text(
+            screen, pilot, "Console Behavior › Side chat model"
+        )
         await pilot.press("enter")
         for _ in range(8):
             await pilot.pause()
@@ -99,7 +106,9 @@ async def test_console_side_chat_settings_are_searchable_and_have_focused_guidan
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_side_chat_save_payload_is_exact_and_updates_runtime(
+    request,
     monkeypatch,
 ):
     """Successful category Save persists exactly the two staged string keys."""
@@ -155,7 +164,8 @@ async def test_console_side_chat_save_payload_is_exact_and_updates_runtime(
 
 
 @pytest.mark.asyncio
-async def test_console_side_chat_failed_save_keeps_draft(monkeypatch):
+@private_profile_test
+async def test_console_side_chat_failed_save_keeps_draft(request, monkeypatch):
     """Persistence failure keeps the staged strings without touching runtime."""
     app = _build_test_app()
     app.app_config["console"] = {}
@@ -182,9 +192,7 @@ async def test_console_side_chat_failed_save_keeps_draft(monkeypatch):
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert (
-            screen.query_one(SIDECAT_MODEL_INPUT, Input).value == "draft-model"
-        )
+        assert screen.query_one(SIDECAT_MODEL_INPUT, Input).value == "draft-model"
         assert (
             screen.query_one(SIDECAT_TEMPLATE_INPUT, Input).value
             == "Draft: {selection}"
@@ -196,7 +204,8 @@ async def test_console_side_chat_failed_save_keeps_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_console_side_chat_revert_restores_loaded_values():
+@private_profile_test
+async def test_console_side_chat_revert_restores_loaded_values(request):
     """Category Revert discards staged side-chat strings and reloads inputs."""
     app = _build_test_app()
     app.app_config["console"] = {

@@ -1312,6 +1312,17 @@ finished in **3m14s**. The xdist prescription is not a nicety for large
 batches — for a batch containing timeout-shaped pre-existing failures it is
 what makes the batch finish at all.
 
+### Repaired modal inventory — 2026-09-14
+
+TASK-31815, commit `b3109ba5cf`, restores the complete bidirectional Library
+modal inventory: 35 launch edges across ten supported owner scopes and 21
+concrete dialog types. The skill chooser and review-set picker now have the
+shared dismissal contracts, and five stale presenter edges name their current
+owners. The modal file plus both dialog-specific files pass **198 tests**.
+The inventory is no longer a standing failure or an excuse to verify a moved
+row only in isolation. Historical wave reports below retain their baseline
+results; current changes must pass the complete inventory.
+
 ### Documented pre-existing failures (do not re-derive these)
 
 Tests confirmed, by at least one Library-decomposition task, to fail
@@ -1373,19 +1384,15 @@ rediscover the same red from scratch.
   SHRANK the file 1738 -> 1686 without lowering its row, leaving 52 lines of
   slack against the 50-line tolerance. Red on `origin/dev` itself. Same
   disposition and same reason: it is dev's move, so dev lowers the row.
-- Two `origin/dev` reds that are not ratchets and that wave 7's merge proved
-  in the same isolated baseline, recorded because they sit inside the
+- An `origin/dev` red that is not a ratchet and that wave 7's merge proved
+  in the isolated baseline, recorded because it sits inside the
   Library battery every future wave runs:
   `Tests/UI/test_library_screen_reuse.py::test_on_screen_suspend_stops_
   every_timer_in_isolation` (dev added `self._unavailable_navigation.
   clear_character_return(self)` to `on_screen_suspend` without seeding that
   attribute in the test's `LibraryScreen.__new__` fixture — the SAME
   `__new__`-bypass shape every state PR in this program has had to seed, now
-  bitten from the dev side) and
-  `Tests/UI/test_library_modal_dismissal.py::test_library_modal_inventory_
-  matches_declared_edges_bidirectionally` (the inventory's AST resolver
-  cannot resolve dev's `SkillImportChoiceModal(snapshot.candidates)`).
-  Both are on TASK-31249.
+  bitten from the dev side). Tracked on TASK-31249.
 - `Tests/UI/test_screen_navigation.py` — **32 failed / 110 passed on
   `origin/dev` (`0bb00beaf`), and the SAME 32 names on wave 7's merged
   branch.** Wave 6 recorded ~30 churning failures here and called the file
@@ -1777,23 +1784,6 @@ rediscover the same red from scratch.
   stale from a Library move at all. Wave-6 task 2 re-ran the same 15 (plus
   the 3 ratchet rows = 18) at ITS parent and `diff`ed the sorted name lists
   to **IDENTICAL**.
-- **`Tests/UI/test_library_modal_dismissal.py` is a standing 1-red at every
-  wave tip, and it is a BLOCKED guard rather than a failing assertion.**
-  `test_library_modal_inventory_matches_declared_edges_bidirectionally`
-  raises on an unresolved modal constructor for the skills-era
-  `LibraryScreen._present_library_skills_import_choice_if_needed`, which
-  aborts `_discover_library_modal_edges` **before** the bidirectional
-  comparison runs — so the file currently proves nothing about ANY
-  subsystem's rows, including rows a task has just repointed. Measured
-  identically on both trees throughout wave 6 (**1 failed / 169 passed**).
-  A task whose own work touches this inventory therefore cannot prove it
-  green end-to-end and must prove the retarget **by construction** instead
-  (run the file's own `_discover_library_modal_edges` against the new
-  `_OwnerScope` alone and compare to the declared rows, matching each
-  modal's concrete type — the prompts series' worked example, §21). Filed
-  for repair as **TASK-31815**, together with the three other equally-stale
-  rows (`handle_library_ingest_browse` and the two skill-trust passphrase
-  presenters); remove this entry when that lands.
 - **`Tests/Performance/test_ui_ready_module_census.py` flaps against a
   ZERO-headroom pin, identically on trees that do not contain the change.**
   The pin is 972 and the warm-boot measurement IS 972; under load it

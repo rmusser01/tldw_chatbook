@@ -1,0 +1,368 @@
+{
+  "merge_base": "fd30614dcdc1e6cbd39b1532769d3e10be9b12b6",
+  "dev": "1c0327b3bb3d95b61e3e1b9a83b30e7030453ad6",
+  "changed_declarations": 45,
+  "mismatches": [],
+  "rows": [
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "width",
+      "upstream": "100%",
+      "candidate": "100%",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "height",
+      "upstream": "3",
+      "candidate": "3",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "min-height",
+      "upstream": "3",
+      "candidate": "3",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "margin",
+      "upstream": "0 0 1 0",
+      "candidate": "0 0 1 0",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "padding",
+      "upstream": "0 1",
+      "candidate": "0 1",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "border",
+      "upstream": "tall $surface-lighten-1",
+      "candidate": "tall $surface-lighten-1",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "background",
+      "upstream": "$surface",
+      "candidate": "$surface",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords",
+      "property": "color",
+      "upstream": "$text",
+      "candidate": "$text",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords:focus",
+      "property": "border",
+      "upstream": "tall $primary",
+      "candidate": "tall $primary",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords:focus",
+      "property": "outline",
+      "upstream": "none",
+      "candidate": "none",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords:focus",
+      "property": "background",
+      "upstream": "$block-cursor-blurred-background",
+      "candidate": "$block-cursor-blurred-background",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords:focus",
+      "property": "color",
+      "upstream": "$text",
+      "candidate": "$text",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-keywords:focus",
+      "property": "text-style",
+      "upstream": "bold",
+      "candidate": "bold",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-delete",
+      "property": "color",
+      "upstream": "$text-error",
+      "candidate": "$text-error",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-preview-region:focus",
+      "property": "border",
+      "upstream": "heavy $primary",
+      "candidate": "heavy $primary",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-preview-region:focus",
+      "property": "outline",
+      "upstream": "none",
+      "candidate": "none",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-region:focus",
+      "property": "border",
+      "upstream": "heavy $primary",
+      "candidate": "heavy $primary",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-context-region:focus",
+      "property": "outline",
+      "upstream": "none",
+      "candidate": "none",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-preview-body MarkdownH1",
+      "property": "content-align",
+      "upstream": "left middle",
+      "candidate": "left middle",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-location",
+      "property": "width",
+      "upstream": "100%",
+      "candidate": "100%",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-location",
+      "property": "height",
+      "upstream": "1",
+      "candidate": "1",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-location",
+      "property": "padding",
+      "upstream": "0 0 0 1",
+      "candidate": "0 0 0 1",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-location",
+      "property": "color",
+      "upstream": "$text-muted",
+      "candidate": "$text-muted",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-location",
+      "property": "text-wrap",
+      "upstream": "nowrap",
+      "candidate": "nowrap",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-location",
+      "property": "text-overflow",
+      "upstream": "ellipsis",
+      "candidate": "ellipsis",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-keywords-row",
+      "property": "layout",
+      "upstream": "vertical",
+      "candidate": "vertical",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-keywords-row",
+      "property": "height",
+      "upstream": "auto",
+      "candidate": "auto",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-keywords-row",
+      "property": "min-height",
+      "upstream": "0",
+      "candidate": "0",
+      "owner": "features/_library_panels.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-note-task-actions",
+      "property": "min-width",
+      "upstream": "61",
+      "candidate": "61",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-task-actions",
+      "property": "min-width",
+      "upstream": "0",
+      "candidate": "0",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-row",
+      "property": "layout",
+      "upstream": "horizontal",
+      "candidate": "horizontal",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-row",
+      "property": "height",
+      "upstream": "1",
+      "candidate": "1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-row",
+      "property": "min-height",
+      "upstream": "1",
+      "candidate": "1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-row",
+      "property": "max-height",
+      "upstream": "1",
+      "candidate": "1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-row",
+      "property": "margin",
+      "upstream": "0",
+      "candidate": "0",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-label",
+      "property": "width",
+      "upstream": "10",
+      "candidate": "10",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-label",
+      "property": "height",
+      "upstream": "1",
+      "candidate": "1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords-label",
+      "property": "padding",
+      "upstream": "0 1",
+      "candidate": "0 1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords",
+      "property": "width",
+      "upstream": "1fr",
+      "candidate": "1fr",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords",
+      "property": "height",
+      "upstream": "1",
+      "candidate": "1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords",
+      "property": "min-height",
+      "upstream": "1",
+      "candidate": "1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords",
+      "property": "margin",
+      "upstream": "0",
+      "candidate": "0",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords",
+      "property": "padding",
+      "upstream": "0 1",
+      "candidate": "0 1",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-keywords",
+      "property": "border",
+      "upstream": "none",
+      "candidate": "none",
+      "owner": "features/_library.tcss",
+      "matches": true
+    },
+    {
+      "selector": "#library-shell-grid.library-notes-compact #library-note-context-meta",
+      "property": "height",
+      "upstream": "auto",
+      "candidate": "auto",
+      "owner": "features/_library.tcss",
+      "matches": true
+    }
+  ]
+}

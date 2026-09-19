@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
-
 
 CONSOLE_BACKGROUND_EFFECTS = frozenset({"none", "snow", "rain", "matrix"})
 CONSOLE_BACKGROUND_SCOPES = frozenset({"transcript", "workbench"})
@@ -62,7 +61,7 @@ def _coerce_fps(value: object) -> int:
         return DEFAULT_CONSOLE_BACKGROUND_FPS
     try:
         fps = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return DEFAULT_CONSOLE_BACKGROUND_FPS
     return max(MIN_CONSOLE_BACKGROUND_FPS, min(MAX_CONSOLE_BACKGROUND_FPS, fps))
 

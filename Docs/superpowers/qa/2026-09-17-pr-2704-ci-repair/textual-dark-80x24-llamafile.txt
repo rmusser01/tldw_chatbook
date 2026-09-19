@@ -1,0 +1,24 @@
+               ╭────────╮
+ ‹ MCP  ⌃0 ACP │ F2 Lab │ F3 Logs  F4 Settings  F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Models  Manage providers,   Ready  Servers: none running  Model install: idle
+ Modes:    Models    Speech    Evals
+Catalog              < │
+                       │       Model source:                          Inspector
+ Local servers         │
+   Llama.cpp           │                                         ▁
+█   Llamafile          │   ┏╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍┓
+   Ollama              │   ╏Choose a managed GGUF model       ▼ ╏
+   vLLM                │   ┗╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍┛
+   ONNX                │                                         ▁
+   Transformers        │           Refresh managed models
+   MLX-LM              │
+                       │
+ Models                │   Selected managed GGUF is unavailable.
+   Curated             │   Choose another managed model or
+   Installed           │   refresh.
+   External            │
+   Remote              │   Host:
+                       │   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+                       │
+  [ / ] Move mode focus | Enter Go | F1 · F6 · Ctrl+P · Ctrl+Q

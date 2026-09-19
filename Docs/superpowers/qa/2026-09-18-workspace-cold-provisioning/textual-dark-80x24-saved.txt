@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │                                    │  │
+│     Privacy & Security       │  │  │ │                                    │  │
+│     Network                  │  │  │ │  Default assistant                 │  │
+│     My Profile               │  │  │ │  Effective: textual-dark-80x24     │▁ │
+│  Troubleshooting           ▇ │  │  │ │  Agent (memory: read_only)         │  │
+│     Diagnostics (view)       │  │  │ │ textual-dark-80x24 Agent           │▅ │
+│     About (view)             │  │  │ │  Set memory: read_write            │  │
+│     Agents                   │  │  │ │                                    │  │
+│  Expert                      │  │  │ │ default                            │  │
+│     Internal Prompts         │  │  │ │ ws-workspace-local-1               │  │
+│     Advanced Config          │  │  │ │  Clear default assistant           │  │
+│   Domain Defaults ▸ (11)     │  │  │ │  chat_with_llm: ask — permissions  │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

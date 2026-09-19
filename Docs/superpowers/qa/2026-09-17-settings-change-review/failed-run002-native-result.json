@@ -1,0 +1,51 @@
+{
+  "pid": 15907,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "revision_conflict_keeps_consent": true,
+      "failed_retry_is_explicit": true,
+      "preparing_failed_ready_updated_in_place": true,
+      "draft_and_focus_retained": true,
+      "one_retry_scheduled": true,
+      "real_snapshot_head": "f27f5012aac6a3d28744dbedd5b8f24440c136dc",
+      "shadow_git_dir": "/private/tmp/tldw-32771-native-002/data/default_user/change_review/f4db3dee77cfcf8d/git",
+      "fixture_unchanged": true,
+      "disable_retains_history": true
+    }
+  ],
+  "runner_sha256": "1ac0908ecf7bce76a46691f293e73faa1ece729603b231942ebdbed319514a09",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "631ec86eb3cb7f786b5a0d3ab40d77ad06358b5d66dd4a637f9d11b0c8803466",
+    "tldw_chatbook/Widgets/Settings_Widgets/workspace_change_review.py": "a009812e546bdc9daca62fa99724d5af3ba0169a61ed793f48ffe9a9a50b82ec",
+    "tldw_chatbook/Workspaces/change_review_consent.py": "4bb4f21a87b87c2b8160dc8bd141bc9bc2f526632cf65f1517d5b04a410880bf",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "6fa772fe15dc43d3977ae7f6c6547389cf8ca85c4b6550a9c23edb268017c452",
+    "tldw_chatbook/css/features/_settings.tcss": "352be084e19440d7940f492028b35eb408507b95e5c39ee09a5e152b46682fd5",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "3a77bf24728f6e67009b2e04e917910cfb881de1ca1022fcd655464e998a9bb3",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Applied pane settled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real registry/consent/initializer/shadow Git, controlled first-attempt failure and release",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-change-review/native_check.py\", line 235, in journey\n    registry.create_workspace(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Workspaces/registry_service.py\", line 531, in create_workspace\n    self._reject_duplicate_name(record.name)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Workspaces/registry_service.py\", line 994, in _reject_duplicate_name\n    raise WorkspaceRegistryServiceError(\ntldw_chatbook.Workspaces.registry_service.WorkspaceRegistryServiceError: A workspace named Review project already exists.\n",
+  "focused_id": "settings-workspace-change-review-toggle",
+  "focused_region": "Region(x=41, y=37, width=22, height=1)",
+  "app_run_returned": true
+}

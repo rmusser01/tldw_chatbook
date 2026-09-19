@@ -1,0 +1,2 @@
+wrote Docs/security/production-diagnostic-inventory.json
+Full rebuild delta matches reviewed app warnings exactly; other owners, sink topology and privacy candidates unchanged.

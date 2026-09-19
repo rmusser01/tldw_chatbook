@@ -1,0 +1,108 @@
+{
+  "revision": "bd6ba3b126588a59699308f71091e7a741bb83d3",
+  "linux": {
+    "status": [
+      {
+        "revision": "bd6ba3b126588a59699308f71091e7a741bb83d3",
+        "source": "/home/ml-user/Working/chatbook-backup-linux-20260912/source-final-bd6ba3b126-831yifme",
+        "fixture": "/home/ml-user/Working/chatbook-backup-linux-20260912/native-final-bd6ba3b126-d3ichqmx"
+      },
+      {
+        "pytest_returncode": 0,
+        "revision": "bd6ba3b126588a59699308f71091e7a741bb83d3",
+        "source_tracked_unchanged": true,
+        "status": {
+          "collected": 34,
+          "counts": {
+            "failed": 0,
+            "passed": 34,
+            "skipped": 0
+          },
+          "exitstatus": 0,
+          "failed_ordinals": [],
+          "unfinished": 0
+        }
+      }
+    ],
+    "installed_verification": {
+      "installed_files": 2867,
+      "revision": "bd6ba3b126588a59699308f71091e7a741bb83d3",
+      "source_python_matches": 2475,
+      "source_python_mismatches": 0,
+      "source_tracked_unchanged": true,
+      "wheel_sha256": "82c5057b974a37e32aa7d07d7460a724ed0dd09ee77b279dc72622d01b5e6ae1"
+    }
+  },
+  "scheduler_probe": {
+    "head": "bd6ba3b126588a59699308f71091e7a741bb83d3",
+    "probe_sha256": "08ae6d2b9bce4a832815411d8b1bad279031c283415df006c0d22c00af7f7576",
+    "results": [
+      {
+        "leader": "trace",
+        "variant": "complete",
+        "returncode": 0,
+        "seconds": 2.219,
+        "log": "/private/tmp/uat-scheduler-trace-final-vl5w27mc/trace-complete/run.log"
+      },
+      {
+        "leader": "trace",
+        "variant": "pause",
+        "returncode": 0,
+        "seconds": 2.172,
+        "log": "/private/tmp/uat-scheduler-trace-final-vl5w27mc/trace-pause/run.log"
+      },
+      {
+        "leader": "heartbeat",
+        "variant": "complete",
+        "returncode": 0,
+        "seconds": 2.211,
+        "log": "/private/tmp/uat-scheduler-trace-final-vl5w27mc/heartbeat-complete/run.log"
+      },
+      {
+        "leader": "heartbeat",
+        "variant": "pause",
+        "returncode": 0,
+        "seconds": 2.207,
+        "log": "/private/tmp/uat-scheduler-trace-final-vl5w27mc/heartbeat-pause/run.log"
+      }
+    ],
+    "source": "import asyncio\nfrom contextlib import contextmanager\nfrom datetime import UTC, datetime, timedelta\nimport json\nimport os\nfrom pathlib import Path\nimport sys\nimport threading\nimport time\nfrom Tests.network_guard import install, blocked_attempts\ninstall()\nfrom tldw_chatbook import config\nfrom tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage\nfrom tldw_chatbook.Chat.console_trace_maintenance import LegacyTraceMaintenance\nfrom tldw_chatbook.DB.base_db import run_owned_db_call\nfrom tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB\nfrom tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop\nfrom tldw_chatbook.Scheduling.scheduler_heartbeat import default_heartbeat_path, read_heartbeat\n\nleader_role, variant = sys.argv[1:]\nselected = {k: os.environ[k] for k in ('HOME','XDG_CONFIG_HOME','XDG_DATA_HOME','TLDW_CONFIG_PATH')}\nassert 'TLDW_TEST_MODE' not in os.environ\nstorage.admit_startup()\nnotes = config.get_chachanotes_db_lazy()\nmaintenance = LegacyTraceMaintenance(notes)\nnotes.close_connection()\ndatabase = ScheduledTasksDB(Path.home()/'scheduler.sqlite')\nscheduler = SchedulerLoop(database,{})\nexpected = default_heartbeat_path()\nassert not expected.exists()\nentered, release, contender = threading.Event(), threading.Event(), threading.Event()\noriginal = storage._Acquisition.initializing\nlocal = threading.local()\nseen = {}\n\n@contextmanager\ndef held_initialization(self, root, path):\n    role = getattr(local,'role',None)\n    is_leader = role == leader_role and not entered.is_set()\n    if role and role != leader_role and entered.is_set() and not release.is_set():\n        seen['contender_role'] = role\n        seen['contender_thread'] = threading.get_ident()\n        seen['same_root'] = root == seen['root']\n        contender.set()\n    with original(self,root,path):\n        if is_leader:\n            seen['root'] = root\n            seen['leader_thread'] = threading.get_ident()\n            entered.set()\n            assert release.wait(5)\n        yield\n\nstorage._Acquisition.initializing = held_initialization\n\ndef trace_batch():\n    local.role = 'trace'\n    try:\n        return maintenance.run_batch()\n    finally:\n        local.role = None\n\ndef heartbeat(tick):\n    local.role = 'heartbeat'\n    try:\n        return scheduler._record_heartbeat(tick,error=None)\n    finally:\n        local.role = None\n\nasync def main():\n    tick = datetime(2026,9,14,18,0,tzinfo=UTC)\n    tasks = {}\n    pause = None\n    def start(role):\n        call = run_owned_db_call(notes,trace_batch) if role == 'trace' else scheduler._offload(heartbeat,tick)\n        tasks[role] = asyncio.create_task(call)\n    try:\n        start(leader_role)\n        assert await asyncio.to_thread(entered.wait,3)\n        start('heartbeat' if leader_role == 'trace' else 'trace')\n        assert await asyncio.to_thread(contender.wait,3)\n        assert seen['same_root'] and seen['leader_thread'] != seen['contender_thread']\n        wait_proved = False\n        observation_deadline = time.monotonic() + 1\n        while time.monotonic() < observation_deadline:\n            frame = sys._current_frames().get(seen['contender_thread'])\n            try:\n                while frame is not None:\n                    if (frame.f_code is threading.Condition.wait.__code__\n                        and frame.f_locals.get('self') is storage._changed\n                        and frame.f_back is not None\n                        and frame.f_back.f_code is original.__wrapped__.__code__):\n                        wait_proved = True\n                        break\n                    frame = frame.f_back\n            finally:\n                del frame\n            if wait_proved:\n                break\n            await asyncio.sleep(0.001)\n        assert wait_proved, 'contender did not enter the actual initializer condition wait'\n        assert all(not task.done() for task in tasks.values())\n        scheduler._maintenance_close_admission()\n        assert not await scheduler._maintenance_drain(time.monotonic()+0.02)\n        assert scheduler._maintenance_db_tasks\n        if variant == 'pause':\n            pause = storage._begin_local_pause()\n        release.set()\n        results = await asyncio.wait_for(asyncio.gather(tasks['trace'],tasks['heartbeat'],return_exceptions=True),5)\n        assert await scheduler._maintenance_drain(time.monotonic()+3)\n        assert not scheduler._maintenance_db_tasks\n        assert results[1] is None, type(results[1]).__name__\n        if variant == 'pause':\n            assert type(results[0]) is bootstrap.RecoveryRequired and results[0].args == ('storage_locally_paused',)\n            assert read_heartbeat(expected) is None\n            pause.resume()\n            pause = None\n        else:\n            assert results[0].admitted and results[0].logical_complete\n            assert read_heartbeat(expected).last_tick_at == tick\n        assert not storage._operations and not storage._pending_acquisitions\n        scheduler._maintenance_resume()\n        resumed = await run_owned_db_call(notes,trace_batch)\n        assert resumed.admitted and resumed.logical_complete\n        await scheduler._offload(heartbeat,tick+timedelta(seconds=1))\n        assert read_heartbeat(expected).last_tick_at == tick+timedelta(seconds=1)\n        assert not blocked_attempts()\n        assert selected == {k:os.environ[k] for k in selected}\n        print(json.dumps({'leader':leader_role,'variant':variant,'actual_trace_callback':True,'native_initializer_wait_proved':wait_proved,'same_root':seen['same_root'],'distinct_threads':True,'blocked_scheduler_drain_refused':True,'workers_completed_after_release':True,'resumed_trace_completed':True,'resumed_heartbeat_readback':True,'network_attempts':0,'test_mode_override':False}))\n    finally:\n        release.set()\n        await asyncio.gather(*tasks.values(),return_exceptions=True)\n        if pause is not None:\n            pause.resume()\n        storage._Acquisition.initializing = original\n        notes.close_connection()\n        database.close()\n\ntry:\n    asyncio.run(main())\nfinally:\n    storage._shutdown()\n",
+    "interpretation": "Actual native initializer contention, exact pause refusal and resumed Notes transaction/heartbeat readback verified. Does not reproduce or explain Windows30s drain timeout; no product correction inferred."
+  },
+  "windows_support": {
+    "run": 34908697549,
+    "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34908697549",
+    "status": "in_progress",
+    "selected_product_cases": 305
+  },
+  "windows_startup": {
+    "run": 34908706892,
+    "job": 104191168572,
+    "source_matches": 8,
+    "observer_errors": 0,
+    "non_ui_pass": 31,
+    "full_app_timeout_failures": 4,
+    "unchanged_timeout_s": 60,
+    "pinned_dev_diagnostic_pass_seconds": 51.83,
+    "candidate_diagnostic": "timeout",
+    "job_log_sha256": "b82a6e0381a38484a095867fa210620a4d1d4564489e60af168043ee993b2279"
+  },
+  "module_census": {
+    "run": 34908706826,
+    "passed": 17,
+    "failed": 1,
+    "optional_skips": 2,
+    "ui_ready_modules": 1024,
+    "approved_limit": 1022,
+    "extra_modules": [
+      "tldw_chatbook.Notes.note_import_parsers",
+      "tldw_chatbook.Widgets.select_values"
+    ],
+    "origin": "Prior upstream merge; two-file import deferral proposal prepared, user approval pending, not applied."
+  },
+  "pending_approvals": [
+    "Linux Persona same900s aggregate-budget redistribution",
+    "Two-file upstream import deferral without raising startup module caps"
+  ],
+  "acceptance": "Incomplete; Windows support result and existing Settings/startup/LinuxPersona completion remain outstanding."
+}

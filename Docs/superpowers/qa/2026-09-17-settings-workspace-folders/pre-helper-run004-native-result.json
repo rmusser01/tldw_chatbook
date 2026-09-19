@@ -1,0 +1,82 @@
+{
+  "pid": 88769,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "invalid_path_visible_and_retained": true,
+      "add_defaults_read_only": true,
+      "write_then_read_only_reaches_registry": true,
+      "feedback_scoped_to_workspace": true,
+      "remove_retains_files_and_focus": true,
+      "active_workspace_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "invalid_path_visible_and_retained": true,
+      "add_defaults_read_only": true,
+      "write_then_read_only_reaches_registry": true,
+      "feedback_scoped_to_workspace": true,
+      "remove_retains_files_and_focus": true,
+      "active_workspace_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "invalid_path_visible_and_retained": true,
+      "add_defaults_read_only": true,
+      "write_then_read_only_reaches_registry": true,
+      "feedback_scoped_to_workspace": true,
+      "remove_retains_files_and_focus": true,
+      "active_workspace_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "invalid_path_visible_and_retained": true,
+      "add_defaults_read_only": true,
+      "write_then_read_only_reaches_registry": true,
+      "feedback_scoped_to_workspace": true,
+      "remove_retains_files_and_focus": true,
+      "active_workspace_unchanged": true
+    }
+  ],
+  "runner_sha256": "cdfaf8a862564050ae406baa19fcdb116ad0af0425735330b18c1ae6de0d47d8",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "ee33cf693f3ae2fecc0ebfb2223d077ad8c8ce9188df04352824201d2a6def87",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "da2e73f4102cebaa79523005310b96bfe101e39b1c2ca0d25138946267f05865",
+    "tldw_chatbook/css/features/_settings.tcss": "2675c80e7d902b8a36c5314eceb91c751ecbfed3a57143cf3cbdba0c81703711",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "ee38b76e4364a9a2649ae098d236fcc818e7d0816d30c2a75935af9f57099285",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Notices clear",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "workspace_setup": "Two named workspaces seeded via the real registry",
+  "passed": true,
+  "app_run_returned": true
+}

@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+13.68s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[stale]
+13.60s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[exception]
+13.50s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[before-replace]
+12.84s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[cache-warning]
+8.34s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_confirmation_uses_the_live_controller
+
+(10 durations < 1s hidden.)
+5 passed, 9 deselected in 64.09s (0:01:04)

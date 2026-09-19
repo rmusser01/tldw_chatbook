@@ -40,6 +40,11 @@ from tldw_chatbook.Workspaces.display_state import (
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Workspaces.conversation_attention import present_conversation_attention
+from .conversation_row_presentation import (
+    conversation_action_width,
+    conversation_title_cells,
+)
 
 
 class ConsoleBrowserSearchInput(Input):
@@ -349,9 +354,27 @@ def _marker_meaning_tooltip_suffix(marker_glyph: str) -> str:
     An unrecognized or empty glyph (the steady state) adds no suffix, so a
     caller can always append this unconditionally.
     """
-    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(
-        str(marker_glyph or "").strip(), ""
-    )
+    semantic_meanings = {
+        "✋": "Approval required",
+        "[approve]": "Approval required",
+        "⛔": "Blocked",
+        "[blocked]": "Blocked",
+        "[failed]": "Failed",
+        "⟳": "Running",
+        "[running]": "Running",
+        "⏸": "Paused",
+        "[paused]": "Paused",
+        "⏹": "Stopped",
+        "[stopped]": "Stopped",
+        "✉": "Unread",
+        "[unread]": "Unread",
+        "[ready]": "New result ready",
+        "🔔": "Background activity ended — outcome unavailable",
+        "[new]": "Background activity ended — outcome unavailable",
+    }
+    meaning = semantic_meanings.get(
+        str(marker_glyph or "").strip()
+    ) or CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(str(marker_glyph or "").strip(), "")
     return f" — {meaning}" if meaning else ""
 
 
@@ -406,6 +429,17 @@ _ROW_BOTTOM_MARGIN = 1
 # state-change recompose (observed as a collapse failing to render) and, in
 # any environment where the gutter CSS is absent, oscillate the relabel.
 _RELABEL_MIN_WIDTH_DELTA = 2
+
+
+def _conversation_activity_text(row) -> str:
+    parts = [
+        fact.label
+        for fact in row.attention
+        if fact.kind in {"approval", "blocked", "failed", "paused"}
+    ]
+    if row.queued_count:
+        parts.append(f"Queue {row.queued_count}")
+    return " · ".join(dict.fromkeys(parts))
 
 
 def _conversation_row_render_height(name_line_count: int, subagent_count: int, progress_count: int = 0) -> int:
@@ -490,7 +524,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         self.label_id = label_id
         self.value_id = value_id
         self.label_width_floor = max(1, int(label_width_floor))
-        self.styles.height = "auto"
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 1
 
     def compose(self) -> ComposeResult:
@@ -512,7 +548,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             self.label_width_floor,
             min(17, cell_len(self.label) + 1),
         )
-        label_widget.styles.width = label_width
+        label_widget.remove_class(*(name for name in label_widget.classes if name.startswith("w-")))
+        # ds-runtime: The field label text is measured in terminal cells within its width budget.
+        label_widget.set_styles(width=label_width)
         label_widget.styles.min_width = label_width
         yield label_widget
 
@@ -522,7 +560,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-value",
             markup=False,
         )
-        value_widget.styles.width = "1fr"
+        value_widget.remove_class(*(name for name in value_widget.classes if name.startswith("w-")))
+        value_widget.set_styles(width=None)
+        value_widget.add_class("w-fill")
         # Preserve the established 23-cell combined floor. Longer labels may
         # shrink the value to 6 cells and use the existing ellipsis + tooltip
         # behavior instead of widening the whole rail.
@@ -654,8 +694,11 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # The first measurement always relabels (to replace the pre-measure
         # fallback budget); later ones apply the hysteresis threshold.
         self._row_width_measured = False
+        self._height_fit_layout_signal: Any | None = None
         self._workspace_tree_context_data: Any | None = None
-        self.styles.height = "auto"
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 0
 
     def on_mount(self) -> None:
@@ -666,6 +709,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
 
         self.call_after_refresh(self._fit_height_to_content)
+
+    def on_unmount(self) -> None:
+        """Release a pending layout wake when the tray leaves its screen."""
+        if self._height_fit_layout_signal is not None:
+            self._height_fit_layout_signal.unsubscribe(self)
+            self._height_fit_layout_signal = None
 
     def on_resize(self, event: Any) -> None:
         """Refit wrapped status rows when the rail width changes.
@@ -1069,11 +1118,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
            section overlapping the conversation list. With two or more
            children a settled layout ALWAYS yields a bottom of at least 2
            (the tray composes four or more children unconditionally), so a
-           bottom of exactly 1 means "not laid out yet": defer one more
-           pass instead of latching. Termination is guaranteed because a
-           displayed tray's children are laid out within the pending
-           refresh, and a hidden one already returned above on
-           ``region.height <= 0``.
+           bottom of exactly 1 means "not laid out yet": wait for the
+           owning screen's next layout instead of latching. A retained
+           tray below another destination can keep its old positive
+           region while recomposed children have no layout. Refresh
+           callbacks run on the active screen, so recursively requesting
+           one would spin until the owning screen becomes visible again.
 
         Returns:
             None.
@@ -1100,11 +1150,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
 
         if content_bottom == 1 and len(self.children) > 1:
-            # Mid-recompose: no child has a laid-out height yet (see point 3
-            # in the docstring). Defer one more pass rather than latch a
-            # bogus one-row height.
-            if self.is_mounted and self.display:
-                self.call_after_refresh(self._fit_height_to_content)
+            # Coalesce retries until this screen actually lays out children.
+            if (
+                self.is_mounted
+                and self.display
+                and self._height_fit_layout_signal is None
+            ):
+                signal = self.screen.screen_layout_refresh_signal
+                signal.subscribe(
+                    self, self._fit_height_after_layout, immediate=True
+                )
+                self._height_fit_layout_signal = signal
             return
 
         target_height = max(1, content_bottom - content_top)
@@ -1119,7 +1175,15 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 target_height = max(target_height, int(parent_region.height))
 
         if int(region.height) != target_height:
-            self.styles.height = target_height
+            self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+            # ds-runtime: The rail region is measured to retain its viewport height during reflow.
+            self.set_styles(height=target_height)
+
+    def _fit_height_after_layout(self, screen: Any) -> None:
+        """Retry once after the owning screen supplies fresh child geometry."""
+        screen.screen_layout_refresh_signal.unsubscribe(self)
+        self._height_fit_layout_signal = None
+        self.call_after_refresh(self._fit_height_to_content)
 
     def _is_inside_rail_section_body(self) -> bool:
         """Return whether this tray is nested in a collapsible rail section body.
@@ -1203,7 +1267,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         if state_class:
             button.add_class(state_class)
         row_height = _conversation_row_render_height(name_line_count, subagent_count, progress_count)
-        button.styles.height = row_height
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        # ds-runtime: Wrapped conversation names and live progress determine each browser row height.
+        button.set_styles(height=row_height)
         button.styles.min_height = row_height
         return button
 
@@ -1243,17 +1309,18 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             compact=True,
             disabled=not conversation_id,
         )
-        button.styles.height = row_height
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        # ds-runtime: Wrapped conversation names and live progress determine each browser row height.
+        button.set_styles(height=row_height)
         button.styles.min_height = row_height
-        # Sizing lives here, not in the boot CSS bundle: the boot-parsed
-        # byte budget is at its ratchet ceiling (ADR-097), and this tray
-        # already sets its row controls' geometry inline (see the star).
         # Compact Button supplies one cell of internal line padding per
         # side, leaving two cells for a wide icon in the four-cell box.
-        button.styles.width = 4
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_styles(width=None)
+        button.add_class("w-4")
         button.styles.min_width = 4
         button.styles.max_width = 4
-        button.styles.margin = (0, 1, 1, 0)
+        button.add_class("console-conversation-appearance-spacing")
         button.styles.text_align = "center"
         button.tooltip = (
             f"Change icon and color for {_escape_markup(row.title or 'this conversation')}."
@@ -1273,16 +1340,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """Total height for a row sequence: per-row button height (from the
         same wrap the labels use, so the two cannot disagree) plus margin."""
         return sum(
-            _conversation_row_render_height(
-                len(
-                    _marker_prefixed_name_lines(
-                        row.title, _row_marker(row.run_marker, row.starred), budget
-                    )
-                ),
-                row.subagent_count,
-                row.progress_count,
-            )
-            + _ROW_BOTTOM_MARGIN
+            1
+            + bool(row.subagent_count)
+            + bool(row.progress_count)
+            + bool(_conversation_activity_text(row))
             for row in rows
         )
 
@@ -1485,7 +1546,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.change_workspace_enabled,
             )
             switch_button.styles.min_width = 5
-            switch_button.styles.width = "auto"
+            switch_button.remove_class(*(name for name in switch_button.classes if name.startswith("w-")))
+            switch_button.set_styles(width=None)
+            switch_button.add_class("w-auto")
             # TASK-2154.3 (LY-06): the block reason used to render as an
             # always-on Static under the buttons, so "Add another workspace
             # before switching." read as an error before the user had
@@ -1508,7 +1571,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.new_workspace_enabled,
             )
             new_button.styles.min_width = 5
-            new_button.styles.width = "auto"
+            new_button.remove_class(*(name for name in new_button.classes if name.startswith("w-")))
+            new_button.set_styles(width=None)
+            new_button.add_class("w-auto")
             yield self._record_composed_node(new_button)
             scope_button = Button(
                 "RAG",
@@ -1518,7 +1583,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 disabled=not self.state.rag_scope_enabled,
             )
             scope_button.styles.min_width = 5
-            scope_button.styles.width = "auto"
+            scope_button.remove_class(*(name for name in scope_button.classes if name.startswith("w-")))
+            scope_button.set_styles(width=None)
+            scope_button.add_class("w-auto")
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
         # TASK-25712: the contextual Star/Unstar button and its
@@ -1703,7 +1770,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     id="console-workspace-conversations-title",
                     classes="console-rail-section-title",
                 )
-                title.styles.width = "1fr"
+                title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+                title.set_styles(width=None)
+                title.add_class("w-fill")
                 yield title
         for label, button_id in (
             ("Archive this chat", "console-archive-chat"),
@@ -1713,7 +1782,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             action = Button(
                 label, id=button_id, compact=True, classes="console-workspace-action"
             )
-            action.styles.width = "100%"
+            action.remove_class(*(name for name in action.classes if name.startswith("w-")))
+            action.set_styles(width=None)
+            action.add_class("w-full")
             yield action
         if show_selected_summary:
             yield self._static(
@@ -1732,7 +1803,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 id="console-workspace-conversation-search",
                 classes="console-workspace-conversation-search",
             )
-            search_input.styles.width = "1fr"
+            search_input.remove_class(*(name for name in search_input.classes if name.startswith("w-")))
+            search_input.set_styles(width=None)
+            search_input.add_class("w-fill")
             yield search_input
             clear_button = Button(
                 "Clear",
@@ -1761,10 +1834,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
-        conversation_list.styles.height = self._conversation_browser_list_height(
-            browser,
-            self._browser_title_budget(),
-            self._row_content_width,
+        conversation_list.remove_class(*(name for name in conversation_list.classes if name.startswith("h-")))
+        # ds-runtime: Visible conversation rows and measured title width determine the list height.
+        conversation_list.set_styles(
+            height=self._conversation_browser_list_height(
+                browser,
+                self._browser_title_budget(),
+                self._row_content_width,
+            )
         )
         conversation_list.styles.min_height = 0
         with conversation_list:
@@ -1937,7 +2014,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
-            toggle.styles.width = 3
+            toggle.remove_class(*(name for name in toggle.classes if name.startswith("w-")))
+            toggle.set_styles(width=None)
+            toggle.add_class("w-3")
             toggle.styles.min_width = 3
             toggle.styles.max_width = 3
             # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
@@ -1988,52 +2067,42 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         with Horizontal(classes="console-conversation-browser-row-line"):
             budget = self._browser_title_budget()
             title = self._conversation_title(row.title)
-            name_lines = _marker_prefixed_name_lines(
-                row.title, _row_marker(row.run_marker, row.starred), budget
+            prefix = ("* " if ascii_glyph_mode() else "★ ") if row.starred else ""
+            name = prefix + conversation_title_cells(title, budget - cell_len(prefix))
+            activity = _conversation_activity_text(row)
+            text = name + (
+                "\n" + conversation_title_cells(activity, budget) if activity else ""
             )
-            status = self._conversation_status(row.status)
-            detail = self._conversation_detail_status(row.status)
-            secondary_copy = (
-                self._conversation_row_secondary(
-                    detail,
-                    row.updated_label,
-                    workspace_label=row.workspace_label if show_workspace else "",
-                )
-                or "conversation"
+            presentation = present_conversation_attention(
+                row.attention, custom_icon=row.icon, ascii_mode=ascii_glyph_mode()
             )
-            if row.queued_count:
-                secondary_copy = f"{secondary_copy} · Queue {row.queued_count}"
-            secondary = truncate_console_row_cells(secondary_copy, budget)
-            status_suffix = f" [{status}]" if status else ""
-            # task-31207: the icon control is the row's leftmost element,
-            # left of the conversation name, mirroring the star on the right.
-            control_height = _conversation_row_render_height(
-                len(name_lines), row.subagent_count, row.progress_count
-            )
-            yield self._conversation_appearance_button(
-                row,
-                index,
-                row_height=control_height,
-            )
-            # TASK-1233 AC#1 (review round 1): `tooltip_label` here is the
-            # PRE-escape, pre-period sentence body -- `_conversation_button`
-            # passes it straight to `_marker_aware_tooltip`, which escapes
-            # the whole thing (title + this bracket-wrapped status badge)
-            # exactly once. Escaping only `title` here, as an earlier round
-            # did, left the literal "[" in `status_suffix` un-escaped: Rich/
-            # Textual markup parsing reads it as a style-tag start and
-            # silently drops the unrecognized "saved"/etc. tag -- the word
-            # never reaches the rendered tooltip at all.
             row_button = self._conversation_button(
-                "\n".join((*name_lines, secondary)),
+                text,
                 id=f"console-workspace-conversation-{index}",
                 conversation_id=row.conversation_id or row.row_key,
-                tooltip_label=f"{title}{status_suffix}",
-                run_marker=row.run_marker,
+                tooltip_label=title,
                 selected=row.selected,
                 subagent_count=row.subagent_count,
                 progress_count=row.progress_count,
-                name_line_count=len(name_lines),
+            )
+            row_button.add_class("console-conversation-compact-row")
+            # ds-runtime: content-dependent row height (base row plus activity, subagent, and progress indicator rows; resting size and spacing are CSS tokens)
+            row_button.styles.height = (
+                1 + bool(activity) + bool(row.subagent_count) + bool(row.progress_count)
+            )
+            row_button.styles.min_height = None
+            row_button.tooltip = Text(
+                " · ".join(
+                    part
+                    for part in (
+                        title,
+                        self._conversation_status(row.status),
+                        row.updated_label,
+                        presentation.summary,
+                        "m: conversation actions",
+                    )
+                    if part
+                )
             )
             row_button.row_key = row.row_key
             # TASK-15454: this pair is the row's click identity; `compose`
@@ -2045,7 +2114,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             row_button.native_session_id = row.native_session_id
             row_button.scope_type = row.scope_type
             row_button.workspace_id = row.workspace_id
-            row_button.styles.width = "1fr"
+            row_button.remove_class(*(name for name in row_button.classes if name.startswith("w-")))
+            row_button.set_styles(width=None)
+            row_button.add_class("w-fill")
             row_button.styles.min_width = 0
             if not row.openable:
                 # TASK-717: a prior open proved this record is missing; the
@@ -2057,30 +2128,24 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 )
             yield row_button
 
-            # TASK-23200: this control used to be a star that toggled a
-            # favourite and nothing else. On a fresh install the marks
-            # service is often absent, so it shipped DISABLED, stretched to
-            # the full height of a multi-line row, and was explained by the
-            # developer-facing line "Local stars unavailable" -- a column of
-            # dead vertical space (2026-08-29 UX audit). It is now an
-            # asterisk that opens the row's action menu: favourite, status,
-            # archive, rename, delete. The menu itself decides what is
-            # available, and says why when something is not, so this control
-            # is never disabled and never needs an apology line beside it.
-            #
-            # One row tall, not the row's full height: favourite state is
-            # carried by the marker beside the title (see
-            # ``_marker_prefixed_name_lines``), so the column no longer has
-            # to be tall enough to show it.
             menu_button = Button(
-                "*",
+                Text(presentation.icon, style=row.color if not row.attention else ""),
                 id=f"console-conversation-actions-{index}",
-                classes="console-workspace-action console-conversation-actions",
+                classes="console-workspace-action console-conversation-actions "
+                + presentation.css_class,
                 compact=True,
             )
-            menu_button.styles.height = 1
+            menu_button.remove_class(*(name for name in menu_button.classes if name.startswith("h-")))
+            menu_button.set_styles(height=None)
+            menu_button.add_class("h-1")
             menu_button.styles.min_height = 1
-            menu_button.tooltip = f"Actions for {title}"
+            # Textual line padding is not expressible in TCSS. Preserve all
+            # nine label cells in the fixed ASCII attention target.
+            menu_button.styles.line_pad = 0
+            menu_button.set_class(ascii_glyph_mode(), "conversation-actions-ascii")
+            menu_button.tooltip = Text(
+                f"{title} · {presentation.summary or 'Conversation'} — conversation actions"
+            )
             menu_button.row_key = row.row_key
             menu_button.conversation_id = row.conversation_id
             # PR #2262 review: Copy-as-markdown reads open native sessions
@@ -2090,6 +2155,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.starred = row.starred
             menu_button.marks_available = marks_available
             menu_button.conversation_title = row.title
+            menu_button.manual_unread = row.manual_unread
             yield menu_button
 
     def _workspace_selector_label(self) -> str:
@@ -2113,8 +2179,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     def _browser_title_budget(self) -> int:
         """Cells available to grouped-browser row text."""
         return max(
-            _MIN_TITLE_WRAP_BUDGET,
-            self._row_content_width - _BROWSER_ROW_CHROME_WIDTH,
+            0,
+            self._row_content_width
+            - conversation_action_width(ascii_mode=ascii_glyph_mode())
+            - 2,
         )
 
     @staticmethod

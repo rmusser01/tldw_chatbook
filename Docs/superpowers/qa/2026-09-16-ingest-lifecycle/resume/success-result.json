@@ -1,0 +1,138 @@
+{
+  "pid": 28879,
+  "phase": "success",
+  "steps": [
+    {
+      "clear_unsubmitted": true,
+      "jobs": 0,
+      "media": 0
+    },
+    {
+      "opened": "alpha.txt",
+      "media_id": 1,
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Alpha import verification."
+    },
+    {
+      "opened": "beta.md",
+      "media_id": 2,
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Beta import verification"
+    },
+    {
+      "opened": "alpha.txt",
+      "media_id": 1,
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Alpha import verification."
+    },
+    {
+      "opened": "beta.md",
+      "media_id": 2,
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Beta import verification"
+    },
+    {
+      "opened": "alpha.txt",
+      "media_id": 1,
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Alpha import verification."
+    },
+    {
+      "opened": "beta.md",
+      "media_id": 2,
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Beta import verification"
+    },
+    {
+      "opened": "alpha.txt",
+      "media_id": 1,
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Alpha import verification."
+    },
+    {
+      "opened": "beta.md",
+      "media_id": 2,
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Beta import verification"
+    },
+    {
+      "opened": "alpha.txt",
+      "media_id": 1,
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Alpha import verification."
+    },
+    {
+      "duplicate": "ingest-job-3",
+      "media_count": 2,
+      "resolved_original": true
+    },
+    {
+      "permission_failure": "ingest-job-4",
+      "successful_retry": "ingest-job-5",
+      "lineage_retained": true
+    },
+    {
+      "opened": "permission.txt",
+      "media_id": 3,
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "body_matches_normalized_presentation": true,
+      "visible_content_marker": "Permission recovered."
+    }
+  ],
+  "app_module": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/app.py",
+  "runner_sha256": "89d682209e0e5a4849722777192059d7f507bea6032324ae240aebf2dc41c8ea",
+  "exclusive_profile": true,
+  "waiting_for": "Import",
+  "driver": "LinuxDriver",
+  "passed": true,
+  "app_run_returned": true
+}

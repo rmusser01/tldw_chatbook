@@ -1,0 +1,9 @@
+tldw_chatbook/UI/Screens/settings_screen.py: 65 -> 65 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 0
+
+no diagnostic statement changed in this file between the two revisions. If the pin still lists it, the pin was already stale when it was committed -- widen the base revision.
+
+tldw_chatbook/Chat/console_chat_controller.py: 78 -> 78 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 0
+
+no diagnostic statement changed in this file between the two revisions. If the pin still lists it, the pin was already stale when it was committed -- widen the base revision.

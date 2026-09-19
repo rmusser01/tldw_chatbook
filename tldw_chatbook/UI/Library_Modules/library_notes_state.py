@@ -489,6 +489,10 @@ class LibraryNotesState:
     import_snapshot: LibraryNoteImportSnapshot | None = None
     lasting_sync_snapshot: LibraryNotesLastingSyncSnapshot | None = None
     selected_note_id: str = ""
+    #: task-32548: the open note's own list-row tie-break ("· #8d61"), or ""
+    #: when its title collides with nothing. Refreshed by
+    #: ``_library_notes_canvas_kwargs`` from the projection it has just built.
+    open_note_title_suffix: str = ""
     load_state: str = "idle"
     load_message: str = ""
     autosave_state: str = "idle"

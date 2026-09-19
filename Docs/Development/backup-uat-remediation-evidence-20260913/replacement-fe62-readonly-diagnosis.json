@@ -1,0 +1,35 @@
+{
+  "reason": "replacement_destination_parent_required",
+  "proof": "installed function bodies with read-only metadata projections; no replacement execution",
+  "ui_logical_id": "profile:9fb777beb626ede6b3aec43e:ui.state",
+  "ui_root_id": "root:48944a90e99863a65a87e9be694468778ebd48c07c5e609af5ae25334c258a1a",
+  "ui_destination": "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/home/.config/tldw_cli/ui_state.toml",
+  "ui_preexisting": false,
+  "ui_namespace_covered": false,
+  "config_root_differs": true,
+  "overlapping_protected": [
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/home/.config/tldw_cli/recovery-bootstrap",
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/home/.config/tldw_cli/recovery/control",
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/home/.config/tldw_cli/recovery/control-work/inspection-826e7c14a6a74e8faa45c97c706294d9/restore-129b33814b2643e48e1fc209fa3645eb/restore-1a24fa75b6104fa9b00300171b6b6e59",
+    "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/home/.config/tldw_cli/recovery/control-work/inspection-826e7c14a6a74e8faa45c97c706294d9/acquired/c2ae4957cddb45d79e8874fb5c495149/input"
+  ],
+  "existing_publication_roots": [
+    [
+      "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/novice/files-needing-setup"
+    ]
+  ],
+  "control_children": [
+    "service.json"
+  ],
+  "earlier_pre_handoff_source_hashes_still_match": {
+    "database_sha256": true,
+    "config_sha256": false
+  },
+  "original_note_readback_matches": true,
+  "installed_source_hashes": {
+    "replacement.py": "2d80908196339b49b15448b79e771b20697704cec98cb4808d4e5ff7b1340c6b",
+    "restore_plan.py": "d89c75691ef240b80915c4c94b8343eea5e2b7d62c9ba462472c104e0b9141bd"
+  },
+  "current_config_matches_prepublication_binding": true,
+  "current_config_sha256": "a6eada0690e80813e526fe1607f5e7cc577c8de3cc2561930d5b1dfc4cb6ed1b"
+}

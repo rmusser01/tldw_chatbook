@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from html import unescape
-from pathlib import Path
 import asyncio
 import re
 import threading
+from copy import deepcopy
+from html import unescape
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -13,18 +13,21 @@ from textual.widgets import Button, Checkbox, Input, Select, Static
 
 import tldw_chatbook
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
 )
+from Tests.UI.test_settings_provider_keyboard_journeys import _settle
+from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_context_memory import (
+    load_context_memory_values,
     load_show_model_thinking,
     load_thinking_history_policy_default,
-    load_context_memory_values,
     model_context_window_save_entry,
     model_context_window_state,
     normalize_context_memory_values,
@@ -75,11 +78,14 @@ def _capture_provider_atomic_writes(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_thinking_visibility_label_is_fully_painted_at_100_columns() -> None:
+@private_profile_test
+async def test_thinking_visibility_label_is_fully_painted_at_100_columns(
+    request,
+) -> None:
     """The responsive Settings workbench must preserve the toggle's state copy."""
     app = _build_test_app()
     app.app_config = {"console": {"show_model_thinking": True}}
-    host = StyledSettingsDestinationHarness(app, "settings")
+    host = _StyledDestinationHarness(app, "settings")
 
     async with host.run_test(size=(100, 30)) as pilot:
         await pilot.app.workers.wait_for_complete()
@@ -87,6 +93,9 @@ async def test_thinking_visibility_label_is_fully_painted_at_100_columns() -> No
         screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
         await pilot.pause()
 
+        screen.query_one("#settings-console-show-model-thinking", Checkbox).focus()
+        await pilot.wait_for_scheduled_animations()
+        await pilot.pause()
         painted = _painted_text(host.export_screenshot(simplify=True))
         assert screen._workbench_compact is True
         assert "Show model thinking (On)" in painted
@@ -133,200 +142,178 @@ def test_thinking_history_default_normalizes_only_optional_values(
     [
         ConfigMutationResult(False, False, "before_replace"),
         ConfigMutationResult(
-            False,
-            False,
-            None,
-            conflict=True,
-            conflict_reason="identity_changed",
+            False, False, None, conflict=True, conflict_reason="identity_changed"
         ),
     ],
     ids=["before-replace", "conflict"],
 )
+@private_profile_test
 async def test_show_model_thinking_is_canonical_immediate_and_rolls_back(
+    request,
+    monkeypatch,
     mutation: ConfigMutationResult,
 ) -> None:
     app = _build_test_app()
     app.app_config = {"console": {"show_model_thinking": False}}
-    captured: list[tuple[bool, int]] = []
-    refreshes: list[int] = []
+    entered, release = threading.Event(), threading.Event()
+    captured, refreshes = [], []
 
-    def _capture_persist(
-        _screen: SettingsScreen,
-        next_value: bool,
-        revision: int,
-    ) -> None:
-        captured.append((next_value, revision))
+    def writer(payload):
+        captured.append(payload)
+        entered.set()
+        assert release.wait(15)
+        return mutation
 
+    monkeypatch.setattr(
+        settings_screen_module, "apply_settings_mutation_to_cli_config", writer
+    )
+    monkeypatch.setattr(
+        SettingsScreen,
+        "_signal_console_appearance_refresh",
+        lambda _screen: refreshes.append(1),
+    )
     host = DestinationHarness(app, "settings")
-    with (
-        patch.object(
-            SettingsScreen,
-            "_settings_persist_thinking_visibility",
-            new=_capture_persist,
-        ),
-        patch.object(
-            SettingsScreen,
-            "_signal_console_appearance_refresh",
-            new=lambda _screen: refreshes.append(1),
-        ),
-    ):
-        async with host.run_test(size=(110, 40)) as pilot:
-            await pilot.app.workers.wait_for_complete()
-            screen = _active_destination_screen(host)
-            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-            await pilot.pause()
-
-            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
-            assert toggle.value is False
-            assert str(toggle.label) == "Show model thinking (Off)"
-
+    async with host.run_test(size=(110, 40)) as pilot:
+        await _settle(host, pilot)
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+        await pilot.pause()
+        toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+        assert toggle.value is False
+        assert str(toggle.label) == "Show model thinking (Off)"
+        try:
             toggle.value = True
             await pilot.pause()
-
+            assert await asyncio.to_thread(entered.wait, 3)
             assert app.app_config["console"]["show_model_thinking"] is True
             assert str(toggle.label) == "Show model thinking (On)"
-            assert captured == [(True, 1)]
+            assert captured == [{"console": {"show_model_thinking": True}}]
             assert len(refreshes) == 1
-
-            screen._apply_thinking_visibility_persist_result(
-                mutation,
-                True,
-                1,
-            )
-            await pilot.pause()
-
-            assert app.app_config["console"]["show_model_thinking"] is False
-            assert toggle.value is False
-            assert str(toggle.label) == "Show model thinking (Off)"
-            assert len(refreshes) == 2
-            result = screen.query_one("#settings-console-behavior-result", Static)
-            assert "prior setting was restored" in _static_text(result)
+        finally:
+            release.set()
+        await _settle(host, pilot)
+        assert app.app_config["console"]["show_model_thinking"] is False
+        assert toggle.value is False
+        assert str(toggle.label) == "Show model thinking (Off)"
+        assert len(refreshes) == 2
+        assert "prior setting was restored" in _static_text(
+            screen.query_one("#settings-console-behavior-result", Static)
+        )
 
 
 @pytest.mark.asyncio
-async def test_thinking_visibility_successful_noop_confirms_optimistic_value() -> None:
-    """Catches treating a structured no-op as a failed write."""
-
+@private_profile_test
+async def test_thinking_visibility_successful_noop_confirms_optimistic_value(
+    request, monkeypatch
+) -> None:
+    """A successful structured no-op must not roll back the optimistic choice."""
     app = _build_test_app()
     app.app_config = {"console": {"show_model_thinking": False}}
-
+    monkeypatch.setattr(
+        settings_screen_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda _payload: ConfigMutationResult(False, False, None),
+    )
     host = DestinationHarness(app, "settings")
-    with patch.object(
+    async with host.run_test(size=(110, 40)) as pilot:
+        await _settle(host, pilot)
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+        await pilot.pause()
+        toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+        toggle.value = True
+        await _settle(host, pilot)
+        assert app.app_config["console"]["show_model_thinking"] is True
+        assert toggle.value is True
+        assert (
+            "visibility saved"
+            in _static_text(
+                screen.query_one("#settings-console-behavior-result", Static)
+            ).lower()
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_thinking_visibility_write_drain_coalesces_and_rolls_back_latest_failure(
+    request, monkeypatch
+) -> None:
+    """Old success cannot replace a pending choice; latest failure restores disk."""
+    app = _build_test_app()
+    app.app_config = {"console": {"show_model_thinking": False}}
+    entered, release = threading.Event(), threading.Event()
+    second_entered, release_second = threading.Event(), threading.Event()
+    writes, refreshes = [], []
+
+    def writer(payload):
+        writes.append(payload["console"]["show_model_thinking"])
+        if len(writes) == 1:
+            entered.set()
+            assert release.wait(15)
+            return ConfigMutationResult(True, False, "cache_reload")
+        second_entered.set()
+        assert release_second.wait(15)
+        return ConfigMutationResult(False, False, "before_replace")
+
+    monkeypatch.setattr(
+        settings_screen_module, "apply_settings_mutation_to_cli_config", writer
+    )
+    monkeypatch.setattr(
         SettingsScreen,
-        "_settings_persist_thinking_visibility",
-        new=lambda _screen, _value, _revision: None,
-    ):
-        async with host.run_test(size=(110, 40)) as pilot:
-            await pilot.app.workers.wait_for_complete()
-            screen = _active_destination_screen(host)
-            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-            await pilot.pause()
-            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
-
-            toggle.value = True
-            await pilot.pause()
-            screen._apply_thinking_visibility_persist_result(
-                ConfigMutationResult(False, False, None),
-                True,
-                1,
-            )
-
-            assert screen._thinking_visibility_confirmed_value is True
-            assert app.app_config["console"]["show_model_thinking"] is True
-            assert toggle.value is True
-            result = screen.query_one("#settings-console-behavior-result", Static)
-            assert "visibility saved" in _static_text(result).lower()
-
-
-@pytest.mark.asyncio
-async def test_thinking_visibility_write_drain_coalesces_and_rolls_back_latest_failure() -> (
-    None
-):
-    """Catches overlapping workers persisting stale visibility after rapid toggles."""
-
-    app = _build_test_app()
-    app.app_config = {"console": {"show_model_thinking": False}}
-    writes: list[tuple[bool, int]] = []
-    refreshes: list[int] = []
-
-    def _capture_persist(
-        _screen: SettingsScreen,
-        value: bool,
-        revision: int,
-    ) -> None:
-        writes.append((value, revision))
-
+        "_signal_console_appearance_refresh",
+        lambda _screen: refreshes.append(1),
+    )
     host = DestinationHarness(app, "settings")
-    with (
-        patch.object(
-            SettingsScreen,
-            "_settings_persist_thinking_visibility",
-            new=_capture_persist,
-        ),
-        patch.object(
-            SettingsScreen,
-            "_signal_console_appearance_refresh",
-            new=lambda _screen: refreshes.append(1),
-        ),
-    ):
-        async with host.run_test(size=(110, 40)) as pilot:
-            await pilot.app.workers.wait_for_complete()
-            screen = _active_destination_screen(host)
-            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-            await pilot.pause()
-            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
-
+    async with host.run_test(size=(110, 40)) as pilot:
+        await _settle(host, pilot)
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+        await pilot.pause()
+        toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+        try:
             toggle.value = True
             await pilot.pause()
+            assert await asyncio.to_thread(entered.wait, 3)
             toggle.value = False
             await pilot.pause()
-
+            assert writes == [True]
             assert app.app_config["console"]["show_model_thinking"] is False
-            assert writes == [(True, 1)]
-
-            screen._apply_thinking_visibility_persist_result(
-                ConfigMutationResult(True, False, "cache_reload"),
-                True,
-                1,
-            )
-            assert writes == [(True, 1), (False, 2)]
-            assert screen._thinking_visibility_confirmed_value is True
-            result = screen.query_one("#settings-console-behavior-result", Static)
-            assert "saved" in _static_text(result).lower()
-            assert "refresh" in _static_text(result).lower()
-
-            screen._apply_thinking_visibility_persist_result(
-                ConfigMutationResult(False, False, "before_replace"),
-                False,
-                2,
-            )
-            await pilot.pause()
-
-            assert app.app_config["console"]["show_model_thinking"] is True
-            assert toggle.value is True
-            assert str(toggle.label) == "Show model thinking (On)"
-            assert len(refreshes) == 3
-            result = screen.query_one("#settings-console-behavior-result", Static)
-            assert "prior setting was restored" in _static_text(result)
-
-            # A stale/out-of-order callback cannot change the confirmed disk view.
-            screen._apply_thinking_visibility_persist_result(
-                ConfigMutationResult(True, False, "cache_reload"),
-                True,
-                1,
-            )
-            assert app.app_config["console"]["show_model_thinking"] is True
-            assert writes == [(True, 1), (False, 2)]
+            release.set()
+            assert await asyncio.to_thread(second_entered.wait, 3)
+            assert writes == [True, False]
+            assert app.app_config["console"]["show_model_thinking"] is False
+            assert "visibility saved" not in screen._console_behavior_result.lower()
+        finally:
+            release.set()
+            release_second.set()
+        await _settle(host, pilot)
+        assert app.app_config["console"]["show_model_thinking"] is True
+        assert toggle.value is True
+        assert str(toggle.label) == "Show model thinking (On)"
+        assert len(refreshes) == 3
+        assert "prior setting was restored" in screen._console_behavior_result
+        # A delayed receipt from the older choice cannot replace failure feedback.
+        state = screen._console_toggle_writes["model-thinking"]
+        screen._finish_console_toggle(
+            "model-thinking",
+            state,
+            1,
+            ConfigMutationResult(True, False, "cache_reload"),
+            True,
+        )
+        assert "prior setting was restored" in screen._console_behavior_result
+        assert writes == [True, False]
 
 
 @pytest.mark.asyncio
-async def test_thinking_visibility_overlapping_failure_matches_restart_value() -> None:
-    """Proves a failed latest write leaves disk and optimistic state aligned."""
-
+@private_profile_test
+async def test_thinking_visibility_overlapping_failure_matches_restart_value(
+    request, monkeypatch
+) -> None:
+    """A failed latest write leaves the confirmed persistence and live value aligned."""
     app = _build_test_app()
     app.app_config = {"console": {"show_model_thinking": False}}
-    first_started = threading.Event()
-    release_first = threading.Event()
+    first_started, release_first = threading.Event(), threading.Event()
     writes: list[bool] = []
     persisted = {"show_model_thinking": False}
 
@@ -335,41 +322,36 @@ async def test_thinking_visibility_overlapping_failure_matches_restart_value() -
         writes.append(value)
         if len(writes) == 1:
             first_started.set()
-            if not release_first.wait(2):
-                return ConfigMutationResult(False, False, "before_replace")
+            assert release_first.wait(15)
             persisted["show_model_thinking"] = value
             return ConfigMutationResult(True, True, None)
         return ConfigMutationResult(False, False, "before_replace")
 
+    monkeypatch.setattr(
+        settings_screen_module, "apply_settings_mutation_to_cli_config", fake_mutation
+    )
     host = DestinationHarness(app, "settings")
-    with patch.object(
-        settings_screen_module,
-        "apply_settings_mutation_to_cli_config",
-        new=fake_mutation,
-    ):
-        async with host.run_test(size=(110, 40)) as pilot:
-            await pilot.app.workers.wait_for_complete()
-            screen = _active_destination_screen(host)
-            screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-            await pilot.pause()
-            toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
-
+    async with host.run_test(size=(110, 40)) as pilot:
+        await _settle(host, pilot)
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+        await pilot.pause()
+        toggle = screen.query_one("#settings-console-show-model-thinking", Checkbox)
+        try:
             toggle.value = True
-            assert await asyncio.to_thread(first_started.wait, 2)
+            await pilot.pause()
+            assert await asyncio.to_thread(first_started.wait, 3)
             toggle.value = False
             await pilot.pause()
-
             assert writes == [True]
+        finally:
             release_first.set()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert writes == [True, False]
-            assert persisted["show_model_thinking"] is True
-            assert app.app_config["console"]["show_model_thinking"] is True
-            assert toggle.value is True
-            assert load_show_model_thinking(persisted) is True
+        await _settle(host, pilot)
+        assert writes == [True, False]
+        assert persisted["show_model_thinking"] is True
+        assert app.app_config["console"]["show_model_thinking"] is True
+        assert toggle.value is True
+        assert load_show_model_thinking(persisted) is True
 
 
 def test_context_memory_defaults_and_saved_overrides_share_policy_contract() -> None:
@@ -460,7 +442,10 @@ def test_model_context_window_state_distinguishes_detection_from_override() -> N
 
 
 @pytest.mark.asyncio
-async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> None:
+@private_profile_test
+async def test_console_memory_controls_mount_stage_and_fit_narrow_settings(
+    request,
+) -> None:
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(80, 34)) as pilot:
@@ -497,26 +482,32 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> 
         representation = screen.query_one(
             "#settings-console-context-compaction-representation", Select
         )
-        assert _static_text(
-            trigger.parent.query_one(".settings-input-label", Static)
-        ) == "Compact at (%)"
-        assert _static_text(
-            mode.parent.query_one(".settings-input-label", Static)
-        ) == "When limit nears"
-        assert _static_text(
-            representation.parent.query_one(".settings-input-label", Static)
-        ) == "Representation"
+        assert (
+            _static_text(trigger.parent.query_one(".settings-input-label", Static))
+            == "Compact at (%)"
+        )
+        assert (
+            _static_text(mode.parent.query_one(".settings-input-label", Static))
+            == "When limit nears"
+        )
+        assert (
+            _static_text(
+                representation.parent.query_one(".settings-input-label", Static)
+            )
+            == "Representation"
+        )
         advanced_labels = {
-            "#settings-console-context-target-percent": "Reduce conversation to (%)",
+            "#settings-console-context-target-percent": "Reduce context to (%)",
             "#settings-console-context-summary-max-tokens": "Summary response max",
             "#settings-console-context-failure-behavior": "If compaction fails",
             "#settings-console-context-carry-forward-mode": "Keep after compaction",
         }
         for selector, expected in advanced_labels.items():
             control = screen.query_one(selector)
-            assert _static_text(
-                control.parent.query_one(".settings-input-label", Static)
-            ) == expected
+            assert (
+                _static_text(control.parent.query_one(".settings-input-label", Static))
+                == expected
+            )
         trigger.value = "85"
         mode.value = "automatic"
         representation.value = "hybrid"
@@ -533,7 +524,8 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings() -> 
 
 
 @pytest.mark.asyncio
-async def test_console_memory_save_blocks_invalid_trigger_target_pair() -> None:
+@private_profile_test
+async def test_console_memory_save_blocks_invalid_trigger_target_pair(request) -> None:
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(110, 40)) as pilot:
@@ -552,9 +544,10 @@ async def test_console_memory_save_blocks_invalid_trigger_target_pair() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_memory_save_routes_normalized_values_to_console_section() -> (
-    None
-):
+@private_profile_test
+async def test_console_memory_save_routes_normalized_values_to_console_section(
+    request,
+) -> None:
     app = _build_test_app()
     captured: list[tuple[dict[str, object], dict[str, object], bool]] = []
 
@@ -609,7 +602,10 @@ async def test_console_memory_save_routes_normalized_values_to_console_section()
 
 
 @pytest.mark.asyncio
-async def test_summary_prompt_route_focuses_existing_internal_prompt_editor() -> None:
+@private_profile_test
+async def test_summary_prompt_route_focuses_existing_internal_prompt_editor(
+    request,
+) -> None:
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(110, 40)) as pilot:

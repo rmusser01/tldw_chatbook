@@ -1,0 +1,24 @@
+{
+  "base": "eda1d6bd65",
+  "files": [
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "base_diagnostics": 6,
+      "current_diagnostics": 6,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_entry_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-16-ingest-entry/native_check.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "new_diagnostics": 0
+}

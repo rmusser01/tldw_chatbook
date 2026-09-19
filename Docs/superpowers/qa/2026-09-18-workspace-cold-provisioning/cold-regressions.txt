@@ -1,0 +1,14 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+10.33s call     Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[True]
+9.91s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[unavailable]
+9.80s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[save]
+8.80s call     Tests/UI/test_workspace_cold_provisioning.py::test_startup_initializes_only_for_eligible_backfill[False]
+8.53s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_create_waits_without_duplicate_or_late_commits[cancel]
+8.31s call     Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[saved]
+7.61s call     Tests/UI/test_workspace_cold_provisioning.py::test_explicit_choice_does_not_initialize_automatic_provisioning[WorkspacePersonaChoice.NONE]
+7.19s call     Tests/UI/test_workspace_cold_provisioning.py::test_cold_wiring_creates_no_orphans_before_authority
+1.22s setup    Tests/UI/test_workspace_cold_provisioning.py::test_cold_wiring_creates_no_orphans_before_authority
+
+(15 durations < 1s hidden.)
+8 passed in 73.62s (0:01:13)

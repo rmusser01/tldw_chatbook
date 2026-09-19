@@ -1,0 +1,24 @@
+                  ╭────────╮
+ ‹   ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││                                          ││                  │
+│ Source       ││  Root: local MCP serving and Hub         ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  tests. Blank uses the serving           ││  ◦ Off (opt-in)  │
+│ ▊ Local  ▼ ▎ ││  process's current folder. Console       ││  tldw_chatbook   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  uses Chat scratch and admitted          ││  (built-in)      │
+│              ││  Workspace folders.                      ││  Why · Off —     │
+│ Servers      ││                                          ││  enable it to    │
+│  ◦ off · ⌂   ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  let MCP         │
+│  built-in    ││  ▊  Filter tools…                    ▎   ││  clients use     │
+│     All      ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  chatbook's      │
+│   ◦ ⌂ tld... ││  ▊  All servers                      ▎ ▇ ││  tools.          │
+│              ││  ▊  Local workspace, web, and        ▎   ││  Add server      │
+│              ││  ▊  Watchlists                       ▎   ││    Advanced…     │
+│              ││  ▊  Virtual CLI (read-only)          ▎   ││                  │
+╰──────────────╯╰──▊  tldw_chatbook                    ▎───╯╰──────────────────╯
+  1-4 mode | a add ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ · Ctrl+Q

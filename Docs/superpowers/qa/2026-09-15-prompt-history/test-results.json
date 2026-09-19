@@ -1,0 +1,33 @@
+{
+  "total_passed": 226,
+  "full_repository_sweep": false,
+  "groups": [
+    {
+      "name": "ui",
+      "passed": 76,
+      "deselected": 277,
+      "log": "ui-tests.txt"
+    },
+    {
+      "name": "domain",
+      "passed": 124,
+      "deselected": 188,
+      "log": "domain-tests.txt"
+    },
+    {
+      "name": "governance",
+      "passed": 26,
+      "deselected": 0,
+      "log": "governance-tests.txt"
+    }
+  ],
+  "new_history_journeys": 11,
+  "existing_history_ui_checks": 65,
+  "visual_review": {
+    "captures": 6,
+    "all_rendered_and_inspected": true,
+    "focused_version_and_restore_labels_readable": true,
+    "restored_title_readable": true,
+    "transient_success_toast_overlaps_lower_rows": true
+  }
+}

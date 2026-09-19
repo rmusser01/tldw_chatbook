@@ -1,0 +1,35 @@
+{
+  "pid": 53828,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "missing_recovery_readable": true,
+      "empty_recovery_readable": true,
+      "clear_enter_returns_focus": true,
+      "metadata_retained": true,
+      "ready_start_reachable_by_tab": true,
+      "jobs_queued": 0
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "missing_recovery_readable": true,
+      "empty_recovery_readable": true,
+      "clear_enter_returns_focus": true,
+      "metadata_retained": true,
+      "ready_start_reachable_by_tab": true,
+      "jobs_queued": 0
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "app_run_returned": true
+}

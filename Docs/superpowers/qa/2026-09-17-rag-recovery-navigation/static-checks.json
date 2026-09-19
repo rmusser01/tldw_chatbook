@@ -1,0 +1,126 @@
+{
+  "Tests/Library/test_library_rag_state.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "new_diagnostics": [],
+    "changed_range_format": [
+      {
+        "range": "233-233",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "347-347",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "2148-2149",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "2159-2159",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "2162-2163",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      }
+    ]
+  },
+  "Tests/UI/test_library_shell.py": {
+    "baseline_diagnostics": 42,
+    "current_diagnostics": 42,
+    "new_diagnostics": [],
+    "changed_range_format": [
+      {
+        "range": "8234-8234",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "8304-8305",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "8307-8313",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      }
+    ]
+  },
+  "Tests/UI/test_product_maturity_gate16_library_search_rag.py": {
+    "baseline_diagnostics": 5,
+    "current_diagnostics": 5,
+    "new_diagnostics": [],
+    "changed_range_format": [
+      {
+        "range": "527-527",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      }
+    ]
+  },
+  "tldw_chatbook/Library/library_rag_state.py": {
+    "baseline_diagnostics": 7,
+    "current_diagnostics": 7,
+    "new_diagnostics": [],
+    "changed_range_format": [
+      {
+        "range": "1339-1339",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "1342-1342",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      }
+    ]
+  },
+  "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": {
+    "baseline_diagnostics": 2,
+    "current_diagnostics": 2,
+    "new_diagnostics": [],
+    "changed_range_format": [
+      {
+        "range": "866-869",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      }
+    ]
+  },
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "baseline_diagnostics": 205,
+    "current_diagnostics": 205,
+    "new_diagnostics": [],
+    "changed_range_format": [
+      {
+        "range": "9111-9124",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      },
+      {
+        "range": "14288-14290",
+        "exit_code": 0,
+        "output": "1 file already formatted\n"
+      }
+    ]
+  },
+  "Tests/UI/test_library_rag_recovery_navigation.py": {
+    "lint_exit": 0,
+    "format_exit": 0,
+    "lint_output": "All checks passed!\n",
+    "format_output": "1 file already formatted\n"
+  },
+  "Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/native_check.py": {
+    "lint_exit": 0,
+    "format_exit": 0,
+    "lint_output": "All checks passed!\n",
+    "format_output": "1 file already formatted\n"
+  }
+}

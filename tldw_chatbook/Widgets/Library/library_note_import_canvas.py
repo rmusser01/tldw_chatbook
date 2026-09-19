@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import groupby
-from typing import Any
+from typing import Any, TypeVar
 
 from textual import on
 from textual.app import ComposeResult
@@ -24,6 +25,7 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.Notes.note_import_plan_models import (
     NON_IMPORTABLE_CLASSIFICATIONS,
     REVIEW_CLASSIFICATION_ORDER,
+    ImportClassification,
 )
 from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
@@ -50,6 +52,8 @@ _CLASSIFICATION_LABELS = {
 _NON_IMPORTABLE = frozenset(
     classification.value for classification in NON_IMPORTABLE_CLASSIFICATIONS
 )
+
+_UNCHANGED_REPEAT = ImportClassification.UNCHANGED_REPEAT.value
 
 _REVIEW_ORDER = tuple(
     classification.value for classification in REVIEW_CLASSIFICATION_ORDER
@@ -84,6 +88,8 @@ def _disabled_action_label(text: str, *, disabled: bool, reason: str = "") -> st
     return f"{text} unavailable — {reason.rstrip('.')}"
 
 
+_RowT = TypeVar("_RowT")
+
 _ROW_NAME_BUDGET = 56
 """Display-width budget for the path at the head of one review row.
 
@@ -97,12 +103,74 @@ its link count. Those came last and were the first thing the row lost.
 _UNIFORM_RUN_MIN = UNIFORM_RUN_MIN
 
 
-def _bounded_row_name(name: str) -> str:
-    """Keep a review row's path recognizable without spending the whole row."""
-    return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+#: Cells the folder prefix may keep when the FILE NAME alone overflows the
+#: row budget. Enough for "vault/Inbox/" and a "…"-headed tail of anything
+#: deeper; the rest of the budget goes to the name.
+_ROW_FOLDER_BUDGET = 20
 
 
-def _group_heading(label: str, *, rendered: int, total: int) -> str:
+def _elide_name_middle(name: str, budget: int) -> str:
+    """Elide inside one file name, keeping its start and its extension."""
+    if len(name) <= budget:
+        return name
+    if budget <= 1:
+        return "…"[:budget]
+    keep = budget - 1
+    head = (keep + 1) // 2
+    tail = keep - head
+    # ``name[head - keep:]`` read as ``name[0:]`` whenever head == keep (a
+    # budget of 2), returning the WHOLE name after the ellipsis and busting
+    # the budget it was given. Take the last ``tail`` characters explicitly;
+    # a tail of 0 is the empty string, not the whole string.
+    return f"{name[:head]}…{name[len(name) - tail:] if tail else ''}"
+
+
+def bounded_row_name(name: str) -> str:
+    """Keep a review row's path recognizable without spending the whole row.
+
+    task-32622 AC#4 (B cap 23): ``elide_path_middle`` keeps the basename
+    whole and truncates the head, which is right until the basename ALONE
+    overflows -- then it falls back to the basename's tail, so one row of a
+    review table read as a fragment ending in ".md" with its "vault/Inbox/"
+    gone, while every sibling row carried its folder. The folder is the one
+    thing that lets a reader find the file in the tree, so keep it and elide
+    inside the name instead, where the information is least: the start of a
+    file name and its extension both survive.
+    """
+    folder, separator, base = name.rpartition("/")
+    if len(name) <= _ROW_NAME_BUDGET or not separator:
+        return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    if len(base) + len(separator) <= _ROW_NAME_BUDGET - len("…"):
+        # The FOLDER is what overflows; the existing head-truncate is right.
+        return elide_path_middle(name, budget=_ROW_NAME_BUDGET)
+    prefix = f"{folder}{separator}"
+    if len(prefix) > _ROW_FOLDER_BUDGET:
+        prefix = f"…{prefix[len(prefix) - _ROW_FOLDER_BUDGET + 1:]}"
+    return f"{prefix}{_elide_name_middle(base, _ROW_NAME_BUDGET - len(prefix))}"
+
+
+def review_row_line(*parts: str) -> str:
+    """Join one review row's clauses into the grammar both reviews use.
+
+    task-32625 AC#1/AC#4 (idea 7 of task-32627): Import once and lasting
+    sync each had their own copy of "name · what happens · where", with
+    their own trailing-punctuation rules -- which is how the two reviews
+    drifted apart in the first place. This is the one place that shape is
+    written down; the surfaces still own their own row WIDGETS, because
+    an Import row carries per-item Skip/Create/Update controls and a sync
+    row carries conflict choices and a diff.
+
+    Args:
+        *parts: Clauses in reading order. Empty ones are dropped, and each
+            keeps its own trailing full stop out of the joined line.
+
+    Returns:
+        The clauses joined with " · ".
+    """
+    return " · ".join(part.rstrip(" .") for part in parts if part)
+
+
+def group_heading(label: str, *, rendered: int, total: int) -> str:
     """Name what a group heading's count means on this page.
 
     task-32250: "New (23)" on page 1 and "New (22)" on page 2 were the same
@@ -125,14 +193,26 @@ def _run_key(item: LibraryNoteImportItemSnapshot) -> tuple[str, ...]:
     )
 
 
-def _uniform_runs(
-    items: tuple[LibraryNoteImportItemSnapshot, ...],
-) -> tuple[tuple[LibraryNoteImportItemSnapshot, ...], ...]:
-    """Split one rendered group into consecutive interchangeable runs."""
-    return tuple(tuple(run) for _, run in groupby(items, key=_run_key))
+def uniform_runs(
+    items: tuple[_RowT, ...],
+    *,
+    key: Callable[[_RowT], tuple[str, ...]] = _run_key,  # type: ignore[assignment]
+) -> tuple[tuple[_RowT, ...], ...]:
+    """Split one rendered group into consecutive interchangeable runs.
+
+    task-32535: the lasting-sync review shares this with its own row type
+    and key; the run threshold stays the pager's ``UNIFORM_RUN_MIN``.
+    """
+    return tuple(tuple(run) for _, run in groupby(items, key=key))
 
 
-def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
+def run_disclosure(
+    title: str,
+    *,
+    dom_token: str,
+    id_prefix: str = "note-import-run",
+    classes: str = "note-import-run",
+) -> Collapsible:
     """Return a one-line disclosure for a collapsed run of identical rows.
 
     The app-wide ``Collapsible`` rule (a round border, a 3-row title, a 3-row
@@ -149,15 +229,23 @@ def _run_disclosure(title: str, *, dom_token: str) -> Collapsible:
         # instance comes back from `from_text` unmodified -- this is the
         # markup=False every other Static on this canvas already sets.
         title=Content(title),
-        id=f"note-import-run-{dom_token}",
-        classes="note-import-run",
+        id=f"{id_prefix}-{dom_token}",
+        classes=classes,
         collapsed=True,
     )
     disclosure.styles.min_height = 1
-    disclosure.styles.margin = 0
-    disclosure.styles.padding = 0
-    disclosure.styles.border = ("none", "transparent")
+    disclosure.add_class("m-0")
+    disclosure.add_class("p-0")
+    disclosure.add_class("border-none")
     return disclosure
+
+
+# task-32535: the private names stay one release as aliases for the four
+# helpers the lasting-sync review now shares.
+_bounded_row_name = bounded_row_name
+_group_heading = group_heading
+_uniform_runs = uniform_runs
+_run_disclosure = run_disclosure
 
 
 def _run_summary(
@@ -186,10 +274,9 @@ def _run_summary(
         else f"{len(run)} of {total} files"
     )
     if first.classification in _NON_IMPORTABLE:
-        return f"{where} · {count} · {first.reason.rstrip(' .')}"
+        return review_row_line(where, count, first.reason)
     verb = "Skip" if first.action == "skip" else "Create"
-    destination = first.membership_summary.rstrip(" .")
-    return f"{where} · {count} · {verb} all · {destination}"
+    return review_row_line(where, count, f"{verb} all", first.membership_summary)
 
 
 _SOURCE_NAME_BUDGET = 48
@@ -201,7 +288,20 @@ bare-filename branches from drifting to different limits independently).
 """
 
 
-def _bounded_source_name(name: str) -> str:
+#: Cells the scrolling body keeps for itself around the summary line (its
+#: own padding plus room for a scrollbar), subtracted when the canvas's width
+#: stands in for the unmeasured Static's.
+_IMPORT_BODY_CHROME_CELLS = 2
+
+_FOLDER_SELECTED_PREFIX = "1 folder selected: "
+"""What precedes a folder path on the confirmation line.
+
+Its width is what the path has to share the row with, so the fit below
+subtracts exactly this rather than a hand-kept number.
+"""
+
+
+def _bounded_source_name(name: str, budget: int = _SOURCE_NAME_BUDGET) -> str:
     """Keep one selected source name useful without dominating compact layouts.
 
     A folder's absolute path (contains "/" or "\\\\" -- a folder selection
@@ -215,10 +315,36 @@ def _bounded_source_name(name: str) -> str:
     minor). Head-truncate those as before.
     """
     if "/" in name or "\\" in name:
-        return elide_path_middle(name, budget=_SOURCE_NAME_BUDGET)
-    if len(name) <= _SOURCE_NAME_BUDGET:
+        return elide_path_middle(name, budget=budget)
+    if len(name) <= budget:
         return name
-    return f"{name[: _SOURCE_NAME_BUDGET - 1]}…"
+    return f"{name[: budget - 1]}…"
+
+
+def _selection_summary(
+    state: LibraryNoteImportSnapshot, budget: int = _SOURCE_NAME_BUDGET
+) -> str:
+    """The one line that states which sources this import will read.
+
+    ``budget`` is the width the source name may take. The default is the
+    compact floor; the mounted canvas re-renders this against the pane it
+    actually got (``_fit_source_summary``), because a 190-column pane had
+    room for the whole path and was still showing a 48-character elision
+    (task-32554 AC#2).
+    """
+    count = len(state.selected_names)
+    if not count:
+        return "No source selected."
+    if state.selection_kind == "folder":
+        name = _bounded_source_name(state.selected_names[0], budget=budget)
+        return f"{_FOLDER_SELECTED_PREFIX}{name}"
+    noun = "file" if count == 1 else "files"
+    visible_names = tuple(
+        _bounded_source_name(name) for name in state.selected_names[:3]
+    )
+    remainder = count - len(visible_names)
+    more = f"; and {remainder} more" if remainder else ""
+    return f"{count} {noun} selected: {', '.join(visible_names)}{more}"
 
 
 class _ImportBody(VerticalScroll):
@@ -415,6 +541,9 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     class RetryRequested(Message):
         """Request retry of only receipt-reported retryable failures."""
 
+    class ViewImportedNotesRequested(Message):
+        """Request the Notes list that now holds what this import created."""
+
     class PageRequested(Message):
         """Request a bounded preview-page change."""
 
@@ -530,16 +659,53 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     def on_mount(self) -> None:
         self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
+        self.call_after_refresh(self._fit_source_summary)
 
     def _after_recompose(self) -> None:
         self._tighten_run_disclosures()
         self.call_after_refresh(self._update_overflow_hint)
+        self.call_after_refresh(self._fit_source_summary)
+
+    def on_resize(self) -> None:
+        """A wider (or narrower) pane changes how much of the path fits."""
+        self.call_after_refresh(self._fit_source_summary)
+
+    def _fit_source_summary(self) -> None:
+        """Re-state the selected folder against the width the pane actually got.
+
+        task-32554 AC#2: the confirmation middle-elided an 89-character path
+        to 48 characters inside a 190-column pane -- the elision hid
+        ``A/fresh/``, the very segments that told two same-named vaults
+        apart. Compose cannot know the width (the canvas is measured after
+        layout), so the line is composed at the compact floor and widened
+        here, once the pane has a measured width.
+        """
+        state = self.snapshot
+        if state.selection_kind != "folder" or not state.selected_names:
+            return
+        try:
+            summary = self.query_one("#note-import-source-summary", Static)
+        except Exception:
+            return
+        # The Static itself is freshly mounted on every recompose and is
+        # often still unmeasured when this runs, while the CANVAS keeps its
+        # width across child recomposes -- so it is the reliable ruler, less
+        # a couple of cells for the scrolling body's own chrome. Measured
+        # live: reading the Static alone left the line at the 48-character
+        # floor until the terminal was resized.
+        width = summary.content_size.width or max(
+            self.content_size.width - _IMPORT_BODY_CHROME_CELLS, 0
+        )
+        if width <= 0:
+            return
+        budget = max(_SOURCE_NAME_BUDGET, width - len(_FOLDER_SELECTED_PREFIX))
+        summary.update(_selection_summary(state, budget=budget))
 
     def _tighten_run_disclosures(self) -> None:
         """Keep a collapsed run's title one line, as the pager budgeted for."""
         for title in self.query(".note-import-run > CollapsibleTitle"):
-            title.styles.height = 1
-            title.styles.padding = 0
+            title.add_class("h-1")
+            title.add_class("p-0")
 
     def _update_overflow_hint(self) -> None:
         try:
@@ -640,38 +806,49 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 "Import the exact choices shown in this review."
             )
             yield submit
-        elif state.phase == "receipt" and (
-            state.retry_available or state.retryable_failures
-        ):
-            noun = "failure" if state.retryable_failures == 1 else "failures"
-            yield Button(
-                state.retry_label or f"Retry {state.retryable_failures} {noun}",
-                id="note-import-retry",
-                classes="library-canvas-action note-import-primary",
-                compact=True,
-            )
+        elif state.phase == "receipt":
+            if state.retry_available or state.retryable_failures:
+                noun = "failure" if state.retryable_failures == 1 else "failures"
+                yield Button(
+                    state.retry_label or f"Retry {state.retryable_failures} {noun}",
+                    id="note-import-retry",
+                    classes="library-canvas-action note-import-primary",
+                    compact=True,
+                )
+            if state.notes_written:
+                # task-32622 AC#1 (B cap 25): after a 54-note import the
+                # receipt offered a collapsed Skipped disclosure and "esc
+                # back to notes" -- no way forward from the biggest thing the
+                # user had done all session. The count is on the label so the
+                # control names its own destination.
+                noun = "note" if state.notes_written == 1 else "notes"
+                view = Button(
+                    f"View {state.notes_written} imported {noun}",
+                    id="note-import-view-notes",
+                    classes="library-canvas-action note-import-primary",
+                    compact=True,
+                )
+                view.tooltip = "Go to the Notes list holding these notes."
+                yield view
 
     def _compose_selection(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
         count = len(state.selected_names)
-        if not count:
-            source_copy = "No source selected."
-        elif state.selection_kind == "folder":
-            source_copy = (
-                f"1 folder selected: {_bounded_source_name(state.selected_names[0])}"
-            )
-        else:
-            noun = "file" if count == 1 else "files"
-            visible_names = tuple(
-                _bounded_source_name(name) for name in state.selected_names[:3]
-            )
-            remainder = count - len(visible_names)
-            more = f"; and {remainder} more" if remainder else ""
-            source_copy = f"{count} {noun} selected: {', '.join(visible_names)}{more}"
         yield Static(
-            source_copy,
+            _selection_summary(state),
             id="note-import-source-summary",
             markup=False,
         )
+        # task-32641: what the folder was recognised as, on the confirmation
+        # line rather than inside the review. Composed only when there is
+        # something to say -- a folder that is not a vault gets no row at
+        # all, not an empty one (AC#3).
+        if state.vault_recognition:
+            yield Static(
+                state.vault_recognition,
+                id="note-import-vault-recognition",
+                classes="note-import-quiet",
+                markup=False,
+            )
 
         if state.selection_kind != "folder":
             yield Button(
@@ -820,7 +997,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                     ),
                     compact=True,
                 )
-                if classification not in _NON_IMPORTABLE:
+                # task-32541: an unchanged repeat has nothing to create -- its
+                # header offered "Create all" anyway, one press from
+                # re-creating every note on the page.
+                if (
+                    classification not in _NON_IMPORTABLE
+                    and classification != _UNCHANGED_REPEAT
+                ):
                     yield Button(
                         "Create all on this page",
                         id=f"note-import-group-{classification}-create",
@@ -900,7 +1083,7 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 item.membership_summary,
             )
         )
-        return " · ".join(part.rstrip(" .") for part in parts if part)
+        return review_row_line(*parts)
 
     def _compose_review_item(
         self,
@@ -1113,6 +1296,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         classification, separator, action = (event.button.name or "").rpartition(":")
         if separator and classification and action:
             self.post_message(self.GroupActionRequested(classification, action))
+
+    @on(Button.Pressed, "#note-import-view-notes")
+    def _view_imported_notes(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.ViewImportedNotesRequested())
 
     @on(Button.Pressed, "#note-import-check")
     def _check(self, event: Button.Pressed) -> None:

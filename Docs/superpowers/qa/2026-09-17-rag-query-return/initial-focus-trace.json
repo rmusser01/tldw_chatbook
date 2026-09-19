@@ -1,0 +1,138 @@
+[
+  {
+    "label": "evidence action before resize",
+    "focus": "library-rag-open-result-0",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=40, y=-84, width=125, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "settled after resize",
+    "focus": "library-row-browse-search",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-row-browse-collections",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-row-browse-skills",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-row-browse-prompts",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-row-browse-notes",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-row-browse-conversations",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-row-browse-media",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "console-rail-section-toggle-library-browse",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-search-clear",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-search-input",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-ingest-top-button",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-rail-collapse",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-86, width=50, height=3)",
+    "panel_scroll": 94
+  },
+  {
+    "label": "shift+tab",
+    "focus": null,
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-186, width=50, height=3)",
+    "panel_scroll": 194
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-rag-select-result-0",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-186, width=50, height=3)",
+    "panel_scroll": 194
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-rag-open-result-0",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-186, width=50, height=3)",
+    "panel_scroll": 194
+  },
+  {
+    "label": "shift+tab",
+    "focus": "library-rag-result-card-0",
+    "original_query_current": true,
+    "original_query_mounted": true,
+    "query_region": "Region(x=29, y=-186, width=50, height=3)",
+    "panel_scroll": 194
+  }
+]

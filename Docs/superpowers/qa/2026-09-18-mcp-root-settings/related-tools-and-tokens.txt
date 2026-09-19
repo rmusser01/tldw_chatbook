@@ -1,0 +1,25 @@
+........................................................                 [100%]
+============================= slowest 25 durations =============================
+20.33s call     Tests/UI/test_mcp_tools_compact_access.py::test_tools_filters_and_first_last_rows_visible_through_resize[textual-light]
+19.29s call     Tests/UI/test_mcp_tools_compact_access.py::test_tools_filters_and_first_last_rows_visible_through_resize[textual-dark]
+17.47s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+17.02s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+9.29s call     Tests/UI/test_mcp_tools_compact_access.py::test_complete_local_switch_label_survives_compact_pane[textual-light]
+8.98s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-light]
+8.90s call     Tests/UI/test_mcp_tools_compact_access.py::test_complete_local_switch_label_survives_compact_pane[textual-dark]
+8.68s call     Tests/UI/test_mcp_tools_compact_access.py::test_overflowing_catalog_retains_visible_cursor_on_resize[textual-light]
+8.42s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-dark]
+8.22s call     Tests/UI/test_mcp_tools_compact_access.py::test_overflowing_catalog_retains_visible_cursor_on_resize[textual-dark]
+3.90s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[True]
+3.58s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[False]
+1.65s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.40s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.39s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.39s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.39s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.38s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.37s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.36s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+
+(5 durations < 1s hidden.)
+56 passed in 155.13s (0:02:35)

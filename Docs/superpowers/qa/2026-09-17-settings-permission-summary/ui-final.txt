@@ -1,0 +1,20 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+12.83s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_revisit_uses_reloaded_config
+12.09s call     Tests/UI/test_settings_permission_summary_journeys.py::test_latest_permission_summary_edit_survives_a_held_write[model-first-model-last-model-category]
+11.90s call     Tests/UI/test_settings_permission_summary_journeys.py::test_latest_permission_summary_edit_survives_a_held_write[mode-always-off-category]
+11.86s call     Tests/UI/test_settings_permission_summary_journeys.py::test_latest_permission_summary_edit_survives_a_held_write[provider-Anthropic-OpenAI-category]
+11.53s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_reports_replaced_file_when_cache_reload_fails[after_receipt]
+11.46s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_failure_retains_values_and_keyboard_retry[size0-category]
+10.88s call     Tests/UI/test_settings_permission_summary_journeys.py::test_latest_permission_summary_edit_survives_a_held_write[model-first-model-last-model-screen]
+10.62s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_reports_replaced_file_when_cache_reload_fails[before_receipt]
+10.57s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_failure_retains_values_and_keyboard_retry[size1-category]
+10.50s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_reports_replaced_file_when_cache_reload_fails[none]
+10.46s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_failure_retains_values_and_keyboard_retry[size0-screen]
+10.33s call     Tests/UI/test_settings_permission_summary_journeys.py::test_latest_permission_summary_edit_survives_a_held_write[provider-Anthropic-OpenAI-screen]
+10.02s call     Tests/UI/test_settings_permission_summary_journeys.py::test_latest_permission_summary_edit_survives_a_held_write[mode-always-off-screen]
+9.93s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_failure_retains_values_and_keyboard_retry[size1-screen]
+9.78s call     Tests/UI/test_settings_permission_summary_journeys.py::test_permission_summary_open_and_revisit_do_not_write
+
+(10 durations < 1s hidden.)
+15 passed in 167.94s (0:02:47)

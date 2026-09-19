@@ -1,0 +1,37 @@
+{
+  "base": "0f69e0ba96",
+  "full_suite": false,
+  "distinct_passed": 118,
+  "remaining_failed": 1,
+  "runs": [
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collections_capture_reader.py Tests/UI/test_library_collections_capture_controller.py Tests/Library/test_collections_capture_scope_service.py Tests/UI/test_library_collections_reader_geometry.py Tests/Architecture/test_library_collections_wiring.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py",
+      "log": "neighbors-final.txt",
+      "passed": 77,
+      "failed": 1,
+      "seconds": 38.68,
+      "failure": "Contextual row inventory expected 7; actionable More now participates in scope-row dispatch. Assertion repaired and rerun in the final journey command."
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collection_browse_journeys.py Tests/UI/test_library_collection_saved_search_loading.py Tests/UI/test_library_collection_reader_journeys.py Tests/UI/test_library_collections_capture_reader.py::test_scope_rows_are_contextual_bounded_and_show_only_active_total",
+      "log": "journeys-complete2.txt",
+      "passed": 33,
+      "failed": 0,
+      "seconds": 133.86
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/Architecture/test_library_modules_size_ratchet.py -k 'collections or every_controller' Tests/Architecture/test_screen_size_ratchet.py -k 'collections or every_controller or library_screen'",
+      "log": "size-final.txt",
+      "passed": 8,
+      "failed": 1,
+      "deselected": 41,
+      "seconds": 0.7,
+      "failure": "Unchanged LibraryScreen exceeds existing size budget."
+    }
+  ],
+  "counting": "77 neighboring passes + 33 final journey/inventory passes + 8 size/inventory passes = 118 distinct passing checks. Earlier overlapping runs are not added.",
+  "new_checks": 20,
+  "native_run": "run-002",
+  "static_new_diagnostics": 0,
+  "warnings": "Two inherited pytest garbage-directory cleanup warnings per targeted run."
+}

@@ -1,0 +1,25 @@
+....................................                                     [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7595ab28-1193-4b7e-8ca2-2b848516b498/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7595ab28-1193-4b7e-8ca2-2b848516b498/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7595ab28-1193-4b7e-8ca2-2b848516b498
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7595ab28-1193-4b7e-8ca2-2b848516b498'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+5.39s call     Tests/UI/test_library_file_notes_workspace.py::test_folder_files_shared_shell_retains_state_across_breakpoints
+4.28s call     Tests/UI/test_console_settings_geometry.py::test_compact_tab_traversal_reveals_every_body_focus_target
+2.26s call     Tests/UI/test_library_notes_w4_layout.py::test_a_pane_that_widens_again_records_the_width_it_was_given
+1.59s call     Tests/UI/test_library_style_transitions.py::test_ordinary_emergency_canvas_releases_previous_fractional_width
+1.29s call     Tests/UI/test_library_file_notes_git.py::test_narrow_editor_actions_keep_complete_labels_at_40_by_20
+1.21s call     Tests/UI/test_library_file_notes_git.py::test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_remount
+1.06s call     Tests/UI/test_library_notes_w4_layout.py::test_f6_on_the_landing_lands_on_a_marked_target
+1.00s call     Tests/UI/test_console_settings_geometry.py::test_conversation_settings_wide_tier_tracks_live_resize_across_threshold[shrink-below-threshold]
+
+(17 durations < 1s hidden.)
+36 passed, 2 warnings in 45.15s

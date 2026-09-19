@@ -1,0 +1,154 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________________________________ test_baseline _________________________________
+
+request = <FixtureRequest for <Coroutine test_baseline>>
+
+    @private_profile_test
+    async def test_baseline(request):
+        from Tests.UI.test_console_rag_settings_modal import test_source_scope_survives_a_screen_state_round_trip
+>       test_source_scope_survives_a_screen_state_round_trip()
+
+Tests/UI/test_pr2704_rag_probe.py:5: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/test_console_rag_settings_modal.py:550: in test_source_scope_survives_a_screen_state_round_trip
+    screen = _bare_screen(store)
+             ^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_rag_settings_modal.py:521: in _bare_screen
+    screen._console_chat_store = store
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9980: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9947: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4878: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:4129: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3906: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ChatScreen()
+
+    def console_view_hooks(self) -> dict[str, Any]:
+        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+    
+        task-15860. The runtime outlives this screen, so every callable it
+        holds that closes over `self` has to be re-bindable and, more
+        importantly, CLEARABLE -- Task 0's P3 found five such slots still
+        pointing at a dead `ChatScreen` after a real unmount, none of them
+        raising, and a silent wrong answer from `wake_conversation_in_view`
+        decides whether the unseen `◈` mark survives.
+    
+        Keys either match `CONSOLE_VIEW_HOOK_SLOTS` (directly rebound and
+        cleared) or are reached through a stable runtime projection router.
+        A test inventories both sets so neither path can retain this view.
+    
+        Returns:
+            dict[str, Any]: slot name -> this view's value.
+        """
+        skill = getattr(self, "_skill", None)
+        return {
+            "set_pending_decision": self._set_console_pending_decision,
+            "follow_watchlists_operations": self._follow_console_watchlists_operations,
+            "set_pending_approval": self._set_console_pending_approval,
+            # ADR-090: UI-thread bridge to patch a mounted approval card's
+            # advisory summary line in place (never re-runs set_batch).
+            "update_pending_approval_summary": self._update_console_approval_summary,
+            # Task 9 (parked background approvals): UI-thread bridge target
+            # for a NON-active session's approval round -- badge + one
+            # toast, never the mounted-card path above.
+            "park_pending_approval": self._park_console_approval,
+            # Task 10 (background completion toasts): UI-thread bridge
+            # target for a NON-active session's run finishing/failing -- the
+            # one-per-run toast, invoked directly (never via
+            # `call_from_thread`) from `_set_run_state`'s once-guarded
+            # non-active terminal branch.
+            "notify_run_outcome": self._notify_console_run_outcome,
+            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+            # one error toast carrying the run's visible copy.
+            "notify_run_failure": self._notify_console_run_failure,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
+            "set_pending_chat_create": getattr(
+                skill, "_set_console_pending_chat_create", None
+            ),
+            # TASK-32482 Task 7: UI-thread completion for a confirmed
+            # agent-created chat (fork_chat/new_chat) -- the executor's
+            # marshal target. Wired here (not at construction) because it
+            # closes over THIS screen, exactly like its sibling bridges.
+            "complete_agent_chat_create": self._complete_agent_chat_create,
+            # PRD Feature B: the pinned task panel above the transcript.
+            "set_task_panel": self._set_console_task_panel,
+            # PRD Feature A: the ask_user question card.
+            "set_pending_question": self._set_console_pending_question,
+            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
+            # PR3a-2 Task 5, user-wins-ties.
+            "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+            # task-15971: the delivery COMMIT's visibility probe -- a wake
+            # completing while this conversation is not displayed-and-active
+            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+            # learns an off-view delivery landed).
+            "wake_conversation_in_view": (
+                self._fleet._console_wake_conversation_in_view
+            ),
+            # the store's one screen-owned callback
+            "on_scope_flushed": self._on_console_scope_flushed,
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the live
+            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            "delivery_ui_hook": self._fleet._on_console_wake_delivery_started,
+            "project_project_instruction_binding": (
+>               self._session._project_project_instruction_binding
+                ^^^^^^^^^^^^^
+            ),
+            "project_project_instruction_dispatch": (
+                self._session._project_project_instruction_dispatch
+            ),
+            "dismiss_project_instruction_decision": (
+                self._session._dismiss_project_instruction_decision_projection
+            ),
+        }
+E       AttributeError: 'ChatScreen' object has no attribute '_session'
+
+tldw_chatbook/UI/Screens/chat_screen.py:10320: AttributeError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 19:14:09.330 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-17 19:14:09.370 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6133 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xtx1q6rd/config/config.toml
+2026-09-17 19:14:09.371 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6162 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xtx1q6rd/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-17 19:14:09.372 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6171 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xtx1q6rd/config/config.toml
+2026-09-17 19:14:09.373 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-17 19:14:09.373 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6242 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-17 19:14:09.379 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /private/tmp/tldw-32749-dev-baseline/tldw_chatbook
+2026-09-17 19:14:09.380 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /private/tmp/tldw-32749-dev-baseline/tldw_chatbook
+2026-09-17 19:14:09.380 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-17 19:14:09.381 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-17 19:14:09.409 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3424 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xtx1q6rd/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-17 19:14:09.409 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3436 - load_settings: Configuration cached for future use
+2026-09-17 19:14:09.409 | INFO     | tldw_chatbook.config:<module>:9752 - Default API Endpoint (from config.py global scope): openai
+2026-09-17 19:14:09.410 | DEBUG    | tldw_chatbook.config:<module>:9775 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-17 19:14:09.506 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-17 19:14:09.515 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-17 19:14:09.592 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 19:14:09.689 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 19:14:09.690 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 19:14:09.690 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-17 19:14:09.829 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-17 19:14:10.156 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+============================= slowest 25 durations =============================
+1.09s setup    Tests/UI/test_pr2704_rag_probe.py::test_baseline
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_pr2704_rag_probe.py::test_baseline - AttributeError: 'Ch...
+1 failed in 1.73s

@@ -1,0 +1,12 @@
+.......                                                                  [100%]
+============================= slowest 25 durations =============================
+11.43s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size1-textual-light]
+10.59s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size1-textual-dark]
+10.44s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size0-textual-light]
+9.99s call     Tests/UI/test_settings_change_review_journeys.py::test_change_review_keyboard_conflict_preparation_and_retry[size0-textual-dark]
+7.67s call     Tests/UI/test_settings_change_review_journeys.py::test_slow_readiness_observation_cannot_publish_after_navigation[modal]
+7.38s call     Tests/UI/test_settings_change_review_journeys.py::test_slow_readiness_observation_cannot_publish_after_navigation[workspace]
+6.85s call     Tests/UI/test_settings_change_review_journeys.py::test_queued_toggle_preserves_the_activated_consent_intent
+
+(14 durations < 1s hidden.)
+7 passed in 66.39s (0:01:06)

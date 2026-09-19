@@ -1,0 +1,286 @@
+{
+  "pid": 58496,
+  "runner_sha256": "0a818a35e9c9e98995cdb6c7fe448e43cd615b083a11b84d3f19ef93ee061f8e",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "origin": "query",
+      "transitions": [
+        {
+          "size": [
+            80,
+            24
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            29,
+            8,
+            50,
+            3
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            40,
+            10,
+            125,
+            3
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            24
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            40,
+            10,
+            125,
+            3
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            40,
+            10,
+            125,
+            3
+          ],
+          "painted": true
+        }
+      ],
+      "reverse_tab_stops": [],
+      "query_scope_answer_preserved_during_resize": true,
+      "query_editable_without_submission": true,
+      "no_extra_retrieval_or_provider_calls": true
+    },
+    {
+      "theme": "textual-dark",
+      "origin": "evidence",
+      "transitions": [
+        {
+          "size": [
+            80,
+            24
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            30,
+            17,
+            10,
+            1
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            41,
+            40,
+            10,
+            1
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            24
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            41,
+            19,
+            10,
+            1
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            41,
+            36,
+            10,
+            1
+          ],
+          "painted": true
+        }
+      ],
+      "reverse_tab_stops": [
+        "library-rag-result-card-0",
+        "library-rag-scope-toggle-media",
+        "library-rag-run-query",
+        "library-rag-query-input"
+      ],
+      "query_scope_answer_preserved_during_resize": true,
+      "query_editable_without_submission": true,
+      "no_extra_retrieval_or_provider_calls": true
+    },
+    {
+      "theme": "textual-light",
+      "origin": "query",
+      "transitions": [
+        {
+          "size": [
+            80,
+            24
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            29,
+            7,
+            50,
+            3
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            40,
+            9,
+            125,
+            3
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            24
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            40,
+            9,
+            125,
+            3
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-query-input",
+          "region": [
+            40,
+            9,
+            125,
+            3
+          ],
+          "painted": true
+        }
+      ],
+      "reverse_tab_stops": [],
+      "query_scope_answer_preserved_during_resize": true,
+      "query_editable_without_submission": true,
+      "no_extra_retrieval_or_provider_calls": true
+    },
+    {
+      "theme": "textual-light",
+      "origin": "evidence",
+      "transitions": [
+        {
+          "size": [
+            80,
+            24
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            30,
+            17,
+            10,
+            1
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            41,
+            40,
+            10,
+            1
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            24
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            41,
+            19,
+            10,
+            1
+          ],
+          "painted": true
+        },
+        {
+          "size": [
+            170,
+            48
+          ],
+          "focus": "library-rag-open-result-0",
+          "region": [
+            41,
+            36,
+            10,
+            1
+          ],
+          "painted": true
+        }
+      ],
+      "reverse_tab_stops": [
+        "library-rag-result-card-0",
+        "library-rag-scope-toggle-media",
+        "library-rag-run-query",
+        "library-rag-query-input"
+      ],
+      "query_scope_answer_preserved_during_resize": true,
+      "query_editable_without_submission": true,
+      "no_extra_retrieval_or_provider_calls": true
+    }
+  ],
+  "waiting_for": "edited query ready",
+  "real_keyword_searches": 4,
+  "controlled_provider_calls": 4,
+  "source_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

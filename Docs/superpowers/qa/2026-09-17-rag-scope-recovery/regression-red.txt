@@ -1,0 +1,53 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-0] _
+Tests/UI/test_library_rag_scope_recovery.py:82: in test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery
+    assert scope.has_class("has-recovery") is (initial_count == 0)
+E   AssertionError: assert False is (0 == 0)
+E    +  where False = has_class('has-recovery')
+E    +    where has_class = Vertical(id='library-rag-source-scope', classes='library-rag-region').has_class
+_ test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-1] _
+Tests/UI/test_library_rag_scope_recovery.py:82: in test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery
+    assert scope.has_class("has-recovery") is (initial_count == 0)
+E   AssertionError: assert True is (1 == 0)
+E    +  where True = has_class('has-recovery')
+E    +    where has_class = Vertical(id='library-rag-source-scope', classes='library-rag-region has-recovery').has_class
+__ test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-0] __
+Tests/UI/test_library_rag_scope_recovery.py:82: in test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery
+    assert scope.has_class("has-recovery") is (initial_count == 0)
+E   AssertionError: assert False is (0 == 0)
+E    +  where False = has_class('has-recovery')
+E    +    where has_class = Vertical(id='library-rag-source-scope', classes='library-rag-region').has_class
+__ test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-1] __
+Tests/UI/test_library_rag_scope_recovery.py:82: in test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery
+    assert scope.has_class("has-recovery") is (initial_count == 0)
+E   AssertionError: assert True is (1 == 0)
+E    +  where True = has_class('has-recovery')
+E    +    where has_class = Vertical(id='library-rag-source-scope', classes='library-rag-region has-recovery').has_class
+__ test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[panel-0] ___
+Tests/UI/test_library_rag_scope_recovery.py:82: in test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery
+    assert scope.has_class("has-recovery") is (initial_count == 0)
+E   AssertionError: assert False is (0 == 0)
+E    +  where False = has_class('has-recovery')
+E    +    where has_class = Vertical(id='library-rag-source-scope', classes='library-rag-region').has_class
+__ test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[panel-1] ___
+Tests/UI/test_library_rag_scope_recovery.py:82: in test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery
+    assert scope.has_class("has-recovery") is (initial_count == 0)
+E   AssertionError: assert True is (1 == 0)
+E    +  where True = has_class('has-recovery')
+E    +    where has_class = Vertical(id='library-rag-source-scope', classes='library-rag-region has-recovery').has_class
+============================= slowest 25 durations =============================
+1.71s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-0]
+1.49s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-1]
+1.16s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-1]
+1.12s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-0]
+
+(14 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-0]
+FAILED Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-1]
+FAILED Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-0]
+FAILED Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[screen-1]
+FAILED Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[panel-0]
+FAILED Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[panel-1]
+6 failed in 9.55s

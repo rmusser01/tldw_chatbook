@@ -32,6 +32,7 @@ from Tests.UI.consolidated_css import (
     ConsolidatedCSSApp,
 )
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import (
     NoteSelectionDialog,
 )
@@ -190,9 +191,7 @@ def test_tie_aware_stylesheet_arms_reparse_when_a_tie_breaker_lowers():
         # apply. Upstream's own new-source path sets BOTH flags; so must the
         # lowering path.
         sheet._rules_map = {"seeded": []}
-        sheet.add_source(
-            "X { height: 1; }", read_from=("probe", "X"), tie_breaker=-2
-        )
+        sheet.add_source("X { height: 1; }", read_from=("probe", "X"), tie_breaker=-2)
         if expect_armed:
             assert sheet._rules_map is None, (
                 f"{cls.__name__}: a tie-breaker lowering must also null "
@@ -283,11 +282,6 @@ _TESTS_ROOT = Path(__file__).resolve().parent.parent
 # production Console harnesses), ``LibraryHarness`` (``test_library_shell``) and
 # ``DestinationHarness`` (``test_destination_shells``; pushes the route's screen).
 _SPLIT_SHEET_OWNERS = {
-    "screen_agentic_console.tcss": (
-        "ChatScreen",
-        "ConsoleHarness",
-        "DestinationHarness",
-    ),
     "screen_agentic_library.tcss": (
         "LibraryScreen",
         "LibraryHarness",
@@ -312,11 +306,27 @@ _SELECTOR_TOKEN_RE = re.compile(r"[#.]([A-Za-z][\w-]*)")
 def _selector_tokens(path: Path) -> set[str]:
     """Every id/class token that heads a rule in ``path``."""
     tokens: set[str] = set()
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.split("/*")[0].strip()
+    css = re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
+    for raw in css.splitlines():
+        line = raw.strip()
         if "{" in line or line.endswith(","):
             tokens.update(_SELECTOR_TOKEN_RE.findall(line.split("{")[0]))
     return tokens
+
+
+def test_selector_tokens_ignore_multiline_source_comments(tmp_path):
+    """Source filenames in authoring comments are not CSS selectors."""
+    sheet = tmp_path / "source.tcss"
+    sheet.write_text(
+        "/* Source: feature.tcss,\n"
+        "   widget.py,\n"
+        "   Example .comment-class { ignored }\n"
+        "*/\n"
+        "#actual-id,\n"
+        ".actual-class { height: auto; }\n",
+        encoding="utf-8",
+    )
+    assert _selector_tokens(sheet) == {"actual-id", "actual-class"}
 
 
 def _module_string_literals(tree: ast.AST) -> str:
@@ -349,6 +359,7 @@ def _module_string_literals(tree: ast.AST) -> str:
 _REAL_SHEET_SEQUENCES: dict[str, tuple[Path, ...]] = {
     "APP_STYLESHEETS": tuple(APP_STYLESHEETS),
     "TldwCli.CSS_PATH": tuple(Path(entry) for entry in TldwCli.CSS_PATH),
+    "LibraryScreen.CSS_PATH": tuple(Path(entry) for entry in LibraryScreen.CSS_PATH),
 }
 
 
@@ -467,9 +478,7 @@ def _harness_owner_names(node: ast.ClassDef, tree: ast.AST) -> set[str]:
     screen, so only a base list or a statement that reaches the screen can
     exempt a harness (task-8 re-review).
     """
-    classes = {
-        cls.name: cls for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)
-    }
+    classes = {cls.name: cls for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)}
     seen: set[str] = set()
     pending = [node]
     names: set[str] = set()
@@ -564,3 +573,15 @@ def test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone():
         "use CSS_PATH = [str(p) for p in APP_STYLESHEETS]"
         for path, cls, sheet, used in findings
     )
+
+
+def test_harness_scan_resolves_real_library_sheet_sequence():
+    """A Library screen path includes its split sheet; app paths alone do not."""
+    for expression, expected in (
+        ("[*TldwCli.CSS_PATH, *LibraryScreen.CSS_PATH]", True),
+        ("[*TldwCli.CSS_PATH]", False),
+    ):
+        source = "CSS_PATH = " + expression
+        tree = ast.parse(source)
+        expanded = _expanded_css_path_source(tree.body[0].value, tree, source)
+        assert ("screen_agentic_library.tcss" in expanded) is expected

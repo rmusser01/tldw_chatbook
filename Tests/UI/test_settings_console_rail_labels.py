@@ -5,12 +5,18 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
+import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
-    _wait_for_selector,
     _visible_text,
+    _wait_for_selector,
+)
+from Tests.UI.test_library_rag_result_focus import _assert_painted
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
 )
 from Tests.UI.test_settings_configuration_hub import (
     _open_settings_category,
@@ -18,20 +24,39 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_search_focus,
     _wait_for_settings_text,
 )
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
-)
-import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.UI.test_settings_overview_search_journeys import _category, _painted
+from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
-
 
 RAIL_LABEL_TOGGLE = "#settings-console-stack-collapsed-rail-labels"
 RAIL_LAYOUT_SCOPE = "#settings-console-rail-layout-scope"
 
 
+async def _toggle_rail_label(pilot, screen):
+    toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
+    toggle.focus()
+    await pilot.wait_for_scheduled_animations()
+    await pilot.pause()
+    assert screen.focused is toggle
+    viewport = screen.query_one("#settings-detail-pane-body")
+    assert viewport.content_region.contains_region(toggle.region), (
+        "Rail label checkbox is outside the visible Settings viewport",
+        toggle.region,
+        viewport.content_region,
+    )
+    _assert_painted(screen, toggle)
+    previous = toggle.value
+    await pilot.press("space")
+    await pilot.pause()
+    assert toggle.value is not previous
+
+
 @pytest.mark.asyncio
-async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentation():
+@private_profile_test
+async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentation(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -65,7 +90,10 @@ async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentati
 
 
 @pytest.mark.asyncio
-async def test_console_rail_layout_scope_search_lands_with_persistence_guidance():
+@private_profile_test
+async def test_console_rail_layout_scope_search_lands_with_persistence_guidance(
+    request,
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -97,7 +125,9 @@ async def test_console_rail_layout_scope_search_lands_with_persistence_guidance(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_rail_layout_scope_keyboard_stages_and_saves_exact_payload(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -137,7 +167,9 @@ async def test_console_rail_layout_scope_keyboard_stages_and_saves_exact_payload
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_rail_layout_scope_failed_save_keeps_draft_and_global_active(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -169,7 +201,10 @@ async def test_console_rail_layout_scope_failed_save_keeps_draft_and_global_acti
 
 
 @pytest.mark.asyncio
-async def test_console_rail_label_setting_carries_state_and_stages_from_keyboard():
+@private_profile_test
+async def test_console_rail_label_setting_carries_state_and_stages_from_keyboard(
+    request,
+):
     """Space changes the draft text without mutating the active runtime config."""
     app = _build_test_app()
     app.app_config["console"] = {"stack_collapsed_rail_labels": False}
@@ -212,7 +247,10 @@ async def test_console_rail_label_setting_carries_state_and_stages_from_keyboard
 
 
 @pytest.mark.asyncio
-async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance():
+@private_profile_test
+async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance(
+    request,
+):
     """The vertical alias lands on the checkbox and exposes its config contract."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -249,7 +287,9 @@ async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_rail_label_setting_saves_exact_payload_and_runtime_value(
+    request,
     monkeypatch,
 ):
     """Successful category Save persists once, then activates the saved style."""
@@ -268,7 +308,7 @@ async def test_console_rail_label_setting_saves_exact_payload_and_runtime_value(
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        await pilot.click(RAIL_LABEL_TOGGLE)
+        await _toggle_rail_label(pilot, screen)
 
         assert app.app_config["console"]["stack_collapsed_rail_labels"] is False
         await pilot.click("#settings-save-category")
@@ -302,7 +342,9 @@ async def test_console_rail_label_setting_saves_exact_payload_and_runtime_value(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_rail_label_failed_save_keeps_draft_and_active_style(
+    request,
     monkeypatch,
 ):
     """Persistence failure keeps the selected value without activating it."""
@@ -323,7 +365,7 @@ async def test_console_rail_label_failed_save_keeps_draft_and_active_style(
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        await pilot.click(RAIL_LABEL_TOGGLE)
+        await _toggle_rail_label(pilot, screen)
         await pilot.click("#settings-save-category")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -348,7 +390,8 @@ async def test_console_rail_label_failed_save_keeps_draft_and_active_style(
 
 
 @pytest.mark.asyncio
-async def test_console_rail_label_revert_discards_every_console_behavior_draft():
+@private_profile_test
+async def test_console_rail_label_revert_discards_every_console_behavior_draft(request):
     """Category Revert restores the rail and paste controls together."""
     app = _build_test_app()
     app.app_config["console"] = {
@@ -362,7 +405,7 @@ async def test_console_rail_label_revert_discards_every_console_behavior_draft()
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         screen.query_one(RAIL_LAYOUT_SCOPE, Select).value = "workspace"
-        await pilot.click(RAIL_LABEL_TOGGLE)
+        await _toggle_rail_label(pilot, screen)
         screen.query_one(
             "#settings-console-collapse-large-pastes-toggle", Checkbox
         ).value = False
@@ -392,3 +435,26 @@ async def test_console_rail_label_revert_discards_every_console_behavior_draft()
             screen._console_behavior_result,
             str(result.renderable),
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+@private_profile_test
+async def test_console_rail_toggle_is_painted_with_production_styles(
+    request, theme, size
+):
+    """The scrolled rail control must paint its label and glyph before toggling."""
+    app = _build_test_app()
+    app.app_config["console"] = {"stack_collapsed_rail_labels": False}
+    host = _StyledDestinationHarness(app, "settings")
+    host.theme = theme
+    async with host.run_test(size=size) as pilot:
+        await _category(host, pilot, "Console Behavior")
+        screen = host.screen
+        await _toggle_rail_label(pilot, screen)
+        toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
+        painted = _painted(host, toggle)
+        assert str(toggle.label) in painted, (toggle.region, painted)
+        assert "X" in painted, (toggle.region, painted)
+        assert app.app_config["console"]["stack_collapsed_rail_labels"] is False

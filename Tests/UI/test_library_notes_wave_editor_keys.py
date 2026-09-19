@@ -706,7 +706,12 @@ async def test_info_properties_show_an_absolute_timestamp_beside_the_relative_on
         assert "Created" in meta
         # An absolute local timestamp ("YYYY-MM-DD HH:MM"), not just a bare
         # relative age -- and never the raw ISO string reaching the user.
-        assert re.search(r"Created \d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+ ago", meta), (
+        #
+        # task-32642 made the wide layout pad the label column, so "Created"
+        # and its value are separated by as many spaces as the widest label
+        # needs. The fact under test is the VALUE beside the age; the
+        # separator is `\s+` rather than one literal space.
+        assert re.search(r"Created\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2} · \S+ ago", meta), (
             f"No absolute timestamp beside the relative age: {meta!r}"
         )
         assert "T" not in meta.split("Created ", 1)[1].split(" · ")[0], (
@@ -932,6 +937,37 @@ async def test_the_editor_footer_advertises_the_document_end_key():
         assert shortcuts.get("ctrl+end") == "end of note", shortcuts
 
 
+@pytest.mark.asyncio
+async def test_ctrl_end_drops_off_the_footer_once_focus_leaves_the_body():
+    """task-32623: the chip named a key that did nothing off the body.
+
+    ``ctrl+end`` (task-32247) is a ``TextArea``-class binding, live only
+    while the note body itself is the focused widget -- Tab (task-32246)
+    moves focus to a toolbar Button, where the key reaches nothing, yet the
+    static editor tier kept advertising it regardless.
+    """
+    host = _build_notes_host(_LONG_NOTE_BODY)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_first_note(screen, pilot)
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+        assert dict(screen._library_notes_footer_shortcuts()).get(
+            "ctrl+end"
+        ) == "end of note"
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert screen.focused is not None and screen.focused.id != "library-note-body"
+        shortcuts = dict(screen._library_notes_footer_shortcuts())
+        assert "ctrl+end" not in shortcuts, shortcuts
+        # The rest of the tier survives -- only the dead key is dropped.
+        assert "esc" in shortcuts, shortcuts
+
+
 # --- task-32253: Shift+Tab into the Title must not select it ---------------
 
 
@@ -952,6 +988,18 @@ async def test_shift_tab_into_the_title_keeps_the_title():
         body = screen.query_one("#library-note-body", TextArea)
         body.focus()
         await pilot.pause()
+
+        # task-32642 AC#3 put the Keywords field between the body and the
+        # title, so the walk back to the title is now two stops. Both are
+        # ``NoteEditorInput``s and the rule under test is the shared one, so
+        # the new stop is asserted on the way past rather than stepped over.
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        keywords = screen.query_one("#library-note-keywords", Input)
+        assert screen.focused is keywords
+        assert keywords.selection.start == keywords.selection.end, (
+            f"Shift+Tab selected the keywords field: {keywords.selection!r}"
+        )
 
         await pilot.press("shift+tab")
         await pilot.pause()

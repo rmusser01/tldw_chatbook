@@ -697,7 +697,28 @@ def _substitute_local_variables(
     )
 
 
-def isolate_local_variables(css: str, *, scope: str = "") -> str:
+def resolve_variable_definitions(css: str) -> dict[str, str]:
+    """Resolve a declaration-only preamble once, preserving theme references.
+
+    Args:
+        css: Ordered central token declarations, without style rules.
+
+    Returns:
+        Resolved values for initializing an isolated block's variables.
+    """
+    segments = _split_opaque_spans(css)
+    variables: dict[str, str] = {}
+    remaining = _consume_variable_defs(
+        segments, variables, _collect_declared_names(segments), "design tokens"
+    )
+    if remaining.strip():
+        raise ValueError("Design token preamble must contain only declarations")
+    return variables
+
+
+def isolate_local_variables(
+    css: str, *, scope: str = "", variables: dict[str, str] | None = None
+) -> str:
     """Inline and strip one block's own top-level ``$name: value;`` declarations.
 
     Textual resolves ``$variable`` references with a single left-to-right
@@ -744,6 +765,8 @@ def isolate_local_variables(css: str, *, scope: str = "") -> str:
             ``BUNDLED_SCREEN_CSS`` class attribute.
         scope: The declaring class's name, used only to name the block in a
             forward-reference error message.
+        variables: Resolved central tokens. Copied before resolving this
+            block so local overrides cannot change another block's values.
 
     Returns:
         The same CSS with local variable declarations inlined and removed.
@@ -756,7 +779,7 @@ def isolate_local_variables(css: str, *, scope: str = "") -> str:
     segments = _split_opaque_spans(css)
     declared_names = _collect_declared_names(segments)
 
-    local_vars: dict[str, str] = {}
+    local_vars = dict(variables or {})
     out: list[str] = []
     pending: list[tuple[str, str]] = []
     body: list[tuple[str, str]] = []
@@ -899,8 +922,46 @@ def _stream_has_rules(text: str) -> bool:
     return "{" in _RULE_BRACE_RE.sub("", text)
 
 
+_SOURCE_COMMENT_OR_STRING = re.compile(
+    r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/""",
+    re.DOTALL,
+)
+_TRAILING_SPACE_OR_STRING = re.compile(
+    r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[ \t]+(?=\n|$)""",
+    re.DOTALL,
+)
+
+
+def without_source_comments(css: str) -> str:
+    """Remove comment bytes without changing Textual's selector boundaries.
+
+    Textual skips comments without inserting whitespace, so ``Button/*x*/.on``
+    must remain a compound selector. Existing surrounding whitespace stays
+    intact. Quoted text is protected in both the comment and trailing-space
+    passes, including strings containing comment markers or trailing spaces.
+    Module provenance banners are added separately by the builder.
+
+    Args:
+        css: Source stylesheet text, including comments and quoted values.
+
+    Returns:
+        Stylesheet text without source comments or unquoted trailing spaces.
+    """
+    without_comments = _SOURCE_COMMENT_OR_STRING.sub(
+        lambda match: "" if match.group().startswith("/*") else match.group(), css
+    )
+    return _TRAILING_SPACE_OR_STRING.sub(
+        lambda match: match.group() if match.group()[0] in "\"'" else "",
+        without_comments,
+    )
+
+
 def render_stylesheets(
-    blocks: list[BundledBlock], title: str, *, scope_every_selector: bool = False
+    blocks: list[BundledBlock],
+    title: str,
+    *,
+    scope_every_selector: bool = False,
+    variables: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Render collected blocks as the two generated stylesheets.
 
@@ -909,6 +970,7 @@ def render_stylesheets(
         title: Human-readable description for the generated headers.
         scope_every_selector: Scope every selector of a comma-separated list
             rather than reproducing Textual's last-selector-only quirk.
+        variables: Resolved central tokens to seed each isolated block.
 
     Returns:
         ``(self_sheet, scoped_sheet)`` -- see :func:`split_scoped_css` for what
@@ -935,7 +997,9 @@ def render_stylesheets(
         # fallbacks *before* splitting/scoping, so they cannot leak into a
         # later block's rules once every block lands in the same generated
         # file -- see `isolate_local_variables`.
-        isolated_css = isolate_local_variables(block.css, scope=block.class_name)
+        isolated_css = isolate_local_variables(
+            block.css, scope=block.class_name, variables=variables
+        )
         split = split_scoped_css(
             isolated_css, block.class_name, scope_every_selector=scope_every_selector
         )
@@ -945,6 +1009,6 @@ def render_stylesheets(
             # Class-body indentation appears on otherwise blank lines before
             # a closing triple quote. Never publish that Python indentation as
             # trailing whitespace in generated CSS.
-            text = "\n".join(line.rstrip() for line in text.splitlines()) + "\n"
+            text = without_source_comments(text).rstrip() + "\n"
             rendered[stream] += banner + text
     return rendered[0], rendered[1]

@@ -358,7 +358,9 @@ async def test_current_user_permissive_root_is_narrowed_before_use(
 
 
 @pytest.mark.asyncio
-async def test_symlink_root_fails_closed_without_touching_target(tmp_path: Path) -> None:
+async def test_symlink_root_fails_closed_without_touching_target(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "target"
     target.mkdir(mode=0o700)
     marker = target / "marker"
@@ -413,11 +415,12 @@ async def test_root_substitution_after_sweep_fails_before_publication(
         selected_root: Path,
         expected_identity: tuple[int, int] | None,
         wav_bytes: bytes,
+        **kwargs,
     ):
         selected_root.rename(moved)
         selected_root.mkdir(mode=0o700)
         replacement_marker.write_text("keep")
-        return real_create(selected_root, expected_identity, wav_bytes)
+        return real_create(selected_root, expected_identity, wav_bytes, **kwargs)
 
     monkeypatch.setattr(module, "_create_materialization_sync", substitute_then_create)
     materializer = TTSCloneReferenceMaterializer(root)

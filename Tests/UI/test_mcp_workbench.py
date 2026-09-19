@@ -15,6 +15,8 @@ from textual.app import App, ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.private_profile import private_profile_test
+from tldw_chatbook.config import ConfigMutationResult
 from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import (
@@ -283,10 +285,12 @@ class HubLocalWorkbenchApp(WorkbenchApp):
 async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
+        # The initial after-refresh dispatch may not have created its worker
+        # yet. An empty worker manager is not evidence that loading finished.
+        async with asyncio.timeout(10):
+            while workbench.is_loading or workbench._reloading:
+                await pilot.pause(0.025)
         assert workbench.active_mode == "servers"
         # builtin + docs rows (+ "All servers")
         assert len(list(app.query("Button.mcp-rail-row"))) == 3
@@ -341,7 +345,7 @@ async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
         # The built-in rail row truncates with an ellipsis (honest
         # truncation) rather than cropping mid-word.
         rows = list(app.query("Button.mcp-rail-row"))
-        assert "..." in str(rows[1].label)
+        assert "…" in str(rows[1].label)
 
 
 @pytest.mark.asyncio
@@ -1110,6 +1114,15 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         "save_setting_to_cli_config",
         fake_save_setting_to_cli_config,
     )
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    def fake_mutate(payload, **kwargs):
+        for section, settings in payload.items():
+            for key, value in settings.items():
+                fake_save_setting_to_cli_config(section, key, value)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1199,6 +1212,15 @@ def _fake_tool_gate_config_seam(monkeypatch):
         "save_setting_to_cli_config",
         fake_save_setting_to_cli_config,
     )
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get_cli_setting)
+
+    def fake_mutate(payload, **kwargs):
+        for section, settings in payload.items():
+            for key, value in settings.items():
+                fake_save_setting_to_cli_config(section, key, value)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
     return flags, save_calls
 
 
@@ -5453,11 +5475,13 @@ async def test_test_tool_preview_unmount_and_remount_revokes_old_nonce():
     async with app.run_test(size=(120, 40)) as pilot:
         nonce = await _open_fetch_test_preview(app, pilot)
         old = app.query_one(MCPWorkbench)
+        old._mcp_recovery_token = object()
         app.set_focus(None)
         await pilot.pause()
         await old.remove()
         await pilot.pause()
         assert not old.is_attached
+        assert old._mcp_recovery_token is None
         app.unified_mcp_service._active_tests.add(("local:docs", "fetch"))
         preview_count = app.unified_mcp_service._preview_count
         await app.mount(MCPWorkbench(app_instance=app, id="mcp-workbench-remounted"))
@@ -5743,12 +5767,20 @@ async def test_test_tool_active_watcher_never_updates_stale_panel(leave_by: str)
         await _wait_for_test_button_label(app, pilot, "Running…")
 
         if leave_by == "switch":
-            await _select_tools_mode_row(app, pilot, 1)
+            # The panel's deferred focus can consume Enter in its JSON editor.
+            # Exercise the selection event independently of keyboard focus.
+            table = app.query_one("#mcp-tools-table", DataTable)
+            table.move_cursor(row=1)
+            table.action_select_cursor()
+            await pilot.pause()
+            inspector = app.query_one(MCPInspector)
+            assert inspector.current_tool is not None
+            assert inspector.current_tool.name == "search"
         else:
             await workbench.remove()
         app.unified_mcp_service._active_tests.discard(key)
-        for _ in range(20):
-            await pilot.pause()
+        # UI idleness does not join the watcher or its off-loop nonce cleanup.
+        await app.workers.wait_for_complete()
 
         assert app.unified_mcp_service._previews == {}
         if leave_by == "switch":
@@ -10903,8 +10935,9 @@ async def test_local_agent_group_present_when_master_key_is_missing(monkeypatch)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_tools_mode_local_controls_round_trip_master_and_workspace(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     values: dict[tuple[str, str], Any] = {}
     save_calls: list[tuple[str, str, Any]] = []
@@ -10921,6 +10954,16 @@ async def test_tools_mode_local_controls_round_trip_master_and_workspace(
     monkeypatch.setattr(unified_service_module, "get_cli_setting", fake_get)
     monkeypatch.setattr(mcp_workbench_module, "save_setting_to_cli_config", fake_save)
 
+    def fake_mutate(payload, **kwargs):
+        for section, settings in payload.items():
+            for key, value in settings.items():
+                fake_save(section, key, value)
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate
+    )
+
     notes_root = tmp_path / "notes-workspace"
     notes_root.mkdir()
     app = HubLocalWorkbenchApp()
@@ -10934,9 +10977,7 @@ async def test_tools_mode_local_controls_round_trip_master_and_workspace(
         # carries the state in text -- a press asks for the OPPOSITE of
         # what it's currently showing (see `on_button_pressed()`).
         toggle = app.query_one("#mcp-tools-local-enabled", Button)
-        assert str(toggle.label) == (
-            "Local workspace, web, and Watchlists tools: on ▸"
-        )
+        assert str(toggle.label) == ("Local workspace, web, and Watchlists tools: on ▸")
         toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -10969,8 +11010,8 @@ async def test_tools_mode_local_controls_round_trip_master_and_workspace(
         assert app.query_one("#mcp-tools-workspace-root", Input).value == str(
             notes_root.resolve()
         )
-        status = app.query_one("#mcp-tools-local-config-status", Static)
-        assert "next Console agent run" in str(status.renderable)
+        status = app.query_one("#mcp-tools-workspace-status", Static)
+        assert "local MCP / Hub test root" in str(status.renderable)
 
 
 @pytest.mark.asyncio
@@ -10982,7 +11023,8 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
 
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
     monkeypatch.setattr(
-        mcp_workbench_module, "save_setting_to_cli_config", lambda *args: False
+        mcp_workbench_module, "apply_settings_mutation_to_cli_config",
+        lambda *args, **kwargs: ConfigMutationResult(False, False, "before_replace")
     )
 
     app = WorkbenchApp()
@@ -11010,12 +11052,15 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_tools_mode_rejects_non_directory_workspace_root(monkeypatch, tmp_path):
+@private_profile_test
+async def test_tools_mode_rejects_non_directory_workspace_root(
+    request, monkeypatch, tmp_path
+):
     save_calls: list[tuple[str, str, Any]] = []
     monkeypatch.setattr(
         mcp_workbench_module,
-        "save_setting_to_cli_config",
-        lambda section, key, value: save_calls.append((section, key, value)) or True,
+        "apply_settings_mutation_to_cli_config",
+        lambda payload, **kwargs: save_calls.append(payload),
     )
 
     app = WorkbenchApp()
@@ -11032,15 +11077,16 @@ async def test_tools_mode_rejects_non_directory_workspace_root(monkeypatch, tmp_
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert not [call for call in save_calls if call[1] == "workspace_root"]
-        status = app.query_one("#mcp-tools-local-config-status", Static)
+        assert not save_calls
+        status = app.query_one("#mcp-tools-workspace-status", Static)
         assert "not saved" in str(status.renderable)
         assert status.has_class("is-error")
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_tools_mode_workspace_root_uses_shared_path_validator(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     validated_root = tmp_path / "validated-workspace"
     validated_root.mkdir()
@@ -11067,8 +11113,13 @@ async def test_tools_mode_workspace_root_uses_shared_path_validator(
     monkeypatch.setattr(mcp_workbench_module, "validate_path", fake_validate_path)
     monkeypatch.setattr(
         mcp_workbench_module,
-        "save_setting_to_cli_config",
-        lambda section, key, value: save_calls.append((section, key, value)) or True,
+        "apply_settings_mutation_to_cli_config",
+        lambda payload, **kwargs: (
+            save_calls.append(
+                ("console", "workspace_root", payload["console"]["workspace_root"])
+            )
+            or ConfigMutationResult(True, True, None)
+        ),
     )
 
     app = WorkbenchApp()

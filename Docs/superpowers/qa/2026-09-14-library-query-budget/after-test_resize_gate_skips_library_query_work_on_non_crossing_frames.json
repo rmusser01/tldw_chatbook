@@ -1,0 +1,48 @@
+{
+  "calls": {},
+  "query_elapsed_ns": {},
+  "signatures": [
+    {
+      "width": 170,
+      "changes": []
+    },
+    {
+      "width": 169,
+      "changes": []
+    },
+    {
+      "width": 169,
+      "changes": []
+    },
+    {
+      "width": 168,
+      "changes": []
+    },
+    {
+      "width": 168,
+      "changes": []
+    },
+    {
+      "width": 167,
+      "changes": []
+    },
+    {
+      "width": 167,
+      "changes": []
+    },
+    {
+      "width": 166,
+      "changes": []
+    },
+    {
+      "width": 166,
+      "changes": [
+        [
+          21,
+          "OrdinaryRailStyleContract(display=True, width=36, min_width=36, max_width=36)",
+          "OrdinaryRailStyleContract(display=True, width=35, min_width=35, max_width=35)"
+        ]
+      ]
+    }
+  ]
+}

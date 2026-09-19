@@ -1,0 +1,50 @@
+{
+  "phase": "exercise",
+  "pid": 62342,
+  "runner_sha256": "9695245821dcf29ed2a9ad22a0ece2e74a70023fb4e187d3e8a01d34ded32a61",
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "cancel_archive_undo_restore_undo_passed": true,
+      "query_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "cancel_archive_undo_restore_undo_passed": true,
+      "query_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "cancel_archive_undo_restore_undo_passed": true,
+      "query_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "cancel_archive_undo_restore_undo_passed": true,
+      "query_retained": true
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "settled count 1",
+  "left_archived_for_restart": "76b3787e-1ab5-56cc-b96e-0682191f5012",
+  "console_context_unchanged": true,
+  "messages_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

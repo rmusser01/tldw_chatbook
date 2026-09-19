@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │  record per-turn diffs for this    │  │
+│     Privacy & Security       │  │  │ │  workspace's folders.              │  │
+│     Network                  │  │  │ │  Change history preparation        │  │
+│     My Profile               │  │  │ │  failed for 1 folder(s); chat and  │▄ │
+│  Troubleshooting           ▇ │  │  │ │  tools continue.                   │▁ │
+│     Diagnostics (view)       │  │  │ │  Retry failed preparation          │  │
+│     About (view)             │  │  │ │  Change Review preparation could   │  │
+│     Agents                   │  │  │ │  not be retried. Try again.        │  │
+│  Expert                      │  │  │ │  Disable change review             │  │
+│     Internal Prompts         │  │  │ │                                    │  │
+│     Advanced Config          │  │  │ │  Default assistant                 │  │
+│   Domain Defaults ▸ (11)     │  │  │ │  No default assistant set — pick   │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

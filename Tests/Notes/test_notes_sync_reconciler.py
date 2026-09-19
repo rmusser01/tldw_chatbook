@@ -507,3 +507,136 @@ def test_public_planner_outputs_validate_and_redact_private_observations() -> No
             managed_placement_effects=(),
             deletion_groups=(),
         )
+
+
+def test_obsidian_mode_skips_config_trash_templates_and_empty_files_with_reasons() -> (
+    None
+):
+    """task-32535 AC#3: the vault's own folders and empty files are skipped."""
+    from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationItemSkip
+
+    def candidate(binding_id: str, path: str, *, blank: bool = False) -> BindingObservation:
+        return replace(
+            _binding(note_digest=None, relative_path=path, baseline_path=path),
+            binding_id=binding_id,
+            note_id=f"note-{binding_id}",
+            bound=False,
+            file_blank=blank,
+        )
+
+    bindings = (
+        candidate("b1", ".obsidian/app.json"),
+        candidate("b2", ".trash/Old idea.md"),
+        candidate("b3", "Templates/Daily.md"),
+        candidate("b4", "Inbox/Untitled.md", blank=True),
+        candidate("b5", "Untitled 1.md", blank=True),
+        candidate("b6", "People/Sam.md"),
+        candidate("b7", "Nested/Templates/Keep.md"),
+    )
+    request = ReconciliationInput(
+        root_id="root-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        bindings=bindings,
+        observation_generation=7,
+        expected_generation=7,
+        obsidian_mode=True,
+    )
+
+    plan = plan_reconciliation(request)
+
+    assert plan.item_skips == (
+        ReconciliationItemSkip(".obsidian/app.json", "obsidian_config"),
+        ReconciliationItemSkip(".trash/Old idea.md", "obsidian_trash"),
+        ReconciliationItemSkip("Templates/Daily.md", "obsidian_template"),
+        ReconciliationItemSkip("Inbox/Untitled.md", "empty_file"),
+        ReconciliationItemSkip("Untitled 1.md", "empty_file"),
+    )
+    assert [action.binding_id for action in plan.safe_actions] == ["b6", "b7"]
+    assert all(
+        action.kind is NotesSyncActionKind.CREATE_NOTE for action in plan.safe_actions
+    )
+    assert plan.skips == ()
+    assert "Old idea" not in repr(plan)
+
+    # Off: the vault's folders are creates again. An empty file is not -- the
+    # toggle covers the three folders and the frontmatter lift, while Import
+    # once refuses an empty source whatever folder it came from.
+    off = plan_reconciliation(replace(request, obsidian_mode=False))
+    assert off.item_skips == (
+        ReconciliationItemSkip("Inbox/Untitled.md", "empty_file"),
+        ReconciliationItemSkip("Untitled 1.md", "empty_file"),
+    )
+    assert len(off.safe_actions) == 5
+    assert off.observation_token != plan.observation_token
+
+    # A bound file is never dropped by the pass: an emptied synced note is an
+    # edit to sync, not a file to skip.
+    bound_blank = replace(request, bindings=(replace(candidate("b8", "Untitled 2.md", blank=True), bound=True, note_digest=BASE_NOTE),))
+    assert plan_reconciliation(bound_blank).item_skips == ()
+
+
+def test_a_file_import_once_already_turned_into_a_note_is_skipped_not_recreated() -> (
+    None
+):
+    """task-32605: Import once created 54 notes from the vault, then Keep a
+    folder synced on the SAME folder planned 54 fresh creates -- activating
+    would have left 108 notes. A never-bound file whose note the importer's
+    own receipt ledger still accounts for is left alone with a reason."""
+    from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationItemSkip
+
+    def candidate(
+        binding_id: str, path: str, *, prior_import: bool = False
+    ) -> BindingObservation:
+        return replace(
+            _binding(note_digest=None, relative_path=path, baseline_path=path),
+            binding_id=binding_id,
+            note_id=f"note-{binding_id}",
+            bound=False,
+            prior_import_note=prior_import,
+        )
+
+    bindings = (
+        candidate("b1", "Daily/2026-09-07.md", prior_import=True),
+        candidate("b2", "People/Sam.md", prior_import=True),
+        candidate("b3", "Added later.md"),
+    )
+    request = ReconciliationInput(
+        root_id="root-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        bindings=bindings,
+        observation_generation=7,
+        expected_generation=7,
+    )
+
+    plan = plan_reconciliation(request)
+
+    assert plan.item_skips == (
+        ReconciliationItemSkip("Daily/2026-09-07.md", "already_imported"),
+        ReconciliationItemSkip("People/Sam.md", "already_imported"),
+    )
+    # Only the file the importer never touched is still a create.
+    assert [action.binding_id for action in plan.safe_actions] == ["b3"]
+    assert plan.safe_actions[0].kind is NotesSyncActionKind.CREATE_NOTE
+    assert plan.attention == ()
+    assert "Sam" not in repr(plan)
+
+    # Without the recognition every one of them is a fresh create -- the
+    # reported defect.
+    unrecognised = replace(
+        request,
+        bindings=tuple(replace(item, prior_import_note=False) for item in bindings),
+    )
+    unrecognised_plan = plan_reconciliation(unrecognised)
+    assert len(unrecognised_plan.safe_actions) == 3
+    assert unrecognised_plan.item_skips == ()
+    # The flag is part of the observation, so a stale review cannot be applied
+    # against a folder whose recognition changed.
+    assert unrecognised_plan.observation_token != plan.observation_token
+
+    # A file this root already syncs is never dropped by the pass: the note it
+    # is bound to is the one the plan is about.
+    bound = replace(
+        request,
+        bindings=(replace(bindings[0], bound=True, note_digest=BASE_NOTE),),
+    )
+    assert plan_reconciliation(bound).item_skips == ()

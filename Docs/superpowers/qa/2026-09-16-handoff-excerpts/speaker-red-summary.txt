@@ -1,0 +1,5 @@
+Condensed pytest failure summary; captured setup logs omitted.
+
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_handoff_excerpts.py::test_long_speaker_name_cannot_displace_the_actual_message_text
+1 failed, 18 deselected in 1.89s

@@ -1,0 +1,34 @@
+{
+  "base_commit": "f09a7786d4543fdccfb2b40c1aa8e73c6fac5ce9",
+  "targeted_command": ".venv/bin/python -m pytest Tests/UI/test_library_handoff_excerpts.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_library_crit8_conversation_handoff.py Tests/UI/test_library_media_reader_flow.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py -q --tb=short --show-capture=no",
+  "red": {
+    "failed": 22,
+    "passed": 3,
+    "seconds": 29.14
+  },
+  "sender_red": {
+    "failed": 1,
+    "seconds": 1.89
+  },
+  "focused_green": {
+    "passed": 26,
+    "seconds": 26.77
+  },
+  "final_targeted": {
+    "passed": 207,
+    "failed": 0,
+    "seconds": 243.27
+  },
+  "production_sha256": {
+    "tldw_chatbook/UI/Screens/library_screen.py": "7bfe42d27383ea70a6f4a82402952c70d9662d1ba2ed18d36e6125c8663f768a",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "2753a64eb9e7efb9713002fb8ef220a390364b9c21dc57bd19aeb80af06cee81",
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": "2f152402bbf8f0a0c016c05547832d40c6cd5af78d83e8c93787da1abc11c2e9",
+    "tldw_chatbook/UI/Library_Modules/screen_constants.py": "503f5eb053b28cc3bfff5f3948c34fcdb77610046d640ba7a14459cfac497196"
+  },
+  "full_suite_run": false,
+  "legacy_media": {
+    "command": ".venv/bin/python -m pytest Tests/UI/test_media_handoffs.py -q --tb=short --show-capture=no",
+    "passed": 7,
+    "seconds": 1.32
+  }
+}

@@ -113,6 +113,8 @@ async def test_save_reports_deduped_runtime_tools_after_warning_reload(runs_db, 
         panel.query_one(
             "#agents-tools-input"
         ).value = "fs_read, spawn_subagent, fs_read, spawn_subagent, wait_agents"
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -148,6 +150,8 @@ async def test_save_with_only_runtime_tools_explains_parent_inheritance(runs_db)
         panel.query_one(
             "#agents-tools-input"
         ).value = "spawn_subagent, wait_agents, spawn_subagent"
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -167,6 +171,8 @@ async def test_panel_creates_definition_via_form(runs_db):
         panel.query_one("#agents-name-input").value = "researcher"
         panel.query_one("#agents-description-input").value = "Searches sources."
         panel.query_one("#agents-instructions-area").text = "Cite sources."
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
     rows = runs_db.list_agent_definitions()
@@ -181,6 +187,8 @@ async def test_panel_round_trips_and_clears_child_time_cap(runs_db):
         panel.query_one("#agents-description-input").value = "Searches sources."
         panel.query_one("#agents-instructions-area").text = "Cite sources."
         panel.query_one("#agents-wall-seconds-input").value = "12.5"
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -199,6 +207,8 @@ async def test_panel_round_trips_and_clears_child_time_cap(runs_db):
         assert panel.query_one("#agents-wall-seconds-input").value == "12.5"
 
         panel.query_one("#agents-wall-seconds-input").value = "7.25"
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -215,6 +225,8 @@ async def test_panel_round_trips_and_clears_child_time_cap(runs_db):
         assert panel._selected_id == stored["id"]
         assert panel.query_one("#agents-wall-seconds-input").value == "7.25"
         panel.query_one("#agents-wall-seconds-input").value = ""
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -256,6 +268,8 @@ async def test_invalid_child_time_cap_keeps_selected_definition_unchanged(
         panel.query_one("#agents-tools-input").value = "fs_list"
         panel.query_one("#agents-enabled-switch").value = True
         panel.query_one("#agents-wall-seconds-input").value = invalid
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -283,6 +297,8 @@ async def test_preset_load_prefills_unsaved_editable_definition(runs_db, preset)
     async with ProductionCssPanelHarness(panel).run_test(size=(120, 40)) as pilot:
         panel.query_one("#agents-wall-seconds-input").value = "41.5"
         panel.query_one("#agents-preset-select", Select).value = preset.name
+        panel.query_one("#agents-load-preset-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-load-preset-button")
         await pilot.pause()
 
@@ -328,10 +344,14 @@ async def test_preset_save_creates_edited_definition_without_overwriting_selecti
         await pilot.pause()
 
         panel.query_one("#agents-preset-select", Select).value = preset.name
+        panel.query_one("#agents-load-preset-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-load-preset-button")
         edited_name = f"{preset.name}-edited"
         panel.query_one("#agents-name-input").value = edited_name
         panel.query_one("#agents-model-input").value = "budget-model"
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -361,8 +381,12 @@ async def test_preset_duplicate_uses_existing_validation_and_preserves_original(
     panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
     async with ProductionCssPanelHarness(panel).run_test(size=(120, 40)) as pilot:
         panel.query_one("#agents-preset-select", Select).value = preset.name
+        panel.query_one("#agents-load-preset-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-load-preset-button")
         panel.query_one("#agents-model-input").value = "budget-model"
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
@@ -396,11 +420,15 @@ async def test_preset_actions_render_with_production_css(runs_db, size):
         assert max(control.region.bottom for control in controls[:2]) <= min(
             control.region.y for control in controls[2:]
         )
+        panel.query_one("#agents-load-preset-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-load-preset-button")
         await pilot.pause()
         status = panel.query_one("#agents-status")
         assert status.region.width > 0
         assert "same provider" in _static_text(status).lower()
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         painted = " ".join(
             _painted_text(pilot.app.export_screenshot(simplify=True)).split()
         )
@@ -409,6 +437,7 @@ async def test_preset_actions_render_with_production_css(runs_db, size):
 
         instructions = panel.query_one("#agents-instructions-area")
         instructions.focus()
+        await pilot.wait_for_scheduled_animations()
         await pilot.pause()
         assert instructions.region.width > 0
         assert instructions.region.height > 0
@@ -505,6 +534,8 @@ async def test_panel_surfaces_validation_error(runs_db):
     async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
         panel.query_one("#agents-name-input").value = "subagent"  # reserved
         panel.query_one("#agents-instructions-area").text = "x"
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
         status = panel.query_one("#agents-status")
@@ -549,6 +580,8 @@ async def test_panel_selection_round_trip_updates_in_place(runs_db):
         panel.query_one(
             "#agents-description-input"
         ).value = "Now cites primary sources."
+        panel.query_one("#agents-save-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-save-button")
         await pilot.pause()
 

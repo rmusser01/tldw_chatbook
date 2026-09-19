@@ -12,6 +12,7 @@ from loguru import logger
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.style import Style
 from rich.table import Table
+from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -20,6 +21,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.timer import Timer
 from textual.widgets import Button, Input, Label, ListItem, ListView, OptionList, Static
+from textual.widgets.option_list import Option
 
 from ..Third_Party.textual_fspicker import Filters
 from ..Third_Party.textual_fspicker.base_dialog import (
@@ -29,9 +31,13 @@ from ..Third_Party.textual_fspicker.base_dialog import (
 )
 from ..Third_Party.textual_fspicker.file_dialog import BaseFileDialog
 from ..Third_Party.textual_fspicker.parts import DirectoryNavigation
-from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryEntry
+from ..Third_Party.textual_fspicker.parts.directory_navigation import (
+    DirectoryEntry,
+    DirectoryEntryStyling,
+)
+from ..Third_Party.textual_fspicker.parts.progressive_directory_navigation import FileRecord
 from ..Third_Party.textual_fspicker.path_maker import MakePath
-from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
+from ..Third_Party.textual_fspicker.safe_tests import is_dir
 from ..Utils.path_validation import validate_path_simple
 from ..config import (
     get_cli_setting,
@@ -474,6 +480,21 @@ class FormattedDirectoryEntry(DirectoryEntry):
     show_selection_marker = False
     selected = False
 
+    def __init__(
+        self,
+        location: Path,
+        styles: DirectoryEntryStyling,
+        *,
+        record: FileRecord | None = None,
+    ) -> None:
+        self.record = record
+        if record is None:
+            super().__init__(location, styles)
+        else:
+            self.location = location
+            self._styles = styles
+            Option.__init__(self, self._as_renderable(location))
+
     @staticmethod
     def _size(location: Path) -> str:
         if is_dir(location):
@@ -491,10 +512,22 @@ class FormattedDirectoryEntry(DirectoryEntry):
         return _ResponsiveDirectoryRow(
             marker=marker,
             selected=self.selected,
-            icon=self.FOLDER_ICON if is_dir(location) else self.FILE_ICON,
-            name=self._name(location),
-            size=self._size(location),
-            modified=self._mtime(location),
+            icon=self.FOLDER_ICON
+            if (self.record.is_directory if self.record else is_dir(location))
+            else self.FILE_ICON,
+            name=(
+                Text.assemble(
+                    self.record.display_name,
+                    " ",
+                    self.LINK_ICON if self.record.is_symlink else "",
+                )
+                if self.record
+                else self._name(location)
+            ),
+            size=self.record.size_text if self.record else self._size(location),
+            modified=self.record.modified_text
+            if self.record
+            else self._mtime(location),
             name_style=self._style(self._styles.name, location),
             size_style=self._style(self._styles.size, location),
             time_style=self._style(self._styles.time, location),
@@ -585,9 +618,16 @@ class SelectableDirectoryEntry(FormattedDirectoryEntry):
 
     show_selection_marker = True
 
-    def __init__(self, location: Path, styles: Any, selected: bool = False) -> None:
+    def __init__(
+        self,
+        location: Path,
+        styles: DirectoryEntryStyling,
+        selected: bool = False,
+        *,
+        record: FileRecord | None = None,
+    ) -> None:
         self.selected = selected
-        super().__init__(location, styles)
+        super().__init__(location, styles, record=record)
 
 
 # Compatibility for callers and tests that imported the former name.
@@ -753,10 +793,12 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
         # Search from the item after the current highlight, wrapping around.
         for idx in range(start, len(options)):
             if match_at(idx):
+                self._interaction_serial += 1
                 self.highlighted = idx
                 return
         for idx in range(0, start):
             if match_at(idx):
+                self._interaction_serial += 1
                 self.highlighted = idx
                 return
 
@@ -807,89 +849,30 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
         self._jump_to_prefix(self._type_ahead_buffer)
         self._restart_type_ahead_timer()
 
-    def _repopulate_display(self) -> None:
-        """Repopulate the display, honouring file, hidden, and search filters."""
-        styles = self._styles
-        query = self.search_filter.strip().lower()
-
-        # Remember the currently highlighted path so we can restore it after
-        # rebuilding the option list.
-        previous_path: Optional[Path] = None
-        try:
-            if self.highlighted is not None:
-                highlighted_option = self.get_option_at_index(self.highlighted)
-                if isinstance(highlighted_option, DirectoryEntry):
-                    previous_path = highlighted_option.location
-        except Exception:
-            pass
-
-        # Determine which paths the hosting dialog currently marks selected.
+    def _make_entry(self, record):
         screen = self.screen
         multi_select = getattr(screen, "multi_select", False)
-        show_selection_marker = (
-            multi_select or getattr(screen, "context", "") == "character_import"
-        )
-        if multi_select:
-            selected = getattr(screen, "_selected_paths", set())
-        else:
-            selected_path = getattr(screen, "_selected_path", None)
-            selected = {selected_path} if selected_path is not None else set()
-
-        # One pass over the entries computes both the visible options and the
-        # filter-hidden count (task-15471). Previously a second full loop
-        # below re-ran ``is_file`` on EVERY entry -- one extra stat per entry
-        # per repopulate, unconditionally, even with no ``file_filter`` set
-        # (``is_file`` was first in that ``and`` chain). The per-entry
-        # predicates here are the vendored ``DirectoryNavigation.hide()``
-        # unrolled: filter check first (files only), then the dotfile/
-        # show-hidden rule, so the visible set is unchanged.
-        #
-        # The filter-hidden count (task-431 AC#2) still counts a real file
-        # that passes the show-hidden/dotfile check but fails the filter,
-        # guarded by an explicit "not already dotfile-hidden" check so
-        # dotfiles aren't double-counted as filter-hidden.
-        file_filter = self.file_filter
-        filter_hidden = 0
-        display_entries: list[DirectoryEntry] = []
-        for entry in self._entries:
-            location = entry.location
-            dot_hidden = self.is_hidden(location) and not self.show_hidden
-            fails_filter = False
-            if file_filter is not None and is_file(location):
-                fails_filter = not file_filter(location)
-                if fails_filter and not dot_hidden:
-                    filter_hidden += 1
-            if fails_filter or dot_hidden:
-                continue
-            if query and query not in location.name.lower():
-                continue
-            display_entries.append(
-                SelectableDirectoryEntry(location, styles, location in selected)
-                if show_selection_marker
-                else FormattedDirectoryEntry(location, styles)
+        if multi_select or getattr(screen, "context", "") == "character_import":
+            selected = (
+                record.location in getattr(screen, "_selected_paths", set())
+                if multi_select
+                else record.location == getattr(screen, "_selected_path", None)
             )
+            return SelectableDirectoryEntry(
+                record.location, self._entry_styles, selected, record=record
+            )
+        return FormattedDirectoryEntry(
+            record.location, self._entry_styles, record=record
+        )
 
-        with self.app.batch_update():
-            self.clear_options()
-            if not self.is_root:
-                parent_entry = (
-                    SelectableDirectoryEntry(self._location / "..", styles, False)
-                    if show_selection_marker
-                    else FormattedDirectoryEntry(self._location / "..", styles)
-                )
-                self.add_option(parent_entry)
-            self.add_options(self._sort(display_entries))
-        self._settle_highlight()
-
-        # Restore the previous highlight if the entry still exists.
-        if previous_path is not None:
-            for idx, option in enumerate(self.options):
-                if isinstance(option, DirectoryEntry) and option.location == previous_path:
-                    self.highlighted = idx
-                    break
-
-        self.post_message(self.SearchCountChanged(self, self.option_count, query))
-        self.post_message(self.FilterHiddenCountChanged(self, filter_hidden))
+    def _notify_listing(self):
+        super()._notify_listing()
+        self.post_message(
+            self.SearchCountChanged(
+                self, len(self._display_records), self.search_filter.strip().lower()
+            )
+        )
+        self.post_message(self.FilterHiddenCountChanged(self, self._filter_hidden))
 
     def _on_option_list_option_selected(
         self, event: OptionList.OptionSelected
@@ -937,7 +920,11 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
                 (1) from a double click (>= 2).
         """
         if getattr(event, "chain", 1) >= 2:
-            self.action_open_highlighted()
+            index = self._current_clicked_index(event)
+            if index is not None:
+                self._interaction_serial += 1
+                self.highlighted = index
+                self.action_open_highlighted()
 
 
 # Keep the established public name while exposing the clearer state-owning name.
@@ -1433,6 +1420,8 @@ class EnhancedFileDialog(BaseFileDialog):
                     # Multi-select status (visible only in multi-select mode).
                     yield Static("", id="multi-select-info")
 
+                    yield from self._listing_controls()
+
                     # Main directory navigation
                     with Horizontal(id="file-list-container"):
                         if sys.platform == "win32":
@@ -1473,6 +1462,18 @@ class EnhancedFileDialog(BaseFileDialog):
                                 "Close without importing a character card."
                             )
                         yield cancel_button
+
+        # task-32606 deliberately does NOT yield a `Footer` here, although
+        # the vendored base does and `EnhancedSelectDirectory` therefore
+        # keeps showing the HOST screen's chips through the translucent
+        # modal. A screen-docked footer takes the bottom terminal row, and
+        # this dialog is `height: 95%` (the vendored one is 80%): at the
+        # 60x24 these pickers are pinned at, adding it pushed the selection
+        # marker off the bottom of the character-import picker and turned
+        # three existing size pins red
+        # (`test_file_picker_action_tooltips.py`,
+        # `test_file_picker_progressive.py`). Giving this family the chips
+        # needs a layout answer for that row, not one more `yield`.
 
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
@@ -1933,7 +1934,7 @@ class EnhancedFileDialog(BaseFileDialog):
             self._selected_paths.add(path)
         self._update_multi_select_ui()
         try:
-            self.query_one(SearchableDirectoryNavigation)._repopulate_display()
+            self.query_one(SearchableDirectoryNavigation).refresh_selection_markers()
         except Exception:
             pass
 
@@ -2288,7 +2289,12 @@ class EnhancedFileDialog(BaseFileDialog):
             if event.query:
                 status.update(f"{event.count} result{'s' if event.count != 1 else ''}")
                 if event.count == 0:
-                    no_match.update(f"No files match '{event.query}'")
+                    message = (
+                        f"No files match '{event.query}'"
+                        if event.navigation._scan_finished
+                        else "No matches yet — still scanning…"
+                    )
+                    no_match.update(Text(message))
                     no_match.styles.display = "block"
                 else:
                     no_match.styles.display = "none"
@@ -2486,6 +2492,9 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
     hints, per-context remembered start directory), so screens that use the
     enhanced family everywhere keep a single picker look (TASK-16477).
     """
+
+    RETURNS_A_FOLDER = True
+    """Directory-only, so it opens on its "Folder path" field (task-32606)."""
 
     # The file-flow select button would query the (absent) filename input;
     # this dialog replaces it with the viewed-directory confirm below.

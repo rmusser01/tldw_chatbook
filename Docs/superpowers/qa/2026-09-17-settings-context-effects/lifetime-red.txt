@@ -1,0 +1,43 @@
+F..                                                                      [100%]
+=================================== FAILURES ===================================
+_________ test_deferred_mount_callback_does_not_restart_removed_effect _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111363bc0>
+
+    @pytest.mark.asyncio
+    async def test_deferred_mount_callback_does_not_restart_removed_effect(monkeypatch):
+        pending = []
+        monkeypatch.setattr(
+            ConsoleBackgroundEffect,
+            "call_after_refresh",
+            lambda self, callback: pending.append(callback),
+        )
+        app = EffectHarness(
+            ConsoleBackgroundEffectSettings(enabled=True, effect="matrix", fps=6)
+        )
+        async with app.run_test(size=(60, 18)) as pilot:
+            await pilot.pause()
+            effect = app.query_one(ConsoleBackgroundEffect)
+            assert len(pending) == 1
+            assert effect._timer is None
+            await effect.remove()
+            assert not effect.is_attached
+            pending.pop()()
+>           assert effect._timer is None
+E           AssertionError: assert Timer(0.16666666666666666, name='set_interval#1') is None
+E            +  where Timer(0.16666666666666666, name='set_interval#1') = ConsoleBackgroundEffect(id='console-background-effect')._timer
+
+Tests/UI/test_console_background_effects.py:137: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-17 20:59:12.588 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-17 20:59:12.596 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-17 20:59:12.596 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-17 20:59:12.597 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+2.59s call     Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-light]
+2.58s call     Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-dark]
+
+(7 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_background_effects.py::test_deferred_mount_callback_does_not_restart_removed_effect
+1 failed, 2 passed, 12 deselected in 7.56s

@@ -74,23 +74,15 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
         background: $boost;
         border: round $accent;
     }
-    .message-header {
-        width: 100%;
-        padding: 0 1;
-        background: $surface-darken-1;
-        text-style: bold;
-    }
-    .message-text {
-        padding: 1;
-        width: 100%;
-        height: auto;
-    }
-    .message-text Markdown {
-        width: 100%;
-        background: transparent;
-        margin: 0;
-        padding: 0;
-    }
+    /* ADR-161 task 8c: .message-header/.message-text/.message-actions and
+       their Button hovers were identical (bundle-wins) copies of the
+       app-tier definitions in css/components/_messages.tcss and moved out
+       of this block; `.message-text Markdown` was dead -- the Markdown
+       widget IS .message-text, nothing nests one inside it. What remains
+       here is genuinely enhanced-specific: image support, TTS states, and
+       the variant-navigation strip. The tts-generating rule below stays a
+       widget-local divergence: the owning sheet's copy wins the border
+       (thick), this one still contributes `padding-left: 1` on top. */
     .message-image-container {
         width: 100%;
         padding: 1;
@@ -112,30 +104,10 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
         height: 3;
         margin: 0 1;
     }
-    .message-actions {
-        height: auto;
-        width: 100%;
-        padding: 0 1;
-        border-top: solid $surface-lighten-1;
-        align: right middle;
-        display: block;
-    }
-    .message-actions Button {
-        min-width: 8;
-        height: 1;
-        margin: 0 0 0 1;
-        border: none;
-        background: $surface-lighten-2;
-        color: $text-muted;
-    }
-    .message-actions Button:hover {
-        background: $surface;
-        color: $text;
-    }
-    .message-actions .delete-button:hover {
-        background: $error;
-        color: white;
-    }
+    /* ADR-161 task 8c: .message-actions (and the .delete-button hover)
+       deduped into css/components/_messages.tcss -- the app-tier copies
+       already won every shared property (padding included: the bundle
+       says 1, the copy here said 0 1 and lost). */
     ChatMessageEnhanced.-ai .message-actions.-generating {
         display: none;
     }
@@ -242,6 +214,8 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
         image_mime_type: Optional[str] = None,
         feedback: Optional[str] = None,
         sender: Optional[str] = None,
+        recovered_root=None,
+        recovered_profile=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -253,6 +227,19 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
         self.timestamp = timestamp
         self.image_data = image_data
         self.image_mime_type = image_mime_type
+        self.recovered_image_status = "unknown"
+        if message_id:
+            from tldw_chatbook.Backup_Recovery.recovered_media import (
+                resolve_message_image,
+            )
+
+            status, payload, mime_type = resolve_message_image(
+                message_id, root=recovered_root, profile=recovered_profile,
+            )
+            self.recovered_image_status = status
+            if status != "unknown":
+                self.image_data = payload
+                self.image_mime_type = mime_type
         self.feedback = feedback
         self._image_widget = None
 
@@ -309,6 +296,8 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
             yield Markdown(self.message_text, classes="message-text")
 
             # Image display if present
+            if self.recovered_image_status in {"missing", "deleted"}:
+                yield Static(self.recovered_image_status.capitalize() + " recovered media")
             if self.image_data:
                 with Container(classes="message-image-container"):
                     # Create image display widget

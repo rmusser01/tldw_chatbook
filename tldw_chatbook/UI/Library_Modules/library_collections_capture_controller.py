@@ -441,6 +441,8 @@ class LibraryCollectionsCaptureController:
             loaded_detail=detail,
             detail_loading=False,
             detail_error=None,
+            mutation_error=None,
+            extraction_error=None,
         )
         return True
 
@@ -601,8 +603,10 @@ class LibraryCollectionsCaptureController:
             loaded = replace(loaded, capture=changed)
         page = self.state.page
         if page is not None:
+            values = {f.name: getattr(changed, f.name) for f in fields(CaptureSummary)}
+            summary = CaptureSummary(**values)
             items = tuple(
-                self._as_summary(changed) if item.identity == changed.identity else item
+                summary if item.identity == changed.identity else item
                 for item in page.items
             )
             page = replace(page, items=items)
@@ -616,19 +620,15 @@ class LibraryCollectionsCaptureController:
             conflict_draft=None,
         )
 
-    @staticmethod
-    def _as_summary(detail: CaptureDetail) -> CaptureSummary:
-        return CaptureSummary(
-            **{
-                field.name: getattr(detail, field.name)
-                for field in fields(CaptureSummary)
-            }
-        )
-
     async def _refresh_after_mutation(self) -> None:
         request = self.state.applied_scope or self.state.requested_scope
-        if request is not None and request.authority_key == self.state.authority_key:
-            await self.load_page(request)
+        if (
+            request is not None
+            and request.authority_key == self.state.authority_key
+            and await self.load_page(request)
+            and self.state.selected_identity is not None
+        ):
+            await self.load_selected_now()
 
     async def retry_extraction(self) -> bool:
         """Retry extraction under its own fence and refresh current data."""

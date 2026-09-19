@@ -1,0 +1,16 @@
+........................................................................ [ 60%]
+...............................................                          [100%]
+============================= slowest 12 durations =============================
+12.49s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[True]
+11.48s call     Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+11.32s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[False]
+10.28s call     Tests/UI/test_console_live_work_handoffs.py::test_console_renders_pending_launch_context
+10.09s call     Tests/UI/test_console_live_work_handoffs.py::test_console_wc_live_work_action_button_routes_run_details
+10.06s call     Tests/UI/test_console_live_work_handoffs.py::test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+9.96s call     Tests/UI/test_console_live_work_handoffs.py::test_locked_console_shows_staged_evidence_receipt_task_2852
+8.95s call     Tests/UI/test_console_live_work_handoffs.py::test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+8.52s call     Tests/UI/test_console_live_work_handoffs.py::test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+7.38s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[media]
+7.23s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_still_auto_opens_inspector
+7.20s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[conversation]
+119 passed in 380.08s (0:06:20)

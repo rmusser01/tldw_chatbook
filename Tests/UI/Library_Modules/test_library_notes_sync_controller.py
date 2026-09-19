@@ -27,6 +27,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationPlan
 from tldw_chatbook.Notes.notes_sync_reconciler import (
+    DeletionGroup,
     ReconciliationAttention,
     ReconciliationAttentionKind,
 )
@@ -40,6 +41,7 @@ from tldw_chatbook.Notes.notes_sync_runtime import (
     RuntimeConflictReceipt,
 )
 from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+    _ROOT_PAGE_SIZE,
     InertLastingSyncRuntime,
     LastingSyncRuntimePort,
     LibraryNotesSyncController,
@@ -800,7 +802,18 @@ async def test_control_failure_publishes_explicit_bounded_recovery_action() -> N
     await controller.pause_root("root-1")
 
     assert controller.snapshot.phase == "roots"
-    assert "Review root status" in controller.snapshot.status_line
+    # task-32545 AC#3: was "Review root status" -- an instruction to read a
+    # row that had not changed. The line now names the category and the next
+    # action, and the row carries the same failure (task-32534 AC#1).
+    assert controller.snapshot.status_line == (
+        "Action failed — RuntimeError. Next: Check changes."
+    )
+    assert controller.snapshot.roots[0].failure == "Action failed — RuntimeError"
+    # Fix round 1: the overlay owns the LABEL, never the status -- rewriting
+    # `status` re-enabled controls the canvas blocks by status.
+    assert controller.snapshot.roots[0].status == "up_to_date"
+    assert controller.snapshot.roots[0].status_label == "⚠ Needs attention"
+    assert "/private/root" not in controller.snapshot.status_line
     assert "/private/root" not in repr(controller.snapshot)
 
 
@@ -3171,3 +3184,470 @@ async def test_unclassified_check_failure_keeps_the_generic_line_and_logs_a_type
     assert "ZeroDivisionError" in joined
     assert "/zqleakcanary/secret/path" not in joined
     assert "Check failed" in controller.snapshot.status_line
+
+
+async def test_a_failed_manual_check_flips_the_row_and_logs_the_category() -> None:
+    """task-32534 AC#1/#2: a failed Check names its cause on the row and in the log."""
+    from loguru import logger
+
+    runtime = _Runtime()
+
+    async def fail(_root_id: str):
+        raise RuntimeError("sync_recovery_unresolved")
+
+    runtime.request_sync_now = fail
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]), level="WARNING"
+    )
+    try:
+        await controller.sync_now("root-1")
+    finally:
+        logger.remove(sink_id)
+
+    row = controller.snapshot.roots[0]
+    assert (row.status_label, row.failure, row.next_action_label) == (
+        "⚠ Needs attention",
+        "Check failed — recovery still open",
+        "Resolve recovery",
+    )
+    assert row.status == "up_to_date"  # truthful; only the label is overlaid
+    assert row.failed_action == "resolve_cleanup"
+    assert controller.snapshot.phase == "roots"
+    assert controller.snapshot.status_line.startswith("Check failed — ")
+    assert "Up to date" not in controller.snapshot.status_line
+    assert "Review root status" not in controller.snapshot.status_line
+    joined = "\n".join(messages)
+    assert "error_type=RuntimeError" in joined
+    assert "sync_recovery_unresolved" in joined
+    assert "/" not in joined.replace("notes sync", "")
+
+    # The next successful check clears the overlay.
+    runtime.request_sync_now = _Runtime.request_sync_now.__get__(runtime)
+    await controller.sync_now("root-1")
+    assert controller.snapshot.roots[0].failure == ""
+
+
+async def test_every_note_to_file_write_leaves_a_receipt_row() -> None:
+    """task-32534 AC#3: completed writes project as receipt rows under the roots."""
+    from tldw_chatbook.Notes.notes_sync_runtime import RuntimeWriteReceipt
+
+    runtime = _Runtime()
+    completed_at = 1_757_780_000_000_000_000  # 2025-09-13 local, fixed
+
+    async def write_receipts(root_id: str, *, limit: int = 20):
+        assert root_id == "root-1"
+        return (
+            RuntimeWriteReceipt(
+                "operation-1", "update_file", completed_at, "People/Sam.md", "Sam"
+            ),
+        )
+
+    runtime.write_receipts = write_receipts
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.refresh_receipts()
+
+    receipt = controller.snapshot.write_receipts[0]
+    assert (receipt.effect, receipt.relative_path, receipt.note_title) == (
+        "Wrote note to file",
+        "People/Sam.md",
+        "Sam",
+    )
+    from datetime import datetime
+
+    assert receipt.when == datetime.fromtimestamp(completed_at / 1e9).strftime(
+        "%Y-%m-%d %H:%M"
+    )
+
+
+async def test_activation_receipt_line_points_at_the_receipts_section() -> None:
+    """task-32545 AC#3: the activation receipt is the line the walk actually sees.
+
+    The apply path was fixed first; this is the second site (`activate_root`),
+    which is what a first activation renders -- the live walk still read
+    "60 applied · durable receipt recorded" there.
+    """
+    root_id = "legacy-root-" + "a" * 40
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot(root_id, "paused", "review_migration"),),
+    )
+
+    async def activate_root(target: str, authorization: object):
+        runtime.calls.append(("activate_root", target, authorization))
+        return NotesSyncControlResult(True, "up_to_date", "sync_now", 60)
+
+    runtime.activate_root = activate_root
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_migration(root_id)
+    assert await controller.activate_root(root_id, TOKEN) is True
+
+    assert controller.snapshot.receipt_line == "60 applied · listed under Receipts"
+
+
+async def test_a_check_on_a_paused_root_names_the_pause_and_offers_resume() -> None:
+    """task-32534 AC#1: the code a paused root actually raises is classified.
+
+    `pause_root` closes the root's admission, so `_admit_task` refuses the
+    next Check with ``root_admission_closed`` -- not ``sync_root_not_active``.
+    The live walk read "Check failed — RuntimeError · Next: Check changes",
+    which sent the reader back to the control that had just refused.
+    """
+    runtime = _Runtime()
+
+    async def fail(_root_id: str):
+        raise RuntimeError("root_admission_closed")
+
+    runtime.request_sync_now = fail
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-1")
+
+    row = controller.snapshot.roots[0]
+    assert (row.status_label, row.failure, row.next_action_label) == (
+        "⚠ Needs attention",
+        "Check failed — folder is paused",
+        "Resume",
+    )
+
+
+def test_every_row_reason_code_has_user_copy() -> None:
+    """A row phrase is only reachable when `_refusal_reason` returns its code.
+
+    `_refusal_reason` filters on `_CHECK_REFUSAL_COPY`, so a code present only
+    in `_CHECK_FAILURE_ROW` is dead: `root_admission_closed`, `root_offline`
+    and `root_unavailable` all fell through to the exception-category
+    fallback until the wave-4 live walk hit the first of them.
+    """
+    from tldw_chatbook.Library import library_notes_lasting_sync_state as state
+
+    assert set(state._CHECK_FAILURE_ROW) <= set(state._CHECK_REFUSAL_COPY)
+
+
+@pytest.mark.parametrize(
+    "route",
+    ("sync_now", "resume_root", "resolve_cleanup", "apply_reviewed"),
+)
+async def test_a_route_that_runs_clears_the_previous_check_failure(route: str) -> None:
+    """task-32534 AC#1: the row must not keep naming a superseded next action.
+
+    Fix round 1: only `sync_now` and the control path cleared the overlay, so
+    the canonical sequence `_CHECK_FAILURE_ROW` itself prescribes -- Check
+    refuses with `sync_recovery_unresolved`, the row says "Next: Resolve
+    recovery", the user runs it, it succeeds -- left the superseded action on
+    the row beside a status line reporting the recovery was reviewed. Same
+    for an apply.
+    """
+    runtime = _Runtime()
+
+    async def fail(_root_id: str):
+        raise RuntimeError("sync_recovery_unresolved")
+
+    working_sync_now = _Runtime.request_sync_now.__get__(runtime)
+    runtime.request_sync_now = fail
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-1")
+    assert controller.snapshot.roots[0].failure.endswith("recovery still open")
+    assert controller.snapshot.roots[0].failed_action == "resolve_cleanup"
+
+    runtime.request_sync_now = working_sync_now
+    if route == "sync_now":
+        await controller.sync_now("root-1")
+    elif route == "resume_root":
+        # The default stub refuses; an ACCEPTED resume is the live case --
+        # it sets no status line of its own, so the failure's line survived.
+        async def resume(_root_id: str):
+            return NotesSyncControlResult(True, "up_to_date", "sync_now")
+
+        runtime.resume_root = resume
+        await controller.resume_root("root-1")
+    elif route == "resolve_cleanup":
+        await controller.resolve_cleanup("root-1", "operation-1")
+    else:
+        await controller.check_root("root-1")
+        await controller.apply_reviewed("root-1", TOKEN)
+
+    row = controller.snapshot.roots[0]
+    assert (row.failure, row.failed_action) == ("", "")
+    # ...and the failure's own status line must not outlive it. Live: Resume
+    # cleared the row but left "Check failed — folder is paused. Next: Resume."
+    # standing beside "✓ Up to date", which is AC#1's contradiction inverted.
+    assert "Check failed" not in controller.snapshot.status_line
+
+
+async def test_one_unreadable_root_does_not_blank_every_root_s_receipts() -> None:
+    """task-32534 AC#3 (fix round 1): the loop used to abort on the first root.
+
+    Reachable with a paused root before the runtime fix, and with any root
+    the runtime cannot answer for after it.
+    """
+    from tldw_chatbook.Notes.notes_sync_runtime import RuntimeWriteReceipt
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot("root-1", "paused", "resume_sync"),
+            NotesSyncRootRuntimeSnapshot("root-2", "up_to_date", "sync_now"),
+        ),
+    )
+
+    async def write_receipts(root_id: str, *, limit: int = 20):
+        if root_id == "root-1":
+            raise RuntimeError("root_admission_closed")
+        return (
+            RuntimeWriteReceipt(
+                "operation-2", "update_file", 1_757_780_000_000_000_000, "b.md", "B"
+            ),
+        )
+
+    runtime.write_receipts = write_receipts
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.refresh_receipts()
+
+    assert [r.relative_path for r in controller.snapshot.write_receipts] == ["b.md"]
+
+
+# --- task-32604 fix round 1: the three edges of sync_now's new status line ---
+
+
+def _paged_runtime(target_status: str, target_action: str) -> _Runtime:
+    """A runtime whose target root sits on page 2 of the bounded root list."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        tuple(
+            NotesSyncRootRuntimeSnapshot(f"root-{index}", "up_to_date", "sync_now")
+            for index in range(_ROOT_PAGE_SIZE)
+        )
+        + (NotesSyncRootRuntimeSnapshot("root-tail", target_status, target_action),),
+    )
+    return runtime
+
+
+async def test_check_reads_its_row_from_every_root_not_just_the_visible_page() -> None:
+    """Minor 3: a root on page 2 must not fall back to "review_changes"."""
+
+    runtime = _paged_runtime("up_to_date", "sync_now")
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-tail")
+
+    assert controller.snapshot.status_line == "Nothing to review."
+    assert controller.snapshot.phase == "roots"
+
+
+async def test_an_unlabelled_review_keeps_the_user_on_the_roots_list() -> None:
+    """Minor 4: nothing should land on a review that cannot be applied."""
+
+    runtime = _Runtime()
+
+    async def refuse_labels(root_id: str, token: str) -> tuple[RuntimeConflictLabel, ...]:
+        raise RuntimeError("labels unavailable")
+
+    runtime.conflict_labels = refuse_labels
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root-1", "needs_attention", "review_changes"
+            ),
+        ),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                kind=ReconciliationAttentionKind.CONFLICT,
+                reason_code="both_sides_changed",
+                binding_id="bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    await controller.sync_now("root-1")
+
+    assert controller.snapshot.status_line == (
+        "Conflict details are unavailable. Check again."
+    )
+    assert controller.snapshot.phase == "roots"
+
+
+async def test_a_deletion_only_review_is_counted_not_reported_as_zero() -> None:
+    """Minor 5: review_changes with no apply-kind action still has a count."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root-1", "needs_attention", "review_changes"
+            ),
+        ),
+    )
+    deletion = ReconciliationAttention(
+        kind=ReconciliationAttentionKind.DELETION_REVIEW,
+        reason_code="file_deleted",
+        binding_id="bind-1",
+    )
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(DeletionGroup(items=(deletion,)),),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-1")
+
+    assert controller.snapshot.status_line == (
+        "Manual check finished. 1 change to review."
+    )
+    assert controller.snapshot.phase == "review"
+
+
+async def test_restating_a_row_reads_every_root_not_just_the_visible_page() -> None:
+    """Round 2 re-review: the one-page lookup survived in ``_restate_root``.
+
+    Its offline/unsupported/paused caller is new in task-32604, so a finished
+    check on a root past page 1 left "Checking changes…" standing forever.
+    """
+
+    runtime = _paged_runtime("offline", "reconnect_folder")
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.sync_now("root-tail")
+
+    assert controller.snapshot.phase == "roots"
+    assert controller.snapshot.status_line == (
+        "⚠ Offline · Next: Reconnect folder."
+    )
+
+
+async def test_a_root_is_not_up_to_date_when_nothing_is_watching_it() -> None:
+    """Round 2 (promoted Minor 8): the P0's lie, one level up.
+
+    A dead watcher leaves ``note_changed`` refusing silently, so an editor
+    save never reaches disk -- while the row goes on rendering the last
+    status it PUBLISHED. Only the reassuring label is rewritten; ``status``
+    and ``next_action`` still drive which controls the canvas offers.
+    """
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "failed",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root-1", "up_to_date", "sync_now"),),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    row = controller.snapshot.roots[0]
+
+    assert row.status_label == "⚠ Sync stopped"
+    assert row.status_label != "✓ Up to date"
+    # The row still offers Check changes -- the way out of exactly this state.
+    assert row.status == "up_to_date"
+    assert row.next_action == "sync_now"
+    assert row.next_action_label == "Check changes"
+
+
+async def test_a_watching_runtime_still_says_up_to_date() -> None:
+    """The negative control for the row above: no blanket relabelling."""
+
+    controller = LibraryNotesSyncController(
+        runtime=_Runtime(),
+        import_controller=_ImportController(),
+    )
+
+    assert controller.snapshot.roots[0].status_label == "✓ Up to date"
+
+
+@pytest.mark.parametrize(
+    ("runtime_status", "expected_label"),
+    (
+        ("active", "✓ Up to date"),
+        # Round 3: `_start_once` publishes each root's up_to_date INSIDE its
+        # loop and sets "active" only after it, so a just-reconciled root is
+        # seen mid-startup. It has not stopped -- it has not finished.
+        ("starting", "◌ Starting"),
+        ("failed", "⚠ Sync stopped"),
+        ("stopping", "⚠ Sync stopped"),
+        ("stopped", "⚠ Sync stopped"),
+        ("not_configured", "⚠ Sync stopped"),
+    ),
+)
+async def test_every_runtime_status_labels_a_clean_root_honestly(
+    runtime_status: str, expected_label: str
+) -> None:
+    """Round 3 ruling 1: neither a false "up to date" nor a false alarm."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        runtime_status,
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root-1", "up_to_date", "sync_now"),),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    row = controller.snapshot.roots[0]
+
+    assert row.status_label == expected_label
+    # Whatever the label, the controls the canvas offers are unchanged.
+    assert (row.status, row.next_action) == ("up_to_date", "sync_now")

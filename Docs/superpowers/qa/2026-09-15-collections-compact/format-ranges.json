@@ -1,0 +1,12 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+    "formatted_changed_ranges": 1,
+    "lines": 1689
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_collections_capture_reader.py",
+    "formatted_changed_ranges": 4,
+    "lines": 1188
+  }
+]

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from textwrap import dedent
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -269,7 +270,7 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
         await _wait_for_selector(console, pilot, "#console-shell")
         recovery = AsyncMock()
         console._open_console_provider_recovery = recovery
-        console._console_provider_blocker_copy = lambda: "No provider configured."
+        console._console_provider_blocker_copy = lambda *, settings_readiness=None: "No provider configured."
 
         console._open_console_prompts_modal()
         await pilot.pause()
@@ -297,7 +298,7 @@ async def test_improve_stays_unavailable_during_an_active_run_even_with_a_health
     async with host.run_test(size=(140, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        console._console_provider_blocker_copy = lambda: ""
+        console._console_provider_blocker_copy = lambda *, settings_readiness=None: ""
         console._console_run_active = lambda: True
 
         console._open_console_prompts_modal()
@@ -600,11 +601,23 @@ async def test_improvement_validation_prefers_the_captured_snapshot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prompt_command_replaces_the_draft_with_the_resolved_body() -> None:
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("Summarize the following.", "Summarize the following."),
+        ("Literal {{name}} and }}", "Literal {name} and }"),
+        ('{{"key": "value"}}', '{"key": "value"}'),
+    ],
+)
+async def test_prompt_command_replaces_the_draft_with_the_resolved_body(
+    source: str, expected: str
+) -> None:
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
-    app.prompt_scope_service = _PromptScopeService(_prompt_record(system_prompt=""))
+    app.prompt_scope_service = _PromptScopeService(
+        _prompt_record(system_prompt="", user_prompt=source)
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 40)) as pilot:
@@ -616,7 +629,7 @@ async def test_prompt_command_replaces_the_draft_with_the_resolved_body() -> Non
         await console._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
         await pilot.pause()
 
-        assert composer.draft_text() == "Summarize the following."
+        assert composer.draft_text() == expected
 
 
 @pytest.mark.asyncio
@@ -1289,27 +1302,49 @@ def test_prompts_controller_owns_no_dom() -> None:
 
 
 @pytest.mark.parametrize(
-    "name",
+    "name,delegate",
     [
-        "_open_console_prompts_modal",
-        "_ensure_console_prompt_history",
-        "_console_command_insert_prompt",
-        "_console_command_apply_system",
-        "_open_console_system_prompt_editor",
-        "_consume_pending_console_prompt_insert",
+        ("_open_console_prompts_modal", "self._prompts._open_console_prompts_modal"),
+        (
+            "_ensure_console_prompt_history",
+            "self._console_runtime().ensure_prompt_history",
+        ),
+        (
+            "_console_command_insert_prompt",
+            "self._prompts._console_command_insert_prompt",
+        ),
+        (
+            "_console_command_apply_system",
+            "self._prompts._console_command_apply_system",
+        ),
+        (
+            "_open_console_system_prompt_editor",
+            "self._prompts._open_console_system_prompt_editor",
+        ),
+        (
+            "_consume_pending_console_prompt_insert",
+            "self._prompts._consume_pending_console_prompt_insert",
+        ),
     ],
 )
-def test_screen_keeps_a_real_delegation_for_every_outside_caller(name: str) -> None:
-    """These six are reached from outside the cluster -- by a staying screen
-    method, by Textual's `action_*` resolution, by the command-registry dict,
-    or by a pre-existing test that replaces the exact screen attribute. Each
-    must stay a thin forwarder onto the controller, never a re-implementation
-    and never absent."""
+def test_screen_keeps_a_real_delegation_for_every_outside_caller(
+    name: str, delegate: str
+) -> None:
+    """Outside callers retain thin forwarders to each method's current owner."""
     method = getattr(ChatScreen, name)
-    body = inspect.getsource(method)
+    function = ast.parse(dedent(inspect.getsource(method))).body[0]
+    statements = function.body
+    if ast.get_docstring(function) is not None:
+        statements = statements[1:]
 
-    assert "self._prompts." + name in body
-    assert len(body.splitlines()) <= 4
+    assert len(statements) == 1
+    assert isinstance(statements[0], (ast.Expr, ast.Return))
+    call = statements[0].value
+    if isinstance(function, ast.AsyncFunctionDef):
+        assert isinstance(call, ast.Await)
+        call = call.value
+    assert isinstance(call, ast.Call)
+    assert ast.unparse(call.func) == delegate
 
 
 def test_moved_methods_are_gone_from_the_screen() -> None:
@@ -1368,3 +1403,39 @@ def test_stale_reason_reports_the_session_change_before_the_system_change() -> N
     # the assertion the mutation slipped past.
     flow._active_system_fingerprint = lambda: "fingerprint-b"
     assert flow._stale_reason() == "The active Console session changed."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination", ["append_active", "replace_snapshot"])
+async def test_prompt_system_replacement_refreshes_visible_status_chip(destination):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        console = host.screen
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        before = store.session_settings(session_id).system_prompt
+        snapshot = composer.capture_draft_snapshot()
+        application = PromptVariableApplication(
+            system_text="Be concise.",
+            user_text="Hello",
+            apply_system=True,
+            apply_user=True,
+            destination=destination,
+            target_session_id=session_id,
+            composer_fingerprint=(
+                snapshot.fingerprint if destination == "replace_snapshot" else None
+            ),
+            system_fingerprint=fingerprint_system_text(str(before or "")),
+        )
+        assert console._prompts._apply_guarded_prompt_application(
+            application,
+            captured_snapshot=snapshot if destination == "replace_snapshot" else None,
+        )
+        await pilot.pause()
+        chip = console.query_one("#console-system-prompt-chip")
+        assert str(chip.render()) == "System Prompt: set"

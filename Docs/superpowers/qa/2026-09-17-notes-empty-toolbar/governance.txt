@@ -1,0 +1,28 @@
+............................................                             [100%]
+============================= slowest 25 durations =============================
+19.69s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+2.74s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+2.06s call     Tests/UI/test_python_style_inventory.py::test_inventory_reports_unknown_css_and_expanded_kwargs_instead_of_skipping
+1.91s call     Tests/UI/test_python_style_inventory.py::test_literal_constructors_and_finite_lookup_remain_static[COLORS[state]]
+1.91s call     Tests/UI/test_python_style_inventory.py::test_marker_inside_a_string_is_not_an_annotation
+1.91s call     Tests/UI/test_python_style_inventory.py::test_unmarked_or_nonspecific_runtime_expressions_remain_visible[# ds-runtime: TODO]
+1.86s call     Tests/UI/test_python_style_inventory.py::test_unmarked_or_nonspecific_runtime_expressions_remain_visible[# ds-runtime: measured width\n\n]
+1.85s call     Tests/UI/test_python_style_inventory.py::test_unmarked_or_nonspecific_runtime_expressions_remain_visible[# ds-runtime: dynamic]
+1.84s call     Tests/UI/test_python_style_inventory.py::test_css_keyword_cannot_hide_string_or_dynamic_declarations
+1.83s call     Tests/UI/test_python_style_inventory.py::test_static_name_alias_and_finite_conditional_do_not_hide_literal_values
+1.82s call     Tests/UI/test_python_style_inventory.py::test_none_reset_is_legal_without_runtime_marker
+1.80s call     Tests/UI/test_python_style_inventory.py::test_pin_refuses_ast_violations_without_rewriting_baseline
+1.76s call     Tests/UI/test_python_style_inventory.py::test_inventory_catches_each_write_form[w.styles.width = 3-properties0]
+1.75s call     Tests/UI/test_python_style_inventory.py::test_inventory_catches_each_write_form[w.styles.width: int = 3-properties1]
+1.72s call     Tests/UI/test_python_style_inventory.py::test_unmarked_or_nonspecific_runtime_expressions_remain_visible[# ds-runtime: runtime]
+1.69s call     Tests/UI/test_python_style_inventory.py::test_inventory_catches_each_write_form[w.styles.width = w.styles.height = 3-properties3]
+1.68s call     Tests/UI/test_python_style_inventory.py::test_literal_constructors_and_finite_lookup_remain_static[Scalar.parse("100%")]
+1.67s call     Tests/UI/test_python_style_inventory.py::test_literal_constructors_and_finite_lookup_remain_static[Color.parse("red")]
+1.66s call     Tests/UI/test_python_style_inventory.py::test_literal_constructors_and_finite_lookup_remain_static[Spacing(1, 2, 1, 2)]
+1.65s call     Tests/UI/test_python_style_inventory.py::test_unmarked_or_nonspecific_runtime_expressions_remain_visible[# ds-runtime:]
+1.65s call     Tests/UI/test_python_style_inventory.py::test_function_parameter_is_not_confused_with_a_module_constant
+1.63s call     Tests/UI/test_python_style_inventory.py::test_inventory_catches_each_write_form[w.set_styles(width=3, margin_top=1)-properties4]
+1.61s call     Tests/UI/test_python_style_inventory.py::test_inventory_catches_each_write_form[w.styles.width, w.styles.height = 3, 4-properties2]
+1.55s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.53s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+44 passed in 92.58s (0:01:32)

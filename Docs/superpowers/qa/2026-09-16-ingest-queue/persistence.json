@@ -1,0 +1,111 @@
+{
+  "native_result": {
+    "pid": 5855,
+    "steps": [
+      {
+        "size": [
+          170,
+          48
+        ],
+        "theme": "textual-dark",
+        "retry_focus_and_full_consent_painted": true,
+        "queue_tick_and_disclosure_focus_preserved": true,
+        "forward_reverse_recovery_focus_painted": true,
+        "draft_preserved": true,
+        "synthetic_jobs_only": 2,
+        "registry_empty_after_fixture_cleanup": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "theme": "textual-light",
+        "retry_focus_and_full_consent_painted": true,
+        "queue_tick_and_disclosure_focus_preserved": true,
+        "forward_reverse_recovery_focus_painted": true,
+        "draft_preserved": true,
+        "synthetic_jobs_only": 2,
+        "registry_empty_after_fixture_cleanup": true
+      }
+    ],
+    "exclusive_profile": true,
+    "driver": "LinuxDriver",
+    "synthetic_registry_without_store": true,
+    "passed": true,
+    "app_run_returned": true
+  },
+  "exit_code": 0,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok",
+      "counts": {
+        "messages": 0
+      }
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok",
+      "counts": {
+        "Media": 0
+      }
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok",
+      "counts": {}
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok",
+      "counts": {
+        "ingest_jobs": 0
+      }
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok",
+      "counts": {}
+    }
+  ],
+  "source_files": [
+    {
+      "name": "notes.txt",
+      "unchanged": true,
+      "sha256": "00fc26d20f9790d27d740eeb94d1946a8cf9abb1ffe1d4f19f268267af626e3e"
+    }
+  ],
+  "log_errors": [],
+  "default_profile_unchanged": true,
+  "default_profile_files_checked": {
+    "/Users/macbook-dev/.config/tldw_cli/config.toml": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+  }
+}

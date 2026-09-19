@@ -1,0 +1,1486 @@
+[
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[refused]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[refused]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[refused]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[refused]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/001",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[exception]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[exception]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[exception]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[exception]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/002",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[cancelled]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[cancelled]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[cancelled]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_recovery_rearms_after_unchanged_failed_action[cancelled]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/003",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/004",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_pending_recovery_still_ignores_duplicate_clicks[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/005",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/006",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[discard_failure-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/007",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/008",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_restored_recovery_failed_discard_can_be_discarded_again[retry_cancel-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/009",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/010",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[False-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/011",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/012",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_preserves_original_recovery_error[True-True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/013",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/014",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_repaint_failure_propagates_after_successful_recovery[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/015",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/016",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_stale_completion_cannot_release_a_new_click[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/017",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_completion_does_not_release_model_owned_claim",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_completion_does_not_release_model_owned_claim",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_completion_does_not_release_model_owned_claim",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_completion_does_not_release_model_owned_claim",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/018",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_scheduling_failure_releases_click",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_scheduling_failure_releases_click",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_scheduling_failure_releases_click",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_dispatch_recovery_repeated_actions.py::test_scheduling_failure_releases_click",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/019",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_disabled_reason_helper_covers_run_blocked_state",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/020",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_empty_draft_disables_send_with_visible_idle_reason",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/021",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_typing_enables_send_and_clears_reason_immediately",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/022",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/023",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_active_run_block_shows_wait_reason",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/024",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_reason_strip_never_adds_height_to_the_composer_row",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/025",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_idle_stop_button_has_no_unreachable_tooltip",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/026",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_still_sends_when_send_is_enabled",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/027",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_enter_hotkey_queues_draft_behind_accepted_run",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/028",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+    "returncode": 1,
+    "qualified": false,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+        "phase": "call",
+        "outcome": "failed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/029",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[rail]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/030",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[inspector]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/031",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_footer_shutdown.py::test_footer_focus_checks_survive_empty_stack_without_losing_live_hints[setup]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/032",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_prompt_queue.py::test_recovery_shelf_buttons_pin_the_displayed_turn_id",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_prompt_queue.py::test_recovery_shelf_buttons_pin_the_displayed_turn_id",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_prompt_queue.py::test_recovery_shelf_buttons_pin_the_displayed_turn_id",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_prompt_queue.py::test_recovery_shelf_buttons_pin_the_displayed_turn_id",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/033",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[switch]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[switch]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[switch]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[switch]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/034",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[unmount]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[unmount]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[unmount]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_never_updates_stale_panel[unmount]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/035",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_delayed_preview_cannot_update_closed_stale_generation",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_delayed_preview_cannot_update_closed_stale_generation",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_delayed_preview_cannot_update_closed_stale_generation",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_delayed_preview_cannot_update_closed_stale_generation",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/036",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_cancelled_unmount_retrieves_and_revokes_late_minted_nonce",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_cancelled_unmount_retrieves_and_revokes_late_minted_nonce",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_cancelled_unmount_retrieves_and_revokes_late_minted_nonce",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_cancelled_unmount_retrieves_and_revokes_late_minted_nonce",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/037",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/038",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_recovers_ready_and_preserves_arguments",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_recovers_ready_and_preserves_arguments",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_recovers_ready_and_preserves_arguments",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_recovers_ready_and_preserves_arguments",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/039",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_retry_preview_uses_service_and_preserves_form_values",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_retry_preview_uses_service_and_preserves_form_values",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_retry_preview_uses_service_and_preserves_form_values",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_mcp_workbench.py::test_test_tool_retry_preview_uses_service_and_preserves_form_values",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/040",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/041",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/042",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_collapsed_paste_sends_full_payload_not_visible_token",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/043",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_preserves_expanded_payload_whitespace",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/044",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_native_send_clears_composer_after_acceptance_and_updates_store",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/045",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_chat_lifecycle_state_survives_screen_recreation_return",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/046",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_refreshes_workspace_conversation_rail_after_persistence",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/047",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/048",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_accepted_send_records_first_send_flag",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/049",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_edit_resend_clears_replaced_descendant_original_attempt",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/050",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_continue_action_streams_new_message_from_selected_turn",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/051",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_regenerate_action_streams_selected_variant",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/052",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_console_native_chat_flow.py::test_console_routine_send_fires_no_success_toast",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/32824-integration-001/053",
+    "classes": [],
+    "mismatches": 0
+  }
+]

@@ -1,0 +1,50 @@
+[
+  {
+    "profile": "/private/tmp/tldw-32705-run-001",
+    "pid": 10913,
+    "passed": false,
+    "app_run_returned": true,
+    "exit": 1,
+    "pid_absent_checked": true,
+    "runner_sha256": "8d16445fe571424e19d91cdbb6179f5abc72641a76511b2cb5682e786a71447a",
+    "reason": "Method compared as property plus premature stored-draft check",
+    "completed_cells": 0,
+    "default_profile_hashes_unchanged": true
+  },
+  {
+    "profile": "/private/tmp/tldw-32705-run-002",
+    "pid": 12215,
+    "passed": false,
+    "app_run_returned": true,
+    "exit": 1,
+    "pid_absent_checked": true,
+    "runner_sha256": "3d25122143c111a67a78fe9586e34b9d36a65d62ff3af29b1a39a1d5e7faee7a",
+    "reason": "Method compared as property",
+    "completed_cells": 0,
+    "default_profile_hashes_unchanged": true
+  },
+  {
+    "profile": "/private/tmp/tldw-32705-run-003",
+    "pid": 13002,
+    "passed": false,
+    "app_run_returned": true,
+    "exit": 1,
+    "pid_absent_checked": true,
+    "runner_sha256": "beeec9b413586912967ce8b4e9450937d52879e9ba904bceec952e3b363f1247",
+    "reason": "Datetime evidence serializer rejected source rows",
+    "completed_cells": 0,
+    "default_profile_hashes_unchanged": true
+  },
+  {
+    "profile": "/private/tmp/tldw-32705-run-004",
+    "pid": 13667,
+    "passed": false,
+    "app_run_returned": true,
+    "exit": 1,
+    "pid_absent_checked": true,
+    "runner_sha256": "627191338667bdeae6ee8335a7abcf054e3065c7d622aee749df699330818cd2",
+    "reason": "Compact draft wrap split a single-line paint assertion",
+    "completed_cells": 1,
+    "default_profile_hashes_unchanged": true
+  }
+]

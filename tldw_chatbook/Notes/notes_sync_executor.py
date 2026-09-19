@@ -299,6 +299,22 @@ _INTERNAL_REASONS = frozenset(
         "undo_expired",
     }
 )
+MAX_SYNC_KEYWORD_LENGTH = 256
+"""Longest keyword one execution request may carry (task-32535).
+
+The contract a file-reading caller has to honour: a frontmatter tag or alias
+longer than this is dropped at the lift, not carried here to throw.
+"""
+
+MAX_SYNC_TITLE_LENGTH = 4096
+"""Longest title one execution request may carry (task-32535).
+
+Same contract as the keyword bound, opposite remedy: a title is the note's
+only name, so a frontmatter `title:` longer than this is truncated at the
+lift rather than dropped -- the first 4096 characters still name the note,
+while dropping it would silently rename the note to its file stem.
+"""
+
 _TYPED_REASON_CODES = frozenset(
     {
         "comparison_root_unavailable",
@@ -360,6 +376,28 @@ _TYPED_REASON_CODES = frozenset(
     }
 )
 _FileSnapshot = NotesSyncFileSnapshot | WindowsNotesSyncObservation
+
+
+def _keywords_metadata(request: "NotesSyncExecutionRequest") -> dict[str, object]:
+    """Return the keyword entry for one recovery envelope, or nothing.
+
+    Omitted when empty: the envelope has a byte budget, and every action but
+    a frontmatter-bearing create carries no keywords at all (task-32535).
+    """
+
+    if not request.desired_keywords:
+        return {}
+    return {"desired_keywords": list(request.desired_keywords)}
+
+
+def _decoded_keywords(value: object) -> tuple[str, ...]:
+    """Return the frontmatter keywords a resumed create must still apply."""
+
+    if value is None:
+        return ()
+    if type(value) is not list or any(type(item) is not str for item in value):
+        raise RuntimeError("recovery_authority_changed")
+    return tuple(value)
 
 
 def _file_relative_path(snapshot: _FileSnapshot) -> str:
@@ -518,6 +556,8 @@ class NotesSyncExecutionRequest:
     desired_title: str
     recovery_id: str
     recovery_expires_at: int
+    desired_keywords: tuple[str, ...] = ()
+    """Keywords lifted from the file's frontmatter for a create (task-32535)."""
     journal_kind: str | None = None
     direction_override: NotesSyncDirectionOverride | None = None
     keep_both: NotesSyncKeepBothAuthority | None = None
@@ -587,10 +627,18 @@ class NotesSyncExecutionRequest:
         if (
             type(self.desired_title) is not str
             or not self.desired_title
-            or len(self.desired_title) > 4096
+            or len(self.desired_title) > MAX_SYNC_TITLE_LENGTH
             or "\x00" in self.desired_title
         ):
             raise ValueError("desired_title must be bounded non-empty text.")
+        if type(self.desired_keywords) is not tuple or any(
+            type(value) is not str
+            or not value.strip()
+            or len(value) > MAX_SYNC_KEYWORD_LENGTH
+            or "\x00" in value
+            for value in self.desired_keywords
+        ):
+            raise ValueError("desired_keywords must be bounded non-empty text.")
         if type(self.recovery_expires_at) is not int or self.recovery_expires_at <= 0:
             raise ValueError("recovery_expires_at must be positive.")
         if self.journal_kind is not None and (
@@ -741,6 +789,7 @@ class _NoteAuthority(Protocol):
         note_id: str,
         title: str,
         content: str,
+        keywords: tuple[str, ...] = (),
     ) -> NotesSyncNoteSnapshot: ...
 
     async def delete(self, expected: NotesSyncNoteSnapshot) -> None: ...
@@ -1175,6 +1224,7 @@ class NotesSyncExecutor:
             note_id = self._required_metadata_text(metadata, "note_id")
             relative_path = self._required_metadata_text(metadata, "file_relative_path")
             desired_title = self._required_metadata_text(metadata, "desired_title")
+            desired_keywords = _decoded_keywords(metadata.get("desired_keywords"))
             recovery_title = self._required_metadata_text(metadata, "recovery_title")
         except (KeyError, TypeError, ValueError):
             raise RuntimeError("recovery_authority_changed") from None
@@ -1325,6 +1375,7 @@ class NotesSyncExecutor:
             note=note,
             file=file,
             desired_title=desired_title,
+            desired_keywords=desired_keywords,
             recovery_id=recovery.recovery_id,
             recovery_expires_at=recovery.expires_at,
             journal_kind=(operation.kind if resolution_action is not None else None),
@@ -1350,6 +1401,7 @@ class NotesSyncExecutor:
             note_id = self._required_metadata_text(metadata, "note_id")
             file_path = self._required_metadata_text(metadata, "file_relative_path")
             desired_title = self._required_metadata_text(metadata, "desired_title")
+            desired_keywords = _decoded_keywords(metadata.get("desired_keywords"))
         except (KeyError, TypeError, ValueError):
             raise RuntimeError("recovery_authority_changed") from None
         raw_override = metadata.get("direction_override")
@@ -1448,6 +1500,7 @@ class NotesSyncExecutor:
             note=note,
             file=file,
             desired_title=desired_title,
+            desired_keywords=desired_keywords,
             recovery_id=recovery.recovery_id,
             recovery_expires_at=recovery.expires_at,
             direction_override=direction_override,
@@ -3204,6 +3257,7 @@ class NotesSyncExecutor:
             ),
             "binding_id": request.binding_id,
             "cleanup_pending": False,
+            **_keywords_metadata(request),
             "desired_title": request.desired_title,
             "direction": request.direction.value,
             "direction_override": _encoded_override(request.direction_override),
@@ -3394,6 +3448,7 @@ class NotesSyncExecutor:
                         note_id=self._request_note_id(request),
                         title=request.desired_title,
                         content=request.file.text,
+                        keywords=request.desired_keywords,
                     )
                 )
             )
@@ -3728,6 +3783,7 @@ class NotesSyncExecutor:
             },
             "cleanup_pending": False,
             "desired_digest": desired_digest,
+            **_keywords_metadata(request),
             "desired_title": request.desired_title,
             "direction": request.direction.value,
             "direction_override": _encoded_override(request.direction_override),
@@ -3843,6 +3899,7 @@ class NotesSyncExecutor:
             "conflict_substage": "recovery_admitted",
             "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
             "desired_digest": _file_content_digest(file),
+            **_keywords_metadata(request),
             "desired_title": request.desired_title,
             "direction": request.direction.value,
             "direction_override": _encoded_override(request.direction_override),

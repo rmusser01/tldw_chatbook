@@ -1,0 +1,12 @@
+tldw_chatbook/UI/Screens/profile_interview_screen.py: Ruff baseline 4, current 4; no new diagnostics.
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check Tests/UI/test_profile_interview_answer_journeys.py Docs/superpowers/qa/2026-09-18-settings-project-interview/native_check.py
+All checks passed!
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check tldw_chatbook/UI/Screens/profile_interview_screen.py Tests/UI/test_profile_interview_answer_journeys.py Docs/superpowers/qa/2026-09-18-settings-project-interview/native_check.py
+3 files already formatted
+
+git diff --check
+
+
+.venv/bin/python scripts/check_backlog_task_ids.py
+No duplicate task IDs across 4126 task files; all task paths are Windows-compatible.

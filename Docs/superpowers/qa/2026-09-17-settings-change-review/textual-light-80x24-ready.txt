@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │  record per-turn diffs for this    │  │
+│     Privacy & Security       │  │  │ │  workspace's folders.              │  │
+│     Network                  │  │  │ │  Change history ready for 1        │  │
+│     My Profile               │  │  │ │  folder(s).                        │▃ │
+│  Troubleshooting           ▇ │  │  │ │  Disable change review             │▁ │
+│     Diagnostics (view)       │  │  │ │  Retry scheduled for 1 folder(s).  │  │
+│     About (view)             │  │  │ │                                    │  │
+│     Agents                   │  │  │ │  Default assistant                 │  │
+│  Expert                      │  │  │ │  No default assistant set — pick   │  │
+│     Internal Prompts         │  │  │ │  a persona to apply.               │  │
+│     Advanced Config          │  │  │ │ Review 4 Agent                     │  │
+│   Domain Defaults ▸ (11)     │  │  │ │ Review 3 Agent                     │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

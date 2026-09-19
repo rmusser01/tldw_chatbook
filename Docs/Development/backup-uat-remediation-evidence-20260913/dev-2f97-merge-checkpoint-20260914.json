@@ -1,0 +1,190 @@
+{
+  "scope": "Integrate dev 2f97 File Notes changes while preserving backup maintenance and explicit restored-owner pairing",
+  "parents": {
+    "ours": "15c1541f77780c7897a11ba136d738bad679e9b4",
+    "incoming": "2f97a42c9aa9cc737cf304f927e6d861824e1b3a"
+  },
+  "reviewed_files": {
+    "tldw_chatbook/Notes/file_notes_service.py": "2fb8e3bc925e80ac506012ec0556734a45c88de0fa008928d538389195155b0e",
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": "4f4c30e584e3da45c9bb48bfd489fd188522dbc6b5eb489a23d22234f22ba570",
+    "Tests/Backup_Recovery/test_file_notes_maintenance.py": "adf2c874d470d4c65b9d81136a5dfdec115a25c9d30643470f0f44d1972764a8",
+    "Tests/Backup_Recovery/test_notes_recovery_review.py": "d1c73dfa5fcc4263e58f6cb57c47e544a84eeb890f3a309f0d1b21ab2de2513e"
+  },
+  "changes": [
+    "Preserve both constructors: one-shot hidden tombstone migration plus existing maintenance registration and recovery pairing methods.",
+    "Run hidden tombstone sweep only within existing approved replica refresh scope.",
+    "Defer only exact expected file_notes_maintenance_paused RuntimeError at automatic Git probe; reset same binding for ordinary refresh retry, preserve newer binding and unrelated failure/cancellation."
+  ],
+  "regressions": {
+    "hidden_tombstone_red": "4 intended failures before gate fix",
+    "probe_red": "2 intended native maintenance failures, 2 unrelated-error/cancellation passes",
+    "initial_probe_red": "4 shared-profile setup failures; not product RED",
+    "root_green": [
+      {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "33",
+        "time": "44.359",
+        "timestamp": "2026-09-14T11:49:41.237285-07:00",
+        "hostname": "Roberts-MacBook-Pro-2.local"
+      }
+    ],
+    "independent_green": "8 passed in 9.28s"
+  },
+  "qualified_upstream": [
+    {
+      "case": "test_dot_directories_are_hidden_from_the_tree",
+      "passed": true,
+      "source": "/private/tmp/chatbook-backup-pr-20260912",
+      "test_sha256": "9970392c1b0f2f2525565508fe1da82d363d32facbd4ee21dffa598faf3d3cf7",
+      "fixed_selection": true,
+      "network_attempts": 0,
+      "test_mode_override": false,
+      "conftest_imported": false,
+      "app_imported": false,
+      "loaded_source_modules": 34,
+      "receipt_path": "/private/tmp/uat-dev-2f97-qualified-34n9u_9m/0/receipt.json",
+      "receipt_sha256": "3e212b50cc6af10882bb80cafdfaeb7b30aca151d62bd23f5cfd4393fdd0f192"
+    },
+    {
+      "case": "test_a_file_indexed_under_a_dot_directory_is_forgotten_not_recently_deleted",
+      "passed": true,
+      "source": "/private/tmp/chatbook-backup-pr-20260912",
+      "test_sha256": "9970392c1b0f2f2525565508fe1da82d363d32facbd4ee21dffa598faf3d3cf7",
+      "fixed_selection": true,
+      "network_attempts": 0,
+      "test_mode_override": false,
+      "conftest_imported": false,
+      "app_imported": false,
+      "loaded_source_modules": 34,
+      "receipt_path": "/private/tmp/uat-dev-2f97-qualified-34n9u_9m/1/receipt.json",
+      "receipt_sha256": "751cad058f04844f93d89fcf7dbae6f0ac8915af330b4c5046ed128bda7024b4"
+    },
+    {
+      "case": "test_a_tombstone_left_under_a_dot_directory_is_swept_on_the_next_scan",
+      "passed": true,
+      "source": "/private/tmp/chatbook-backup-pr-20260912",
+      "test_sha256": "9970392c1b0f2f2525565508fe1da82d363d32facbd4ee21dffa598faf3d3cf7",
+      "fixed_selection": true,
+      "network_attempts": 0,
+      "test_mode_override": false,
+      "conftest_imported": false,
+      "app_imported": false,
+      "loaded_source_modules": 34,
+      "receipt_path": "/private/tmp/uat-dev-2f97-qualified-34n9u_9m/2/receipt.json",
+      "receipt_sha256": "b663c346b17ce5a5cd24bfb19c1cd119a7675d18f8d45203aa878e40ff9a453b"
+    },
+    {
+      "case": "test_a_tombstone_for_a_hidden_file_that_is_really_gone_still_restores",
+      "passed": true,
+      "source": "/private/tmp/chatbook-backup-pr-20260912",
+      "test_sha256": "9970392c1b0f2f2525565508fe1da82d363d32facbd4ee21dffa598faf3d3cf7",
+      "fixed_selection": true,
+      "network_attempts": 0,
+      "test_mode_override": false,
+      "conftest_imported": false,
+      "app_imported": false,
+      "loaded_source_modules": 34,
+      "receipt_path": "/private/tmp/uat-dev-2f97-qualified-34n9u_9m/3/receipt.json",
+      "receipt_sha256": "8d95860e8ce5d91c63de7b44d1a7273f426de46d656770e7edd7fd5391b638ff"
+    },
+    {
+      "case": "test_reconcile_tombstones_a_hidden_file_that_left_the_disk",
+      "passed": true,
+      "source": "/private/tmp/chatbook-backup-pr-20260912",
+      "test_sha256": "9970392c1b0f2f2525565508fe1da82d363d32facbd4ee21dffa598faf3d3cf7",
+      "fixed_selection": true,
+      "network_attempts": 0,
+      "test_mode_override": false,
+      "conftest_imported": false,
+      "app_imported": false,
+      "loaded_source_modules": 34,
+      "receipt_path": "/private/tmp/uat-dev-2f97-qualified-34n9u_9m/4/receipt.json",
+      "receipt_sha256": "91b761eafd96d1bc3cf996deabc35db5a0cdc5c9dd18f5ca190fa7a3a7afca04"
+    },
+    {
+      "case": "header_plain",
+      "passed": true,
+      "source": "/private/tmp/chatbook-backup-pr-20260912",
+      "test_sha256": "eb776272b3cf19cc4952ba07a287f4906d09aa67c5a1b45ede4a33305f2353d4",
+      "fixed_selection": true,
+      "network_attempts": 0,
+      "test_mode_override": false,
+      "conftest_imported": false,
+      "app_imported": true,
+      "loaded_source_modules": 1228,
+      "receipt_path": "/private/tmp/uat-dev-2f97-qualified-34n9u_9m/5/receipt.json",
+      "receipt_sha256": "eb7179dedb652f1e189b499af2b725bcf53477308a47ddcc5fde65c2dca18f97"
+    },
+    {
+      "case": "header_repository",
+      "passed": true,
+      "source": "/private/tmp/chatbook-backup-pr-20260912",
+      "test_sha256": "eb776272b3cf19cc4952ba07a287f4906d09aa67c5a1b45ede4a33305f2353d4",
+      "fixed_selection": true,
+      "network_attempts": 0,
+      "test_mode_override": false,
+      "conftest_imported": false,
+      "app_imported": true,
+      "loaded_source_modules": 1228,
+      "receipt_path": "/private/tmp/uat-dev-2f97-qualified-34n9u_9m/6/receipt.json",
+      "receipt_sha256": "1342583c46135f6560f251e368748184e0c4b6743820f39ec750ea12be09ba8f"
+    }
+  ],
+  "product_static": {
+    "ruff": {
+      "counts": {
+        "ours": 257,
+        "dev": 252,
+        "merged": 258
+      },
+      "new_findings": []
+    },
+    "bandit": {
+      "counts": {
+        "ours": 31,
+        "dev": 31,
+        "merged": 31
+      },
+      "new_findings": []
+    },
+    "parsed_python_files": 4
+  },
+  "test_static": {
+    "counts": {
+      "before": 53,
+      "after": 60
+    },
+    "new_nonassert_findings": []
+  },
+  "inventory": {
+    "profile_owned_path_occurrences": 54,
+    "profile_owned_files": 22,
+    "approved_exceptions": 51,
+    "diagnostic_owners": 610,
+    "TASK_492": 1407,
+    "TASK_31551": 55,
+    "TASK_494": 7765,
+    "sink_files": 14
+  },
+  "evidence_files": {
+    "/private/tmp/uat-dev-2f97-tombstone-red.log": "87c830c0ec54436a0adcd1941721efbde7aa9e7ec0243bfb43ea03226dc32377",
+    "/private/tmp/uat-dev-2f97-probe-native-red.log": "7a13760f31669ae11adda37a0b3310b5c7be6dd15e8b092a332fb41ba82182ed",
+    "/private/tmp/uat-dev-2f97-probe-red.log": "f290fcd1996ccea2ddc3fe8aeb7ea2a20ef7948cc6dd53e05a57131c50442acc",
+    "/private/tmp/uat-dev-2f97-final-lifetimes.log": "cc5b99b764ed520fa1a8638e521555b4d24113f90d82673f8c72bcd22a7367d6",
+    "/private/tmp/uat-dev-2f97-final-lifetimes.xml": "9d48951d7878a637d197f094f95ed5a1f4996a7effe64b7256e3163fc71b2796",
+    "/private/tmp/uat-dev-2f97-review-independent.log": "8286ba25d309818ffe33abc8fb68c4379c2f15cefbee4e318ffe4ff806f1f485",
+    "/private/tmp/uat-dev-2f97-qualified-upstream.py": "a46b8a0a8b341a2d07a04bd811fd2387d6d3f34d157f85fef80ab05928910703",
+    "/private/tmp/uat-dev-2f97-qualified-launch.py": "c2c8021007c3bb0ab77be14f6d7b87de22b32b4aa515d04df9a59e283a598c45",
+    "/private/tmp/uat-dev-2f97-qualified-results.json": "d0f8db834934a7146fa287c1c8fa432f4f0817018be535190de3d32001b71703",
+    "/private/tmp/uat-dev-2f97-static/comparison.json": "8e46ea403e454735b86cb0ecce248be17f15a324a60034758d5f5716fc295155",
+    "/private/tmp/uat-dev-2f97-test-static/comparison.json": "10b2d010015e775818b48d01ca83241cb64eddc49ce1c59abfc5e3fd58d68bc0"
+  },
+  "limits": [
+    "Focused native service and Textual workspace tests, not a new complete installed keyboard UAT.",
+    "Windows runs 34880766232 and 34881797168 target earlier recorded commits and remain separate evidence.",
+    "Linux metadata permission and Windows composite test budget proposal remain pending; no deadline or guard changes."
+  ]
+}

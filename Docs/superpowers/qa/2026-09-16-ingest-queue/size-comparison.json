@@ -1,0 +1,53 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "base": {
+      "lines": 35212,
+      "class_methods": {
+        "LibraryScreen": 1321
+      }
+    },
+    "current": {
+      "lines": 35214,
+      "class_methods": {
+        "LibraryScreen": 1321
+      }
+    }
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py",
+    "base": {
+      "lines": 3078,
+      "class_methods": {
+        "LibraryIngestController": 121
+      }
+    },
+    "current": {
+      "lines": 3080,
+      "class_methods": {
+        "LibraryIngestController": 121
+      }
+    }
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+    "base": {
+      "lines": 2294,
+      "class_methods": {
+        "LibraryIngestPreflightSummary": 3,
+        "LibraryIngestQueuePanel": 3,
+        "StateGlyphCheckbox": 3,
+        "LibraryIngestCanvas": 21
+      }
+    },
+    "current": {
+      "lines": 2341,
+      "class_methods": {
+        "LibraryIngestPreflightSummary": 3,
+        "LibraryIngestQueuePanel": 5,
+        "StateGlyphCheckbox": 3,
+        "LibraryIngestCanvas": 23
+      }
+    }
+  }
+]

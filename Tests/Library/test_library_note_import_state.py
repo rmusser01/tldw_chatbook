@@ -694,7 +694,7 @@ def test_review_projection_exposes_relative_source_membership_and_bounded_effect
     assert projected.name == "alpha/record.md"
     assert projected.target_label == "Existing note: Existing title (version 7)."
     assert projected.membership_summary == "Folder placement: add Imported / Alpha."
-    assert projected.effect_summary == "Content: replace existing content."
+    assert projected.effect_summary == "Replace existing content."
     assert "-Old" in projected.content_diff
     assert "alpha/record.md" not in repr(projected)
     assert "Existing title" not in repr(projected)
@@ -1011,7 +1011,12 @@ def test_receipt_counts_the_links_the_import_resolved() -> None:
     projection = project_library_note_import_snapshot(_linked_settled_state())
 
     assert projection.resolved_links == 1
-    assert projection.receipt_line == "2 notes created · 1 link resolved"
+    # task-32622 AC#2: "1 link resolved" said nothing about WHAT resolved, and
+    # the figure counts link occurrences reaching a note the same batch
+    # creates -- which is why it can exceed the number of notes carrying one.
+    assert projection.receipt_line == (
+        "2 notes created · 1 link to an imported note rewritten"
+    )
 
 
 def test_a_revisited_receipt_keeps_its_resolved_link_count() -> None:
@@ -1061,10 +1066,47 @@ def test_a_no_change_row_never_carries_a_changed_diff() -> None:
 
     projected = project_library_note_import_snapshot(state)
 
-    assert projected.preview_items[0].effect_summary == "Content: no change."
+    assert projected.preview_items[0].effect_summary == "No change."
     assert projected.preview_items[0].content_diff == ""
     # The matched note is still named, so the row is not silent about it.
     assert projected.preview_items[0].target_label.startswith("Existing note:")
+
+
+def test_no_review_row_effect_carries_the_content_prefix() -> None:
+    """task-32554 AC#1: "Content:" led every row and carried nothing.
+
+    Every branch of the effect builder, through the real projection -- the
+    row already reads ``<path> · <effect> · <placement>``, so the word the
+    clause is about is the one thing the column does not need to repeat.
+    """
+    branches = (
+        _item(classification=ImportClassification.NEW),
+        _item(classification=ImportClassification.UNCHANGED_REPEAT),
+        _item(
+            classification=ImportClassification.CHANGED_REPEAT,
+            selected_action=ImportAction.UPDATE_EXISTING,
+            replace_content=True,
+        ),
+        _item(
+            classification=ImportClassification.CHANGED_REPEAT,
+            selected_action=ImportAction.UPDATE_EXISTING,
+            replace_content=False,
+        ),
+    )
+
+    summaries = [
+        project_library_note_import_snapshot(_file_review(_plan(item)))
+        .preview_items[0]
+        .effect_summary
+        for item in branches
+    ]
+
+    assert summaries and all(summaries)
+    for summary in summaries:
+        assert not summary.lower().startswith("content"), summary
+        # Still a sentence, still capitalised: it sits between two other
+        # capitalised clauses on the row.
+        assert summary[0].isupper(), summary
 
 
 def test_the_row_that_replaces_content_still_shows_what_it_replaces() -> None:
@@ -1083,7 +1125,7 @@ def test_the_row_that_replaces_content_still_shows_what_it_replaces() -> None:
     projected = project_library_note_import_snapshot(state)
 
     assert projected.preview_items[0].effect_summary == (
-        "Content: replace existing content."
+        "Replace existing content."
     )
     assert "+new line" in projected.preview_items[0].content_diff
 

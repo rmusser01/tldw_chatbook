@@ -1,0 +1,47 @@
+{
+  "base": "9ff4839ce0",
+  "files": {
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+      "baseline_diagnostics": 16,
+      "current_diagnostics": 16,
+      "changed_functions_formatted": [
+        "_report_library_prompt_action_result",
+        "handle_library_prompt_copy"
+      ],
+      "formatting_preserves_class_indentation": true
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+      "baseline_diagnostics": 205,
+      "current_diagnostics": 205,
+      "changed_functions_formatted": [
+        "_write_library_prompt_export_file"
+      ],
+      "formatting_preserves_class_indentation": true
+    },
+    "Tests/UI/test_library_prompts_canvas.py": {
+      "baseline_diagnostics": 24,
+      "current_diagnostics": 24,
+      "changed_functions_formatted": [
+        "test_library_prompt_write_export_file_rejects_invalid_path",
+        "test_library_prompt_write_export_file_cancelled_dialog_notifies_quietly",
+        "test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown",
+        "test_library_prompt_copy_uses_current_structured_block_working_copy",
+        "test_library_prompt_copy_warns_when_clipboard_is_unavailable",
+        "test_library_prompt_copy_reports_clipboard_error_without_success_notice"
+      ],
+      "formatting_preserves_class_indentation": true
+    },
+    "tldw_chatbook/Prompt_Management/prompt_markdown_export.py": {
+      "baseline_diagnostics": 1,
+      "current_diagnostics": 1,
+      "changed_functions_formatted": [
+        "render_prompt_markdown"
+      ],
+      "formatting_preserves_class_indentation": true
+    }
+  },
+  "clean_files": [
+    "Tests/UI/test_library_prompt_export_journeys.py",
+    "Docs/superpowers/qa/2026-09-15-prompt-export/native_check.py"
+  ]
+}

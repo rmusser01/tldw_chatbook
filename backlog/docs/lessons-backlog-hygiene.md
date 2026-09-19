@@ -5,6 +5,22 @@ known, expensive to rediscover. Every entry states the incident that produced it
 
 ---
 
+## A removed worktree path can make Git operate on a parent checkout (TASK-31985, 2026-09-07)
+
+**Incident.** A broad worktree cleanup stashed active TASK-31985 packaging changes
+and then removed its registered checkout. With the task directory and its `.git`
+metadata gone, Git invoked from a surviving descendant path could walk upward and
+resolve the unrelated main checkout. Work stopped before further mutation; the exact
+stash OID `3de040179723f7ae95dbbf2d63cf73bfff753771` and an external patch preserved the
+changes, which were resumed in a self-contained local clone.
+
+**What to do.** Before any recovery mutation, run `git rev-parse --show-toplevel` and
+compare its exact output with the intended checkout. Preserve active changes by
+immutable stash/patch identity outside disposable worktrees before cleanup or
+recovery. A directory path alone does not prove which repository Git will mutate.
+
+---
+
 ## Task IDs collide constantly — sweep every remote, not just dev
 
 **What happened.** This has recurred **ten-plus times**. Most recently, in one session:
@@ -312,6 +328,15 @@ restore them with `cp` — plain file operations touch nothing shared. If you ha
 lost work this way: your untracked files survived (stash skips them by default), the
 foreign changes in your tree belong to someone else — save them to a patch and `git checkout
 --` them rather than committing them — and re-apply your own edits by hand.
+
+**Same trap, second door (ADR-161 task 11, 2026-09-13).** After committing, the tree was
+clean, so `git stash -q` was a SILENT NO-OP ("No local changes to save", entry never
+created) — and the paired `git stash pop -q` then popped whatever foreign entry sat at
+`stash@{0}` (an unrelated branch's WIP), conflicting into my tree. With a clean tree there
+is nothing to verify against HEAD anyway: skip the stash entirely and just run the command.
+Recovery when it fires: the pop keeps the foreign stash entry on conflict, so
+`git restore --source=HEAD --staged --worktree -- <file>` aborts the pop with zero loss
+(their entry is still in the stack; rerere may also record a resolution — harmless).
 
 ---
 
@@ -987,3 +1012,76 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
   dev's current minting rate, an id chosen before a multi-hour reconciliation is
   STALE BY CONSTRUCTION — re-sweep and renumber, if needed, as the LAST commit
   before push, not during the fix wave.
+## The stash stack is shared across worktrees — subagents must never touch it
+
+**TASK-32477 SDD, 2026-09-11.** A subagent working in a git worktree
+(`tldw_chatbook-apr`, isolated because the main checkout had another session's
+590-file dirty tree) ran `git stash pop` to clean its tree — and applied the
+OTHER session's `wip-voice-fixes` stash, dropping it from the stack. The stash
+stack is repo-global: every worktree sees the same entries, and `pop` removes
+whichever is on top regardless of which worktree or session created it. Recovery
+required restoring the worktree by hand, backing the foreign content up to
+/tmp, and protecting the dropped stash commit with a tag
+(`recovery/wip-voice-fixes-20260911`) before it could be gc'd.
+
+**What to do.** In any multi-worktree or multi-session flow, forbid `git stash`
+in every dispatch/instruction set — a clean assigned worktree never needs it
+(commit or leave files in place). If a foreign stash is ever popped anyway:
+do NOT re-stash or force anything; back up the content, then tag the dropped
+stash commit immediately so it survives garbage collection, and notify the owner.
+
+## Plan anchors read from a dirty working tree silently point at uncommitted code
+
+**TASK-32477, 2026-09-11.** The implementation plan's "verified" code anchors
+(`_CURRENT_SCHEMA_VERSION = 15`, spawn closure at :3115, etc.) were gathered by
+reading the main checkout's WORKING TREE — which contained another session's
+~1200 uncommitted lines on exactly those files. The branch base was actually at
+schema v12, and every line number was stale; tasks had to relocate by symbol,
+and the schema task had to handle a 12→16 version jump on the spot (their
+session owned 13–15; the collision with their later v16 "budget_tokens" was
+caught only by the final review enumerating convergence state).
+
+**What to do.** When gathering anchors for a plan, read from the COMMIT the work
+will branch from (`git show HEAD:path`, or a clean worktree), never from a
+working tree that may carry another session's uncommitted edits. If anchors
+must come from a dirty tree, mark them "approximate, locate by symbol" in the
+plan itself — and check schema-version constants against the branch base, not
+the tree, before assigning the next number.
+
+## Announce a claimed id block to peer sessions on day one, or a peer starts your in-flight P0 (wave 4, 2026-09-14)
+
+**Wave 4, 2026-09-13/14.** This wave filed tasks 32533–32559 from a critique,
+then dispatched ten implementer groups into ten worktrees. Every group's work
+lived on an unpushed branch — correct isolation, and the reason the id block
+was invisible. On `dev`, every one of those 27 tasks still read **"To Do",
+unassigned**, because the task files' status lives in the branch that owns
+them. A peer session doing exactly the right thing — looking for unowned work
+on `dev` — picked up **task-32533, the wave's P0**, created a branch and
+started implementing it while our group-1 agent was three commits into the
+same task.
+
+It resolved well only because it was caught early: the peer stood down with
+zero commits, deleted its branch and worktree, and handed over a real gap it
+had found in the meantime (two sibling `settings_screen.py` Selects carrying
+the same defect, which were then folded into group 1's AC and turned out to
+be real crashes, not paperwork). The cost was luck, not process.
+
+**What to do, on the day the block is claimed — not on the day it lands.**
+
+1. **Say the range out loud** in whatever channel peer sessions read: "wave N
+   owns 32533–32559" plus the date. Ranges are cheap to state and impossible
+   to infer.
+2. **Push an early branch**, even an empty one carrying only the task files
+   with `status: In Progress` and an assignee. A pushed branch is the only
+   artefact a peer session can actually see; a worktree is not.
+3. **Set status and assignee BEFORE the first code commit**, per CLAUDE.md,
+   because that is the field a peer reads — and understand it is invisible
+   until pushed, which is the whole trap.
+4. **Sweep at MINT time, not at plan time.** This wave's dev watermark moved
+   from 32559 to 32567 during the run, with three sessions minting
+   concurrently; the id block written into a plan two days earlier holds
+   nothing. Sweep `git rev-list --objects --all`, every worktree's
+   `backlog/tasks`, `backlog/drafts`, `backlog/archive`, and
+   `git ls-tree -r --name-only <ref> -- backlog` for every ref, immediately
+   before each mint and again before pushing. When two tasks do collide, the
+   older `created_date` keeps the id.

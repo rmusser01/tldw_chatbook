@@ -221,6 +221,7 @@ def build_console_disabled_reason(
     send_blocked: bool,
     setup_blocked_reason: str = "",
     wake_turn_active: bool = False,
+    dispatch_recovery_blocked: bool = False,
 ) -> str:
     """Return concise disabled copy for Console action controls.
 
@@ -229,9 +230,10 @@ def build_console_disabled_reason(
         has_draft: Whether the composer currently has message text.
         send_blocked: Whether sending is blocked by setup or run state.
         setup_blocked_reason: Provider/setup blocker copy, when present.
+        dispatch_recovery_blocked: An unresolved response needs explicit recovery.
         wake_turn_active: Whether the active session is busy with a
             machine-injected auto-wake turn (task-15862 AC#3). Checked
-            FIRST: during a wake the queue presentation's "wait to be
+            before provider setup: during a wake the queue presentation's "wait to be
             accepted" tooltip rides the ``setup_blocked_reason`` slot (a
             chainless wake is never queue-accepted), and the setup
             fallback below would blame provider setup for it -- the
@@ -244,12 +246,18 @@ def build_console_disabled_reason(
     if action_id != "send":
         return ""
 
+    if send_blocked and dispatch_recovery_blocked:
+        return "Send blocked — resolve response recovery first"
     if send_blocked and wake_turn_active:
         return "Send blocked — delivering a sub-agent result"
 
     setup_reason = _clean(setup_blocked_reason, "")
     setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
+        if setup_reason == "Checking Claude subscription credential.":
+            return "Checking Claude subscription credential"
+        if setup_reason == "Log in with Claude Code to refresh the subscription credential.":
+            return "Send blocked — log in with Claude Code"
         # TX-07 follow-up (TASK-2154.12): "api key"/"endpoint" must be
         # checked BEFORE "model" -- the real blocker copy points at the
         # "Settings > Providers & Models" screen (e.g. "Add API key in

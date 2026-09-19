@@ -30,6 +30,10 @@ from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import lexical_path
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access, _core_cached_connection, _core_closing, _core_getter,
+    _core_transaction, _register_core_connection,
+)
 
 
 #: Shared by the single-item and batch write paths so the two can never
@@ -96,6 +100,7 @@ class RAGIndexingDB:
 
         self._initialize_schema()
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
         """Open and configure a NEW database connection with row factory.
 
@@ -103,7 +108,16 @@ class RAGIndexingDB:
         ``connection``/``transaction``; this is the single place a
         connection is created, so every per-connection property lives here.
         """
+        _core_access(self)
         conn = connect_private_sqlite("db.rag_indexing", self.db_path_str)
+        _register_core_connection(self, conn)
+        try:
+            return self._configure_connection(conn)
+        except BaseException:
+            conn.close()
+            raise
+
+    def _configure_connection(self, conn):
         conn.row_factory = sqlite3.Row
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL")
@@ -137,6 +151,7 @@ class RAGIndexingDB:
         # connection holds no read snapshot and does not block checkpointing.
         return conn
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
 
@@ -158,7 +173,9 @@ class RAGIndexingDB:
         this port EVERY call opened a fresh, empty in-memory database, so
         no operation after construction could see the schema at all.
         """
+        _core_access(self)
         conn = getattr(self._thread_local, "conn", None)
+        conn = _core_cached_connection(self, conn)
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -170,9 +187,11 @@ class RAGIndexingDB:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
                     try:
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
                         conn.close()
-                    except Exception:  # noqa: BLE001 - already unusable
-                        pass
+                    else:
+                        raise
                     conn = None
         if conn is None:
             conn = self._get_connection()
@@ -180,6 +199,7 @@ class RAGIndexingDB:
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield the calling thread's held connection (no transaction).
@@ -189,6 +209,7 @@ class RAGIndexingDB:
         """
         yield self._held_connection()
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a write transaction.
@@ -221,12 +242,15 @@ class RAGIndexingDB:
     def close(self) -> None:
         """Close the current thread's held connection, if any."""
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - preserve retryable native cache
+                    return
+                self._thread_local.conn = None
 
     def _initialize_schema(self):
         """Initialize the database schema."""

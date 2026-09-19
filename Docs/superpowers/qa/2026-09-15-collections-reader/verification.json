@@ -1,0 +1,39 @@
+{
+  "task": "TASK-32658",
+  "base": "213200441a",
+  "distinct_passed": 95,
+  "distinct_failed": 1,
+  "targeted_runs": [
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collection_reader_journeys.py Tests/UI/test_library_collections_reader_geometry.py Tests/UI/test_library_collections_capture_controller.py",
+      "result": "34 passed, 2 warnings in 72.30s",
+      "log": "journeys-final.txt"
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collections_capture_reader.py Tests/UI/test_library_collections_capture_controller.py Tests/Library/test_collections_capture_scope_service.py Tests/UI/test_library_collections_reader_geometry.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/Architecture/test_library_collections_wiring.py",
+      "result": "78 passed, 2 warnings in 41.80s",
+      "log": "targeted-confirmation.txt"
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_collections_capture_controller.py Tests/Architecture/test_library_modules_size_ratchet.py -k 'library_collections_controller or library_collections_capture_controller'",
+      "result": "18 passed, 39 deselected, 2 warnings in 1.74s",
+      "log": "controller-final.txt"
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/Architecture/test_screen_size_ratchet.py -k library_screen",
+      "result": "1 failed, 1 passed, 3 deselected, 2 warnings in 0.81s",
+      "log": "screen-size-final.txt"
+    }
+  ],
+  "deduplication": "78 reader/service/layout/wiring/token checks + 12 new journeys + 4 controller size checks + 1 screen slack check = 95 passes. The separate inherited screen ceiling check fails.",
+  "baseline_failure": "LibraryScreen: base 35202 lines / 1319 methods; current 35210 / 1320; ceilings 33204 / 1276. Eight lines add one event-forwarding method. No ceiling raised.",
+  "red_evidence": {
+    "journeys-red.txt": "6 failed: draft loss at four size/theme combinations, cross-capture highlights, unloaded Archive successor.",
+    "highlight-races-red.txt": "3 failed: stale post-save list, committed highlight misreported after list failure, newer draft at risk.",
+    "note-focus-red2.txt": "1 failed: focused Save action below compact viewport."
+  },
+  "static": "Both new Python files pass Ruff and full formatting; existing changed files have zero new Ruff diagnostics against base. Changed ranges formatted. Python ASTs parse. See static-comparison.json.",
+  "native": "run-003: TldwCli/LinuxDriver; 170x48 dark and 80x24 light; six rendered SVGs inspected; terminal Ctrl+Q exit 0; ten read-only SQLite integrity checks; exact two captures and four highlights; zero messages.",
+  "review": "Final independent read-only review found no actionable findings after the first review fixes.",
+  "full_suite_run": false
+}

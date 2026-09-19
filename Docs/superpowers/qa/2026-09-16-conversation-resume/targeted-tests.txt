@@ -1,0 +1,31 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+....................................................................... [ 86%]
+...........                                                              [100%]
+============================= slowest 25 durations =============================
+4.36s call     Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size0]
+4.29s call     Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]
+3.87s call     Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[True]
+3.75s call     Tests/UI/test_console_conversation_archive_flow.py::test_restore_resume_then_send_retains_original_history_and_unrelated_draft[False]
+3.12s call     Tests/UI/test_library_conversation_recovery_flow.py::test_real_saved_body_search_archive_restore_resume_and_undo[size1]
+3.05s call     Tests/UI/test_library_conversation_recovery_flow.py::test_real_saved_body_search_archive_restore_resume_and_undo[size0]
+2.53s call     Tests/UI/test_console_resume_active_path.py::test_durable_resume_restores_only_guarded_roleplay_context
+1.80s call     Tests/UI/test_console_resume_active_path.py::test_restart_hides_off_lineage_banner_and_returning_restores_it[sibling-a3-alt-generated_prefix]
+1.79s call     Tests/UI/test_console_resume_active_path.py::test_restart_hides_off_lineage_banner_and_returning_restores_it[range-u2-generated_range]
+1.32s call     Tests/UI/test_console_resume_active_path.py::test_mounted_file_backed_sibling_navigation_clears_and_restores_banner
+1.30s call     Tests/UI/test_console_resume_active_path.py::test_legacy_flat_before_first_then_new_root_restart_preserves_all_rows
+1.23s call     Tests/UI/test_console_resume_active_path.py::test_file_backed_banner_add_replace_clear_restore_is_presentation_only
+1.23s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[range-generated_range-range-u2-Context uses a summary of turns #2-#2 - full transcript remains visible.]
+1.23s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[manual_prefix-generated_prefix-prefix-u2-\u2935 Earlier turns summarized for context \u2014 full history above]
+1.22s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[corrupt-raw-None-None-None]
+1.22s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[reset-raw-None-None-None]
+1.20s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[dangling-raw-None-None-None]
+1.20s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[auto-generated_prefix-prefix-u2-\u2935 Earlier turns summarized for context \u2014 full history above]
+1.18s call     Tests/UI/test_console_resume_active_path.py::test_restart_memory_banner_matches_dispatch_effective_state[sibling-raw-None-None-None]
+
+(6 durations < 1s hidden.)
+83 passed in 76.07s (0:01:16)

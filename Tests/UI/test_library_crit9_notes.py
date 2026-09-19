@@ -184,7 +184,9 @@ async def test_folder_files_paints_one_noun_for_the_on_disk_source():
         painted = _painted(screen)
         assert "Folder files" in painted, "the source's own noun is not painted"
         _assert_no_retired_source_words(painted, "Folder files")
-        assert ("esc", "back to Library notes") in (
+        # task-32552: "notes" on the tree side of the two-step ladder
+        # ("files" while the editor has focus); was "back to Library notes".
+        assert ("esc", "notes") in (
             screen._library_footer_shortcuts_for_current_state()
         )
 

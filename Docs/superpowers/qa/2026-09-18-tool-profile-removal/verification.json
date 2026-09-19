@@ -1,0 +1,40 @@
+{
+  "task": "TASK-32782",
+  "base_commit": "7fc7f3acb54e9027cecf29a8a27c0848a8729163",
+  "tests": {
+    "new_removal": 18,
+    "focus_and_loading": 31,
+    "prior_workflows": 62,
+    "governance": 26,
+    "css": 5,
+    "service": 25,
+    "distinct_total": 167
+  },
+  "ruff": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "before": 114,
+      "after": 114,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": {
+      "before": 1,
+      "after": 0,
+      "introduced": []
+    }
+  },
+  "format": "Panel, new test, native runner, changed Settings methods pass",
+  "backlog_guard": "4133 unique tasks; Windows-compatible paths",
+  "diagnostic_inventory": "No drift",
+  "native_cells": 4,
+  "captures_rendered_and_inspected": 12,
+  "native_scope": "Real in-use refusal and explicit retry; no injected native service outcomes",
+  "native_final_source_and_capture_hashes_match": true,
+  "lifecycle": "Normal exit 0; default fingerprints unchanged; 11 healthy databases; lock released; app PID absent before terminal closure",
+  "independent_review": "No introduced blocker; overlapping render/outcome probe retained focus and full receipt visibility",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "7062bbb0b1f053cf79d10ab88d4797144b608b50a5c01780a83fbbe795b38ee5",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "baf3e0ac1247141b59e615eaaa12dc19d01ec1cc94a0c287b61d0a7fe5b2b09e",
+    "Tests/UI/test_tool_profile_removal_outcomes.py": "c82e33ba2c7cbd233984144bd5701c59d39bd2055ff2f6255dbedf9b5be5b4a5",
+    "Docs/superpowers/qa/2026-09-18-tool-profile-removal/native_check.py": "99d094e59b7b09e730607cdf689ecab9476e2d638cae01e6690aa64cd5232775"
+  }
+}

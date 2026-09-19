@@ -66,6 +66,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.css import build_css
 
 #: Drift budget for the total bytes of CSS parsed on the boot path.
@@ -104,7 +105,16 @@ from tldw_chatbook.css import build_css
 #: no rules to that stream (the Import canvas's own 393 B scoped stanza was
 #: one of them). Landed at a measured 743,638 B. Pinned at measured + the
 #: standard 25,000 B slack, rounded down. Lowering needs no ledger row.
-MAX_BOOT_PARSED_CSS_BYTES = 768_000
+#: TIGHTENED 2026-09-14 (TASK-32596): omit authoring comments from generated
+#: module payloads, preserving source prose, quoted strings and selector semantics.
+#: Initial census 609,050 B; bank ADR-097 standard 25,000 B slack. Completing
+#: the active Statistics source migration yields 609,446 B; keep the lower pin.
+#: TIGHTENED 2026-09-18 (TASK-32813): stripping author comments from the
+#: generated class-default streams pays for 25 newly consolidated declarations
+#: and indexed subjects. Parsed token parity and retained ownership banners
+#: establish that no rule-bearing sources were dropped: measured 583,097 B.
+#: Bank the saving at measured + 25,000 B, rounded down to ten bytes.
+MAX_BOOT_PARSED_CSS_BYTES = 608_090
 
 #: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
 #: census that comes in under this did not measure the real boot-parsed set
@@ -112,7 +122,9 @@ MAX_BOOT_PARSED_CSS_BYTES = 768_000
 #: fail loudly rather than "pass" on a hollow measurement. Re-pinned below
 #: the post-split reality on 2026-08-31 (was 700,000 against a pre-split
 #: ~854 KB census).
-MIN_BOOT_PARSED_CSS_BYTES = 600_000
+#: Rebased with the same complete source census after TASK-32813's comment
+#: paydown; this is an anti-vacuity floor, not a ratchet (ADR-097).
+MIN_BOOT_PARSED_CSS_BYTES = 550_000
 
 
 #: The generated sheets' internal separators: ``/* ===== MODULE: x ===== */``
@@ -195,7 +207,9 @@ def _boot_parsed_css_segment_census() -> dict[str, int]:
 
 
 @pytest.mark.unit
-def test_boot_parsed_css_bytes_stay_within_budget(ratchet) -> None:
+@pytest.mark.asyncio
+@private_profile_test
+def test_boot_parsed_css_bytes_stay_within_budget(ratchet, request: pytest.FixtureRequest) -> None:
     """Total bytes of boot-parsed CSS stay within the pinned budget.
 
     Args:

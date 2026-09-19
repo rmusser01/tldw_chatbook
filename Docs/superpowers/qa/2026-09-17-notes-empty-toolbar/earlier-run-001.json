@@ -1,0 +1,11 @@
+{
+  "profile": "/private/tmp/tldw-32752-native-001",
+  "pid": 21591,
+  "exit_code": 1,
+  "app_run_started": false,
+  "qualified": false,
+  "reason": "Private database directories missing; pre-import profile validator refused launch.",
+  "defaults_unchanged": true,
+  "pid_absent_before_terminal_close": true,
+  "owned_terminal_closed": true
+}

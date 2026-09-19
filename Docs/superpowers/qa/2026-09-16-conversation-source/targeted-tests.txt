@@ -1,0 +1,56 @@
+........................................................................ [ 55%]
+.............................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+......--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+...............               [100%]
+============================= slowest 25 durations =============================
+5.26s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[False]
+4.46s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[True]
+4.11s call     Tests/UI/test_console_live_work_handoffs.py::test_console_wc_live_work_action_button_routes_run_details
+4.06s call     Tests/UI/test_console_live_work_handoffs.py::test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback
+3.60s call     Tests/UI/test_console_live_work_handoffs.py::test_console_renders_pending_launch_context
+3.49s call     Tests/UI/test_console_live_work_handoffs.py::test_console_staged_launch_with_evidence_bundle_survives_screen_recreation_and_a_fresh_handoff_supersedes_it
+3.43s call     Tests/UI/test_console_live_work_handoffs.py::test_locked_console_shows_staged_evidence_receipt_task_2852
+3.36s call     Tests/UI/test_console_live_work_handoffs.py::test_configured_console_staged_strip_unaffected_by_receipt_task_2852
+2.06s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_preserves_rail_scroll
+2.05s call     Tests/UI/test_console_live_work_handoffs.py::test_console_restored_launch_does_not_touch_an_empty_handoff_channel
+1.98s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_still_auto_opens_inspector
+1.96s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_local_workspace_mouse_clicks
+1.87s call     Tests/UI/test_console_live_work_handoffs.py::test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
+1.78s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_restage_replaces_single_card
+1.75s call     Tests/UI/test_console_live_work_handoffs.py::test_stage_console_library_rag_launch_swaps_card_without_screen_recompose
+1.72s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_workspace_receipts_and_actions_follow_mounted_source_transitions[textual-light]
+1.60s call     Tests/UI/test_console_live_work_handoffs.py::test_media_handoff_evidence_bundle_reaches_capture_as_real_context
+1.54s call     Tests/UI/test_console_live_work_handoffs.py::test_console_send_blocked_reason_sendable_for_media_handoff_with_new_bundle
+1.53s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[conversation]
+1.52s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_create_workspace_notification_names_console_retarget
+1.50s call     Tests/UI/test_console_live_work_handoffs.py::test_non_rag_handoff_stages_a_non_empty_evidence_bundle[notes]
+1.47s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_skips_archived_local_workspace_identity
+1.47s call     Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_can_create_and_select_local_workspace
+1.46s call     Tests/UI/test_console_live_work_handoffs.py::test_notes_handoff_evidence_bundle_reaches_capture_as_real_context
+1.45s call     Tests/UI/test_console_live_work_handoffs.py::test_rag_labeled_handoff_evidence_bundle_shape_is_byte_unchanged
+130 passed in 155.21s (0:02:35)

@@ -1,0 +1,39 @@
+{
+  "normalization": "Trailing line whitespace removed for git hygiene; SVG content unchanged.",
+  "raw_svg_sha256": {
+    "auditdarkcompact-media.svg": "e4f185d20ec53542062dec1c01c779eab6056fcbd1935032b21248c356134954",
+    "auditdarkcompact-prompt-body.svg": "1bd120af5fcad1855978ca6e8d4046b3dc9f981b834500e911d33159e0150cc9",
+    "auditdarkcompact-prompt.svg": "1ea258b4c1c9b53286f870381f6bd24e2608618f7c9ea264f655c8cb8fe990cd",
+    "auditdarkcompact-refusal.svg": "afb29b72e204d503a7a1719986a7a72e84d1dcb9f444653781caca438f90fe36",
+    "auditdarkwide-media.svg": "0e521fd27f4c3286bba55fa1cb99074870b23eceeb00304b29c77c119f40f2ae",
+    "auditdarkwide-prompt-body.svg": "0bac89324c5cc2c2ccf4eee81a137e9bbc512d11f3b2c9e59461920c94c0dc90",
+    "auditdarkwide-prompt.svg": "e2e652a2e4f2b657d3ee2095043345fe3d19548987d0c10ea7e79e8f0910d32d",
+    "auditdarkwide-refusal.svg": "6a28b8cf8054c3d8cb25d346d4579179161221fffcf668eb985f7b692528ad79",
+    "auditlightcompact-media.svg": "b60c3a5205b9c390a7f706e5e701eddf3699f6b030cbabc8f2b12132e9bf19df",
+    "auditlightcompact-prompt-body.svg": "c14a3a42f412d8ddb8492389ecac70c348809d43bca2c988bce0c792a3d12218",
+    "auditlightcompact-prompt.svg": "c386137881051f07f64882c302a62d701460d8413dbdc49cb1eb1cd282b54e8a",
+    "auditlightcompact-refusal.svg": "45734e961ec700df96194766b15e06626fe9587402bfc0f11a67a33e48bb6ab9",
+    "auditlightwide-media.svg": "572c341dd45b83641519f429986e4607d130d5d74867543d50af2f6df45b0127",
+    "auditlightwide-prompt-body.svg": "8740dfbf8de224d49e14927381493ca6448d4e89a94c10584f677894037e21ed",
+    "auditlightwide-prompt.svg": "9ea7565b101815f936e64056052c232c604cb914999f71cfda312afb05835d07",
+    "auditlightwide-refusal.svg": "698e28b97df8a49c6c1e4e1f5f4aab3ba488c7fb6aea8d90d223560c97cf6488"
+  },
+  "stored_svg_sha256": {
+    "auditdarkcompact-media.svg": "7f544232b7ef8d8e1b805921d2a78d4e01262c0e2e43a141d586fa58c1a72a4e",
+    "auditdarkcompact-prompt-body.svg": "599cfc8a92dce38d9c90ce663e83e19f565407919c4dd854fe7b96120c6b124a",
+    "auditdarkcompact-prompt.svg": "ffb34b01aee52cf1f801eb5d4957c7752164f825da8c4089c33578c9569e0d8c",
+    "auditdarkcompact-refusal.svg": "041097c9233f9548b28a43f428288acb7474cc55e02634f055d2996ca7bf7112",
+    "auditdarkwide-media.svg": "81ea733d6ef835d69aa8736c01c2b974fec4cd4332f3bc2093f52d50d339a762",
+    "auditdarkwide-prompt-body.svg": "c30ae09ae809b8d2da1d7464d0a860711e96d241a85ef5bc053b389560d477e1",
+    "auditdarkwide-prompt.svg": "c7bbcd31c1685a9d766e92156d2f7f143534d8a9166d69e5f00cd35ad8645c2e",
+    "auditdarkwide-refusal.svg": "d9bb0c3ce20cfb95d5b955ebe36a5fc3621329969a8b559911da4ebaa91550c3",
+    "auditlightcompact-media.svg": "ec97f094dd383bd057fa9ac1cb3f20e048281b8191950b178641ffcb42d4ef4a",
+    "auditlightcompact-prompt-body.svg": "0bef812afc5b0c046972501225aab66fa5898e6129f5086744cb99c1cb9efef9",
+    "auditlightcompact-prompt.svg": "396f48cd5870e18f022a34deb743a7a4510ca88599cf625cb510ab910fb7963e",
+    "auditlightcompact-refusal.svg": "aca926aed7e29c94426e2d88a48d5af9d57871836da26b13d156567e8fdead09",
+    "auditlightwide-media.svg": "9eed17d708041239afc4b9df36ece4d624eeea82575f07caee7b838b8f6614da",
+    "auditlightwide-prompt-body.svg": "cc1cf5be344b20f5d744845b6b5cb29b06509747d5ce06a8692531d44bf66a66",
+    "auditlightwide-prompt.svg": "4c9e10fd301507f4613d0fd5781bc8995d2ca2bb953870f9b58bf7cd3eef4e50",
+    "auditlightwide-refusal.svg": "f69fc3d969c0d0398ddda459ade4c3d573558104c293e943c067368071e038f1"
+  }
+}

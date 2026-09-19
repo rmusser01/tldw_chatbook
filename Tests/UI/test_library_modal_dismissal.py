@@ -11,46 +11,23 @@ from typing import Any
 
 import pytest
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Library.library_prompts_state import (
+    begin_prompt_collection_catalog,
+)
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactPreflightEntry,
     PreflightReport,
 )
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef, ProvenanceClass
-from tldw_chatbook.Prompt_Management.prompt_variables import (
-    PromptVariableApplication,
-)
-from tldw_chatbook.Third_Party.textual_fspicker import (
-    FileOpen,
-    FileSave,
-    SelectDirectory,
-)
-from tldw_chatbook.Library.library_prompts_state import (
-    begin_prompt_collection_catalog,
-)
-from tldw_chatbook.UI.Library_Modules.prompt_collections import (
-    PromptCollectionManagerResult,
-)
-from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
-    PromptCollectionManagerModal,
-)
-from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
-from tldw_chatbook.UI.Screens.skills_screen import (
-    SkillTrustBootstrapModal,
-    SkillTrustPassphraseModal,
-)
-from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
-    LibraryNoteFolderNameDialog,
-    LibraryNoteFolderTargetDialog,
-)
 from tldw_chatbook.Notes.file_notes_conflict_compare import (
     ConflictSide,
     build_conflict_comparison,
@@ -59,6 +36,37 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushAuthorizationProjection,
     PushCandidateProjection,
     PushDestinationProjection,
+)
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+)
+from tldw_chatbook.Third_Party.textual_fspicker import (
+    FileOpen,
+    FileSave,
+    SelectDirectory,
+)
+from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
+    PromptCollectionManagerModal,
+)
+from tldw_chatbook.UI.Library_Modules.prompt_collections import (
+    PromptCollectionManagerResult,
+)
+from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
+    SkillImportChoiceModal,
+)
+from tldw_chatbook.UI.Screens.skills_screen import (
+    SkillTrustBootstrapModal,
+    SkillTrustPassphraseModal,
+)
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
+    PromptVariablesDialog,
+    PromptVariablesDialogRequest,
+)
+from tldw_chatbook.Widgets.enhanced_file_picker import (
+    EnhancedFileOpen,
+    EnhancedFileSave,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     PushDestinationAuthorizationDialog,
@@ -69,25 +77,22 @@ from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     FileNotesConflictCompareDialog,
     FileNotesRootDetailsDialog,
 )
+from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
+    LibraryNoteFolderNameDialog,
+    LibraryNoteFolderTargetDialog,
+)
+from tldw_chatbook.Widgets.Library.library_review_set_picker import (
+    LibraryReviewSetPickerDialog,
+)
 from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
-    PromptDeleteDecision,
     PromptDeleteConfirmationModal,
+    PromptDeleteDecision,
     PromptDeleteItem,
     PromptDeleteRequest,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.ModelArtifacts.install_modal import ModelInstallModal
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
-from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
-    PromptVariablesDialog,
-    PromptVariablesDialogRequest,
-)
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-from tldw_chatbook.Widgets.enhanced_file_picker import (
-    EnhancedFileOpen,
-    EnhancedFileSave,
-)
-from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-
 
 _STABLE_OPENER_ID = "library-stable-opener"
 
@@ -261,6 +266,32 @@ _FOCUS_POSTCONDITION = "restore the exact eligible opener identity"
 
 
 LIBRARY_MODAL_CONTRACTS = (
+    LibraryModalContract(
+        SkillImportChoiceModal,
+        lambda: SkillImportChoiceModal(("skills/alpha", "skills/zeta")),
+        "#skill-import-choice",
+        "#skill-import-choice-cancel",
+        _assert_none,
+        str,
+        _assert_exact("skills/alpha"),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        LibraryReviewSetPickerDialog,
+        lambda: LibraryReviewSetPickerDialog(
+            (("review-set-1", "Contract review", "1 of 2", False),)
+        ),
+        "#library-review-set-picker-dialog",
+        "#library-review-set-picker-close",
+        _assert_none,
+        tuple,
+        _assert_exact(("open", "review-set-1")),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
     LibraryModalContract(
         SkillTrustPassphraseModal,
         lambda: SkillTrustPassphraseModal(confirm_bootstrap=False),
@@ -519,6 +550,15 @@ _PROMPTS_CONTROLLER_FILE = (
 #: repointed edge is simply never found (and the bidirectional assertion fails
 #: the other way) -- the same repoint the prompts controller needed at wave 6.
 _NOTES_CONTROLLER_FILE = "tldw_chatbook/UI/Library_Modules/library_notes_controller.py"
+_SKILLS_CONTROLLER_FILE = (
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py"
+)
+_INGEST_CONTROLLER_FILE = (
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py"
+)
+_EXPORT_CONTROLLER_FILE = (
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py"
+)
 _FILE_NOTES_WORKSPACE_FILE = (
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
 )
@@ -536,6 +576,9 @@ _SUPPORTED_OWNER_SCOPES = (
     _OwnerScope(_COLLECTIONS_FILE, "LibraryPromptCollectionsController"),
     _OwnerScope(_PROMPTS_CONTROLLER_FILE, "LibraryPromptsController"),
     _OwnerScope(_NOTES_CONTROLLER_FILE, "LibraryNotesController"),
+    _OwnerScope(_SKILLS_CONTROLLER_FILE, "LibrarySkillsController"),
+    _OwnerScope(_INGEST_CONTROLLER_FILE, "LibraryIngestController"),
+    _OwnerScope(_EXPORT_CONTROLLER_FILE, "LibraryExportController"),
     _OwnerScope(_FILE_NOTES_WORKSPACE_FILE, "LibraryFileNotesWorkspace"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "PushDestinationAuthorizationDialog"),
@@ -554,6 +597,18 @@ def _edge(
 
 
 LIBRARY_MODAL_LAUNCH_EDGES = (
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_present_library_skills_import_choice_if_needed",
+        SkillImportChoiceModal,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_push_review_set_picker",
+        LibraryReviewSetPickerDialog,
+    ),
     _edge(
         _LIBRARY_SCREEN_FILE,
         "LibraryScreen",
@@ -585,14 +640,14 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         WorkbenchHelpPanel,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _SKILLS_CONTROLLER_FILE,
+        "LibrarySkillsController",
         "_request_library_skill_trust_passphrase",
         SkillTrustPassphraseModal,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _SKILLS_CONTROLLER_FILE,
+        "LibrarySkillsController",
         "_request_library_skill_trust_bootstrap_passphrase",
         SkillTrustBootstrapModal,
     ),
@@ -639,8 +694,8 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         FileOpen,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _INGEST_CONTROLLER_FILE,
+        "LibraryIngestController",
         "handle_library_ingest_browse",
         FileOpen,
     ),
@@ -669,8 +724,8 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         ModelInstallModal,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _EXPORT_CONTROLLER_FILE,
+        "LibraryExportController",
         "handle_library_export_choose_destination",
         FileSave,
     ),
@@ -725,7 +780,7 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
     _edge(
         _FILE_NOTES_WORKSPACE_FILE,
         "LibraryFileNotesWorkspace",
-        "_choose_root",
+        "_open_root_picker",
         SelectDirectory,
     ),
     _edge(
@@ -1561,7 +1616,7 @@ def test_library_modal_contract_table_covers_every_discovered_concrete_type() ->
     contract_types = [row.concrete_type for row in LIBRARY_MODAL_CONTRACTS]
     edge_types = {edge.concrete_type for edge in LIBRARY_MODAL_LAUNCH_EDGES}
 
-    assert len(contract_types) == len(set(contract_types)) == 19
+    assert len(contract_types) == len(set(contract_types)) == 21
     assert edge_types == set(contract_types)
     assert set(ENHANCED_PICKER_COMPATIBILITY_TYPES).isdisjoint(contract_types)
     assert {SessionGitTrustDialog}.issubset(contract_types)
@@ -1618,8 +1673,60 @@ def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> Non
     discovered = _discover_library_modal_edges(_production_owner_sources())
     declared = set(LIBRARY_MODAL_LAUNCH_EDGES)
 
-    assert len(discovered) == len(declared) == 33
     _assert_exact_library_modal_inventory(discovered, declared)
+    assert len(discovered) == len(declared) == 35
+
+
+@pytest.mark.parametrize(
+    "presenter_name",
+    (
+        "handle_library_ingest_browse",
+        "_request_library_skill_trust_passphrase",
+        "_request_library_skill_trust_bootstrap_passphrase",
+        "handle_library_export_choose_destination",
+        "_open_root_picker",
+    ),
+)
+def test_library_modal_inventory_rejects_wrong_type_at_moved_presenter(
+    presenter_name: str,
+) -> None:
+    """Keeping the owner and presenter cannot hide a changed dialog class."""
+    sources = _production_owner_sources()
+    edge = next(
+        edge
+        for edge in LIBRARY_MODAL_LAUNCH_EDGES
+        if edge.presenter_name == presenter_name
+    )
+    tree = ast.parse(sources[edge.owner_file])
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == edge.owner_class
+    )
+    presenter = next(
+        node
+        for node in owner.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == presenter_name
+    )
+    constructors = [
+        node.func
+        for node in ast.walk(presenter)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == edge.concrete_type.__name__
+    ]
+    assert len(constructors) == 1
+    constructors[0].id = "ConfirmationDialog"
+    sources[edge.owner_file] = ast.unparse(tree)
+
+    discovered = _discover_library_modal_edges(sources)
+    assert replace(edge, concrete_type=ConfirmationDialog) in discovered
+    assert edge not in discovered
+    with pytest.raises(AssertionError, match="undeclared Library modal edges"):
+        _assert_exact_library_modal_inventory(
+            discovered, set(LIBRARY_MODAL_LAUNCH_EDGES)
+        )
 
 
 def test_library_modal_inventory_controller_route_uses_app_push_screen() -> None:
@@ -1770,7 +1877,11 @@ async def test_concrete_library_modal_inside_and_non_primary_clicks_stay_open(
 
 
 async def _drive_public_positive(modal: ModalScreen[Any], pilot: Any) -> None:
-    if isinstance(modal, SkillTrustPassphraseModal):
+    if isinstance(modal, SkillImportChoiceModal):
+        await pilot.click("#skill-import-choice-import")
+    elif isinstance(modal, LibraryReviewSetPickerDialog):
+        await pilot.click("#library-review-set-open-0")
+    elif isinstance(modal, SkillTrustPassphraseModal):
         modal.query_one("#skill-trust-passphrase-input", Input).value = "secret"
         await pilot.click("#skill-trust-passphrase-submit")
     elif isinstance(modal, SkillTrustBootstrapModal):

@@ -1,0 +1,13 @@
+.......                                                                  [100%]
+============================= slowest 25 durations =============================
+18.55s call     Tests/UI/test_profile_interview_answer_journeys.py::test_closing_final_review_restores_review_action_without_writing
+15.60s call     Tests/UI/test_profile_interview_answer_journeys.py::test_failed_answer_retains_entry_and_retry_clears_only_after_acceptance[RuntimeError]
+15.10s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-dark-size1]
+15.01s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-light-size0]
+14.10s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-light-size1]
+13.33s call     Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-dark-size0]
+11.85s call     Tests/UI/test_profile_interview_answer_journeys.py::test_failed_answer_retains_entry_and_retry_clears_only_after_acceptance[ValueError]
+2.21s setup    Tests/UI/test_profile_interview_answer_journeys.py::test_question_and_typed_answer_paint_together[textual-dark-size0]
+
+(13 durations < 1s hidden.)
+7 passed in 106.83s (0:01:46)

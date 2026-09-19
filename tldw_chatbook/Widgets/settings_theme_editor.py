@@ -23,6 +23,9 @@ from ..Utils.path_validation import validate_filename
 from .confirmation_dialog import ConfirmationDialog
 
 
+from ..Backup_Recovery import raw_participants as raw
+
+
 class SettingsThemeEditor(Vertical):
     """Theme editor styled for the Settings screen."""
 
@@ -31,6 +34,13 @@ class SettingsThemeEditor(Vertical):
 
         def __init__(self, is_modified: bool) -> None:
             self.is_modified = is_modified
+            super().__init__()
+
+    class LaunchDefaultChanged(Message):
+        """Publish a saved launch preference to the surrounding Settings draft."""
+
+        def __init__(self, theme_name: str) -> None:
+            self.theme_name = theme_name
             super().__init__()
 
     current_theme_name = reactive("textual-dark")
@@ -94,7 +104,8 @@ class SettingsThemeEditor(Vertical):
         from ..config import get_user_themes_dir
 
         self.custom_themes_path = get_user_themes_dir()
-        self.custom_themes_path.mkdir(parents=True, exist_ok=True)
+        with raw._scope(self, "theme_directory", writing=True) as operation:
+            raw._mkdirs(operation)
         self.color_inputs: dict[str, Input] = {}
         self.color_swatches: dict[str, Static] = {}
         # TASK-31258: the user theme file the palette was loaded from (or last
@@ -190,7 +201,7 @@ class SettingsThemeEditor(Vertical):
                         id=f"settings-theme-preset-{palette_name}-{idx}",
                         classes="color-preset-swatch",
                     )
-                    swatch.styles.background = color
+                    swatch.add_class(f"theme-preset-{palette_name.lower()}-{idx}")
                     swatch.can_focus = True
                     swatch.tooltip = f"Apply {color} to the selected color"
                     yield swatch
@@ -277,16 +288,15 @@ class SettingsThemeEditor(Vertical):
 
     def _load_user_themes(self, parent_node) -> None:
         """Load user-created themes from the themes directory."""
-        for theme_file in sorted(self.custom_themes_path.glob("*.toml")):
-            try:
-                with open(theme_file, "r", encoding="utf-8") as f:
-                    theme_data = toml.load(f)
-                theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
-                # TASK-31256: the leaf's data says which loader applies; the
-                # label is the bare name (no "user:" prefix).
-                parent_node.add_leaf(theme_name, data="user")
-            except Exception as e:
-                logger.error(f"Failed to load user theme {theme_file}: {e}")
+        with raw._scope(self, "theme_directory") as operation:
+            for theme_file in raw._check(operation).observed_files:
+                try:
+                    with raw._file(operation, theme_file, "r") as f:
+                        theme_data = toml.load(f)
+                    theme_name = theme_data.get("theme", {}).get("name", theme_file.stem)
+                    parent_node.add_leaf(theme_name, data="user")
+                except Exception as e:
+                    logger.error(f"Failed to load user theme {theme_file}: {e}")
 
     @on(Tree.NodeSelected)
     def on_theme_selected(self, event: Tree.NodeSelected) -> None:
@@ -336,8 +346,9 @@ class SettingsThemeEditor(Vertical):
         theme_path = self.custom_themes_path / f"{theme_name}.toml"
         if theme_path.exists():
             try:
-                with open(theme_path, "r", encoding="utf-8") as f:
-                    theme_data = toml.load(f)
+                with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
+                    with raw._file(operation, theme_path, "r") as f:
+                        theme_data = toml.load(f)
 
                 self.current_theme_name = theme_name
                 self.current_theme_data = theme_data.get("colors", {})
@@ -405,9 +416,11 @@ class SettingsThemeEditor(Vertical):
             foreground = self.current_theme_data.get(fg_key)
             try:
                 if background:
-                    row.styles.background = background
+                    # ds-runtime: preview the user-edited theme palette.
+                    row.set_styles(background=background)
                 if foreground:
-                    row.styles.color = foreground
+                    # ds-runtime: preview the user-edited theme palette.
+                    row.set_styles(color=foreground)
             except Exception:  # noqa: BLE001 - a half-typed hex must not break painting
                 continue
 
@@ -422,15 +435,19 @@ class SettingsThemeEditor(Vertical):
         if color_name in self.color_swatches:
             try:
                 parsed_color = Color.parse(color_value)
-                self.color_swatches[color_name].styles.background = color_value
-                self.color_swatches[color_name].update(color_value.upper())
-                self.color_swatches[color_name].styles.color = (
-                    "black" if parsed_color.brightness > 0.5 else "white"
-                )
+                swatch = self.color_swatches[color_name]
+                swatch.remove_class("theme-preview-invalid")
+                swatch.set_class(parsed_color.brightness > 0.5, "theme-preview-dark-ink")
+                swatch.set_class(parsed_color.brightness <= 0.5, "theme-preview-light-ink")
+                # ds-runtime: preview the user-entered theme color before applying it.
+                swatch.set_styles(background=color_value)
+                swatch.update(color_value.upper())
             except Exception:
-                self.color_swatches[color_name].styles.background = "#808080"
-                self.color_swatches[color_name].update("Invalid")
-                self.color_swatches[color_name].styles.color = "white"
+                swatch = self.color_swatches[color_name]
+                swatch.set_styles(background=None)
+                swatch.remove_class("theme-preview-dark-ink", "theme-preview-light-ink")
+                swatch.add_class("theme-preview-invalid")
+                swatch.update("Invalid")
 
     def _validate_color_input(self, color_value: str) -> bool:
         """Validate a color input value."""
@@ -604,8 +621,14 @@ class SettingsThemeEditor(Vertical):
     ) -> None:
         """Write the theme TOML, register it, and update the tree."""
         try:
-            with open(theme_path, "w", encoding="utf-8") as f:
-                toml.dump(theme_data, f)
+            with raw._scope(self, "theme_file", writing=True, selected_read=theme_path) as operation:
+                temporary = theme_path.with_suffix(theme_path.suffix + ".tmp")
+                try:
+                    with raw._file(operation, temporary, "w") as f:
+                        toml.dump(theme_data, f)
+                    raw._replace(operation, temporary, theme_path)
+                finally:
+                    raw._remove_temporary(operation, temporary)
 
             # TASK-31250: register at once so Appearance and the palette can
             # offer the theme without a restart.
@@ -649,16 +672,28 @@ class SettingsThemeEditor(Vertical):
                 severity="warning",
             )
             return
-        from ..config import save_setting_to_cli_config
+        self._save_launch_default(name, f"'{name}' will load at the next launch")
 
-        # PR #2375 review #7: the config write reports success as a bool.
-        if not save_setting_to_cli_config("general", "default_theme", name):
+    def _save_launch_default(self, name: str, success_message: str) -> None:
+        from ..config import apply_settings_mutation_to_cli_config
+
+        result = apply_settings_mutation_to_cli_config(
+            {"general": {"default_theme": name}}
+        )
+        if not result.file_replaced:
             self.app.notify(
                 "Could not save the launch default; check the config file",
                 severity="error",
             )
             return
-        self.app.notify(f"'{name}' will load at the next launch", severity="success")
+        self.post_message(self.LaunchDefaultChanged(name))
+        if result.caches_reloaded:
+            self.app.notify(success_message, severity="success")
+        else:
+            self.app.notify(
+                "Launch default saved, but configuration refresh failed. Reopen Settings to refresh.",
+                severity="warning",
+            )
 
     @on(Button.Pressed, "#settings-theme-reset")
     def on_reset_theme(self) -> None:
@@ -844,10 +879,11 @@ class SettingsThemeEditor(Vertical):
     def _delete_user_theme(self, theme_path: Path, theme_name: str) -> None:
         """Unlink a user theme file and reset the editor (post-confirmation)."""
         try:
-            theme_path.unlink()
-            self.app.notify(
-                f"Deleted theme '{theme_name}'", severity="success"
-            )
+            with raw._scope(
+                self, "theme_file", writing=True, selected_read=theme_path
+            ) as operation:
+                raw._unlink(operation, theme_path)
+            self.app.notify(f"Deleted theme '{theme_name}'", severity="success")
 
             tree = self.query_one("#settings-theme-tree", Tree)
             for node in tree.root.children:
@@ -869,18 +905,15 @@ class SettingsThemeEditor(Vertical):
             else:
                 self.app.unregister_theme(theme_name)
 
-            from ..config import get_cli_setting, save_setting_to_cli_config
+            from ..config import get_cli_setting
 
-            if str(get_cli_setting("general", "default_theme", "textual-dark")) == theme_name:
-                if save_setting_to_cli_config("general", "default_theme", "textual-dark"):
-                    self.app.notify(
-                        "Launch default reset to textual-dark", severity="information"
-                    )
-                else:
-                    self.app.notify(
-                        "Could not reset the launch default; check the config file",
-                        severity="error",
-                    )
+            if (
+                str(get_cli_setting("general", "default_theme", "textual-dark"))
+                == theme_name
+            ):
+                self._save_launch_default(
+                    "textual-dark", "Launch default reset to textual-dark"
+                )
 
             self.load_theme("textual-dark")
         except Exception as e:
@@ -925,9 +958,15 @@ class SettingsThemeEditor(Vertical):
     def _write_export(self, export_path: Path, theme_data: dict[str, Any]) -> None:
         """Write the export TOML and report the path."""
         try:
-            export_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(export_path, "w", encoding="utf-8") as f:
-                toml.dump(theme_data, f)
+            with raw._scope(self, "theme_export", writing=True, selected_read=export_path) as operation:
+                raw._mkdirs(operation)
+                temporary = export_path.with_suffix(export_path.suffix + ".tmp")
+                try:
+                    with raw._file(operation, temporary, "w") as f:
+                        toml.dump(theme_data, f)
+                    raw._replace(operation, temporary, export_path)
+                finally:
+                    raw._remove_temporary(operation, temporary)
 
             self.app.notify(f"Theme exported to: {export_path}", severity="success")
         except Exception as e:

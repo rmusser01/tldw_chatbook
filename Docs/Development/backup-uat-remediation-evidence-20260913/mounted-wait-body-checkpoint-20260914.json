@@ -1,0 +1,73 @@
+{
+  "base_revision": "b416cf4c1a09f6993af7f3e0307c46315793c3b8",
+  "scope": "Test-only bounded wait/body exception records before cleanup and fixed service-close phase markers.",
+  "files": {
+    "Tests/Backup_Recovery/test_mounted_console_backup.py": "db86c4c42d4612fc5e9681e8f74b77e17f77210c649fe799b820b13fa0cafdcc",
+    "Tests/Backup_Recovery/test_later_failure_diagnostics.py": "5ae7684ed70989891b37a0e6b258a16de2e1381641d6be78100c4f1841ac094f"
+  },
+  "red": {
+    "body": "5 expected failures, 3 existing collector passes",
+    "wait": "3 expected missing-record failures"
+  },
+  "intermediate_test_correction": "Initial wait GREEN had one assertion failure because asyncio Future reconstructs a worker TimeoutError. Final test checks exact exception identity at the actual observer boundary; product driver unchanged.",
+  "green": "43 passed in 0.86s",
+  "support_collected": 293,
+  "ruff": "clean",
+  "bandit": {
+    "assertions": 48,
+    "nonassert_findings": 0
+  },
+  "installed_mac_smoke": {
+    "product_revision": "b416cf4c1a09f6993af7f3e0307c46315793c3b8",
+    "driver_scope": "pre-service-close observer version, before separate wait observer added",
+    "wheel_sha256": "e65e3f95a525e6e191e010fd23fcad71e153a91569c2f15e683ce53631dc23d5",
+    "installed_files": 2867,
+    "source_python_matches": 2475,
+    "phases": [
+      {
+        "phase": "construct_begin",
+        "elapsed": 0.003
+      },
+      {
+        "phase": "construct_complete",
+        "elapsed": 3.006
+      },
+      {
+        "phase": "mount_begin",
+        "elapsed": 3.006
+      },
+      {
+        "phase": "mount_yield",
+        "elapsed": 7.122
+      },
+      {
+        "phase": "service_close_begin",
+        "elapsed": 49.502
+      },
+      {
+        "phase": "service_close_complete",
+        "elapsed": 49.503
+      }
+    ]
+  },
+  "installed_mac_result": "1 passed in 60.50s: coherent Library backup, archive readback, resumed writes, both service-close phases. Tested before the wait-only observer addition; same product bytes.",
+  "review": "mounted-wait-body-review-20260914.md",
+  "evidence_hashes": {
+    "/private/tmp/uat-mounted-body-red.log": "d708326eec6b524f88b7f8c8951dd851d455ed46120fa87be03c250db7b8cde4",
+    "/private/tmp/uat-mounted-body-final.log": "b5dc109528b9e2c27309a1d00ccda0a41d3c450ada765d3b49e1523cc276ed3c",
+    "/private/tmp/uat-mounted-wait-red.log": "63e13983d732b9ecd44443a5ced3a497447765f4d337921b66739e4edbd2c0af",
+    "/private/tmp/uat-mounted-wait-green.log": "9c2ad6fd1f314ea7ea23d4640584b1c937b294175845941be331ac62107657b7",
+    "/private/tmp/uat-mounted-wait-final2.log": "f86fecf51f7c1785c67a6034e2aa0d52c8c1dfd9552e1b1569e80b2d76edfb39",
+    "/private/tmp/uat-mounted-wait-final2-ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "/private/tmp/uat-mounted-wait-final2-bandit.json": "fc9fc5fd3c2d7c8b9fbcf8696edb7dd345f1e5f3a94d104b6f16160c24d7ecb1",
+    "/private/tmp/uat-mounted-wait-support-collection.log": "6db500115276e28ff77afe7c91688de2d34b3d2239cc17ced8db104677981b34",
+    "/private/tmp/uat-mounted-body-installed.log": "963cfd58af923d6a8842897a444187fec9fa9078d207e87a0dc5cd1eb1689e4c",
+    "/private/tmp/uat-mounted-body-installed/verified-package.json": "05ca8405fc5a4a417f6a7bd5bfdfe85538aab15049dfaff99d5bd8a16cde51f2",
+    "/private/tmp/uat-mounted-body-review.md": "e2f0543b3bce746b3cbf5f2178cfe93c2ea4cbb75371750d51f4215ad19bf733"
+  },
+  "limits": [
+    "No product code, native safeguard, assertion, or time limit changed.",
+    "The wait receipt covers only exceptions from the existing service.wait await; outer body handler still follows Textual cleanup for other failures.",
+    "Native Windows repeat is required to identify the prior Library failure; no old timeout cause is assumed."
+  ]
+}

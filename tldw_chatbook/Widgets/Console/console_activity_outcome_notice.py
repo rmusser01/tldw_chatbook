@@ -83,7 +83,9 @@ class ConsoleActivityOutcomeNotice(Horizontal):
         self._presentation: ConsoleActivityOutcomePresentation | None = None
         self._presentation_generation = 0
         self._retry_all_generation: int | None = None
-        self.styles.height = 1
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-1")
         self.styles.min_height = 1
         self.styles.max_height = 1
         self.styles.display = "none"
@@ -100,25 +102,37 @@ class ConsoleActivityOutcomeNotice(Horizontal):
 
     def compose(self) -> ComposeResult:
         content = Static("", id="console-activity-outcome-copy", markup=False)
-        content.styles.width = "1fr"
-        content.styles.height = 1
+        content.remove_class(*(name for name in content.classes if name.startswith("w-")))
+        content.set_styles(width=None)
+        content.add_class("w-fill")
+        content.remove_class(*(name for name in content.classes if name.startswith("h-")))
+        content.set_styles(height=None)
+        content.add_class("h-1")
         yield content
         mark_seen = Button(
             "Mark seen",
             id="console-activity-outcome-mark-seen",
             compact=True,
         )
-        mark_seen.styles.width = 11
+        mark_seen.remove_class(*(name for name in mark_seen.classes if name.startswith("w-")))
+        mark_seen.set_styles(width=None)
+        mark_seen.add_class("w-11")
         mark_seen.styles.min_width = 11
-        mark_seen.styles.height = 1
+        mark_seen.remove_class(*(name for name in mark_seen.classes if name.startswith("h-")))
+        mark_seen.set_styles(height=None)
+        mark_seen.add_class("h-1")
         mark_seen.styles.min_height = 1
         yield mark_seen
         dismiss = Button(
             "×", id="console-activity-outcome-dismiss", compact=True
         )
-        dismiss.styles.width = 3
+        dismiss.remove_class(*(name for name in dismiss.classes if name.startswith("w-")))
+        dismiss.set_styles(width=None)
+        dismiss.add_class("w-3")
         dismiss.styles.min_width = 3
-        dismiss.styles.height = 1
+        dismiss.remove_class(*(name for name in dismiss.classes if name.startswith("h-")))
+        dismiss.set_styles(height=None)
+        dismiss.add_class("h-1")
         dismiss.styles.min_height = 1
         yield dismiss
 

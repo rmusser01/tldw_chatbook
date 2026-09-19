@@ -1,0 +1,28 @@
+........F
+=================================== FAILURES ===================================
+____________ test_deferred_resize_respects_newer_focus[size0-False] ____________
+Tests/UI/test_library_rag_query_return.py:170: in test_deferred_resize_respects_newer_focus
+    target = await _back_to_query(screen, pilot)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_rag_query_return.py:93: in _back_to_query
+    _assert_painted(screen, current)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: ('library-rag-query-input', Region(x=29, y=-86, width=50, height=3))
+E   assert None is not None
+============================= slowest 25 durations =============================
+7.36s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-light]
+7.32s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-dark]
+6.14s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-False]
+5.90s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-dark]
+5.75s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-light]
+2.67s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-dark]
+2.52s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start0-textual-light]
+2.45s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-light]
+2.26s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[query-start1-textual-dark]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-False]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 8 passed in 45.08s

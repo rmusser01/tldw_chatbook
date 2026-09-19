@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Tool Profiles
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Reviewed actions | Imports      │
+│  Core                        │  │  │  stay unbound; MCP owns policy          │
+│     Overview (view)          │  │  │  editing; removal permanently reserves  │
+│     Providers & Models       │  │  │  the profile id.                        │
+│     Web Search               │  │  │                                         │
+│     Speech & TTS             │  │  │  Tool Profiles                          │
+│  Interface                   │  │  │  Portable permission profiles change    │
+│     Appearance               │  │  │  tool policy only. Importing a          │
+│     Theme                  ▁ │  │  │  profile never installs tools or        │
+│     Splash Screen            │  │  │  binds it to a workspace.               │
+│     Console Behavior         │  │  │  Removed native-light-80 · id           │
+│  Data & Privacy              │  │  │  permanently reserved                   │
+│     Storage                  │  │  │   Import Tool Pack                      │
+│     Workspaces               │  │  │ ┌────────────────────────────────────┐  │
+│   > Tool Profiles            │  │  │ │ default                            │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Inspect a Tool Pack before importing an unbound profile.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

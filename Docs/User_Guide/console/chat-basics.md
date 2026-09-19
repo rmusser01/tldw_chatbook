@@ -68,6 +68,20 @@ nothing while the pointer is elsewhere. A blocked Send (setup incomplete, a run
 in flight, an auto-wake turn delivering) shows the reason for the block instead
 of a price.
 
+### Recovering an interrupted response
+
+After reopening a conversation, Console may show **Response delivery status is
+unknown on the source device**. This means the previous request needs a recovery
+decision; it does not mean a model is still running. The composer says **Send
+blocked — resolve response recovery first**.
+
+Use the recovery controls above the composer. **Retry anyway** may send a
+duplicate request because the previous delivery cannot be confirmed. **Discard**
+keeps your user message and settles the interrupted response without replaying
+the request. A failed recovery leaves the available controls usable so you can
+address the reported problem and try again or discard. Once recovery settles,
+the composer clears this blocker.
+
 ### Collapsed rail labels
 
 Collapsed Console rails use horizontal **Context->** and **<-Inspect** handles

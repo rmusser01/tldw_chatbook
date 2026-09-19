@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="180.625" timestamp="2026-09-18T12:55:23.971514-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_widget_css_consolidation" name="test_full_destination_tour_stays_under_the_parse_cache_cliff" time="180.122"><failure message="Failed: Timeout (&gt;180.0s) from pytest-timeout.">self = &lt;Coroutine test_full_destination_tour_stays_under_the_parse_cache_cliff&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:678: in run_until_complete
+    self.run_forever()
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:645: in run_forever
+    self._run_once()
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:1961: in _run_once
+    event_list = self._selector.select(timeout)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;selectors.KqueueSelector object at 0x10d808f20&gt;
+timeout = 179.99994420801522
+
+    def select(self, timeout=None):
+        timeout = None if timeout is None else max(timeout, 0)
+        # If max_ev is 0, kqueue will ignore the timeout. For consistent
+        # behavior with the other selector classes, we prevent that here
+        # (using max). See https://bugs.python.org/issue29255
+        max_ev = self._max_events or 1
+        ready = []
+        try:
+&gt;           kev_list = self._selector.control(None, max_ev, timeout)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: Timeout (&gt;180.0s) from pytest-timeout.
+
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/selectors.py:566: Failed</failure></testcase></testsuite></testsuites>

@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    TypeAdapter,
     ValidationInfo,
     field_validator,
 )
@@ -27,11 +28,34 @@ from pydantic import (
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .reasoning_config import REASONING_HISTORY_MODES
 
+_BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
+    Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
+)
+
+
+def validate_batch_transcription_provider(value: object) -> str:
+    """Validate a Library transcription provider without coercion.
+
+    Args:
+        value: Provider restored from settings or supplied by an option event.
+
+    Returns:
+        The exact supported provider identifier.
+
+    Raises:
+        ValueError: The value is not a supported provider identifier.
+    """
+    return _BATCH_TRANSCRIPTION_PROVIDER.validate_python(value, strict=True)
+
 PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
 CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
+WORKFLOW_SEARCH_MAX_LENGTH = 512
+WORKFLOW_NAME_MAX_LENGTH = 256
+WORKFLOW_MAX_PAGE_SIZE = 100
+SQLITE_INTEGER_MAX = 2**63 - 1
 RAW_CLI_COMMAND_MAX_BYTES = 16 * 1024
 RAW_CLI_TIMEOUT_MAX_SECONDS = 300.0
 _VLLM_DRAFT_INPUT_LIMITS = {
@@ -50,6 +74,48 @@ TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
 TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
 TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
+
+
+def validate_file_picker_sort_key(value: object) -> str:
+    """Validate an exact file-picker sort key without coercion.
+
+    Args:
+        value: Candidate sort key from a selector event.
+
+    Returns:
+        The supported sort key unchanged.
+
+    Raises:
+        ValueError: The value is not a supported string sort key.
+    """
+    if not isinstance(value, str) or value not in (
+        "folders",
+        "discovery",
+        "name",
+        "modified",
+        "accessed",
+        "created",
+        "size",
+    ):
+        raise ValueError("Invalid file picker sort key")
+    return value
+
+
+def validate_file_picker_sort_direction(value: object) -> str:
+    """Validate an exact file-picker sort direction without coercion.
+
+    Args:
+        value: Candidate direction from a selector event.
+
+    Returns:
+        The supported ascending or descending value unchanged.
+
+    Raises:
+        ValueError: The value is not a supported string direction.
+    """
+    if not isinstance(value, str) or value not in ("ascending", "descending"):
+        raise ValueError("Invalid file picker sort direction")
+    return value
 
 
 def validate_tts_inference_device(value: object) -> str:
@@ -572,6 +638,87 @@ def validate_console_switcher_query(value: object) -> str:
             "Switcher search must be text containing at most "
             f"{CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
         ) from None
+
+
+class WorkflowNameInput(BaseModel):
+    """Bounded New workflow input, not a portable document-name restriction.
+
+    Attributes:
+        name: Nonempty trimmed Unicode text, from at most 256 raw characters.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
+    )
+
+    name: str
+
+    @field_validator("name", mode="plain")
+    @classmethod
+    def _bounded_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("Workflow name must be text")
+        if len(value) > WORKFLOW_NAME_MAX_LENGTH:
+            raise ValueError(
+                f"Workflow name must contain at most {WORKFLOW_NAME_MAX_LENGTH} characters"
+            )
+        value.encode("utf-8")  # Server definition names are bound as database text.
+        name = value.strip()
+        if not name:
+            raise ValueError("Name the workflow before creating it")
+        return name
+
+
+def validate_workflow_name(value: object) -> str:
+    """Validate a New workflow name with concise, input-free error guidance.
+
+    Args:
+        value: Raw creation name, bounded before whitespace trimming.
+
+    Returns:
+        Nonempty trimmed, UTF-8-encodable text, without Unicode normalization.
+
+    Raises:
+        ValueError: The name is non-text, blank, malformed Unicode or too long.
+    """
+    try:
+        return WorkflowNameInput(name=value).name
+    except (PydanticValidationError, TypeError):
+        raise ValueError(
+            "Workflow name must be nonblank valid Unicode text, at most "
+            f"{WORKFLOW_NAME_MAX_LENGTH} characters."
+        ) from None
+
+
+class WorkflowSearchInput(BaseModel):
+    """Strict parameters for local workflow-library reads.
+
+    Attributes:
+        query: Unmodified substring, at most 512 Python characters.
+        page_size: Number of results requested, from 1 to 100.
+        offset: Nonnegative matching-result offset within SQLite's integer range.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, hide_input_in_errors=True
+    )
+
+    query: str
+    page_size: int = Field(ge=1, le=WORKFLOW_MAX_PAGE_SIZE)
+    offset: int = Field(ge=0, le=SQLITE_INTEGER_MAX)
+
+    @field_validator("query", mode="plain")
+    @classmethod
+    def _bounded_query(cls, value: object) -> str:
+        # Ordinary Pydantic str validation rejects lone surrogates already
+        # admitted in saved JSON names. Validate without rewriting those names.
+        if not isinstance(value, str):
+            raise TypeError("Workflow search must be text")
+        if len(value) > WORKFLOW_SEARCH_MAX_LENGTH:
+            raise ValueError(
+                f"Workflow search must contain at most {WORKFLOW_SEARCH_MAX_LENGTH} characters"
+            )
+        return value
 
 
 class TerminalSessionNameInput(BaseModel):

@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 import ast
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+import asyncio
 import importlib
 import inspect
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from types import MethodType
 from typing import Any
 
 import pytest
 from textual import events, on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
@@ -25,8 +25,10 @@ from Tests.UI.background_signals import (
     wait_for_background_signal,
 )
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
+from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+from tldw_chatbook.Chat.console_context_compaction import ManualSummaryPreview
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
 from tldw_chatbook.Chat.console_session_settings import (
@@ -34,11 +36,12 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
 )
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeGitCommitModal,
     ChangeGitPushModal,
-    ChangeReviewScreen,
     ChangeRevertConfirmModal,
+    ChangeReviewScreen,
 )
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
@@ -46,58 +49,10 @@ from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpSta
 from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
     CancelConfirmationDialog,
 )
-from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
-from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
-from tldw_chatbook.Chat.console_context_compaction import ManualSummaryPreview
-from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
-    ConsoleSummarizePreviewModal,
-)
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
 )
-from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
-    ConsoleComposerMenuModal,
-)
-from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
-    ConsoleEditMessageModal,
-    ConsoleEditResult,
-)
-from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
-    ConsoleFeedbackCommentModal,
-)
-from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
-    ConsoleGenerateImageModal,
-)
-from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
-    ConsoleRagSettingsModal,
-    ConsoleRagSettingsResult,
-)
-from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
-    ConsoleRenameSessionModal,
-)
-from tldw_chatbook.Widgets.Console.console_rewind_modal import (
-    ConsoleRewindChoice,
-    ConsoleRewindModal,
-)
-from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
-from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
-    ConsoleSessionSwitcherModal,
-    ConsoleSwitcherChoice,
-)
-from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
-    ConsoleSystemPromptModal,
-)
-from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
-    ConsoleWorkspaceRenameModal,
-    ConsoleWorkspaceSwitcherModal,
-)
-from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
-    ConsoleWorkspaceFilesModal,
-    WorkspaceFilesBinding,
-)
-from tldw_chatbook.Workspaces.file_inspector import DirectoryPage, DirectoryStatus
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
@@ -105,20 +60,29 @@ from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourcesModal,
 )
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    ConsoleComposerMenuModal,
+)
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
+)
+from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
+    ConsoleEditMessageModal,
+    ConsoleEditResult,
+)
+from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+    ConsoleEndpointTemplateModal,
+)
+from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
+)
+from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
+    ConsoleGenerateImageModal,
 )
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import (
     ConsoleImageViewerModal,
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
-from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
-    MODE_INSERT,
-    ConsolePromptPickerModal,
-)
-from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
-    ConsolePromptQueueModal,
-)
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ProjectInstructionNoticeModal,
     ProjectInstructionSetupModal,
@@ -126,17 +90,41 @@ from tldw_chatbook.Widgets.Console.console_project_instructions import (
 from tldw_chatbook.Widgets.Console.console_prompt_comparison_modal import (
     ConsolePromptComparisonModal,
 )
+from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
+    MODE_INSERT,
+    ConsolePromptPickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
+    ConsolePromptQueueModal,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
+from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    ConsoleRagSettingsModal,
+    ConsoleRagSettingsResult,
+)
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
+    ConsoleRenameSessionModal,
 )
 from tldw_chatbook.Widgets.Console.console_review_notes_modal import (
     ConsoleReviewNotesModal,
 )
+from tldw_chatbook.Widgets.Console.console_rewind_modal import (
+    ConsoleRewindChoice,
+    ConsoleRewindModal,
+)
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
-from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
-from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-    ConsoleEndpointTemplateModal,
+from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
+from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
+    ConsoleScopePickerModal,
+    ScopeListPage,
+    TagCount,
+)
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+    ConsoleSessionSwitcherModal,
+    ConsoleSwitcherChoice,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
@@ -147,22 +135,32 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.Console.console_side_chat_modal import (
     ConsoleSideChatModal,
 )
-from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
-    ScopeListPage,
-    TagCount,
-    ConsoleScopePickerModal,
-)
 from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
     ConsoleStylePickerModal,
+)
+from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
+    ConsoleSummarizePreviewModal,
+)
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+    ConsoleSystemPromptModal,
 )
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     ConsoleVideoCapacityModal,
 )
-from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
+from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
+    ConsoleWorkspaceFilesModal,
+    WorkspaceFilesBinding,
+)
+from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
+    ConsoleWorkspaceRenameModal,
+    ConsoleWorkspaceSwitcherModal,
+)
 from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
+from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
+from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen,
     # task-18810: declared launches -- see CONSOLE_MODAL_LAUNCH_EDGES.
@@ -174,6 +172,8 @@ from tldw_chatbook.Widgets.modal_dismissal import (
 )
 from tldw_chatbook.Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 from tldw_chatbook.Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
+from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
+from tldw_chatbook.Workspaces.file_inspector import DirectoryPage, DirectoryStatus
 
 
 @dataclass(frozen=True)
@@ -259,6 +259,9 @@ def _inspector_factory() -> ConsoleConversationInspector:
     launch target -- both entry points now push this instead (see
     ``chat_screen.py``'s ``_push_console_inspector``)."""
     return ConsoleConversationInspector(
+        conversation_title="Test chat",
+        target_profile_key="test-profile",
+        target_is_current=lambda: True,
         rows=[],
         totals=ConsoleCostRowTotals(0, 0.0, False, 0),
         turns=[],

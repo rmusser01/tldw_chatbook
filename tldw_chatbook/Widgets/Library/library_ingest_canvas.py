@@ -13,7 +13,10 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import DescendantFocus
 from textual.message import Message
+from textual.geometry import Size
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     Checkbox,
@@ -26,6 +29,7 @@ from textual.widgets import (
 
 from tldw_chatbook.Library.ingest_capabilities import (
     ANALYSIS_STATE_FIELD,
+    OptionField,
     TypeGroupCapabilities,
     _is_installed,
     capabilities_for_backend,
@@ -311,8 +315,8 @@ class LibraryIngestPreflightSummary(Vertical):
         self.tooling_detail_expanded = bool(
             getattr(state, "tooling_detail_expanded", False)
         )
-        self.styles.width = "1fr"
-        self.styles.height = "auto"
+        self.add_class("w-fill")
+        self.add_class("h-auto")
 
     @on(Collapsible.Expanded)
     @on(Collapsible.Collapsed)
@@ -512,8 +516,42 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
         # ticks recompose this panel's CHILDREN while the panel itself keeps
         # identity, so an expansion survives every tick that matters.
         self.expanded_groups: set[str] = set()
-        self.styles.width = "1fr"
-        self.styles.height = "auto"
+        self._recent_collapsed = True
+        self.add_class("w-fill")
+        self.add_class("h-auto")
+
+    async def recompose(self) -> None:
+        """Capture queue focus at the actual rebuild, including late Tab input."""
+        recent = next(iter(self.query("#library-ingest-recent")), None)
+        if isinstance(recent, Collapsible):
+            self._recent_collapsed = recent.collapsed
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            selector = f"#{focused.id}" if focused.id else None
+            if recent is not None and focused is recent.query_one("CollapsibleTitle"):
+                selector = "#library-ingest-recent > CollapsibleTitle"
+            if selector:
+                self.queue_default_after_recompose(
+                    lambda: self._restore_queue_focus(selector)
+                )
+                self.screen.set_focus(None)
+        await super().recompose()
+
+    def _restore_queue_focus(self, control_selector: str) -> None:
+        """Restore before older action callbacks, without replacing newer focus."""
+        focused = self.app.focused
+        if (focused is not None and focused.is_attached) or self.parent is None:
+            return
+        for selector in (control_selector, "#library-ingest-path"):
+            try:
+                target = self.parent.query_one(selector)
+            except NoMatches:
+                continue
+            if not target.focusable:
+                continue
+            # Synchronous so an older pending action sees this newer focus.
+            self.screen.set_focus(target)
+            return
 
     def compose(self) -> ComposeResult:
         state = self.state
@@ -661,7 +699,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
         if state.recent_jobs:
             with Collapsible(
                 title="Recent imports",
-                collapsed=True,
+                collapsed=self._recent_collapsed,
                 id="library-ingest-recent",
             ):
                 for job in state.recent_jobs:
@@ -1153,6 +1191,21 @@ def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
     )
 
 
+def _option_label(field: OptionField, disabled_note: str = "") -> str:
+    """Keep field hints and disabled reasons identical on mount and updates."""
+    label = field.label
+    if field.type != "select" and field.hint:
+        label += f" ({field.hint})"
+    return f"{label} — {disabled_note}" if disabled_note else label
+
+
+def _parakeet_install_label(provider: str) -> str:
+    label = "Install verified Parakeet v2 INT8 (630.6 MiB)…"
+    if provider != "parakeet-onnx":
+        label += " — needs the parakeet-onnx provider"
+    return label
+
+
 class StateGlyphCheckbox(Checkbox):
     """Checkbox whose glyph carries on/off without color (task-2043).
 
@@ -1165,6 +1218,10 @@ class StateGlyphCheckbox(Checkbox):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.BUTTON_INNER = "✓" if self.value else " "
+
+    def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
+        """Measure wrapped option labels instead of ToggleButton's one-row cap."""
+        return self.render().get_height(self.styles, width) if width else 0
 
     def watch_value(self) -> None:
         self.BUTTON_INNER = "✓" if self.value else " "
@@ -1206,11 +1263,19 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     class OptionValueChanged(Message):
         """A per-type option value changed."""
 
-        def __init__(self, group: str, name: str, value: Any) -> None:
+        def __init__(
+            self,
+            group: str,
+            name: str,
+            value: Any,
+            *,
+            source_widget: Widget | None = None,
+        ) -> None:
             super().__init__()
             self.group = group
             self.name = name
             self.value = value
+            self.source_widget = source_widget
 
     class OptionPanelToggled(Message):
         """A per-type options panel was expanded or collapsed."""
@@ -1263,7 +1328,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         self.state = state
         self.external_busy = external_busy
         self.external_status = external_status
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 40
         # Value each option widget was last rendered/reported with, keyed by
         # ``(group, field name)``. Seeded by ``_compose_type_group`` so that a
@@ -1286,6 +1351,161 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         self.state = state
         self._reported_option_values.clear()
         self.refresh(recompose=True)
+
+    def sync_option_group(
+        self, group: str, state: LibraryIngestCanvasState, *, apply_values: bool = True
+    ) -> None:
+        """Update one group's values and dependencies without replacing editors.
+
+        Args:
+            group: Existing capability group whose options changed or reset.
+            state: Fresh snapshot after applying the user's option change.
+            apply_values: Apply a reset/snapshot to editors. False refreshes
+                dependencies while preserving newer edits awaiting delivery.
+        """
+        self.state = state
+        # An outgoing group's last event can arrive after its source was removed.
+        if group not in state.type_groups or not self.query(f"#type-group-{group}"):
+            return
+        cap = capabilities_for_backend(get_capabilities(group), state.ingest_backend)
+        # sync_state assigns its snapshot before the backend's new controls
+        # mount. Let that pending compose consume this snapshot rather than
+        # querying the outgoing backend's incompatible body.
+        required_ids = [f"opt-{group}-{field.name}" for field in cap.fields]
+        if group == "generic" and state.ingest_backend != "server":
+            required_ids.append(INGEST_CHUNK_TEMPLATE_PICKER_ID)
+        if any(not self.query(f"#{widget_id}") for widget_id in required_ids):
+            return
+        values = state.form.type_options.get(group, {})
+        for field in cap.fields:
+            widget_id = f"opt-{group}-{field.name}"
+            widget = self.query_one(f"#{widget_id}")
+            value = values.get(field.name, field.default)
+            disabled, reason = field_disabled_state(
+                field, cap, values, is_installed=_is_installed
+            )
+            label = _option_label(field, reason if disabled else "")
+            if isinstance(widget, Checkbox):
+                value = bool(value)
+                widget.label = label
+            else:
+                self.query_one(f"#{widget_id}-label", Static).update(label)
+                if isinstance(widget, Select):
+                    if not apply_values:
+                        value = widget.value
+                    error = (
+                        "" if disabled else validate_ingest_option_value(field, value)
+                    )
+                    if error:
+                        value = "__invalid_saved_option__"
+                    elif value not in field.options:
+                        value = (
+                            field.default
+                            if field.default in field.options
+                            else field.options[0]
+                        )
+                    line = self.query_one(f"#{widget_id}-error", Static)
+                    if bool(error) != line.display:
+                        options = [
+                            (select_option_label(field, opt), opt)
+                            for opt in field.options
+                        ]
+                        if error:
+                            options.insert(0, ("Choose a supported provider", value))
+                        self._reported_option_values[(group, field.name)] = value
+                        with widget.prevent(Select.Changed):
+                            widget.set_options(options)
+                            widget.value = value
+                else:
+                    value = str(value)
+            if apply_values:
+                # Seed before assigning so reset events cannot resurrect stale values.
+                self._reported_option_values[(group, field.name)] = value
+                # These are state echoes, not edits. Two queued snapshots otherwise
+                # emit alternating Changed events and can keep replaying each other.
+                with widget.prevent(
+                    Checkbox.Changed, Select.Changed, Input.Changed, TextArea.Changed
+                ):
+                    if isinstance(widget, TextArea):
+                        if widget.text != value:
+                            widget.load_text(value)
+                    elif widget.value != value:
+                        widget.value = value
+            else:
+                value = widget.text if isinstance(widget, TextArea) else widget.value
+            widget.disabled = disabled or self.external_busy
+            if field.directory_picker:
+                self.query_one(
+                    f"#{widget_id}-browse", Button
+                ).disabled = widget.disabled
+            if field.type in ("text", "number", "textarea", "select"):
+                error = "" if disabled else validate_ingest_option_value(field, value)
+                widget.set_class(bool(error), "-ingest-option-invalid")
+                line = self.query_one(f"#{widget_id}-error", Static)
+                line.update(error)
+                line.display = bool(error)
+        if group == "generic" and state.ingest_backend != "server":
+            picker = self.query_one(f"#{INGEST_CHUNK_TEMPLATE_PICKER_ID}", Select)
+            value = values.get(
+                INGEST_CHUNK_TEMPLATE_FIELD, INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            )
+            if value not in (
+                INGEST_CHUNK_TEMPLATE_NONE_VALUE,
+                INGEST_CHUNK_TEMPLATE_AUTO_VALUE,
+                *self._chunk_template_names,
+            ):
+                value = INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            if apply_values:
+                self._reported_option_values[(group, INGEST_CHUNK_TEMPLATE_FIELD)] = (
+                    value
+                )
+                with picker.prevent(Select.Changed):
+                    if picker.value != value:
+                        picker.value = value
+            chunk_on = bool(values.get("chunk", True))
+            picker.disabled = not chunk_on or self.external_busy
+            label = INGEST_CHUNK_TEMPLATE_LABEL
+            if not chunk_on:
+                label += " — needs Chunk content on"
+            self.query_one(f"#{INGEST_CHUNK_TEMPLATE_PICKER_ID}-label", Static).update(
+                label
+            )
+        elif group == "web":
+            self.query_one("#web-local-scope-note").display = bool(
+                build_web_scope_note(state.ingest_backend, values)
+            )
+        elif group == "audio_video":
+            provider = values.get("transcription_provider", "default")
+            install = self.query_one("#opt-audio_video-install-parakeet-v2", Button)
+            install.label = _parakeet_install_label(provider)
+            install.disabled = provider != "parakeet-onnx" or self.external_busy
+            configured = state.transcribe_cpp_configured
+            status = self.query_one("#opt-audio_video-transcribe-cpp-status", Static)
+            status.update(
+                "Local GGUF configured." if configured else "No local GGUF configured."
+            )
+            chooser = self.query_one(
+                "#opt-audio_video-choose-transcribe-cpp-gguf", Button
+            )
+            chooser.label = "Choose another GGUF…" if configured else "Choose GGUF…"
+            chooser.disabled = self.external_busy
+            status.display = chooser.display = provider == "transcribe-cpp"
+        self.query_one(
+            f"#type-group-{group}", Collapsible
+        ).title = build_type_group_title(cap, values)
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def _reveal_focused_control(self) -> None:
+        """Reveal current focus after labels, queue content or layout settle."""
+        if not self.is_attached:
+            return
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors:
+            # A reveal is a no-op while focus is visible, even if an older
+            # animation is about to move it under the docks. Stop that motion
+            # at its current position before measuring the current target.
+            self.scroll_to(y=self.scroll_y, animate=False, immediate=True)
+            focused.scroll_visible(animate=False, immediate=True)
 
     def _compose_type_group(
         self,
@@ -1325,21 +1545,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
 
             if field.type == "checkbox":
                 self._reported_option_values[(group, field.name)] = bool(value)
-                # (task-3303) A gated checkbox must carry its reason at the
-                # control: the label absorbs the schema hint ("Enable OCR
-                # (docling or docext engines only)"), so the inert state is
-                # explained where the user is looking, not somewhere else.
-                checkbox_label = (
-                    f"{field.label} ({field.hint})"
-                    if getattr(field, "hint", "")
-                    else field.label
-                )
-                # (task-3304, MI-07) Disabled-state annotation: the WHY at
-                # the control while the gate is closed. Empty for fields
-                # whose static hint above already names the gate, so
-                # labels never double-annotate.
-                if disabled and disabled_note:
-                    checkbox_label = f"{checkbox_label} — {disabled_note}"
+                checkbox_label = _option_label(field, disabled_note if disabled else "")
                 children.append(
                     StateGlyphCheckbox(
                         checkbox_label,
@@ -1359,19 +1565,21 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
+                error_message = (
+                    "" if disabled else validate_ingest_option_value(field, value)
+                )
+                if error_message:
+                    # Show a repairable choice instead of silently painting Auto
+                    # while the persisted provider remains invalid. Selecting
+                    # Auto must emit a real change that corrects the form.
+                    select_value = "__invalid_saved_option__"
+                    select_options.insert(0, ("Choose a supported provider", select_value))
                 self._reported_option_values[(group, field.name)] = select_value
-                # (task-2043) Selects missed task-2012's labeling pass: a
-                # bare "pymupdf4llm" carries no meaning on its own.
-                # (task-3304, MI-07) While schema-disabled, the label
-                # carries the reason -- selects re-compose on every gate
-                # flip (checkbox/select changes recompose the canvas), so
-                # compose-time is the single point of truth.
-                select_label = field.label
-                if disabled and disabled_note:
-                    select_label = f"{select_label} — {disabled_note}"
+                select_label = _option_label(field, disabled_note if disabled else "")
                 children.append(
                     Static(
                         select_label,
+                        id=f"{widget_id}-label",
                         classes="type-group-field-label",
                         markup=False,
                     )
@@ -1385,6 +1593,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                         allow_blank=False,
                     )
                 )
+                error_line = Static(
+                    error_message,
+                    id=f"{widget_id}-error",
+                    classes="type-group-field-error",
+                    markup=False,
+                )
+                error_line.display = bool(error_message)
+                children.append(error_line)
                 if group == "web" and field.name == "scrape_method":
                     # (task-3303 AC5) Local single-page honesty, right under
                     # the control that promises otherwise: the local article
@@ -1404,28 +1620,12 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     children.append(scope_note)
             else:
                 self._reported_option_values[(group, field.name)] = str(value)
-                # A populated Input never shows its placeholder, so
-                # placeholder-as-label left values like "1000" with no
-                # visible meaning (task-2012). The label gets its own line,
-                # carrying the unit/range hint up front (task-2223).
-                label_text = (
-                    f"{field.label} ({field.hint})"
-                    if getattr(field, "hint", "")
-                    else field.label
-                )
-                # (task-3304, MI-07) Disabled-state reason at the control.
-                # (live-verify round) APPENDED to ``label_text``, not
-                # rebuilt from ``field.label``: rebuilding dropped the hint
-                # -- so on a stock install the cookies field's "video URLs
-                # only" and the trim fields' "HH:MM:SS or seconds" were
-                # invisible exactly while the control was inert and the
-                # user had the most to work out. The checkbox branch above
-                # already appends; these two now agree.
-                if disabled and disabled_note:
-                    label_text = f"{label_text} — {disabled_note}"
+                # Keep identity and units visible after the placeholder disappears.
+                label_text = _option_label(field, disabled_note if disabled else "")
                 children.append(
                     Static(
                         label_text,
+                        id=f"{widget_id}-label",
                         classes="type-group-field-label",
                         markup=False,
                     )
@@ -1443,7 +1643,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     # TextArea defaults to ``height: 1fr``. Bound it inside
                     # an option panel so two prompts remain compact-viewport
                     # reachable instead of consuming all available height.
-                    input_widget.styles.height = 4
+                    input_widget.add_class("h-4")
                     input_widget.styles.min_width = 0
                 else:
                     input_widget = Input(
@@ -1456,7 +1656,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                         disabled=control_disabled,
                     )
                 if field.directory_picker:
-                    input_widget.styles.width = "1fr"
+                    input_widget.add_class("w-fill")
                     input_widget.styles.min_width = 0
                     browse_button = Button(
                         "Browse…",
@@ -1467,14 +1667,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                         compact=True,
                         disabled=control_disabled,
                     )
-                    browse_button.styles.width = "auto"
+                    browse_button.add_class("w-auto")
                     path_row = Horizontal(
                         input_widget,
                         browse_button,
                         classes="library-ingest-path-actions",
                     )
-                    path_row.styles.width = "100%"
-                    path_row.styles.height = 3
+                    path_row.add_class("w-full")
+                    path_row.add_class("h-3")
                     children.append(path_row)
                     if field.name == "transcription_model_dir":
                         children.append(
@@ -1547,6 +1747,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             children.append(
                 Static(
                     picker_label,
+                    id=f"{INGEST_CHUNK_TEMPLATE_PICKER_ID}-label",
                     classes="type-group-field-label",
                     markup=False,
                 )
@@ -1580,11 +1781,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 "transcription_provider", provider.default
             )
             install_gated = provider_value != "parakeet-onnx"
-            install_label = "Install verified Parakeet v2 INT8 (630.6 MiB)…"
-            if install_gated:
-                # (task-3304, MI-07) Inert-actions rule: a disabled button
-                # carries the WHY in its label, never dimming alone.
-                install_label += " — needs the parakeet-onnx provider"
+            install_label = _parakeet_install_label(provider_value)
             children.append(
                 Button(
                     install_label,
@@ -1594,27 +1791,22 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     disabled=install_gated or self.external_busy,
                 )
             )
-            if provider_value == "transcribe-cpp":
-                configured = self.state.transcribe_cpp_configured
-                children.append(
-                    Static(
-                        "Local GGUF configured."
-                        if configured
-                        else "No local GGUF configured.",
-                        id="opt-audio_video-transcribe-cpp-status",
-                        classes="type-group-scope",
-                        markup=False,
-                    )
-                )
-                children.append(
-                    Button(
-                        "Choose another GGUF…" if configured else "Choose GGUF…",
-                        id="opt-audio_video-choose-transcribe-cpp-gguf",
-                        classes="library-canvas-action",
-                        compact=True,
-                        disabled=self.external_busy,
-                    )
-                )
+            configured = self.state.transcribe_cpp_configured
+            status = Static(
+                "Local GGUF configured." if configured else "No local GGUF configured.",
+                id="opt-audio_video-transcribe-cpp-status",
+                classes="type-group-scope",
+                markup=False,
+            )
+            chooser = Button(
+                "Choose another GGUF…" if configured else "Choose GGUF…",
+                id="opt-audio_video-choose-transcribe-cpp-gguf",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=self.external_busy,
+            )
+            status.display = chooser.display = provider_value == "transcribe-cpp"
+            children.extend((status, chooser))
 
         children.append(
             Button(
@@ -1808,13 +2000,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     id="library-ingest-keywords",
                     classes="library-ingest-field",
                 )
-        # Always mounted, even with empty text, so the Start button never
-        # shifts vertically when the gate line's copy appears/disappears
-        # (2026-07 UAT: the button jumped ~2 rows on every gate change,
-        # breaking muscle memory). The fixed inline height reserves the
-        # line's row when the text is empty (an auto-height empty Static
-        # would collapse to 0); the screen's path-changed handler updates
-        # the text in place instead of mounting/removing the widget.
+        # Always mounted with a minimum row, preserving the 2026-07 UAT
+        # fix for Start jumping when an empty gate collapsed. Longer
+        # recovery/consent copy must wrap (TASK-32663); a fixed one-row
+        # height hid its ending at compact widths. The screen updates
+        # the text in place, keeping form fields and focus mounted.
         # (task-2140) Always mounted, display-managed: the conditional
         # compose reintroduced the round-3 empty-Recent bug class -- a
         # text-only pre-flight applies via the NON-structural in-place
@@ -1842,7 +2032,6 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 classes="library-ingest-quiet-line",
                 markup=False,
             )
-            start_quiet_line.styles.height = 1
             start_quiet_line.set_class(
                 state.start_confirm_armed, "-ingest-start-confirm"
             )
@@ -1918,6 +2107,16 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     def on_mount(self) -> None:
         """Settle the fold indicator once first layout has real sizes."""
         self.call_after_refresh(self.sync_fold_hint)
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal keyboard targets above the docked commit bar and fold hint."""
+        if event.widget.has_focus:
+            # Textual's containment check ignores docks. A control under
+            # either dock can otherwise bypass automatic focus scrolling.
+            self.scroll_to_widget(event.widget, animate=False, immediate=True)
+            # Earlier focus scrolling may still be queued for this refresh.
+            # Resolve the current target again after layout, never the old one.
+            self.call_after_refresh(self._reveal_focused_control)
 
     def on_show(self) -> None:
         """Populate DB-backed controls once the canvas is actually visible.
@@ -2018,8 +2217,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             picker.set_options(options)
 
     def on_resize(self, _event: Any) -> None:
-        """A viewport change can (un)cover the fold -- re-derive the hint."""
+        """Re-derive the fold and reveal current focus after viewport layout."""
         self.sync_fold_hint()
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def watch_virtual_size(self) -> None:
+        """Reveal retained focus after preflight or queue content changes height."""
+        if self.is_running:
+            self.call_after_refresh(self._reveal_focused_control)
 
     def sync_fold_hint(self) -> None:
         """Show the fold indicator only while the canvas content overflows.
@@ -2038,12 +2243,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         )
 
     @on(Button.Pressed, ".ingest-preflight-copy-command")
-    def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
+    async def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
         """Copy one warning's install command from the summary (MI-17).
 
-        Mirrors the guardrail modal's copy button (same seam, same
-        notifications) so the modal is no longer the only place the
-        command can be recovered from.
+        Confirm native delivery where possible and reveal the literal
+        command when clipboard delivery cannot be confirmed.
         """
         event.stop()
         button_id = event.button.id or ""
@@ -2062,15 +2266,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 command = self.state.warning_commands[index]
             except (ValueError, IndexError):
                 return
-        copy_fn = getattr(self.app, "copy_to_clipboard", None)
-        if callable(copy_fn):
-            try:
-                copy_fn(command)
-                self.notify("Install command copied to clipboard")
-            except Exception:
-                self.notify("Failed to copy command", severity="error")
-        else:
-            self.notify("Clipboard not available", severity="warning")
+        from tldw_chatbook.Utils.install_clipboard import copy_install_command
+
+        if not await copy_install_command(self, command):
+            # Keep the literal command visible when terminal delivery is
+            # unavailable or unacknowledged; the collapsed fold hid recovery.
+            for detail in self.query(f"#{INGEST_TOOLING_FOLD_ID}"):
+                if isinstance(detail, Collapsible):
+                    detail.collapsed = False
 
     @on(Checkbox.Changed)
     @on(Select.Changed)
@@ -2114,12 +2317,22 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         name = "-".join(parts[2:])
         if name == "reset":
             return
+        # A reset may supersede an already queued Changed; a recompose may
+        # replace its sender entirely. Neither old event owns the current form.
+        if not widget.is_attached or self not in widget.ancestors:
+            return
+        if self.query_one(f"#{widget_id}") is not widget:
+            return
         key = (group, name)
         value = widget.text if isinstance(widget, TextArea) else event.value
+        if not isinstance(widget, TextArea) and value != widget.value:
+            return
         if key in self._reported_option_values and self._reported_option_values[key] == value:
             return
         self._reported_option_values[key] = value
-        self.post_message(self.OptionValueChanged(group, name, value))
+        self.post_message(
+            self.OptionValueChanged(group, name, value, source_widget=widget)
+        )
 
     @on(Collapsible.Expanded)
     @on(Collapsible.Collapsed)

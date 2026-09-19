@@ -48,9 +48,7 @@ def workspace_persona_label_suffix(
         personas = getattr(app_instance, "local_character_persona_service", None)
 
         def lookup(persona_id: str):
-            if personas is None or not hasattr(
-                personas, "get_persona_profile"
-            ):
+            if personas is None or not hasattr(personas, "get_persona_profile"):
                 return None
             try:
                 return personas.get_persona_profile(persona_id)
@@ -392,12 +390,12 @@ class ConsoleWorkspaceRenameModal(SafeModalDismissMixin, ModalScreen[str | None]
 class WorkspaceArchiveReceiptModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Persistent recovery choices, dismissed only by deliberate interaction."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     WorkspaceArchiveReceiptModal { align: center middle; }
     #workspace-archive-receipt { width: 60; height: auto; border: tall $primary;
         background: $surface; padding: 1 2; }
     #workspace-archive-receipt-actions { height: 3; }
-    #workspace-archive-receipt-actions Button { width: auto; min-width: 8; margin-right: 1; }
+    #workspace-archive-receipt-actions Button.workspace-archive-receipt-modal-button { width: auto; min-width: 8; margin-right: 1; }
     """
     SAFE_MODAL_CONTENT = "#workspace-archive-receipt"
     BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Done")]
@@ -423,9 +421,24 @@ class WorkspaceArchiveReceiptModal(SafeModalDismissMixin, ModalScreen[str | None
                 markup=False,
             )
             with Horizontal(id="workspace-archive-receipt-actions"):
-                yield Button("Undo", id="workspace-archive-undo", compact=True)
-                yield Button("View archived", id="workspace-archive-view", compact=True)
-                yield Button("Done", id="workspace-archive-done", compact=True)
+                yield Button(
+                    "Undo",
+                    id="workspace-archive-undo",
+                    compact=True,
+                    classes="workspace-archive-receipt-modal-button",
+                )
+                yield Button(
+                    "View archived",
+                    id="workspace-archive-view",
+                    compact=True,
+                    classes="workspace-archive-receipt-modal-button",
+                )
+                yield Button(
+                    "Done",
+                    id="workspace-archive-done",
+                    compact=True,
+                    classes="workspace-archive-receipt-modal-button",
+                )
 
     @on(Button.Pressed)
     async def _choose(self, event: Button.Pressed) -> None:

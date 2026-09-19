@@ -1,0 +1,77 @@
+{
+  "pid": 43125,
+  "runner_sha256": "744f54a8a3e0b0a28242b605539784f3836964c4368e71b4bced1a7b8152c0f1",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "media_id": 2,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_mode_and_scope": true,
+      "receipt_survives_mode_change": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "media_id": 3,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_mode_and_scope": true,
+      "receipt_survives_mode_change": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "media_id": 4,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_mode_and_scope": true,
+      "receipt_survives_mode_change": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "media_id": 5,
+      "legacy_before": 2,
+      "legacy_after": 1,
+      "summary": "1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)",
+      "running_feedback_survives_mode_and_scope": true,
+      "receipt_survives_mode_change": true,
+      "full_receipt_painted_after_keyboard_scroll": true,
+      "chunks_stamped": 1,
+      "skipped_chunks_unchanged": true
+    }
+  ],
+  "waiting_for": "#library-rag-mode-toggle",
+  "passed": true,
+  "real_rechunk_runs": 4,
+  "sources_unchanged": true,
+  "skipped_id": 1,
+  "semantic_indexing_enabled": false,
+  "app_run_returned": true
+}

@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+9.44s call     Tests/UI/test_library_notes_authority_layout.py::test_notes_next_step_is_fully_painted_across_pane_resize[False-textual-light]
+9.36s call     Tests/UI/test_library_notes_authority_layout.py::test_notes_next_step_is_fully_painted_across_pane_resize[True-textual-dark]
+7.59s call     Tests/UI/test_library_notes_authority_layout.py::test_notes_next_step_is_fully_painted_across_pane_resize[True-textual-light]
+6.81s call     Tests/UI/test_library_notes_authority_layout.py::test_notes_next_step_is_fully_painted_across_pane_resize[False-textual-dark]
+
+(8 durations < 1s hidden.)
+4 passed in 38.72s

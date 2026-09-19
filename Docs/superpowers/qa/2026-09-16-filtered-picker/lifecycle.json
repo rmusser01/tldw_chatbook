@@ -1,0 +1,9 @@
+{
+  "run": "run-004",
+  "pid": 70114,
+  "passed": true,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "process_gone": true,
+  "owned_tmux_session_closed": true
+}

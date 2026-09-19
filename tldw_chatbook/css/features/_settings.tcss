@@ -1,0 +1,1478 @@
+/* ========================================
+ * FEATURES: Settings workbench
+ * ========================================
+ * ADR-161 task 10: the settings-* workbench vocabulary, extracted from
+ * components/_agentic_terminal.tcss and tokenized on arrival. This sheet
+ * is the SOURCE for the screen-owned split: all-settings-token rules move
+ * to the lazily-loaded screen_agentic_settings.tcss (TASK-25812), while
+ * pinned/mixed rules (settings-input-label, destination-section scoped
+ * overrides) ride the bundle here. Distinct from features/
+ * _tools-settings.tcss (the deprecated legacy Tools/Settings window).
+ * Never add local $ds-* fallbacks here (two-track rule).
+ * ======================================== */
+
+/* Header sentinel: unit-splitting attaches leading comments to the
+ * next rule, so without this no-op the provenance essay above would
+ * travel with the first moved rule into the generated screen sheet
+ * (same trick as the split preamble's sentinel). Stays in the bundle:
+ * its token matches no split owner. */
+.tldw-split-source-header-end { }
+
+
+#settings-category-pane {
+    width: $ds-size-30;
+    max-width: $ds-size-34;
+    /* min-width (task-1342): worst label is "> Privacy & Security *" (22
+       cells) plus Button line-pad (2), border (2), padding (2), list
+       scrollbar (1) and pane border (2) -- 31; width:30 alone clips the
+       dirty "*" marker off edited categories. */
+    min-width: $ds-size-32;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#settings-category-list {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    /* task-1712: $ds-grid-line blended into the panel, hiding that four
+       categories sit below the fold on common heights -- the overflow
+       cue must actually read as one. */
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+/* Qodo PR #1147: both panes are fixed-header-over-scroll-body now (the
+   detail pane since task-1716, the impact pane since task-1560) -- the
+   scrollbar theming has to sit on the -body children that actually
+   scroll, or the real scroll containers render stock scrollbars. The
+   outer panes keep only their column width and clip. */
+#settings-detail-pane {
+    width: $ds-fr-6;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#settings-impact-pane {
+    /* min-width: longest inspector word is "Read-only/WIP;" (14 cells) plus
+       border (2), padding (2), scrollbar (1) and row padding (2), so words
+       wrap on whitespace instead of folding mid-word (task-1342). */
+    width: $ds-fr-2;
+    min-width: $ds-size-21;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
+#settings-detail-pane-body,
+#settings-impact-pane-body {
+    width: $ds-width-full;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+/* Narrow-width compact workbench (task-1342), following the personas
+   precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
+   leaves slivers, so the category pane becomes a fixed-width sidebar, the
+   inspector pane and its divider drop out, and the detail pane takes the
+   rest. The search help/status rows hide so category rows stay visible at
+   24-row heights. */
+#settings-workbench.settings-workbench-compact {
+    padding: $ds-space-0;
+}
+
+#settings-category-pane.settings-workbench-compact-pane {
+    width: $ds-size-32;
+    min-width: $ds-size-32;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#settings-detail-pane.settings-workbench-compact-pane {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#settings-impact-pane.settings-workbench-compact-pane,
+#settings-workbench.settings-workbench-compact #settings-detail-impact-divider {
+    display: none;
+}
+
+#settings-workbench.settings-workbench-compact .settings-category-search-help,
+#settings-workbench.settings-workbench-compact .settings-category-search-status {
+    display: none;
+}
+
+/* TASK-32593: a 24-column label leaves only seven editable cells in the
+   default 80-column workbench. Keep the sidebar and complete labels, and
+   spend vertical space on the Connect/Network field rows instead.
+   TASK-32748 includes the nested Generation defaults rows, where the same
+   fixed label otherwise leaves only the final digit of Temperature visible.
+   Console Behavior and Storage use the same stacked field contract.
+   Existing controls retain their compact border and focus contracts. */
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row,
+.settings-workbench-compact #settings-network-card > .settings-input-row,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row,
+.settings-workbench-compact #settings-storage-card .settings-input-row {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-2;
+    margin-bottom: $ds-space-stack;
+}
+
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {
+    width: $ds-width-full;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Input,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Select,
+.settings-workbench-compact #settings-network-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-network-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > Input,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > Select,
+.settings-workbench-compact #settings-storage-card .settings-input-row > Input {
+    width: $ds-width-full;
+}
+
+/* The narrow card can have 34 columns once its scrollbar appears. Its
+   longest policy is 29 columns; one padding cell plus the existing border
+   and arrow fits it without changing the value or removing focus chrome. */
+.settings-workbench-compact #settings-network-ssl-mode > SelectCurrent {
+    padding-right: $ds-space-0;
+}
+
+/* Settings density: the workbench panes themselves carry borders and
+   padding, so the frame would only double them up. */
+#settings-workbench {
+    padding: $ds-space-0;
+    border: none;
+}
+
+.settings-active-section {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    /* Textual 8 Buttons default to line-pad: 1, reserving one cell on each
+       side of the label (line-pad: 0 is not expressible in CSS). The
+       #settings-category-pane min-width absorbs those 2 cells so labels
+       never wrap into this clipped second line (task-1342). */
+    content-align: left middle;
+    text-align: left;
+    background: $ds-surface-panel;
+}
+
+Button.settings-category-button.settings-active-section {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button:focus {
+    outline: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-button.settings-active-section:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button.settings-active-section:hover,
+Button.settings-category-button.settings-active-section:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button.settings-primary-search-match {
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-button.settings-secondary-search-match {
+    color: $ds-text-muted;
+}
+
+#settings-category-search {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    /* No border: at height 1 a border would clip the content row. The
+       raised background carries the "this is a field" affordance, and
+       focus/active below swap background+weight only, so the strip never
+       changes height (stable-border-geometry contract). */
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#settings-category-search:focus {
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+#settings-category-search.settings-category-search-active {
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-category-search-help {
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    color: $ds-text-muted;
+}
+
+.settings-category-search-status {
+    width: $ds-width-full;
+    min-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.settings-search-empty {
+    width: $ds-width-full;
+    min-height: $ds-size-3;
+    padding: $ds-space-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
+#settings-shell Button:focus,
+#settings-shell Button:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold underline;
+    outline: none;
+}
+
+.settings-category-group-title {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Collapsible rail-group toggle (Domain Defaults): renders like a group
+   heading but behaves like the compact category buttons. */
+Button.settings-category-group-toggle {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    content-align: left middle;
+    text-align: left;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-group-toggle:focus {
+    outline: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Section headers inside the settings detail pane get a raised bar and a
+   blank line above, so each content block reads as a distinct section.
+   (The class itself is shared; scope stays inside settings.) */
+#settings-detail-pane .destination-section {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-state-banner {
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    /* task-1625: the State strip reads as a raised status surface (the
+       task-345 focus steel at low alpha), not another flat prose row --
+       it now leads with the persistence badge (task-1717), so it earns
+       the emphasis. */
+    background: $ds-focus-bg 30%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* ADR-161 task 9: the bare .settings-detail-row definition moved to
+   components/_forms.tcss (documented variant of form-row; consumed on TWO
+   production surfaces -- the Settings workbench and the STTS speech
+   settings pane -- so it rides the boot bundle instead of the lazy
+   settings screen sheet). The scoped override below stays with its
+   surface. */
+
+/* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
+   ~30 columns, so the blank line between rows earns its keep there (and
+   the F6 fold-geometry contract measures against it). */
+#settings-impact-pane .settings-detail-row {
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.settings-input-row {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+/* Interface subviews must grow with their forms so the detail pane owns
+   scrolling, including stacked Theme actions and the Splash gallery. */
+#settings-theme-editor,
+#settings-splash-screen-viewer {
+    height: auto;
+}
+
+/* Compact toggles retain the full label and glyph without three-row
+   chrome, including the rail-label control in the narrow Settings pane. */
+#settings-console-stack-collapsed-rail-labels,
+#settings-appearance-animations-enabled,
+#settings-splash-enabled,
+#settings-splash-show-progress,
+#settings-splash-skip-on-keypress {
+    width: auto;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+
+/* Appearance has the same 24-column label constraint as Connect. Stack
+   compact fields so the toggle buttons and editable values fit the card. */
+.settings-workbench-compact #settings-appearance-card > .settings-input-row,
+.settings-workbench-compact #settings-splash-card > .settings-select-row {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-2;
+    margin-bottom: $ds-space-stack;
+}
+
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-splash-card > .settings-select-row > .settings-input-label {
+    width: $ds-width-full;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-splash-default-select {
+    width: $ds-width-full;
+}
+
+/* Palette rows also include a nine-cell swatch. A compact label leaves
+   enough room to read and edit the complete hex value beside that swatch. */
+.settings-workbench-compact #settings-theme-card .settings-input-label {
+    width: $ds-size-12;
+}
+
+.settings-workbench-compact #settings-theme-tree {
+    height: $ds-size-8;
+}
+
+/* A stacked gallery gives compact terminals a useful card list and preview
+   width; the list fits completely inside the detail pane when focused. */
+.settings-workbench-compact #settings-splash-gallery {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-space-0;
+}
+
+.settings-workbench-compact #settings-splash-card-list {
+    width: $ds-width-full;
+    height: $ds-size-8;
+}
+
+.settings-workbench-compact #settings-splash-preview-scroll {
+    width: $ds-width-full;
+    height: $ds-size-12;
+}
+
+/* The provider search is content-sized, while its OptionList owns a bounded
+   scrolling viewport. Explicit sizing keeps following fields in document
+   order at both the standard and compact Settings workbench widths. */
+#settings-provider-picker-block {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-9;
+}
+
+#settings-provider-picker {
+    width: $ds-width-full;
+    height: $ds-size-6;
+    min-height: $ds-size-6;
+    max-height: $ds-size-6;
+}
+
+.settings-select-row {
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+}
+
+/* Agent presets keep selection and its explicit load action on one compact
+   row. The button must size to its label; Textual's default full-width Button
+   otherwise places it beyond both supported Settings widths. */
+.agents-preset-row {
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+}
+
+#agents-preset-select {
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
+}
+
+#agents-load-preset-button {
+    width: auto;
+    min-width: $ds-size-13;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+}
+
+/* TextArea's border consumes two rows. Keep at least one painted content row
+   when the preset row joins this scrollable form. */
+#agents-instructions-area {
+    height: $ds-size-5;
+    min-height: $ds-size-3;
+}
+
+/* Inputs inherit a full-row minimum from Textual. Inside the Agents label +
+   field rows that made their 1fr width extend past the right viewport edge. */
+#agents-form .settings-compact-input {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    min-width: $ds-size-0;
+    border: none;
+    outline: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.agents-field-row {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: $ds-size-24 1fr;
+    overflow-x: hidden;
+}
+
+#agents-form .settings-compact-input:focus {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#agents-enabled-switch {
+    width: auto;
+    min-width: $ds-size-8;
+}
+
+/* Switch chrome needs a full control row. Scope this rule to the form so the
+   later-loaded Settings sheet's compact input row cannot clip its content. */
+#agents-form .agents-enabled-row {
+    height: $ds-control-height;
+    min-height: $ds-control-height;
+}
+
+
+.settings-input-label {
+    /* task-1713: 12 cells truncated most labels ("Palette limit" ->
+       "Palette", "Tool result display cap" -> "Tool result"), which read
+       as unit-less mystery numerics in the critique. */
+    width: $ds-size-24;
+    min-width: $ds-size-12;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-select-row .settings-input-label {
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    content-align: left middle;
+}
+
+/* The Library/RAG detail card (Search/Embedding/Chunking/Vector store/
+ * Reranking groups) has the longest field labels in Settings ("Default
+ * results", "Embedding model ⚠", "Distance metric ⚠", "Rerank results", ...).
+ * The generic 12-column label width clips them to their first wrapped word
+ * (Static wraps at the column width but the row stays height:1, so only
+ * that first line paints) -- e.g. "Default results" rendered as just
+ * "Default", and "Reranker model"/"Reranker top-k" (pre UX-review-2026-07
+ * naming) both rendered as the identical "Reranker". Widen the column for
+ * this card only so every RAG label fits on one line unambiguously; other
+ * Settings categories keep the base 12-column rhythm.
+ */
+#settings-library-rag-card .settings-input-label {
+    width: $ds-size-20;
+    min-width: $ds-size-20;
+}
+
+/* ADR-161 task 9: the .settings-compact-input definitions (base, :focus,
+   and its halves of the two .settings-invalid-input rules below) moved to
+   components/_forms.tcss as the documented compact variant of form-input
+   -- also composed by the pattern gallery, so it rides the boot bundle.
+   The compact-SELECT stays here (Settings-only). */
+.settings-compact-select.settings-invalid-input {
+    background: $ds-status-error 18%;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-select.settings-invalid-input:focus {
+    /* task-1369: keep the error tint while focused so the invalid marker is
+       not lost; slightly stronger than the unfocused 18% to still read as
+       focused. */
+    background: $ds-status-error 28%;
+    color: $ds-text-primary;
+    text-opacity: 1;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-select {
+    width: $ds-width-fill;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectCurrent {
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    content-align: left middle;
+}
+
+.settings-compact-select:focus {
+    border: solid $ds-action-focus;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-select:focus > SelectCurrent {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-compact-select > SelectOverlay {
+    padding: $ds-space-0 $ds-space-1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    min-width: $ds-size-30;
+}
+
+.settings-compact-select > SelectOverlay Option {
+    padding: $ds-space-0 $ds-space-2;
+    min-height: $ds-size-3;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectOverlay Option:hover {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectOverlay Option.-selected {
+    padding: $ds-space-0 $ds-space-2;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.settings-provider-manual-hidden {
+    display: none;
+}
+
+/* task-189: generation-profile rows a provider does not support are hidden
+   entirely; the Generation defaults disclosure shows one summary line instead
+   of per-row "Unavailable for <provider>" placeholders. */
+.settings-gated-profile-hidden {
+    display: none;
+}
+
+.settings-status-row {
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    background: $ds-surface-inspector;
+    color: $ds-text-muted;
+}
+
+/* task-1341: intentional instant-apply controls are visually separated from
+   staged fields with a bordered group plus an inline italic hint.
+   task-1367: explicit height:auto -- the default Vertical 1fr never resolves
+   inside the auto-height providers card and clipped every control. */
+.settings-instant-apply-group {
+    height: auto;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+/* Keep refresh controls inside the scrolled group at compact widths. */
+#settings-model-catalog-group .settings-input-row {
+    height: auto;
+}
+
+#settings-model-catalog-group Checkbox {
+    width: auto;
+    max-width: $ds-width-full;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+
+#settings-model-catalog-group Input {
+    width: $ds-width-fill;
+}
+
+.settings-workbench-compact #settings-model-catalog-group .settings-input-row {
+    layout: vertical;
+}
+
+.settings-workbench-compact Input#settings-model-catalog-stale-hours,
+.settings-workbench-compact #settings-model-catalog-group .settings-input-label {
+    width: $ds-width-full;
+}
+
+.settings-instant-apply-hint {
+    color: $ds-text-muted;
+    text-style: italic;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+.settings-storage-check-result {
+    min-height: $ds-size-7;
+}
+
+.settings-dirty-category {
+    color: $ds-status-unsaved;
+    text-style: bold;
+}
+
+/* RAG profile-manager region (task-2): read-only note for a built-in active
+   profile -- attention-worthy like #library-skill-warnings above, not muted
+   like the surrounding .settings-status-row lines. */
+.settings-library-rag-readonly-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* RAG profile editor (task-3 review): reranker top-k vs default-results
+   advisory -- same attention-worthy treatment as the readonly banner above.
+   Purely informational (never gates Save; see soft_config_warnings). */
+.settings-library-rag-soft-warning {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* Task 4 (541 v2 UX AC1): profile-picker PREVIEW banner -- shown only while
+   the editor is displaying a browsed, non-active profile read-only. Same
+   attention-worthy treatment as the readonly banner above (hidden by
+   default via Static.display, toggled by _set_library_rag_preview_banner). */
+.settings-library-rag-preview-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+.settings-rag-profile-modal {
+    width: $ds-size-60;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
+#global-speech-tts-leave-modal .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+
+#global-speech-tts-leave-modal .settings-action-row Button {
+    width: $ds-width-full;
+    margin-right: $ds-space-0;
+}
+
+.settings-speech-credential-modal {
+    width: $ds-size-70;
+    max-width: $ds-percent-90;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
+/* task-2835: keyboard-reachable mirror of the focused control's tooltip,
+   one muted line pinned under the Settings workbench. */
+#settings-focus-help {
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+}
+
+.settings-focus-card {
+    width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+/* Overview shares the detail pane scroll owner; its primary rows must
+   grow with wrapped status copy instead of shrinking as a 1fr child. */
+#settings-overview-primary {
+    height: auto;
+}
+
+/* Workspace rows share the detail pane scroll owner; keep every row inside
+   the list's bounds so keyboard focus can reveal it beside a tall card. */
+#settings-workspaces-list {
+    height: auto;
+}
+
+#settings-workspaces-list .settings-workspace-row {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
+/* Keep the selected option and its adjacent staging receipt together even
+   when the user's Persona/profile catalog is long. */
+#settings-workspace-persona-picker,
+#settings-workspace-profile-picker {
+    max-height: $ds-size-5;
+    /* The generic focus outline paints over compact option text. */
+    outline: none;
+}
+
+#settings-workspace-persona-picker:focus > .option-list--option-highlighted,
+#settings-workspace-profile-picker:focus > .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+.settings-workbench-compact #settings-overview-primary .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+
+/* RAW CLI DANGER GATE START */
+.settings-raw-cli-danger {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    padding: $ds-space-1;
+    border: solid $surface-lighten-2;
+    background: $surface;
+}
+
+.settings-raw-cli-danger.settings-raw-cli-armed {
+    border: solid $error;
+    background: $error 10%;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state,
+.settings-raw-cli-disclosure,
+#settings-raw-cli-immediate {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    text-wrap: wrap;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state {
+    color: $error;
+    text-style: bold;
+}
+
+.settings-raw-cli-disclosure {
+    color: $text;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+#settings-raw-cli-permitted {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.settings-raw-cli-action-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-0;
+}
+
+#settings-raw-cli-immediate {
+    color: $text-muted;
+}
+
+#settings-shell Button#settings-raw-cli-arm {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold;
+}
+
+#settings-shell Button#settings-raw-cli-arm:focus,
+#settings-shell Button#settings-raw-cli-arm:hover,
+#settings-shell Button#settings-raw-cli-arm:hover:focus {
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold underline;
+}
+
+/* App-tier Legible Disabled: Textual's Button dimming compounds with the
+   theme's disabled opacity. The label itself states the recovery action,
+   while the inert surface remains visibly distinct and above the measured
+   3:1 disabled-label contrast floor. */
+#settings-shell Button#settings-raw-cli-arm:disabled,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover:focus {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
+    border: none;
+    outline: none;
+}
+/* RAW CLI DANGER GATE END */
+
+/* Keep every Tool Profile action visible inside the compact detail pane. */
+.settings-workbench-compact ToolProfilesPanel .tool-profile-actions {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-control-height-compact;
+    grid-gutter: $ds-space-stack $ds-space-inline;
+}
+
+.settings-workbench-compact ToolProfilesPanel Button.tool-profile-action {
+    width: $ds-width-fill;
+}
+
+#settings-advanced-config-card {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+
+#settings-advanced-config-actions {
+    grid-size: 2;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: $ds-size-2;
+}
+
+#settings-advanced-config-actions Button {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+    padding: $ds-space-0;
+}
+
+#settings-advanced-guide {
+    height: auto;
+    max-height: $ds-size-8;
+    overflow-y: auto;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    border: none;
+}
+
+#settings-advanced-guide Button {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+}
+
+#settings-advanced-config-validation-status,
+#settings-advanced-config-result {
+    height: auto;
+    max-height: $ds-size-3;
+    overflow-y: auto;
+}
+
+.settings-secondary-card {
+    /* task-1625: border titles ("Profiles") were dim grey on the border
+       line -- near-invisible in the critique captures. */
+    border-title-color: $ds-text-primary;
+    border-title-style: bold;
+    width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+/* Task 5 (541 v2 UX AC5): first-run starter panel -- replaces the "wall of
+   disabled fields" a brand-new install used to show with a direct next
+   step (Clone/Backfill). Accent border (same treatment as
+   .settings-rag-profile-modal above) so it reads as the primary call to
+   action, not just another secondary card. Hidden by default via
+   Static.display, toggled by `_refresh_rag_first_run_panel_state`/composed
+   directly by `_render_library_rag_detail`. */
+.settings-library-rag-starter-panel {
+    border: thick $ds-action-focus;
+}
+
+#settings-console-behavior-card {
+    min-height: $ds-size-12;
+}
+
+/* Textual checkboxes measure one row. Compact borders and concise labels
+   keep both the checkbox glyph and complete label inside the pane. */
+#settings-console-behavior-card Checkbox {
+    width: auto;
+    max-width: $ds-width-full;
+    height: auto;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+#settings-console-context-memory-jump {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
+
+/* The outer focus card already supplies the compact pane inset. A second
+   inset leaves too few columns for the full rail-label checkbox. */
+.settings-workbench-compact #settings-console-behavior-card {
+    padding: $ds-space-0;
+}
+
+.settings-action-row {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+.settings-action-row Button {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
+.settings-action-row Button:focus,
+#settings-impact-pane Button:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold underline;
+    outline: none;
+}
+
+/* UX review item 7 (delete danger styling): visually separate the RAG
+   profile-manager's destructive Delete button from the other three
+   (Set active/Clone/Rename) in the same row -- variant="error" alone
+   (settings_screen.py) gives it distinct color, but it still read as just
+   another button in the row without the extra gap. */
+.settings-library-rag-profile-delete-button {
+    margin-left: $ds-space-2;
+}
+
+.settings-sync-safety-row {
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-raised;
+}
+
+.settings-advanced-safety-status {
+    background: $ds-status-unsaved 10%;
+    color: $ds-status-unsaved;
+    text-style: bold;
+}
+
+#settings-advanced-config-editor {
+    height: $ds-height-fill;
+    min-height: $ds-size-5;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+/* Settings > Image Gen: the whole panel and its nested backend-editor
+   scroll region default to Textual's framework-level width/height
+   fallback (1fr) since neither `Vertical`/`VerticalScroll` declares one
+   in DEFAULT_CSS for a widget shaped like this -- fine for a SINGLE
+   dominant 1fr child (see InternalPromptsPanel's #internal-prompts-list),
+   but this panel has MANY siblings (Backends block, the backend-editor
+   region, Generation defaults, Style templates, Save/Revert) all
+   competing for the SAME bounded 1fr height, which starved the backend-
+   editor region down to ~1 row (verified live: region height 1 vs
+   virtual_size height 46) and clipped everything below it (Generation
+   defaults, Save/Revert) off the bottom entirely -- `settings-detail-
+   pane` (the ancestor Settings already scrolls the WHOLE category
+   through) is the one and only scroll owner here. */
+#settings-imagegen-panel {
+    height: auto;
+}
+
+#settings-imagegen-editor {
+    height: auto;
+}
+
+/* Web Search shares the Settings detail pane's scrolling document. */
+#settings-web-search-panel,
+#settings-web-search-fields {
+    width: $ds-width-full;
+    height: auto;
+}
+
+#settings-web-search-panel Select {
+    width: $ds-width-full;
+    margin: $ds-space-0;
+}
+
+#settings-web-search-panel Button {
+    width: auto;
+    max-width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+    margin: $ds-space-0 $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#settings-web-search-panel Link {
+    margin: $ds-space-0 $ds-space-1;
+    height: auto;
+}
+
+#settings-web-search-panel .settings-compact-input {
+    width: $ds-width-full;
+}
+
+#settings-web-search-compact-actions {
+    display: none;
+    height: auto;
+}
+
+.settings-workbench-compact #settings-web-search-compact-actions {
+    display: block;
+}
+
+/* Settings > Speech & TTS: the Settings detail pane is the single scroll
+   owner. The panel must grow to its content instead of becoming a hidden-
+   overflow 1fr viewport that strands Save below the terminal. */
+#settings-speech-tts-panel {
+    height: auto;
+}
+
+.settings-speech-provider-form,
+.settings-speech-credential,
+.settings-speech-control-stack {
+    width: $ds-width-full;
+    height: auto;
+}
+
+/* Mode-specific audio.cpp groups remain mounted so switching modes preserves
+   focus and dormant values. They must size to their content; Textual's
+   Vertical default of 1fr would otherwise add hundreds of blank rows and
+   strand Save below the Settings scroll owner. */
+#settings-speech-audio-cpp-external-fields,
+#settings-speech-audio-cpp-managed-fields,
+#settings-speech-audio-cpp-managed-lifecycle-fields,
+#settings-speech-audio-cpp-manual-json-fields,
+#settings-speech-audio-cpp-guided-fields,
+#settings-speech-audio-cpp-guided-advanced-fields,
+.settings-speech-audio-cpp-packages,
+.settings-speech-audio-cpp-package-row {
+    width: $ds-width-full;
+    height: auto;
+}
+
+.settings-speech-audio-cpp-package-row {
+    min-height: $ds-size-1;
+    margin: $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-panel;
+}
+
+.settings-speech-audio-cpp-package-copy {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+}
+
+.settings-speech-audio-cpp-package-remove {
+    width: auto;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+}
+
+/* Field errors live below their control. As a third child of a Horizontal,
+   the shared width:100% status row reduced otherwise usable controls to two
+   cells even while empty. */
+.settings-speech-input-row {
+    height: auto;
+    min-height: $ds-size-1;
+    align: left top;
+}
+
+/* Leave room for the sibling label in horizontal forms. */
+.settings-speech-input-row > .settings-speech-control-stack {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
+.settings-speech-input-row.settings-select-row {
+    min-height: $ds-size-3;
+}
+
+.settings-speech-field-error {
+    display: none;
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    color: $ds-status-error;
+}
+
+.settings-speech-field-error-visible {
+    display: block;
+}
+
+.settings-speech-path-control {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+}
+
+.settings-speech-path-control .settings-compact-input {
+    width: $ds-width-fill;
+}
+
+.settings-speech-path-picker {
+    width: auto;
+    min-width: $ds-size-9;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+.settings-speech-stacked .settings-speech-input-row {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-3;
+    margin-bottom: $ds-space-1;
+}
+
+.settings-speech-stacked .settings-speech-input-row .settings-input-label,
+.settings-speech-stacked .settings-speech-input-row .settings-speech-control-stack,
+.settings-speech-stacked .settings-speech-input-row > Input,
+.settings-speech-stacked .settings-speech-input-row > Select,
+.settings-speech-stacked .settings-speech-input-row > Switch {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+}
+
+.settings-speech-stacked #settings-speech-actions {
+    layout: vertical;
+    height: $ds-size-4;
+}
+
+.settings-speech-stacked #settings-speech-actions Button {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin-right: $ds-space-0;
+}
+
+/* This row includes a Select, so it cannot use an action row's single line. */
+.settings-speech-voice-picker {
+    height: auto;
+}
+
+.settings-speech-voice-picker > Select {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
+.settings-speech-stacked .settings-speech-voice-picker {
+    layout: vertical;
+}
+
+.settings-speech-stacked .settings-speech-voice-picker > Select,
+.settings-speech-stacked .settings-speech-voice-picker > Button {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin-right: $ds-space-0;
+}
+
+#settings-speech-details,
+#settings-speech-scope-inspector {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-3;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0;
+    border: none;
+    background: transparent;
+}
+
+#settings-speech-inspector {
+    width: $ds-width-full;
+    height: auto;
+}
+
+#settings-speech-details > CollapsibleTitle,
+#settings-speech-scope-inspector > CollapsibleTitle {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    padding: $ds-space-1;
+}
+
+#settings-speech-details > Contents,
+#settings-speech-scope-inspector > Contents {
+    width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1;
+    background: transparent;
+}
+
+/* One row per backend inside the Backends block -- label, status badge,
+   Enabled checkbox, default marker, Test button. height:auto (not the
+   base .settings-input-row's fixed height:1) so the row never clips a
+   wrapped Checkbox/Button. */
+.settings-imagegen-backend-row {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    align: left middle;
+}
+
+/* min-width 6 (not Button's own default 16) + no left margin: at a
+   120-column launch the "Preference Detail" pane is only ~53 columns
+   wide, and this row packs 5 pieces (label, badge, checkbox, default
+   marker, Test) -- every column here is contested (verified live:
+   without this, the DEFAULT backend's row -- the one carrying "★
+   Default" -- clipped Test entirely off the visible/clickable area). */
+.settings-imagegen-backend-row Button {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    min-width: $ds-size-6;
+    margin: $ds-space-0;
+}
+
+/* _conversations.tcss's bare `Checkbox { width: 100%; height: 2; }` is an
+   unscoped TYPE selector that reaches every Checkbox app-wide (verified
+   live: region.width computed to the ROW's full width, overlapping/
+   clipping the marker and Test button that come after it in the SAME
+   row) -- override both Enabled checkboxes (one per backend row) and the
+   standalone "Context LLM enabled" checkbox back to a natural, single-
+   line size within this panel specifically; never touching that shared
+   global rule, which other screens may rely on. The backend-row Checkbox
+   also drops its horizontal padding (unlike the roomier standalone
+   context_llm_enabled one) -- same narrow-terminal column budget as the
+   Button rule above. */
+.settings-imagegen-backend-row Checkbox {
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-0;
+    border: none;
+    padding: $ds-space-0;
+}
+
+
+
+#settings-imagegen-context_llm_enabled {
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-0;
+    border: none;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+/* No horizontal padding (final review): "Not configured" (14 chars) is
+   the longest value this ever holds -- padding just wasted 2 more
+   contested columns in the narrow-terminal row budget above. */
+.settings-imagegen-badge {
+    width: auto;
+    min-width: $ds-size-14;
+    color: $ds-text-muted;
+}
+
+/* No min-width (final review): reserving 10 columns even when this row
+   isn't the default (the common case -- 5 of 6 rows) was pure waste on a
+   narrow terminal, where every column in a backend row is contested; let
+   it shrink to 0 for an empty marker and grow only for "★ Default". */
+.settings-imagegen-default-marker {
+    width: auto;
+    color: $ds-status-info;
+    text-style: bold;
+}
+
+.settings-imagegen-hint {
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    color: $ds-text-muted;
+}
+
+.settings-imagegen-key-source {
+    color: $ds-status-warning;
+}
+
+/* Task 5: the secret field's row grows an inline Clear button next to the
+   masked Input -- Button's own default min-width (16) plus the fixed-
+   width label would overflow the base .settings-input-row's width:100%/
+   height:1 (no wrap headroom), so this row gets its own auto-height class
+   and the Clear button gets a narrower min-width. */
+.settings-imagegen-secret-row {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.settings-imagegen-secret-row Button.settings-imagegen-clear-button {
+    width: auto;
+    min-width: $ds-size-8;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+/* SwarmUI's swarm_token is optional for local installs -- its "missing"
+   source line must not read as an error like the four remote API keys. */
+.settings-imagegen-key-source-neutral {
+    color: $ds-text-muted;
+}
+
+
+/* task-1624: the Checkbox glyph paints "X" in BOTH states, distinguishing
+   them by color alone -- it read as checked either way in the critique.
+   Hide the glyph while off so its presence carries the state; the On/Off
+   word beside it (switch_word) stays the text carrier. */
+/* task-1713 counterweight: the widened shared label column (24) does not
+   fit the Image Gen backend rows' five controls at 120 cols -- the
+   geometry guard test pins that width. Backend-row labels are short
+   backend names; 12 never truncated them. */
+.settings-imagegen-backend-row .settings-input-label {
+    width: $ds-size-12;
+    min-width: $ds-size-12;
+}

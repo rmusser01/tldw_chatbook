@@ -1,0 +1,18 @@
+{
+  "profile": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003",
+  "configured_private_paths": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/chachanotes.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/prompts.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/media.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/research.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/writing.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/library_collections.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/workspaces.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/evals.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/rag_indexing.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db/subscriptions.db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data/db",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.superpowers/sdd/2026-09-16-ingest-options/run-003/data"
+  ],
+  "keyring_backend": "keyring.backends.null.Keyring"
+}

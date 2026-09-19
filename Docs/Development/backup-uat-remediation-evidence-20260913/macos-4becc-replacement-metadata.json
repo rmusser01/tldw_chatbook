@@ -1,0 +1,48 @@
+{
+  "head": "4becc2872cd020ef8f2b28669d2e51cc9c7c1f62",
+  "product_tree": "e5f85340daa00377093ed007521ee519a5cceeef",
+  "packages": [
+    {
+      "wheel": "/private/tmp/uat-macos-replacement-4becc-20260914/f9-native-package0/wheels/tldw_chatbook-0.2.1-py3-none-any.whl",
+      "sha256": "96c46db364db279e89ae7edb45b1e554cdd0f818d076921bb06340f098574d20",
+      "installed": "/private/tmp/uat-macos-replacement-4becc-20260914/f9-native-package0/installed",
+      "installed_files": 2866,
+      "checked_python_files": 2474,
+      "missing_python_files": [],
+      "different_python_files": [],
+      "receipt_sha256": "7fb183fce0400cdcaa1c607a0fccff04a3fa5d41a53dd3cb765e6e6588ab5a9f"
+    },
+    {
+      "wheel": "/private/tmp/uat-macos-replacement-4becc-20260914/f9-native-package1/wheels/tldw_chatbook-0.2.1-py3-none-any.whl",
+      "sha256": "127e7ec405d1d0e7d86c88db7fc0a9d1ea17a65861f52a0a2ed9b3fd73fd7dc5",
+      "installed": "/private/tmp/uat-macos-replacement-4becc-20260914/f9-native-package1/installed",
+      "installed_files": 2866,
+      "checked_python_files": 2474,
+      "missing_python_files": [],
+      "different_python_files": [],
+      "receipt_sha256": "15fb4d8e832f0e670b181ce2fc9e9b28cf8f1402808316ad11106321a3b6522d"
+    }
+  ],
+  "result": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "junit_seconds": 434.773,
+    "pytest_seconds": 434.79,
+    "cases": [
+      {
+        "name": "test_full_f9_replacement_after_explicit_safety_and_credential_review",
+        "seconds": 138.53
+      },
+      {
+        "name": "test_default_profile_service_replacement_and_later_rollback",
+        "seconds": 296.182
+      }
+    ]
+  },
+  "junit_sha256": "ff49144433e92a77f78efedeb3bd888434dd3891f010cb3d2bc4f85bbad99dca",
+  "log_sha256": "dac64a8d215ad2aa663d25e81ffe217069485c20c347b7c9f65f57b197843d9a",
+  "final_head": "4becc2872cd020ef8f2b28669d2e51cc9c7c1f62",
+  "final_product_tree": "e5f85340daa00377093ed007521ee519a5cceeef"
+}

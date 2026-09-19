@@ -1,0 +1,12 @@
+[
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_block_shows_reason_and_clears_when_unblocked",
+    "returncode": 1,
+    "directory": "/private/tmp/32824-dev-baseline-001/1"
+  },
+  {
+    "node": "Tests/UI/test_console_send_disabled_state.py::test_setup_blocked_reason_never_parses_reason_text_as_markup",
+    "returncode": 0,
+    "directory": "/private/tmp/32824-dev-baseline-001/2"
+  }
+]

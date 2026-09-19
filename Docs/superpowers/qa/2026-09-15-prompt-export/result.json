@@ -1,0 +1,47 @@
+{
+  "pid": 41434,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "clipboard_osc52_matches_markdown": true,
+      "clipboard_unavailable_reported": true,
+      "inline_results_painted_without_prompt_toasts": true,
+      "filename_initial_focus_and_label": true,
+      "cancel_returns_export_focus": true,
+      "write_failure_visible_in_terminal_capture": true,
+      "retry_written_file_matches_clipboard": true,
+      "live_field_identity_preserved": true,
+      "output": "exports/roundtrip-170.md"
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "clipboard_osc52_matches_markdown": true,
+      "clipboard_unavailable_reported": true,
+      "inline_results_painted_without_prompt_toasts": true,
+      "filename_initial_focus_and_label": true,
+      "cancel_returns_export_focus": true,
+      "write_failure_visible_in_terminal_capture": true,
+      "retry_written_file_matches_clipboard": true,
+      "live_field_identity_preserved": true,
+      "output": "exports/roundtrip-80.md"
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "prompt_id": 10,
+  "passed": true,
+  "normal_quit_requested": true,
+  "quit_size": [
+    80,
+    24
+  ],
+  "app_run_returned": true
+}

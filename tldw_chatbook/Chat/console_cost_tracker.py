@@ -960,7 +960,8 @@ def build_cost_rows(
     for index, message in enumerate(messages):
         try:
             usage = getattr(message, "usage", None)
-            role = str(getattr(message, "role", "") or "")
+            raw_role = getattr(message, "role", "") or ""
+            role = str(getattr(raw_role, "value", raw_role))
 
             if isinstance(usage, ProviderUsage):
                 breakdown = catalog.cost_for_usage(usage)

@@ -127,6 +127,18 @@ LIBRARY_GLYPH_OUTCOME_FAILED = "✗"
 #: A settled outcome: this one was never attempted.
 LIBRARY_GLYPH_OUTCOME_SKIPPED = "–"
 
+# task-32464 (controller's ruling, revisitable): radios are CARVED OUT of the
+# checkbox pair rather than folded into it. A radio is a single-choice
+# control; painting it "☑/☐" would promise a multi-select it does not offer,
+# which is a worse lie than the glyph collision with the disabled marker. So
+# the group itself disambiguates: exactly one sibling is "●" at all times,
+# which is what tells the reader it is a chooser, while a bare "○" OUTSIDE a
+# radio group keeps LIBRARY_DISABLED_ACTION_MARKER's blocked meaning.
+#: A radio inside a radio group, chosen.
+LIBRARY_GLYPH_RADIO_SELECTED = "●"
+#: The same radio, not chosen (inside a radio group only).
+LIBRARY_GLYPH_RADIO_UNSELECTED = "○"
+
 # F-018 reason for the list canvases' Select toggle while the rendered
 # list is empty -- previously the only disabled Library action with no
 # reason anywhere at the control ("click does nothing, says nothing",
@@ -151,6 +163,60 @@ LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
 LIBRARY_ACTION_LABEL_PAD = " " * (cell_len(LIBRARY_DISABLED_ACTION_MARKER) + 1)
 
 
+def library_disabled_reason_line(label: str, reason: str) -> str:
+    """One blocked control's reason, in the grammar this screen already uses.
+
+    task-32549: a disabled Library action carries its "○" marker (the
+    Library-wide blocked marker, task-32235) and its reason lives on a
+    tooltip, which never renders in a TUI -- so the control said that it was
+    unavailable and nothing else. This is the sentence for the shared
+    ``.library-disabled-reason`` line that goes with the control, the same
+    one "○ Server notes" has carried since task-32257.
+
+    A LINE rather than the label, for all three controls, because every one
+    of their rows is measured to the cell: the label spelling was written
+    first and painted "○ Sort unavailable — clear the" against the grip on
+    the 42-column pane a 100x30 terminal gives the Notes list
+    (`wave4-caps/layout/layout-21-100x30-sort-reason`), which is exactly the
+    clipping task-32544 and task-32557 fix. task-32261 had already had to
+    hide the select strip's own counter to keep "Export selected" on that
+    same pane.
+
+    Args:
+        label: The blocked control's plain label, without its marker.
+        reason: Why it is blocked, with or without a trailing full stop.
+
+    Returns:
+        ``"<label> unavailable — <reason>"``.
+    """
+    return f"{label} unavailable — {reason.rstrip('.')}"
+
+
+def library_selection_count_line(count: int, action_label: str) -> str:
+    """The count under a select strip, naming what a zero count blocks.
+
+    task-32549: "○ Export selected" said that exporting was off and nothing
+    about why. Its own row has no cells for the reason -- task-32261 had to
+    hide that strip's in-row counter to keep this very action on a
+    42-column pane -- and a line of its own costs the tree a row on a
+    20-row terminal (pinned by ``test_library_note_60x20_navigator_state_
+    allocation``, which caught exactly that). The line directly under the
+    strip already exists and already says "0 selected", so the blocked
+    action is named there: same row budget, nothing new on screen.
+
+    Args:
+        count: Rows currently checked.
+        action_label: The blocked action's own label, in whichever
+            spelling this width uses ("Export selected" / "Export").
+
+    Returns:
+        ``"N selected"``, or ``"0 selected — <action> unavailable"``.
+    """
+    if count:
+        return f"{count} selected"
+    return f"0 selected — {action_label} unavailable"
+
+
 def library_disabled_action_label(
     label: str, disabled: bool, *, align: bool = False
 ) -> str:
@@ -167,11 +233,38 @@ def library_disabled_action_label(
 
     Returns:
         ``"○ <label>"`` while disabled; ``label`` unchanged otherwise, or
-        blank-padded to the same width when ``align``.
+        blank-padded to the same width when ``align``. A blocked control's
+        REASON never goes here -- see ``library_disabled_reason_line``
+        above for why (task-32549).
     """
     if disabled:
         return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}"
     return f"{LIBRARY_ACTION_LABEL_PAD}{label}" if align else label
+
+
+#: The one back-cue glyph every Library surface leads with (task-32553).
+LIBRARY_BACK_CUE_MARKER = "‹"
+
+
+def back_cue_label(destination: str) -> str:
+    """Return the one "go back" wording: the cue, then where it goes.
+
+    task-32553 (critique #3, assessor A, everyone): the same action had
+    three names on three surfaces -- "‹ Notes" in the note editor, "Back to
+    Notes" on the import stepper and the Add-from-files chooser, and "Back
+    to navigator" on the Session Git panel and the Folder-files work pane.
+    task-32139 had already settled the grammar inside the editor; this is
+    the same grammar for every other surface, so the cue is recognisable by
+    shape and the word after it always names the destination.
+
+    Args:
+        destination: Where the control returns to, as the reader would name
+            it -- "Notes", "Files", or the editor's compact "Back to list".
+
+    Returns:
+        ``"‹ <destination>"``.
+    """
+    return f"{LIBRARY_BACK_CUE_MARKER} {destination}"
 
 
 # task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row

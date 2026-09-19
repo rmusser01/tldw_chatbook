@@ -9,6 +9,7 @@ from Tests.Chat.test_console_durable_turn_fix_round1 import (
     _install_real_effect_failure,
 )
 from Tests.Chat.test_console_first_send_atomicity import _controller
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.UI.Console_Modules.dispatch_recovery import (
     ConsoleDispatchRecoveryRegion,
@@ -17,7 +18,9 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_retry_resumes_interrupted_postcommit_on_app_owned_controller(
+    request,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -25,9 +28,9 @@ async def test_mounted_retry_resumes_interrupted_postcommit_on_app_owned_control
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
         db, store, controller, gateway = _controller(tmp_path)
+        request.addfinalizer(db.close)
         runtime = console._console_runtime()
         runtime.set_chat_store(store)
-        runtime.set_provider_gateway(gateway)
         runtime.set_chat_controller(controller)
         counts = _install_real_effect_failure(
             controller,

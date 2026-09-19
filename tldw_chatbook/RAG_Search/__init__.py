@@ -1,3 +1,9 @@
+
+# ADR-126: fence and enroll before runtime imports, including direct workers.
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+
+admit_startup()
+
 # __init__.py
 # Description: RAG Search package initialization
 """Lazy facade over the RAG Search package (PEP 562, task-21102).

@@ -1,0 +1,40 @@
+{
+  "baseline": "807d6c9ce0ef4d619348a9e7cc2da3d09190b959",
+  "files": [
+    {
+      "file": "Tests/UI/test_settings_configuration_hub.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 11,
+      "inherited_format_hunks": 31
+    },
+    {
+      "file": "Tests/UI/test_settings_web_search.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 1,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "Tests/UI/test_settings_web_search_lifecycle.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "Tests/UI/test_settings_overview_search_journeys.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "Docs/superpowers/qa/2026-09-17-settings-overview-web-search/native_check.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "pid": 78679,
+  "runner_sha256": "16bea0c051a074c81bde7c1e0ab514ef926fe35005e6d8ec434421fc1b3d302a",
+  "source_hashes": {
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": "5fd858c62eb16233976c4bd09bcb0ad8038736d9213b5eeeca743df840d042a6",
+    "tldw_chatbook/Widgets/Console/console_bounded_section.py": "cae8e50e9cacf5b5609ffaeaef1481171e25e99be0c534543addb5459e0123b8",
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": "6a383d528a16396f38678bbe2973cd4bd02868806944afa0c2062dc197c4a55a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3614411d7ad34a3a7aa14d9ea9816a9d0695a2b9db082efdc9f64fb3a3a11fc9",
+    "tldw_chatbook/css/screen_agentic_library.tcss": "5db9953acf6a0e0c2555d13e201f36a532111d0a32e8826b4580a10236eecc36"
+  },
+  "cells": [],
+  "waiting_for": "Notes canvas",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-notes-authority-layout/native_check.py\", line 146, in journey\n    assert focused is not None and focused.is_attached\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "exit_code": 143,
+  "qualified": false,
+  "termination": "SIGTERM to exact owned PID after normal terminal quit failed to complete",
+  "pid_absent": true,
+  "owned_terminal_closed": true,
+  "default_before": {
+    "/Users/macbook-dev/.config/tldw_cli/config.toml": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+  },
+  "default_after": {
+    "/Users/macbook-dev/.config/tldw_cli/config.toml": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+  },
+  "database_checks": {
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/library_collections.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/chachanotes.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/workspaces.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/agent_runs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/media.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/evals.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/prompts.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/subscriptions.db": [
+      [
+        "ok"
+      ]
+    ]
+  }
+}

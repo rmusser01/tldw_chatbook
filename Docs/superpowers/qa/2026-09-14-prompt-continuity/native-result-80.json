@@ -1,0 +1,70 @@
+{
+  "steps": [
+    {
+      "saved_prompt_id": 5,
+      "items_before": 4,
+      "items_after": 5,
+      "fields_retained": true
+    },
+    {
+      "mode": "basic",
+      "theme": "textual-dark",
+      "focus": "library-prompt-user",
+      "region": [
+        10,
+        10,
+        69,
+        6
+      ]
+    },
+    {
+      "mode": "advanced",
+      "theme": "textual-dark",
+      "focus": "prompt-block-content-message",
+      "region": [
+        14,
+        10,
+        62,
+        6
+      ]
+    },
+    {
+      "mode": "basic",
+      "theme": "textual-light",
+      "focus": "library-prompt-user",
+      "region": [
+        10,
+        10,
+        69,
+        6
+      ]
+    },
+    {
+      "mode": "advanced",
+      "theme": "textual-light",
+      "focus": "prompt-block-content-message",
+      "region": [
+        14,
+        10,
+        62,
+        6
+      ]
+    },
+    {
+      "reopened_prompt_id": 5,
+      "text_matches": true,
+      "version": 1
+    }
+  ],
+  "expected_size": [
+    80,
+    24
+  ],
+  "exclusive_profile": true,
+  "size": [
+    80,
+    24
+  ],
+  "driver": "LinuxDriver",
+  "passed": true
+}

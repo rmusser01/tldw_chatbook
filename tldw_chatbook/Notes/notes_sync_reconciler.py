@@ -6,7 +6,9 @@ import hashlib
 import json
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from pathlib import PurePosixPath
 
+from tldw_chatbook.Notes.note_import_discovery import OBSIDIAN_SKIPPED_ROOT_FOLDERS
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncAction,
     NotesSyncActionKind,
@@ -66,6 +68,16 @@ class BindingObservation:
     bound: bool = True
     baseline_serialization: NotesSyncSerializationProfile | None = None
     serialization: NotesSyncSerializationProfile | None = None
+    file_blank: bool = False
+    """Whether the file on disk holds nothing but whitespace (task-32535)."""
+    prior_import_note: bool = False
+    """Whether Import once already made a still-present note from this file.
+
+    task-32605: the two Obsidian paths mint different note identities, so a
+    vault imported once and then kept synced planned a fresh create for every
+    file it had already imported. The runtime resolves this from the
+    importer's own receipt ledger; the planner only decides what to do with it.
+    """
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.binding_id, field_name="binding_id")
@@ -107,7 +119,15 @@ class BindingObservation:
                 "note_implied_relative_path",
                 normalize_notes_sync_relative_path(self.note_implied_relative_path),
             )
-        if type(self.duplicate_authority) is not bool or type(self.bound) is not bool:
+        if any(
+            type(value) is not bool
+            for value in (
+                self.duplicate_authority,
+                self.bound,
+                self.file_blank,
+                self.prior_import_note,
+            )
+        ):
             raise TypeError("binding flags must be booleans.")
 
     def __repr__(self) -> str:
@@ -132,6 +152,14 @@ class ReconciliationInput:
     root_overlap: bool = False
     write_capable: bool = True
     capability_generation: int = 0
+    obsidian_mode: bool = False
+    """Whether the vault's own folders and empty files are left alone.
+
+    task-32535: Import once already skips ``.obsidian/``, ``.trash/`` and
+    ``Templates/`` at the vault root with a reason. Keeping a folder synced
+    made notes out of all three, so the same pass runs here behind the same
+    per-root toggle.
+    """
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -149,7 +177,12 @@ class ReconciliationInput:
                 raise ValueError(f"{name} must be non-negative.")
         if any(
             type(value) is not bool
-            for value in (self.root_available, self.root_overlap, self.write_capable)
+            for value in (
+                self.root_available,
+                self.root_overlap,
+                self.write_capable,
+                self.obsidian_mode,
+            )
         ):
             raise TypeError("root capability flags must be booleans.")
         if (
@@ -185,6 +218,32 @@ class ReconciliationSkip:
         if type(self.kind) is not ReconciliationSkipKind:
             raise TypeError("kind must be a ReconciliationSkipKind.")
         validate_notes_sync_reason_code(self.reason_code)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ReconciliationItemSkip:
+    """One discovered file the plan leaves alone, and why (task-32535).
+
+    Unlike :class:`ReconciliationSkip` this is per file, never blocks the
+    rest of the plan, and carries the root-relative path so the review can
+    name it.
+    """
+
+    relative_path: str
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "relative_path",
+            normalize_notes_sync_relative_path(self.relative_path),
+        )
+        if self.reason_code is None:
+            raise ValueError("reason_code is required.")
+        validate_notes_sync_reason_code(self.reason_code)
+
+    def __repr__(self) -> str:
+        return "ReconciliationItemSkip(<private>)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +291,7 @@ class ReconciliationPlan:
     managed_placement_effects: tuple[ManagedPlacementEffect, ...]
     deletion_groups: tuple[DeletionGroup, ...]
     page_size: int = RECONCILIATION_PAGE_SIZE
+    item_skips: tuple[ReconciliationItemSkip, ...] = ()
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -245,6 +305,7 @@ class ReconciliationPlan:
             ("skips", ReconciliationSkip),
             ("managed_placement_effects", ManagedPlacementEffect),
             ("deletion_groups", DeletionGroup),
+            ("item_skips", ReconciliationItemSkip),
         ):
             values = getattr(self, name)
             if type(values) is not tuple or any(
@@ -260,7 +321,8 @@ class ReconciliationPlan:
         return (
             "ReconciliationPlan("
             f"safe={len(self.safe_actions)}, attention={len(self.attention)}, "
-            f"skips={len(self.skips)}, deletion_groups={len(self.deletion_groups)})"
+            f"skips={len(self.skips)}, item_skips={len(self.item_skips)}, "
+            f"deletion_groups={len(self.deletion_groups)})"
         )
 
 
@@ -274,6 +336,7 @@ def _observation_token(request: ReconciliationInput) -> str:
         "root_overlap": request.root_overlap,
         "write_capable": request.write_capable,
         "capability_generation": request.capability_generation,
+        "obsidian_mode": request.obsidian_mode,
         "bindings": [
             {
                 "binding_id": binding.binding_id,
@@ -291,6 +354,8 @@ def _observation_token(request: ReconciliationInput) -> str:
                 "note_implied_relative_path": binding.note_implied_relative_path,
                 "duplicate_authority": binding.duplicate_authority,
                 "bound": binding.bound,
+                "file_blank": binding.file_blank,
+                "prior_import_note": binding.prior_import_note,
                 "baseline_serialization": (
                     None
                     if binding.baseline_serialization is None
@@ -358,6 +423,37 @@ def _empty_plan(
         managed_placement_effects=(),
         deletion_groups=(),
     )
+
+
+def _item_skip(
+    binding: BindingObservation, *, obsidian: bool
+) -> ReconciliationItemSkip | None:
+    """Return why the planner leaves this discovered file alone, if it does.
+
+    task-32535: only files the sync has never bound. An already-synced note
+    emptied in Chatbook is an edit to carry back to disk, not a file to drop,
+    and a folder the user later named ``Templates`` keeps its synced notes.
+    The vault folders need the toggle; an empty file does not, because Import
+    once refuses one whatever folder it came from (``empty_source``).
+
+    task-32605: a file Import once already turned into a note is left alone
+    for the same reason. Creating a second note from it is the duplication
+    the critique reported, and it needs no toggle -- the recognition is a
+    receipt the importer wrote, not a guess about the folder.
+    """
+
+    if binding.bound or binding.file_digest is None:
+        return None
+    parts = PurePosixPath(binding.relative_path).parts
+    if obsidian and len(parts) > 1:
+        reason = OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(parts[0].casefold())
+        if reason is not None:
+            return ReconciliationItemSkip(binding.relative_path, reason)
+    if binding.prior_import_note:
+        return ReconciliationItemSkip(binding.relative_path, "already_imported")
+    if binding.file_blank:
+        return ReconciliationItemSkip(binding.relative_path, "empty_file")
+    return None
 
 
 def _plan_unbound(
@@ -614,8 +710,13 @@ def plan_reconciliation(request: ReconciliationInput) -> ReconciliationPlan:
     actions: list[NotesSyncAction] = []
     attention: list[ReconciliationAttention] = []
     effects: list[ManagedPlacementEffect] = []
+    item_skips: list[ReconciliationItemSkip] = []
     for binding in sorted(request.bindings, key=lambda item: item.binding_id):
         if not binding.bound:
+            item_skip = _item_skip(binding, obsidian=request.obsidian_mode)
+            if item_skip is not None:
+                item_skips.append(item_skip)
+                continue
             action, issue = _plan_unbound(request, token, binding)
             effect = None
         else:
@@ -648,6 +749,7 @@ def plan_reconciliation(request: ReconciliationInput) -> ReconciliationPlan:
         skips=(),
         managed_placement_effects=tuple(effects),
         deletion_groups=deletion_groups,
+        item_skips=tuple(item_skips),
     )
 
 
@@ -682,6 +784,7 @@ __all__ = [
     "ReconciliationAttention",
     "ReconciliationAttentionKind",
     "ReconciliationInput",
+    "ReconciliationItemSkip",
     "ReconciliationPlan",
     "ReconciliationSkip",
     "ReconciliationSkipKind",

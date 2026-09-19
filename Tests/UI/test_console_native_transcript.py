@@ -10,6 +10,7 @@ from textual.app import App, ComposeResult
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.widgets import Button, Markdown, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -3154,7 +3155,8 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
 
 
 @pytest.mark.asyncio
-async def test_mounted_console_repaints_when_transcript_style_changes():
+@private_profile_test
+async def test_mounted_console_repaints_when_transcript_style_changes(request):
     app = _build_test_app()
     app.app_config["appearance"] = {"console_transcript_style": "neutral"}
     host = ConsoleHarness(app)

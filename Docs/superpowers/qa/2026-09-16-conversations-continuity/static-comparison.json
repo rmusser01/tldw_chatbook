@@ -1,0 +1,42 @@
+[
+  {
+    "path": "Tests/UI/test_library_conversation_reader.py",
+    "baseline_lint_count": 3,
+    "current_lint_count": 3,
+    "new_findings": [],
+    "baseline_formatted": false,
+    "current_formatted": false
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py",
+    "baseline_lint_count": 5,
+    "current_lint_count": 5,
+    "new_findings": [],
+    "baseline_formatted": false,
+    "current_formatted": false
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "baseline_lint_count": 205,
+    "current_lint_count": 205,
+    "new_findings": [],
+    "baseline_formatted": false,
+    "current_formatted": false
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_conversation_reader.py",
+    "baseline_lint_count": 2,
+    "current_lint_count": 2,
+    "new_findings": [],
+    "baseline_formatted": false,
+    "current_formatted": true
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_conversations_canvas.py",
+    "baseline_lint_count": 0,
+    "current_lint_count": 0,
+    "new_findings": [],
+    "baseline_formatted": true,
+    "current_formatted": true
+  }
+]

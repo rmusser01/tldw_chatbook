@@ -74,46 +74,46 @@ def _recent_emojis_path() -> Path:
 
 def load_recent_emojis() -> List[str]:
     """Load recently used emojis from file."""
-    try:
-        recent_emojis_file = _recent_emojis_path()
-        if recent_emojis_file.exists():
-            import json
+    from ..Backup_Recovery.raw_participants import _scope
+    import sys
 
-            with open(recent_emojis_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data.get("recent", [])[:MAX_RECENT_EMOJIS]
+    try:
+        with _scope(sys.modules[__name__], "emoji") as operation:
+            return _load_recent_emojis_in_operation(operation)
     except Exception:
-        pass
-    return []
+        return []
+
+
+def _load_recent_emojis_in_operation(operation) -> List[str]:
+    from ..Backup_Recovery.raw_participants import _file, _selected
+    import json
+
+    try:
+        with _file(operation, _selected(operation), "r") as stream:
+            return json.load(stream).get("recent", [])[:MAX_RECENT_EMOJIS]
+    except (OSError, ValueError):
+        return []
 
 
 def save_recent_emoji(emoji_char: str) -> None:
-    """Save an emoji to the recently used list."""
+    """Best-effort save; a silent refusal does not retire a running worker."""
+    from ..Backup_Recovery.raw_participants import _scope, _file, _selected, _mkdirs
+    import json
+    import sys
+
     try:
-        recent_emojis_file = _recent_emojis_path()
-        # Ensure config directory exists
-        recent_emojis_file.parent.mkdir(parents=True, exist_ok=True)
-
-        # Load existing recent emojis
-        recent = load_recent_emojis()
-
-        # Remove if already exists (to move to front)
-        if emoji_char in recent:
-            recent.remove(emoji_char)
-
-        # Add to front
-        recent.insert(0, emoji_char)
-
-        # Limit to max
-        recent = recent[:MAX_RECENT_EMOJIS]
-
-        # Save back
-        import json
-
-        with open(recent_emojis_file, "w", encoding="utf-8") as f:
-            json.dump({"recent": recent}, f, ensure_ascii=False, indent=2)
+        # Admission belongs to this actual worker, never to submission/cancellation.
+        with _scope(sys.modules[__name__], "emoji", writing=True) as operation:
+            _mkdirs(operation)
+            recent = _load_recent_emojis_in_operation(operation)
+            if emoji_char in recent:
+                recent.remove(emoji_char)
+            recent.insert(0, emoji_char)
+            recent = recent[:MAX_RECENT_EMOJIS]
+            with _file(operation, _selected(operation), "w") as stream:
+                json.dump({"recent": recent}, stream, ensure_ascii=False, indent=2)
     except Exception:
-        pass  # Fail silently for recent emojis
+        pass  # Refusal before IO is harmless; native-close uncertainty stays held.
 
 
 def _load_emojis() -> Tuple[

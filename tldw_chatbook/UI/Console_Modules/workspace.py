@@ -17,32 +17,46 @@ DOM or reach through sibling controllers.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
-from functools import partial
-from types import MappingProxyType
-from typing import Any, Optional, TYPE_CHECKING
 import asyncio
-from datetime import datetime, timezone
 import inspect
 import re
 import time
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from functools import partial
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.css.query import NoMatches
 
+from tldw_chatbook.DB.base_db import operation_owned_connection
+
+from ...Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
+)
 from ...Chat.console_appearance import ConsoleConversationAppearance
-from ...Chat.console_chat_models import (    CONSOLE_GLOBAL_WORKSPACE_ID,
+from ...Chat.console_chat_models import (
+    CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_RUN_MARKER_GLYPHS,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleRunMarker,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
+from ...Chat.console_conversation_hydration import (
+    ConsoleGenerationSettingsHydration,
+    ConversationLoadFailed,
+    ConversationServiceUnavailable,
+    hydrate_console_session,
+    load_console_conversation_tree,
+)
 from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.console_switcher_state import (
     CONSOLE_SWITCHER_PAGE_LIMIT,
     ConsoleSwitcherActivitySignal,
@@ -56,38 +70,28 @@ from ...Chat.console_switcher_state import (
     plan_console_history_query,
     resolve_console_history_timezone,
 )
-from ...Chat.console_conversation_hydration import (
-    ConversationLoadFailed,
-    ConversationServiceUnavailable,
-    ConsoleGenerationSettingsHydration,
-    hydrate_console_session,
-    load_console_conversation_tree,
-)
-from ...Character_Chat.character_conversation_navigation import (
-    LocalCharacterConversationTarget,
-)
-from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.rag_scope import RagScope
 from ...config import save_setting_to_cli_config
+from ...Utils.input_validation import (
+    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    sanitize_string,
+    validate_console_switcher_query,
+    validate_text_input,
+)
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Workspaces.models import (
-    RuntimeBindingKind,
-    RuntimeBindingStatus,
-    WorkspaceRuntimeBinding,
-)
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+    DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
-    DEFAULT_WORKSPACE_ID,
     WorkspaceRecord,
     WorkspaceTreeWorkspace,
     build_console_conversation_browser_state,
@@ -108,11 +112,10 @@ from ...Workspaces.display_state import (
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
-from ...Utils.input_validation import (
-    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
-    sanitize_string,
-    validate_console_switcher_query,
-    validate_text_input,
+from ...Workspaces.models import (
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
+    WorkspaceRuntimeBinding,
 )
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
@@ -122,6 +125,7 @@ from ..character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController
+    from ...Chat.console_conversation_actions import ConversationMenuTarget
     from ...Chat.console_conversation_activation import (
         CharacterConversationActivationRequest,
         ConsoleActivationCommit,
@@ -506,6 +510,8 @@ class ConsoleWorkspaceController:
         notify_character_navigation: Callable[..., None] | None = None,
         resolve_resumed_character_name: Callable[[int], Any] | None = None,
         resolve_resumed_persona_name: Callable[[str, str], Any] | None = None,
+        begin_manual_read_visit: Callable[..., Any] | None = None,
+        complete_manual_read_visit: Callable[..., None] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -575,6 +581,8 @@ class ConsoleWorkspaceController:
                 construction leaves the session unlabeled).
         """
         self._screen = screen
+        self._begin_manual_read_visit = begin_manual_read_visit
+        self._complete_manual_read_visit = complete_manual_read_visit
         self._notify_character_navigation = notify_character_navigation
         self.app_instance = app_instance
         self._chat_store_accessor = chat_store_accessor
@@ -2573,6 +2581,233 @@ class ConsoleWorkspaceController:
             star_enabled=bool(star_enabled),
         )
 
+    async def conversation_menu_presentation(
+        self, conversation_id: str | None, session_id: str = ""
+    ) -> dict[str, Any]:
+        """Capture current read state and saved appearance for either row menu.
+
+        Args:
+            conversation_id: Persisted conversation ID, or None for an unsaved chat.
+            session_id: Native session ID used for live attention facts.
+
+        Returns:
+            Menu target fields including read state, appearance, attention, and
+            profile authority. Read state is None when unavailable.
+        """
+        from ...Workspaces.conversation_attention import present_conversation_attention
+
+        authority = self._console_switcher_authority()
+        service = getattr(self.app_instance, "conversation_local_marks_service", None)
+        manual = None
+        if conversation_id and callable(getattr(service, "unread_token", None)):
+            try:
+                manual = (
+                    await asyncio.to_thread(service.unread_token, conversation_id)
+                    is not None
+                )
+            except Exception:  # noqa: BLE001 - unread remains unknown on service failure
+                manual = None
+        appearance = (
+            self._console_conversation_appearance_map([conversation_id])
+            if conversation_id
+            else {}
+        )
+        icon, color = appearance.get(conversation_id, ("", ""))
+        row = ConsoleConversationBrowserInputRow(
+            row_key=conversation_id or session_id,
+            conversation_id=conversation_id,
+            native_session_id=session_id,
+            title="",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="",
+        )
+        facts = self._conversation_attention_rows((row,))[0].attention
+        # The explicit read above is fresher than the asynchronous row cache.
+        from ...Workspaces.conversation_attention import ConversationAttentionFact
+
+        facts = tuple(fact for fact in facts if fact.kind != "unread")
+        if manual:
+            facts += (ConversationAttentionFact("unread", "Unread"),)
+        return {
+            "manual_unread": manual,
+            "icon": icon,
+            "color": color,
+            "attention_summary": present_conversation_attention(facts).summary,
+            "profile_authority": authority,
+        }
+
+    def set_conversation_manual_unread(
+        self, target: ConversationMenuTarget, *, unread: bool
+    ) -> None:
+        """Schedule a profile-fenced reminder mutation for a persisted chat.
+
+        Args:
+            target: Captured menu target including conversation and profile identity.
+            unread: True to set a reminder; False to clear only the manual mark.
+        """
+        service = getattr(self.app_instance, "conversation_local_marks_service", None)
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if service is None or db is None or not target.conversation_id:
+            self.app_instance.notify("Read state is unavailable.", severity="warning")
+            return
+        authority = self._console_switcher_authority()
+        if (
+            target.profile_authority is not None
+            and target.profile_authority != authority
+        ):
+            return
+        self.run_worker(
+            self._write_manual_unread(
+                target.conversation_id, unread, service, db, authority
+            ),
+            group="console-manual-unread-write",
+            exclusive=False,
+        )
+
+    async def _write_manual_unread(self, cid, unread, service, db, authority) -> None:
+        def write():
+            if not db.get_conversation_by_id(cid):
+                raise ValueError("Conversation no longer exists")
+            return service.mark_unread(cid) if unread else service.mark_read(cid)
+
+        if (
+            self._console_switcher_authority() != authority
+            or getattr(self.app_instance, "conversation_local_marks_service", None)
+            is not service
+        ):
+            return
+        try:
+            await asyncio.to_thread(write)
+        except Exception:  # noqa: BLE001 - contain local mark service failures
+            if self._console_switcher_authority() == authority:
+                self.app_instance.notify(
+                    "Could not update read state. Reopen the menu and try again.",
+                    severity="error",
+                )
+            return
+        if self._console_switcher_authority() == authority:
+            self._sync_console_workspace_context()
+
+    def _manual_unread_for_rows(self, rows) -> dict[str, bool | None]:
+        """Return cached reminders and batch missing identities off the UI loop."""
+        service = getattr(self.app_instance, "conversation_local_marks_service", None)
+        ids = {str(row.conversation_id) for row in rows if row.conversation_id}
+        if not callable(getattr(service, "unread_ids_for", None)):
+            return dict.fromkeys(ids)
+        key = (service, service.manual_revision, self._console_switcher_authority())
+        state = getattr(self, "_manual_unread_cache", None)
+        if state is None or state["key"] != key:
+            state = {"key": key, "values": {}, "pending": set()}
+            self._manual_unread_cache = state
+        missing = ids - state["values"].keys() - state["pending"]
+        if missing:
+            state["pending"].update(missing)
+            self.run_worker(
+                self._load_manual_unread_rows(service, state, tuple(sorted(missing))),
+                group="console-manual-unread-load",
+                exclusive=False,
+            )
+        return {cid: state["values"].get(cid) for cid in ids}
+
+    async def _load_manual_unread_rows(self, service, state, ids) -> None:
+        try:
+            unread = await asyncio.to_thread(service.unread_ids_for, ids)
+            values = {cid: cid in unread for cid in ids}
+        except Exception:  # noqa: BLE001 - contain local mark service failures
+            values = dict.fromkeys(ids)
+        if (
+            getattr(self, "_manual_unread_cache", None) is not state
+            or getattr(self.app_instance, "conversation_local_marks_service", None)
+            is not service
+            or state["key"]
+            != (service, service.manual_revision, self._console_switcher_authority())
+        ):
+            return
+        state["pending"].difference_update(ids)
+        state["values"].update(values)
+        self._sync_console_workspace_context()
+
+    def _conversation_attention_rows(self, rows):
+        from ...Workspaces.conversation_attention import (
+            ConversationAttentionFact as Fact,
+        )
+
+        rows = tuple(rows)
+        unread = self._manual_unread_for_rows(rows)
+        by_conversation = {}
+        by_session = {}
+        store = self._console_chat_store
+        controller = self._console_chat_controller
+        read_attention = getattr(controller, "conversation_attention_for", None)
+        if store is not None and callable(read_attention):
+            for session in store.sessions():
+                facts = read_attention(session.id)
+                by_session[session.id] = list(facts)
+                if session.persisted_conversation_id:
+                    by_conversation.setdefault(
+                        session.persisted_conversation_id, []
+                    ).extend(facts)
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        receipts = getattr(runtime, "activity_receipts", None)
+        known_outcomes = set()
+        labels = {
+            "done": ("ready", "New result ready"),
+            "error": ("failed", "Failed"),
+            "blocked": ("blocked", "Blocked"),
+            "stuck": ("blocked", "Stuck — needs attention"),
+            "complete": ("ready", "New result ready"),
+            "completed": ("ready", "New result ready"),
+            "failed": ("failed", "Failed"),
+            "stopped": ("stopped", "Stopped"),
+            "cancelled": ("stopped", "Cancelled"),
+        }
+        for receipt in receipts.unseen_snapshot() if receipts is not None else ():
+            if receipt.conversation_id:
+                kind, label = labels.get(
+                    receipt.status,
+                    (
+                        "outcome_unknown",
+                        "Background activity ended — outcome unavailable",
+                    ),
+                )
+                by_conversation.setdefault(receipt.conversation_id, []).append(
+                    Fact(kind, label)
+                )
+                known_outcomes.add(receipt.conversation_id)
+            elif receipt.session_id:
+                kind, label = labels.get(
+                    receipt.status,
+                    (
+                        "outcome_unknown",
+                        "Background activity ended — outcome unavailable",
+                    ),
+                )
+                by_session.setdefault(receipt.session_id, []).append(Fact(kind, label))
+        for cid in self._console_fleet_unseen_ids() - known_outcomes:
+            by_conversation.setdefault(cid, []).append(
+                Fact(
+                    "outcome_unknown", "Background activity ended — outcome unavailable"
+                )
+            )
+        result = []
+        for row in rows:
+            facts = list(
+                by_conversation.get(row.conversation_id, ())
+                if row.conversation_id
+                else by_session.get(row.native_session_id, ())
+            )
+            manual = unread.get(row.conversation_id)
+            if manual:
+                facts.append(Fact("unread", "Unread"))
+            facts = tuple(dict.fromkeys(facts))
+            result.append(
+                row
+                if (row.attention, row.manual_unread) == (facts, manual)
+                else replace(row, attention=facts, manual_unread=manual)
+            )
+        return tuple(result)
+
     def _overlay_current_console_browser_markers(
         self,
         rows: Iterable[ConsoleConversationBrowserInputRow],
@@ -2606,7 +2841,7 @@ class ConsoleWorkspaceController:
             if conversation_id not in live_conversation_ids:
                 run_markers[conversation_id] = unseen_marker
         return overlay_console_conversation_markers(
-            row_tuple,
+            self._conversation_attention_rows(row_tuple),
             starred_ids=self._starred_console_conversation_ids(),
             selected_conversation_id=(
                 current_conversation_id or self._current_console_conversation_id()
@@ -3006,12 +3241,19 @@ class ConsoleWorkspaceController:
                             occurred_at=row.updated_sort,
                         )
                     )
-        return build_console_active_results(
+        entries = build_console_active_results(
             rows,
             receipts=receipts,
             controller_signals=signals,
             profile_authority=profile,
             authority_token=token,
+        )
+        unread = self._manual_unread_for_rows(rows)
+        return tuple(
+            replace(entry, subtitle=f"{entry.subtitle} · Unread")
+            if unread.get(entry.conversation_id)
+            else entry
+            for entry in entries
         )
 
     async def load_console_session_switcher_history(
@@ -3225,6 +3467,21 @@ class ConsoleWorkspaceController:
                     lifecycle=lifecycle,
                 )
             )
+        marks = getattr(self.app_instance, "conversation_local_marks_service", None)
+        if callable(getattr(marks, "unread_ids_for", None)):
+            try:
+                unread = await asyncio.to_thread(
+                    marks.unread_ids_for, (entry.conversation_id for entry in entries)
+                )
+            except Exception:  # noqa: BLE001 - history remains navigable if local marks fail
+                unread = set()
+            if (profile, token) == self._console_switcher_authority():
+                entries = [
+                    replace(entry, subtitle=f"{entry.subtitle} · Unread")
+                    if entry.conversation_id in unread
+                    else entry
+                    for entry in entries
+                ]
         local_timezone = resolve_console_history_timezone(
             getattr(self.app_instance, "local_timezone_name", None)
         )
@@ -3335,8 +3592,28 @@ class ConsoleWorkspaceController:
                         if bool(getattr(db, "is_memory_db", False)):
                             result = list_conversations(**list_kwargs)
                         else:
+                            from tldw_chatbook.Chat.chat_conversation_service import (
+                                ChatConversationService,
+                            )
+                            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+                            def read_in_worker(
+                                method=list_conversations,
+                                kwargs=list_kwargs,
+                                owner=service,
+                                database=db,
+                            ):
+                                try:
+                                    return method(**kwargs)
+                                finally:
+                                    if (
+                                        type(owner) is ChatConversationService
+                                        and type(database) is CharactersRAGDB
+                                    ):
+                                        database.close_connection()
+
                             result = await asyncio.to_thread(
-                                list_conversations, **list_kwargs
+                                read_in_worker
                             )
                     if inspect.isawaitable(result):
                         result = await result
@@ -4877,6 +5154,11 @@ class ConsoleWorkspaceController:
         controller = self._ensure_chat_controller_fn()
         store = controller.store
         prior_active_session_id = store.active_session_id
+        visit = (
+            await self._begin_manual_read_visit(session_id)
+            if self._begin_manual_read_visit
+            else None
+        )
         try:
             from .conversation_token_preparation import prepare_conversation_tokens
 
@@ -4926,6 +5208,8 @@ class ConsoleWorkspaceController:
                 browser_row,
                 previous_workspace_id=prior_browser_workspace_id,
             )
+        if self._complete_manual_read_visit:
+            self._complete_manual_read_visit(visit)
         return True
 
     # -- Workspace RAG-scope picker ------------------------------------------
@@ -5864,6 +6148,11 @@ class ConsoleWorkspaceController:
             return None
         store = self._ensure_console_chat_store()
         prior_active_session_id = store.active_session_id
+        visit = (
+            await self._begin_manual_read_visit("", target)
+            if self._begin_manual_read_visit
+            else None
+        )
         # TASK-339: keystrokes typed while the conversation tree loads
         # belong to the resumed session — snapshot the composer now.
         self._capture_console_draft_switch_snapshot()
@@ -6048,6 +6337,8 @@ class ConsoleWorkspaceController:
                 timeout=15,
             )
             return None
+        if self._complete_manual_read_visit:
+            self._complete_manual_read_visit(visit, session.id)
         return True
 
     # -- Workspace context state / grouped conversation rows -----------------
@@ -6122,40 +6413,41 @@ class ConsoleWorkspaceController:
     ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
         """Read runtime bindings and folder readiness off-loop into a snapshot."""
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        availability: dict[str, bool] = {}
-        bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
-        for workspace_id in workspace_ids:
-            if registry is None:
-                availability[workspace_id] = False
-                bindings_by_id[workspace_id] = ()
-                continue
-            try:
-                folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
-                list_runtime_bindings = getattr(registry, "list_runtime_bindings", None)
-                runtime_bindings = (
-                    tuple(list_runtime_bindings(workspace_id))
-                    if callable(list_runtime_bindings)
-                    else folder_bindings
-                )
-                refreshed_by_binding_id = {
-                    str(getattr(binding, "binding_id", "")): binding
-                    for binding in folder_bindings
-                }
-                bindings_by_id[workspace_id] = tuple(
-                    refreshed_by_binding_id.get(
-                        str(getattr(binding, "binding_id", "")), binding
+        with operation_owned_connection(getattr(registry, "db", None)):
+            availability: dict[str, bool] = {}
+            bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
+            for workspace_id in workspace_ids:
+                if registry is None:
+                    availability[workspace_id] = False
+                    bindings_by_id[workspace_id] = ()
+                    continue
+                try:
+                    folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
+                    list_runtime_bindings = getattr(registry, "list_runtime_bindings", None)
+                    runtime_bindings = (
+                        tuple(list_runtime_bindings(workspace_id))
+                        if callable(list_runtime_bindings)
+                        else folder_bindings
                     )
-                    for binding in runtime_bindings
-                )
-                availability[workspace_id] = any(
-                    binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
-                    and binding.status is RuntimeBindingStatus.READY
-                    for binding in folder_bindings
-                )
-            except Exception:
-                availability[workspace_id] = False
-                bindings_by_id[workspace_id] = ()
-        return availability, bindings_by_id
+                    refreshed_by_binding_id = {
+                        str(getattr(binding, "binding_id", "")): binding
+                        for binding in folder_bindings
+                    }
+                    bindings_by_id[workspace_id] = tuple(
+                        refreshed_by_binding_id.get(
+                            str(getattr(binding, "binding_id", "")), binding
+                        )
+                        for binding in runtime_bindings
+                    )
+                    availability[workspace_id] = any(
+                        binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                        and binding.status is RuntimeBindingStatus.READY
+                        for binding in folder_bindings
+                    )
+                except Exception:
+                    availability[workspace_id] = False
+                    bindings_by_id[workspace_id] = ()
+            return availability, bindings_by_id
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""

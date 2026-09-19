@@ -1,0 +1,9 @@
+{
+  "reviewer": "conversation_receipt_review",
+  "baseline": "33079ca5a2",
+  "passes": 2,
+  "actionable_findings": [],
+  "suggestion_addressed": "Added stale-list hidden Undo regression; mutation showed removal of workspace-block guard incorrectly deletes the original link.",
+  "final_review": "Narrowed exception matches registry contract; both rendering paths and exact unlink target remain consistent.",
+  "limits": "Read-only review; reviewer did not rerun tests or native journeys."
+}

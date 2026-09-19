@@ -1,0 +1,26 @@
+{
+  "rounds": 1,
+  "captures_reviewed": [
+    "textual-dark-170-draft.svg",
+    "textual-dark-170-reader.svg",
+    "textual-dark-170-resumed.svg",
+    "textual-dark-80-draft.svg",
+    "textual-dark-80-reader.svg",
+    "textual-dark-80-resumed.svg",
+    "textual-light-170-draft.svg",
+    "textual-light-170-reader.svg",
+    "textual-light-170-resumed.svg",
+    "textual-light-80-draft.svg",
+    "textual-light-80-reader.svg",
+    "textual-light-80-resumed.svg"
+  ],
+  "renderer": "qlmanage -t -s 1400",
+  "observations": [
+    "Focused Resume action readable in both themes/sizes.",
+    "Original question and older selected answer painted in all Console captures; assistant badge reads 1/2.",
+    "Unrelated draft readable; compact size wraps across three lines without loss.",
+    "Compact Library reader collapses Items; transcript lies below the viewport when Resume is focused.",
+    "Long Console tab labels truncate and tab strip scrolls; active conversation title remains visible."
+  ],
+  "actionable_resume_findings": []
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "file": "tldw_chatbook/UI/Library_Modules/library_skills_controller.py",
+    "baseline": 13,
+    "current": 13,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Screens/library_screen.py",
+    "baseline": 205,
+    "current": 205,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/Widgets/Library/library_skills_canvas.py",
+    "baseline": 2,
+    "current": 2,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/Library/library_skills_state.py",
+    "baseline": 3,
+    "current": 3,
+    "new": []
+  },
+  {
+    "file": "Tests/UI/test_library_skills_canvas.py",
+    "baseline": 6,
+    "current": 6,
+    "new": []
+  }
+]

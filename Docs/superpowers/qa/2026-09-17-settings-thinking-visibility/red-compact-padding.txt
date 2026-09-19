@@ -1,0 +1,472 @@
+......F.F.F....                                                          [100%]
+=================================== FAILURES ===================================
+_ test_thinking_visibility_failed_write_is_readable_and_retriable[before-replace-size1] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_thinking_visibility_failed_write_is_readable_and_retriable[before-replace-size1] _
+E
+E   request = <FixtureRequest for <Coroutine test_thinking_visibility_failed_write_is_readable_and_retriable[before-replace-size1]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x115a20920>
+E   size = (80, 24), failure = 'before-replace'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("failure", ["before-replace", "conflict", "exception"])
+E       @private_profile_test
+E       async def test_thinking_visibility_failed_write_is_readable_and_retriable(
+E           request, monkeypatch, size, failure
+E       ):
+E           from Tests.UI.test_library_rag_result_focus import _assert_painted
+E           from Tests.UI.test_settings_overview_search_journeys import _painted
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens import settings_screen as module
+E
+E           host, path = _setup()
+E           real_writer = config.apply_settings_mutation_to_cli_config
+E
+E           def fail(payload):
+E               assert payload == {"console": {"show_model_thinking": True}}
+E               if failure == "exception":
+E                   raise OSError("test unavailable writer")
+E               return config.ConfigMutationResult(
+E                   False,
+E                   False,
+E                   "before_replace" if failure == "before-replace" else None,
+E                   conflict=failure == "conflict",
+E               )
+E
+E           monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", fail)
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               before = path.read_bytes()
+E               checkbox = await _toggle(host, pilot)
+E               await _settle(host, pilot)
+E               assert path.read_bytes() == before
+E               assert checkbox.value is False
+E               assert host.app_instance.app_config["console"]["show_model_thinking"] is False
+E               assert "prior setting was restored" in host.screen._console_behavior_result
+E               assert host.screen.focused is checkbox
+E               _assert_painted(host.screen, checkbox)
+E               assert "Show model thinking (Off)" in _painted(host, checkbox)
+E               receipt = host.screen.query_one(
+E                   "#settings-console-model-thinking-result", Static
+E               )
+E   >           _assert_painted(host.screen, receipt)
+E
+E   Tests/UI/test_settings_thinking_visibility_journeys.py:180:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   screen = SettingsScreen(classes='shell-header-compact')
+E   widget = Static(id='settings-console-model-thinking-result', classes='settings-status-row')
+E
+E       def _assert_painted(screen, widget):
+E           """Require the whole control inside its compositor clip, not just the DOM."""
+E           geometry = screen._compositor.visible_widgets.get(widget)
+E           assert geometry is not None, (widget.id, widget.region)
+E           region, clip = geometry
+E   >       assert region.intersection(clip) == region, (widget.id, region, clip)
+E   E       AssertionError: ('settings-console-model-thinking-result', Region(x=42, y=19, width=32, height=3), Region(x=42, y=13, width=32, height=8))
+E   E       assert Region(x=42, ...=32, height=2) == Region(x=42, ...=32, height=3)
+E   E
+E   E         Omitting 3 identical items, use -vv to show
+E   E         Differing attributes:
+E   E         ['height']
+E   E
+E   E         Drill down into differing attribute height:
+E   E           height: 2 != 3
+E   E         Use -v to get more diff
+E
+E   Tests/UI/test_library_rag_result_focus.py:27: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:38:56.618 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:38:56.623 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:38:56.624 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:38:56.624 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:38:56.639 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['show_model_thinking']}, deletes={}
+E   2026-09-17 17:38:56.648 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile1/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:38:56.650 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:38:56.650 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:38:56.651 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:38:56.651 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:38:56.666 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:38:56.666 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:38:56.667 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:38:56.727 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:38:56.745 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:38:56.745 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:38:56.746 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:38:56.746 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:38:56.813 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:38:56.869 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sn3vawf9/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:38:57.005 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sn3vawf9/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:38:57.016 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:38:57.016 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sn3vawf9/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:38:57.017 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sn3vawf9/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:38:57.137 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:38:57.180 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:38:57.217 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:38:57.251 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:38:57.286 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:38:57.325 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:38:57.326 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sn3vawf9/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:38:57.363 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:38:57.364 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:38:57.371 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:38:57.436 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:38:57.436 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:38:57.437 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:38:57.491 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:38:57.491 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:38:57.491 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:38:57.492 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.817 seconds
+E   2026-09-17 17:38:57.492 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.068s (8.4%)
+E   2026-09-17 17:38:57.493 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:38:57.493 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.001s (0.2%)
+E   2026-09-17 17:38:57.493 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:38:57.493 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:38:57.494 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:38:57.494 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:38:57.494 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:38:57.702 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:38:57.790 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:39:00.518 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   3.89s call     Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[before-replace-size1]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[before-replace-size1]
+E   1 failed in 5.77s
+_ test_thinking_visibility_failed_write_is_readable_and_retriable[conflict-size1] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile3/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_thinking_visibility_failed_write_is_readable_and_retriable[conflict-size1] _
+E
+E   request = <FixtureRequest for <Coroutine test_thinking_visibility_failed_write_is_readable_and_retriable[conflict-size1]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x116014da0>
+E   size = (80, 24), failure = 'conflict'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("failure", ["before-replace", "conflict", "exception"])
+E       @private_profile_test
+E       async def test_thinking_visibility_failed_write_is_readable_and_retriable(
+E           request, monkeypatch, size, failure
+E       ):
+E           from Tests.UI.test_library_rag_result_focus import _assert_painted
+E           from Tests.UI.test_settings_overview_search_journeys import _painted
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens import settings_screen as module
+E
+E           host, path = _setup()
+E           real_writer = config.apply_settings_mutation_to_cli_config
+E
+E           def fail(payload):
+E               assert payload == {"console": {"show_model_thinking": True}}
+E               if failure == "exception":
+E                   raise OSError("test unavailable writer")
+E               return config.ConfigMutationResult(
+E                   False,
+E                   False,
+E                   "before_replace" if failure == "before-replace" else None,
+E                   conflict=failure == "conflict",
+E               )
+E
+E           monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", fail)
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               before = path.read_bytes()
+E               checkbox = await _toggle(host, pilot)
+E               await _settle(host, pilot)
+E               assert path.read_bytes() == before
+E               assert checkbox.value is False
+E               assert host.app_instance.app_config["console"]["show_model_thinking"] is False
+E               assert "prior setting was restored" in host.screen._console_behavior_result
+E               assert host.screen.focused is checkbox
+E               _assert_painted(host.screen, checkbox)
+E               assert "Show model thinking (Off)" in _painted(host, checkbox)
+E               receipt = host.screen.query_one(
+E                   "#settings-console-model-thinking-result", Static
+E               )
+E   >           _assert_painted(host.screen, receipt)
+E
+E   Tests/UI/test_settings_thinking_visibility_journeys.py:180:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   screen = SettingsScreen(classes='shell-header-compact')
+E   widget = Static(id='settings-console-model-thinking-result', classes='settings-status-row')
+E
+E       def _assert_painted(screen, widget):
+E           """Require the whole control inside its compositor clip, not just the DOM."""
+E           geometry = screen._compositor.visible_widgets.get(widget)
+E           assert geometry is not None, (widget.id, widget.region)
+E           region, clip = geometry
+E   >       assert region.intersection(clip) == region, (widget.id, region, clip)
+E   E       AssertionError: ('settings-console-model-thinking-result', Region(x=42, y=19, width=32, height=3), Region(x=42, y=13, width=32, height=8))
+E   E       assert Region(x=42, ...=32, height=2) == Region(x=42, ...=32, height=3)
+E   E
+E   E         Omitting 3 identical items, use -vv to show
+E   E         Differing attributes:
+E   E         ['height']
+E   E
+E   E         Drill down into differing attribute height:
+E   E           height: 2 != 3
+E   E         Use -v to get more diff
+E
+E   Tests/UI/test_library_rag_result_focus.py:27: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:39:11.347 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:39:11.353 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:39:11.353 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:39:11.354 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:39:11.368 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['show_model_thinking']}, deletes={}
+E   2026-09-17 17:39:11.377 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile3/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:39:11.378 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:39:11.379 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:39:11.379 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:39:11.380 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:39:11.394 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:39:11.395 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:39:11.396 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:39:11.456 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:39:11.474 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:39:11.474 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:39:11.475 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:39:11.475 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:39:11.538 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:11.596 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2mpcgw50/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:11.727 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2mpcgw50/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:11.738 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:11.739 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2mpcgw50/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:11.739 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2mpcgw50/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:11.852 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:39:11.886 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:39:11.929 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:39:11.965 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:39:12.005 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:39:12.041 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:39:12.041 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-2mpcgw50/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:39:12.083 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:39:12.086 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:39:12.093 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:39:12.161 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:39:12.162 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile3/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:39:12.162 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:39:12.213 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:39:12.214 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:39:12.214 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:39:12.214 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.811 seconds
+E   2026-09-17 17:39:12.215 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.069s (8.5%)
+E   2026-09-17 17:39:12.215 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:39:12.215 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 17:39:12.215 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:39:12.216 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:39:12.216 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:39:12.216 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:39:12.216 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:39:12.424 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:39:12.511 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:39:15.206 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   3.85s call     Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[conflict-size1]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[conflict-size1]
+E   1 failed in 5.69s
+_ test_thinking_visibility_failed_write_is_readable_and_retriable[exception-size1] _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+    super().runtest()
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile5/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _ test_thinking_visibility_failed_write_is_readable_and_retriable[exception-size1] _
+E
+E   request = <FixtureRequest for <Coroutine test_thinking_visibility_failed_write_is_readable_and_retriable[exception-size1]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1159bc920>
+E   size = (80, 24), failure = 'exception'
+E
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize("size", [(190, 55), (80, 24)])
+E       @pytest.mark.parametrize("failure", ["before-replace", "conflict", "exception"])
+E       @private_profile_test
+E       async def test_thinking_visibility_failed_write_is_readable_and_retriable(
+E           request, monkeypatch, size, failure
+E       ):
+E           from Tests.UI.test_library_rag_result_focus import _assert_painted
+E           from Tests.UI.test_settings_overview_search_journeys import _painted
+E           from tldw_chatbook import config
+E           from tldw_chatbook.UI.Screens import settings_screen as module
+E
+E           host, path = _setup()
+E           real_writer = config.apply_settings_mutation_to_cli_config
+E
+E           def fail(payload):
+E               assert payload == {"console": {"show_model_thinking": True}}
+E               if failure == "exception":
+E                   raise OSError("test unavailable writer")
+E               return config.ConfigMutationResult(
+E                   False,
+E                   False,
+E                   "before_replace" if failure == "before-replace" else None,
+E                   conflict=failure == "conflict",
+E               )
+E
+E           monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", fail)
+E           async with host.run_test(size=size) as pilot:
+E               await _category(host, pilot, "Console Behavior")
+E               before = path.read_bytes()
+E               checkbox = await _toggle(host, pilot)
+E               await _settle(host, pilot)
+E               assert path.read_bytes() == before
+E               assert checkbox.value is False
+E               assert host.app_instance.app_config["console"]["show_model_thinking"] is False
+E               assert "prior setting was restored" in host.screen._console_behavior_result
+E               assert host.screen.focused is checkbox
+E               _assert_painted(host.screen, checkbox)
+E               assert "Show model thinking (Off)" in _painted(host, checkbox)
+E               receipt = host.screen.query_one(
+E                   "#settings-console-model-thinking-result", Static
+E               )
+E   >           _assert_painted(host.screen, receipt)
+E
+E   Tests/UI/test_settings_thinking_visibility_journeys.py:180:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   screen = SettingsScreen(classes='shell-header-compact')
+E   widget = Static(id='settings-console-model-thinking-result', classes='settings-status-row')
+E
+E       def _assert_painted(screen, widget):
+E           """Require the whole control inside its compositor clip, not just the DOM."""
+E           geometry = screen._compositor.visible_widgets.get(widget)
+E           assert geometry is not None, (widget.id, widget.region)
+E           region, clip = geometry
+E   >       assert region.intersection(clip) == region, (widget.id, region, clip)
+E   E       AssertionError: ('settings-console-model-thinking-result', Region(x=42, y=19, width=32, height=3), Region(x=42, y=13, width=32, height=8))
+E   E       assert Region(x=42, ...=32, height=2) == Region(x=42, ...=32, height=3)
+E   E
+E   E         Omitting 3 identical items, use -vv to show
+E   E         Differing attributes:
+E   E         ['height']
+E   E
+E   E         Drill down into differing attribute height:
+E   E           height: 2 != 3
+E   E         Use -v to get more diff
+E
+E   Tests/UI/test_library_rag_result_focus.py:27: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-17 17:39:25.638 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E   2026-09-17 17:39:25.644 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-17 17:39:25.645 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-09-17 17:39:25.645 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-17 17:39:25.659 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7707 - Attempting to apply literal settings mutation: sets={"('console',)": ['show_model_thinking']}, deletes={}
+E   2026-09-17 17:39:25.669 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7765 - Successfully replaced settings file at /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile5/private-profile-process/profile/config/config.toml
+E   2026-09-17 17:39:25.670 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:39:25.670 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E   2026-09-17 17:39:25.671 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-09-17 17:39:25.671 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-09-17 17:39:25.687 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile5/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-09-17 17:39:25.687 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E   2026-09-17 17:39:25.688 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7793 - Global configuration caches invalidated and reloaded.
+E   2026-09-17 17:39:25.749 | INFO     | tldw_chatbook.app:__init__:8023 - Loaded app_config - strip_thinking_tags: True
+E   2026-09-17 17:39:25.767 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-09-17 17:39:25.767 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-09-17 17:39:25.768 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-09-17 17:39:25.768 | INFO     | tldw_chatbook.app:__init__:8131 - Parallel init task 'media_db' completed in 0.000s
+E   2026-09-17 17:39:25.836 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile5/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:25.894 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i53m2_2r/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:26.032 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i53m2_2r/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:26.044 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:26.045 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i53m2_2r/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:26.046 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i53m2_2r/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-09-17 17:39:26.165 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-09-17 17:39:26.201 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-09-17 17:39:26.245 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-09-17 17:39:26.279 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-09-17 17:39:26.315 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-09-17 17:39:26.350 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-09-17 17:39:26.351 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-i53m2_2r/scheduled_tasks.sqlite [Client: default]
+E   2026-09-17 17:39:26.389 | DEBUG    | tldw_chatbook.app:__init__:8203 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-09-17 17:39:26.389 | DEBUG    | tldw_chatbook.app:__init__:8206 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-09-17 17:39:26.396 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-09-17 17:39:26.459 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E   2026-09-17 17:39:26.460 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/thinking-ui-final-002/test_thinking_visibility_faile5/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-09-17 17:39:26.460 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-09-17 17:39:26.514 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-09-17 17:39:26.515 | INFO     | tldw_chatbook.app:_init_worker_handlers:12026 - Worker handler registry initialized with all handlers
+E   2026-09-17 17:39:26.515 | INFO     | tldw_chatbook.app:__init__:8384 - === STARTUP TIMING SUMMARY ===
+E   2026-09-17 17:39:26.515 | INFO     | tldw_chatbook.app:__init__:8385 - Total initialization time: 0.820 seconds
+E   2026-09-17 17:39:26.516 | INFO     | tldw_chatbook.app:__init__:8391 -   basic_init: 0.070s (8.5%)
+E   2026-09-17 17:39:26.516 | INFO     | tldw_chatbook.app:__init__:8391 -   attribute_init: 0.000s (0.0%)
+E   2026-09-17 17:39:26.516 | INFO     | tldw_chatbook.app:__init__:8391 -   parallel_init: 0.002s (0.2%)
+E   2026-09-17 17:39:26.516 | INFO     | tldw_chatbook.app:__init__:8404 -     - notes_service: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:39:26.517 | INFO     | tldw_chatbook.app:__init__:8404 -     - media_db: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:39:26.517 | INFO     | tldw_chatbook.app:__init__:8404 -     - providers_models: 0.000s (0.1% of parallel_init)
+E   2026-09-17 17:39:26.517 | INFO     | tldw_chatbook.app:__init__:8404 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E   2026-09-17 17:39:26.518 | INFO     | tldw_chatbook.app:__init__:8408 - ==============================
+E   2026-09-17 17:39:26.723 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E   2026-09-17 17:39:26.808 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E   2026-09-17 17:39:29.562 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:8157 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:8261 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:8282 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   ============================= slowest 25 durations =============================
+E   3.92s call     Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[exception-size1]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[exception-size1]
+E   1 failed in 5.84s
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[before-replace-size1]
+FAILED Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[conflict-size1]
+FAILED Tests/UI/test_settings_thinking_visibility_journeys.py::test_thinking_visibility_failed_write_is_readable_and_retriable[exception-size1]
+3 failed, 12 passed in 138.66s (0:02:18)

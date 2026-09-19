@@ -3,6 +3,10 @@
  * ========================================
  * Modal dialogs and popup styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* FileSave/FileOpen (vendored Third_Party/textual_fspicker) input bar --
    the filename Input + file-type filter Select row shared by every
@@ -27,8 +31,111 @@
 FileSave InputBar Select,
 FileOpen InputBar Select,
 EnhancedFileDialog InputBar Select {
-    width: 24;
-    margin-bottom: 0;
+    width: $ds-size-24;
+    margin-bottom: $ds-space-0;
+}
+
+/* task-32540 AC#2 (critique #3, assessor B 27): the picker's Open /
+   Select folder / Cancel told a keyboard user which one was focused by
+   colour alone -- foreground 224,224,224 -> 225,230,235 over a blue-ish
+   fill, plus the label underline `components/_buttons.tcss` paints. Both
+   are colour/text-style; nothing about the button's SHAPE changed, so in
+   monochrome (and in a plain-text capture) the three were byte-identical.
+   Same remedy and same reasoning as `Button.library-canvas-action:focus`
+   in screen_agentic_library.tcss: heavy SIDE rails land on the button's
+   own padding cells, so the label survives and the button's dimensions
+   never change on focus/blur (`outline: heavy` would eat a one-row
+   compact button's only row -- the task-2041 trap).
+
+   APP tier on purpose. `Button:focus` in `components/_buttons.tcss` sets
+   `outline: none`, and Textual ranks every CSS_PATH-sourced rule above
+   any widget's own DEFAULT_CSS regardless of specificity -- so the same
+   rule written into `FileSystemPickerScreen.DEFAULT_CSS` would never
+   paint. The 2-type selector (0,1,2) outranks the bare `Button:focus`
+   (0,1,1) within this tier. `FileSystemPickerScreen` matches the
+   vendored dialogs and, via the CSS type-name MRO, `EnhancedFileDialog`
+   too. */
+FileSystemPickerScreen Button:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+}
+
+/* TASK-32665 / TASK-32699: preserve listing rows and path space in compact pickers.
+   Class changes retain the inputs, listing, focus and selection on resize. */
+SelectDirectory.-compact Dialog,
+FileOpen.-compact Dialog,
+FileSave.-compact Dialog {
+    width: $ds-percent-95;
+    height: $ds-percent-95;
+}
+
+SelectDirectory.-compact #current_path_display,
+FileOpen.-compact #current_path_display,
+FileSave.-compact #current_path_display {
+    margin-bottom: $ds-space-0;
+}
+
+SelectDirectory.-compact #path-breadcrumbs,
+FileOpen.-compact #path-breadcrumbs,
+FileSave.-compact #path-breadcrumbs {
+    height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-inline;
+    margin-bottom: $ds-space-0;
+}
+
+SelectDirectory.-compact InputBar,
+FileOpen.-compact InputBar,
+FileSave.-compact InputBar {
+    padding: $ds-space-0 $ds-space-inline;
+}
+
+SelectDirectory.-compact InputBar Input {
+    width: $ds-width-fill;
+}
+
+SelectDirectory.-compact InputBar Button,
+FileOpen.-compact InputBar Button,
+FileSave.-compact InputBar Button {
+    width: auto;
+    min-width: $ds-size-8;
+}
+
+SelectDirectory #picker-error-line,
+FileOpen #picker-error-line,
+FileSave #picker-error-line {
+    color: $ds-status-error-readable;
+}
+
+/* The path remains editable in its field; its repeated diagnostic must not
+   consume all folder rows when the missing path contains many components. */
+SelectDirectory.-compact #picker-error-line,
+FileOpen.-compact #picker-error-line,
+FileSave.-compact #picker-error-line {
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* TASK-32699: keep the same filename, filter and action widgets mounted.
+   Dock label + filename above the filter/actions only in compact dialogs.
+   Docks share an origin, so the input margin reserves the label row. */
+FileOpen.-compact InputBar,
+FileSave.-compact InputBar {
+    height: $ds-size-7;
+}
+
+FileOpen.-compact #file-name-label,
+FileSave.-compact #file-name-label {
+    dock: top;
+    height: $ds-control-height-compact;
+}
+
+FileOpen.-compact InputBar Input,
+FileSave.-compact InputBar Input {
+    dock: top;
+    width: $ds-width-full;
+    height: $ds-control-height;
+    margin-top: $ds-space-stack;
 }
 
 /* The EnhancedFileDialog selector above (TASK-16478) also defends the
@@ -42,3 +149,132 @@ EnhancedFileDialog InputBar Select {
    the dialog's right edge, clipped out of view -- the dialog looked
    buttonless. The type selector matches EnhancedFileOpen/
    EnhancedFileSave/EnhancedSelectDirectory via the CSS type-name MRO. */
+
+.dialog-title {
+    text-align: center;
+    text-style: $ds-text-strong;
+    margin-bottom: $ds-space-stack;
+}
+
+.dialog-buttons {
+    layout: horizontal;
+    height: $ds-size-3;
+    align: center middle;
+}
+
+/* Explicit button-group alignment wins over the dialog's centered default. */
+.dialog-buttons.button-group-left {
+    align-horizontal: left;
+}
+
+.dialog-buttons.button-group-right {
+    align-horizontal: right;
+}
+
+.dialog-buttons Button {
+    margin: $ds-space-0 $ds-space-inline;
+    min-width: $ds-size-12;
+}
+
+/* Roleplay partial-save recovery shares the modal title/action grammar.
+   Keep the failed-domain list and both choices visible at 52x20. */
+RoleplayDraftRecoveryDialog {
+    align: center middle;
+}
+
+#roleplay-draft-recovery-dialog {
+    width: $ds-size-64;
+    max-width: $ds-percent-96;
+    height: auto;
+    max-height: $ds-height-full;
+    border: tall $ds-control-edge;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#roleplay-draft-recovery-dialog .dialog-title {
+    color: $ds-text-primary;
+}
+
+#roleplay-draft-recovery-domains {
+    color: $ds-text-primary;
+    margin-bottom: $ds-space-stack;
+}
+
+/* TASK-32655: trust dialogs share the application surface and readable
+   error palette. App-tier rules also override global Static colours. */
+SkillTrustPassphraseModal,
+SkillTrustBootstrapModal {
+    align: center middle;
+}
+
+#skill-trust-passphrase-modal,
+#skill-trust-bootstrap-modal {
+    width: $ds-size-64;
+    max-width: $ds-width-full;
+    height: auto;
+    max-height: $ds-height-full;
+    border: tall $ds-control-edge;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#skill-trust-passphrase-modal Static,
+#skill-trust-bootstrap-modal Static {
+    color: $ds-text-primary;
+}
+
+#skill-trust-passphrase-message,
+#skill-trust-bootstrap-message {
+    margin: $ds-space-1 $ds-space-0;
+}
+
+#skill-trust-passphrase-input,
+#skill-trust-bootstrap-input,
+#skill-trust-bootstrap-confirm-input {
+    width: $ds-width-full;
+}
+
+#skill-trust-bootstrap-input {
+    margin-bottom: $ds-space-1;
+}
+
+#skill-trust-passphrase-modal #skill-trust-passphrase-error,
+#skill-trust-bootstrap-modal #skill-trust-bootstrap-error {
+    height: auto;
+    min-height: $ds-size-1;
+    color: $ds-status-error-readable;
+}
+
+#skill-trust-passphrase-actions,
+#skill-trust-bootstrap-actions {
+    height: $ds-control-height;
+    min-height: $ds-control-height;
+    margin-top: $ds-space-1;
+    align-horizontal: right;
+}
+
+Button#skill-trust-passphrase-cancel,
+Button#skill-trust-passphrase-submit,
+Button#skill-trust-bootstrap-cancel,
+Button#skill-trust-bootstrap-submit {
+    width: $ds-size-10;
+    min-width: $ds-size-10;
+    height: $ds-control-height;
+    min-height: $ds-control-height;
+}
+
+/* TASK-32773: shared creation dialog follows the current theme. Keep token
+   rules in the app sheet: the consolidated widget-defaults source has its
+   own variable scope. Python retains the matching standalone fallback. */
+WorkspaceCreateModal #workspace-create-modal {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: tall $ds-control-edge;
+}
+
+WorkspaceCreateModal #workspace-create-error {
+    color: $ds-status-error-readable;
+}

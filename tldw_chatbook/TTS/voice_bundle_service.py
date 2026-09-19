@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import errno
 import os
+import re
+import threading
 import stat
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -392,13 +395,303 @@ def _reconstruct_public_failure(outcome: _PublicOutcome) -> BaseException | None
     return None
 
 
-def _prepare_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
+_ORIGINAL_OPEN = os.open
+_ORIGINAL_FDOPEN = os.fdopen
+
+
+@dataclass(eq=False)
+class _BundleOpenOutcome:
+    descriptor: int | None = None
+    rejected: bool = False
+    identity: tuple[int, int] | None = None
+
+
+def _open_bundle_descriptor(*args, _outcome, **kwargs):
+    primitive = os.open
+    try:
+        fd = primitive(*args, **kwargs)
+    except OSError:
+        if primitive is _ORIGINAL_OPEN:
+            _outcome.rejected = True
+        raise
+    _outcome.descriptor = fd
+    _outcome.identity = _identity(os.fstat(fd))
+    return fd
+
+
+@dataclass(eq=False)
+class _BundleStreamOutcome:
+    stream: object | None = None
+    rejected: bool = False
+
+
+def _open_bundle_stream(fd, *, _outcome):
+    primitive = os.fdopen
+    try:
+        stream = primitive(fd, "w+b", closefd=False)
+    except OSError:
+        if primitive is _ORIGINAL_FDOPEN:
+            _outcome.rejected = True
+        raise
+    _outcome.stream = stream
+    return stream
+
+
+class _BundleNativeOperation:
+    """Actual bundle worker outcomes, never descendant or capture authority."""
+
+    def __init__(self, service, selected, *, publication=False):
+        self.service = service
+        self.publication = publication
+        self.published = None
+        self.root = service._root
+        self.selected = tuple(selected)
+        self.paths = {self.root, *selected, *(p.parent for p in selected)}
+        self.parents = {}
+        self.descriptors = {}
+        self.identities = {}
+        self.streams = {}
+        self.pending_stream_fds = set()
+        self.pending = set()
+        self.failed_closes = set()
+        self.leases = []
+        self.errors = []
+        self.uncertain = False
+        self.residue = False
+        self.operation = None
+        self.pid = os.getpid()
+        self.thread = None
+
+    def check(self):
+        if (
+            self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self not in self.service._native_operations
+        ):
+            raise TTSVoiceBundleError("operation_failed")
+
+    def admit(self, selected=None):
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        self.check()
+        if self.uncertain or self.pending:
+            raise TTSVoiceBundleError("cleanup_failed")
+        self.service._check_source()
+        if self.service._root != self.root:
+            raise TTSVoiceBundleError("operation_failed")
+        lease = storage.acquire_storage(self.root if selected is None else selected)
+        lease.native_owner = self
+        self.leases.append(lease)
+
+    def select(self, parent_fd, leaf):
+        self.check()
+        if (
+            sys._getframe(1).f_code is not _bundle_select.__code__
+            or sys._getframe(2).f_code not in _BUNDLE_SELECT_CODES
+        ):
+            raise TTSVoiceBundleError("operation_failed")
+        parent = self.parents.get(parent_fd)
+        operation = self.operation
+        valid = (
+            parent == self.root
+            and re.fullmatch(r"operation-[0-9a-f]{32}", leaf)
+            or operation is not None
+            and parent_fd == operation.operation_fd
+            and leaf in ("source.bundle", *_MEMBER_LEAVES)
+            or any(
+                parent == p.parent
+                and re.fullmatch(
+                    re.escape("." + p.name + ".") + r"[0-9a-f]{32}\.tmp", leaf
+                )
+                for p in self.selected
+            )
+        )
+        if not valid:
+            raise TTSVoiceBundleError("operation_failed")
+        self.paths.add(parent / leaf)
+
+    def open(self, *args, **kwargs):
+        self.check()
+        if "dir_fd" in kwargs:
+            parent = self.parents.get(kwargs["dir_fd"])
+            if parent is None:
+                raise TTSVoiceBundleError("operation_failed")
+            selected = parent / args[0]
+        else:
+            selected = Path(args[0])
+        if selected not in self.paths:
+            raise TTSVoiceBundleError("operation_failed")
+        self.admit(selected)
+        outcome = _BundleOpenOutcome()
+        self.pending.add(outcome)
+        try:
+            return _open_bundle_descriptor(*args, _outcome=outcome, **kwargs)
+        finally:
+            if outcome.descriptor is not None:
+                self.descriptors[outcome.descriptor] = None
+                self.identities[outcome.descriptor] = outcome.identity
+                if (
+                    self.operation is not None
+                    and kwargs.get("dir_fd") == self.operation.operation_fd
+                    and selected.name in ("source.bundle", *_MEMBER_LEAVES)
+                    and args[1] & os.O_CREAT
+                    and outcome.identity is not None
+                ):
+                    self.operation.files[selected.name] = outcome.identity
+                if args[1] & _DIRECTORY:
+                    self.parents[outcome.descriptor] = selected
+                self.pending.discard(outcome)
+            elif outcome.rejected:
+                self.pending.discard(outcome)
+
+    def open_directory(self, *args, **kwargs):
+        from tldw_chatbook.Utils import private_paths
+
+        self.admit()
+        outcome = private_paths._NativeOpenOutcome()
+        attempt = object()
+        self.pending.add(attempt)
+        try:
+            return private_paths._native_open(*args, _outcome=outcome, **kwargs)
+        finally:
+            if outcome.descriptor is not None:
+                self.descriptors[outcome.descriptor] = private_paths._native_close
+                self.pending.discard(attempt)
+            elif outcome.rejected:
+                self.pending.discard(attempt)
+
+    def close(self, fd):
+        self.check()
+        if fd in self.failed_closes:
+            raise TTSVoiceBundleError("cleanup_failed")
+        if fd not in self.descriptors:
+            raise TTSVoiceBundleError("cleanup_failed")
+        try:
+            (self.descriptors[fd] or os.close)(fd)
+        except BaseException as error:
+            self.failed_closes.add(fd)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        del self.descriptors[fd]
+        self.parents.pop(fd, None)
+        self.identities.pop(fd, None)
+
+    def stream(self, fd):
+        self.check()
+        if fd not in self.descriptors or fd in self.failed_closes:
+            raise TTSVoiceBundleError("cleanup_failed")
+        outcome = _BundleStreamOutcome()
+        self.pending.add(outcome)
+        self.pending_stream_fds.add(fd)
+        # Buffered objects never own the descriptor; there is one native closer.
+        try:
+            return _open_bundle_stream(fd, _outcome=outcome)
+        finally:
+            if outcome.stream is not None:
+                self.streams[outcome.stream] = fd
+                self.pending_stream_fds.remove(fd)
+                self.pending.remove(outcome)
+            elif outcome.rejected:
+                self.pending_stream_fds.remove(fd)
+                self.pending.remove(outcome)
+
+    def close_stream(self, stream):
+        self.check()
+        if stream not in self.streams or stream in self.failed_closes:
+            raise TTSVoiceBundleError("cleanup_failed")
+        try:
+            stream.close()
+        except BaseException as error:
+            self.failed_closes.add(stream)
+            self.errors.append(error)
+            self.uncertain = True
+            raise
+        del self.streams[stream]
+
+    def finish(self):
+        self.check()
+        for stream in tuple(self.streams):
+            if stream not in self.failed_closes:
+                try:
+                    self.close_stream(stream)
+                except BaseException:
+                    pass  # Exact error and native outcome remain on this operation.
+        for fd in tuple(self.descriptors):
+            if (
+                fd not in self.failed_closes
+                and fd not in self.streams.values()
+                and fd not in self.pending_stream_fds
+            ):
+                try:
+                    self.close(fd)
+                except BaseException:
+                    pass  # Do not retry this descriptor after an uncertain close.
+        if (
+            self.pending
+            or self.streams
+            or self.descriptors
+            or self.uncertain
+            or self.residue
+        ):
+            return False
+        while self.leases:
+            try:
+                self.leases[-1].close()
+            except BaseException as error:
+                self.errors.append(error)
+                self.uncertain = True
+                return False
+            self.leases.pop()
+        self.service._native_operations.discard(self)
+        return True
+
+
+def _bundle_native(native):
+    if type(native) is not _BundleNativeOperation:
+        raise TTSVoiceBundleError("operation_failed")
+    native.check()
+    return native
+
+
+def _bundle_open(native, *args, **kwargs):
+    return (
+        os.open(*args, **kwargs)
+        if native is None
+        else _bundle_native(native).open(*args, **kwargs)
+    )
+
+
+def _bundle_close(native, fd):
+    return os.close(fd) if native is None else _bundle_native(native).close(fd)
+
+
+def _bundle_select(native, parent_fd, leaf):
+    if native is not None:
+        _bundle_native(native).select(parent_fd, leaf)
+
+
+def _prepare_root_sync(root: Path, *, _native=None) -> tuple[Path, tuple[int, int]]:
+    if _native is not None and (
+        root != _bundle_native(_native).root or _native.selected
+    ):
+        raise TTSVoiceBundleError("operation_failed")
     if not _posix_supported():
         raise TTSVoiceBundleError("unsupported_platform")
     selected = secure_private_directory(
-        root, create=True, application_owned=True
+        root,
+        create=True,
+        application_owned=True,
+        **(
+            {
+                "_open": _bundle_native(_native).open_directory,
+                "_close": _bundle_native(_native).close,
+            }
+            if _native is not None
+            else {}
+        ),
     ).lexical_path
-    descriptor = os.open(selected, _DIRECTORY_FLAGS)
+    descriptor = _bundle_open(_native, selected, _DIRECTORY_FLAGS)
     try:
         opened = os.fstat(descriptor)
         named = os.stat(selected, follow_symlinks=False)
@@ -410,11 +703,19 @@ def _prepare_root_sync(root: Path) -> tuple[Path, tuple[int, int]]:
             raise TTSVoiceBundleError("cleanup_failed")
         return selected, _identity(opened)
     finally:
-        os.close(descriptor)
+        _bundle_close(_native, descriptor)
 
 
-def _create_operation(root: Path, root_identity: tuple[int, int]) -> _Operation:
-    root_fd = os.open(root, _DIRECTORY_FLAGS)
+def _create_operation(
+    root: Path, root_identity: tuple[int, int], *, _native=None
+) -> _Operation:
+    if _native is not None and (
+        root != _bundle_native(_native).root
+        or _native.operation is not None
+        or _native.publication
+    ):
+        raise TTSVoiceBundleError("operation_failed")
+    root_fd = _bundle_open(_native, root, _DIRECTORY_FLAGS)
     operation_fd = -1
     operation_leaf = ""
     try:
@@ -433,39 +734,82 @@ def _create_operation(root: Path, root_identity: tuple[int, int]) -> _Operation:
         for _ in range(16):
             operation_leaf = f"operation-{token_hex(16)}"
             try:
+                if _native is not None:
+                    _native.admit()
+                    _native.residue = True
                 os.mkdir(operation_leaf, _PRIVATE_DIRECTORY_MODE, dir_fd=root_fd)
                 break
             except FileExistsError:
                 continue
         else:
             raise OSError
-        operation_fd = os.open(operation_leaf, _DIRECTORY_FLAGS, dir_fd=root_fd)
+        _bundle_select(_native, root_fd, operation_leaf)
+        operation_fd = _bundle_open(
+            _native, operation_leaf, _DIRECTORY_FLAGS, dir_fd=root_fd
+        )
         os.fchmod(operation_fd, _PRIVATE_DIRECTORY_MODE)
         opened = os.fstat(operation_fd)
         named = os.stat(operation_leaf, dir_fd=root_fd, follow_symlinks=False)
         if not _private_directory(opened) or _identity(opened) != _identity(named):
             raise OSError
-        return _Operation(
+        operation = _Operation(
             root_fd=root_fd,
             operation_fd=operation_fd,
             operation_leaf=operation_leaf,
             operation_identity=_identity(opened),
             files={},
         )
+        if _native is not None:
+            _native.operation = operation
+            _native.residue = True
+        return operation
     except BaseException:
-        if operation_fd >= 0:
-            os.close(operation_fd)
-        if operation_leaf:
-            try:
-                os.rmdir(operation_leaf, dir_fd=root_fd)
-            except OSError:
-                pass
-        os.close(root_fd)
+        # Only an observed original opened inode can authorize failed-create removal.
+        known_fd = operation_fd
+        expected = None
+        if _native is not None:
+            for fd, selected in _native.parents.items():
+                if selected == root / operation_leaf:
+                    known_fd = fd
+                    expected = _native.identities.get(fd)
+                    break
+        elif known_fd >= 0:
+            expected = _identity(os.fstat(known_fd))
+        try:
+            if operation_leaf and known_fd >= 0 and expected is not None:
+                opened = os.fstat(known_fd)
+                named = os.stat(operation_leaf, dir_fd=root_fd, follow_symlinks=False)
+                if (
+                    _identity(opened) == expected == _identity(named)
+                    and _identity(os.fstat(root_fd)) == root_identity
+                    and _identity(os.stat(root, follow_symlinks=False)) == root_identity
+                    and _private_directory(opened)
+                    and not os.listdir(known_fd)
+                ):
+                    os.rmdir(operation_leaf, dir_fd=root_fd)
+                    os.fsync(root_fd)
+                    if _native is not None:
+                        _native.residue = False
+        except BaseException as error:
+            if _native is not None:
+                _native.errors.append(error)
+        if _native is None:
+            for fd in (known_fd, root_fd):
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+        # The original worker retires all independently known FDs, preserving body.
         raise
 
 
-def _create_operation_file(operation: _Operation, leaf: str) -> int:
-    descriptor = os.open(
+def _create_operation_file(operation: _Operation, leaf: str, *, _native=None) -> int:
+    if _native is not None and _bundle_native(_native).operation is not operation:
+        raise TTSVoiceBundleError("operation_failed")
+    _bundle_select(_native, operation.operation_fd, leaf)
+    descriptor = _bundle_open(
+        _native,
         leaf,
         os.O_RDWR | os.O_CREAT | os.O_EXCL | _CLOEXEC | _NOFOLLOW,
         _PRIVATE_FILE_MODE,
@@ -475,13 +819,21 @@ def _create_operation_file(operation: _Operation, leaf: str) -> int:
     info = os.fstat(descriptor)
     named = os.stat(leaf, dir_fd=operation.operation_fd, follow_symlinks=False)
     if not _private_file(info) or _identity(info) != _identity(named):
-        os.close(descriptor)
+        _bundle_close(_native, descriptor)
         raise OSError
     operation.files[leaf] = _identity(info)
     return descriptor
 
 
-def _cleanup_operation(operation: _Operation) -> bool:
+def _cleanup_operation(operation: _Operation, *, _native=None) -> bool:
+    if _native is not None:
+        native = _bundle_native(_native)
+        if (
+            native.operation is not operation
+            or operation.root_fd not in native.descriptors
+            or operation.operation_fd not in native.descriptors
+        ):
+            raise TTSVoiceBundleError("cleanup_failed")
     failed = False
     for leaf, expected in tuple(operation.files.items()):
         try:
@@ -514,12 +866,14 @@ def _cleanup_operation(operation: _Operation) -> bool:
             os.fsync(operation.root_fd)
     except OSError:
         failed = True
-    os.close(operation.operation_fd)
+    _bundle_close(_native, operation.operation_fd)
     try:
         assert fcntl is not None
         fcntl.flock(operation.root_fd, fcntl.LOCK_UN)
     finally:
-        os.close(operation.root_fd)
+        _bundle_close(_native, operation.root_fd)
+    if _native is not None:
+        _native.residue = failed
     return not failed
 
 
@@ -528,8 +882,10 @@ def _copy_and_inspect(
     root_identity: tuple[int, int],
     source: Path,
     expected: _SourceFingerprint | None,
+    *,
+    _native=None,
 ) -> _CopyResult:
-    operation = _create_operation(root, root_identity)
+    operation = _create_operation(root, root_identity, _native=_native)
     source_fd = -1
     copy_fd = -1
     primary_code: str | None = None
@@ -540,7 +896,7 @@ def _copy_and_inspect(
         if not stat.S_ISDIR(parent_before.st_mode):
             raise TTSVoiceBundleError("source_changed")
         parent_identity = _parent_identity(parent_before)
-        parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
+        parent_fd = _bundle_open(_native, source.parent, _DIRECTORY_FLAGS)
         try:
             parent_opened = os.fstat(parent_fd)
             parent_named = os.lstat(source.parent)
@@ -552,7 +908,9 @@ def _copy_and_inspect(
             initial = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
             if not _owned_source(initial):
                 raise TTSVoiceBundleError("source_changed")
-            source_fd = os.open(source.name, _SOURCE_FLAGS, dir_fd=parent_fd)
+            source_fd = _bundle_open(
+                _native, source.name, _SOURCE_FLAGS, dir_fd=parent_fd
+            )
             opened = os.fstat(source_fd)
             if _identity(opened) != _identity(initial):
                 raise TTSVoiceBundleError("source_changed")
@@ -569,7 +927,9 @@ def _copy_and_inspect(
                 raise TTSVoiceBundleError("source_changed")
             _test_boundary("source_initial_open")
 
-            copy_fd = _create_operation_file(operation, "source.bundle")
+            copy_fd = _create_operation_file(
+                operation, "source.bundle", _native=_native
+            )
             digest = sha256()
             copied = 0
             while True:
@@ -601,8 +961,8 @@ def _copy_and_inspect(
                 raise TTSVoiceBundleError("source_changed")
             _test_boundary("source_post_copy")
         finally:
-            os.close(parent_fd)
-        os.close(source_fd)
+            _bundle_close(_native, parent_fd)
+        _bundle_close(_native, source_fd)
         source_fd = -1
         os.lseek(copy_fd, 0, os.SEEK_SET)
         parts: list[bytes] = []
@@ -616,8 +976,12 @@ def _copy_and_inspect(
 
         sink_files = []
         for leaf in _MEMBER_LEAVES:
-            descriptor = _create_operation_file(operation, leaf)
-            stream = os.fdopen(descriptor, "w+b")
+            descriptor = _create_operation_file(operation, leaf, _native=_native)
+            stream = (
+                os.fdopen(descriptor, "w+b")
+                if _native is None
+                else _native.stream(descriptor)
+            )
             streams.append(stream)
             sink_files.append(stream)
         bundle = inspect_clone_voice_bundle(
@@ -629,7 +993,7 @@ def _copy_and_inspect(
             stream.flush()
             os.fsync(stream.fileno())
         _test_boundary("source_post_inspection")
-        parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
+        parent_fd = _bundle_open(_native, source.parent, _DIRECTORY_FLAGS)
         try:
             parent_opened = os.fstat(parent_fd)
             parent_named = os.lstat(source.parent)
@@ -641,9 +1005,9 @@ def _copy_and_inspect(
             ):
                 raise TTSVoiceBundleError("source_changed")
         finally:
-            os.close(parent_fd)
+            _bundle_close(_native, parent_fd)
         _test_boundary("source_pre_fingerprint")
-        parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
+        parent_fd = _bundle_open(_native, source.parent, _DIRECTORY_FLAGS)
         try:
             parent_opened = os.fstat(parent_fd)
             parent_named = os.lstat(source.parent)
@@ -655,7 +1019,7 @@ def _copy_and_inspect(
             ):
                 raise TTSVoiceBundleError("source_changed")
         finally:
-            os.close(parent_fd)
+            _bundle_close(_native, parent_fd)
         if expected is not None and current != expected:
             raise TTSVoiceBundleError("source_changed")
         result = _CopyResult(current, bundle)
@@ -667,15 +1031,15 @@ def _copy_and_inspect(
         primary_code = "operation_failed"
     finally:
         if source_fd >= 0:
-            os.close(source_fd)
+            _bundle_close(_native, source_fd)
         if copy_fd >= 0:
-            os.close(copy_fd)
+            _bundle_close(_native, copy_fd)
         for stream in streams:
             try:
-                stream.close()
+                (stream.close() if _native is None else _native.close_stream(stream))
             except OSError:
                 primary_code = primary_code or "cleanup_failed"
-        if not _cleanup_operation(operation):
+        if not _cleanup_operation(operation, _native=_native):
             primary_code = "cleanup_failed"
     if primary_code is not None or result is None:
         raise TTSVoiceBundleError(
@@ -689,10 +1053,13 @@ def _copy_and_inspect_sync(
     root_identity: tuple[int, int],
     source: Path,
     expected: _SourceFingerprint | None,
+    *,
+    _native=None,
 ) -> _WorkerOutcome:
     try:
         return _WorkerOutcome(
-            None, _copy_and_inspect(root, root_identity, source, expected)
+            None,
+            _copy_and_inspect(root, root_identity, source, expected, _native=_native),
         )
     except TTSVoiceBundleError as error:
         return _WorkerOutcome(error.code, None)
@@ -703,7 +1070,7 @@ def _copy_and_inspect_sync(
 
 
 def _fingerprint_source_sync(
-    source: Path, expected: _SourceFingerprint
+    source: Path, expected: _SourceFingerprint, *, _native=None
 ) -> _WorkerOutcome:
     """Revalidate exact parent, inode metadata, and all source bytes."""
 
@@ -713,14 +1080,14 @@ def _fingerprint_source_sync(
         parent_named = os.lstat(source.parent)
         if _parent_identity(parent_named) != expected.parent_identity:
             raise TTSVoiceBundleError("source_changed")
-        parent_fd = os.open(source.parent, _DIRECTORY_FLAGS)
+        parent_fd = _bundle_open(_native, source.parent, _DIRECTORY_FLAGS)
         parent_opened = os.fstat(parent_fd)
         if _parent_identity(parent_opened) != expected.parent_identity:
             raise TTSVoiceBundleError("source_changed")
         named = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
         if _source_identity(named) != expected.identity or not _private_file(named):
             raise TTSVoiceBundleError("source_changed")
-        source_fd = os.open(source.name, _SOURCE_FLAGS, dir_fd=parent_fd)
+        source_fd = _bundle_open(_native, source.name, _SOURCE_FLAGS, dir_fd=parent_fd)
         opened = os.fstat(source_fd)
         if _source_identity(opened) != expected.identity:
             raise TTSVoiceBundleError("source_changed")
@@ -756,9 +1123,9 @@ def _fingerprint_source_sync(
         return _WorkerOutcome("operation_failed", None)
     finally:
         if source_fd >= 0:
-            os.close(source_fd)
+            _bundle_close(_native, source_fd)
         if parent_fd >= 0:
-            os.close(parent_fd)
+            _bundle_close(_native, parent_fd)
 
 
 def _published_file_matches(
@@ -767,6 +1134,8 @@ def _published_file_matches(
     parent_identity: tuple[int, int, int, int],
     published_identity: tuple[int, int],
     payload: bytes,
+    *,
+    _native=None,
 ) -> bool:
     os.fsync(parent_fd)
     if (
@@ -777,7 +1146,9 @@ def _published_file_matches(
     named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
     if _identity(named) != published_identity or not _private_file(named):
         return False
-    descriptor = os.open(destination.name, _SOURCE_FLAGS, dir_fd=parent_fd)
+    descriptor = _bundle_open(
+        _native, destination.name, _SOURCE_FLAGS, dir_fd=parent_fd
+    )
     try:
         opened = os.fstat(descriptor)
         digest = sha256()
@@ -790,7 +1161,7 @@ def _published_file_matches(
             digest.update(chunk)
         final_opened = os.fstat(descriptor)
     finally:
-        os.close(descriptor)
+        _bundle_close(_native, descriptor)
     final_named = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
     if (
         _identity(opened) != published_identity
@@ -819,6 +1190,8 @@ def _converge_published_file(
     parent_identity: tuple[int, int, int, int],
     published_identity: tuple[int, int],
     payload: bytes,
+    *,
+    _native=None,
 ) -> bool:
     for _ in range(3):
         try:
@@ -828,6 +1201,7 @@ def _converge_published_file(
                 parent_identity,
                 published_identity,
                 payload,
+                _native=_native,
             )
         except OSError:
             continue
@@ -835,7 +1209,11 @@ def _converge_published_file(
 
 
 def _publish_sync(
-    destination: Path, payload: bytes, cancellation: Event | None = None
+    destination: Path,
+    payload: bytes,
+    cancellation: Event | None = None,
+    *,
+    _native=None,
 ) -> _WorkerOutcome:
     parent_fd = -1
     temporary_fd = -1
@@ -850,7 +1228,7 @@ def _publish_sync(
         before = os.lstat(destination.parent)
         if not stat.S_ISDIR(before.st_mode):
             raise TTSVoiceBundleError("destination_changed")
-        parent_fd = os.open(destination.parent, _DIRECTORY_FLAGS)
+        parent_fd = _bundle_open(_native, destination.parent, _DIRECTORY_FLAGS)
         opened_parent = os.fstat(parent_fd)
         parent_identity = _parent_identity(opened_parent)
         if (
@@ -864,7 +1242,9 @@ def _publish_sync(
             pass
         else:
             raise TTSVoiceBundleError("destination_changed")
-        temporary_fd = os.open(
+        _bundle_select(_native, parent_fd, temporary_leaf)
+        temporary_fd = _bundle_open(
+            _native,
             temporary_leaf,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | _CLOEXEC | _NOFOLLOW,
             _PRIVATE_FILE_MODE,
@@ -942,6 +1322,7 @@ def _publish_sync(
             parent_identity,
             published_identity,
             payload,
+            _native=_native,
         ):
             return _WorkerOutcome("cleanup_failed", None)
         try:
@@ -954,8 +1335,11 @@ def _publish_sync(
             parent_identity,
             published_identity,
             payload,
+            _native=_native,
         ):
             return _WorkerOutcome("cleanup_failed", None)
+        if _native is not None:
+            _bundle_native(_native).published = (destination, published_identity)
         return _WorkerOutcome(None, True)
     except TTSVoiceBundleError as error:
         code = error.code
@@ -969,17 +1353,26 @@ def _publish_sync(
     finally:
         if temporary_fd >= 0:
             try:
-                os.close(temporary_fd)
+                _bundle_close(_native, temporary_fd)
             except OSError:
                 code = "cleanup_failed"
         if parent_fd >= 0:
             try:
-                os.close(parent_fd)
+                _bundle_close(_native, parent_fd)
             except OSError:
                 code = "cleanup_failed"
     if published_identity is not None:
         return _WorkerOutcome(code or "cleanup_failed", None)
     return _WorkerOutcome(code or "operation_failed", None)
+
+
+_BUNDLE_SELECT_CODES = frozenset(
+    (
+        _create_operation.__code__,
+        _create_operation_file.__code__,
+        _publish_sync.__code__,
+    )
+)
 
 
 async def _await_retained(
@@ -1116,6 +1509,10 @@ class TTSVoiceBundlePortabilityService:
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
         self._root = Path(operation_root)
+        self._configured_source = None
+        self._native_operations = set()
+        self._maintenance_admission_closed = False
+        self._owner_loop = None
         self._repository = repository
         self._dependency_service = dependency_service
         if not callable(profile_mutation_fence):
@@ -1166,11 +1563,76 @@ class TTSVoiceBundlePortabilityService:
         async with cast(Any, self._profile_mutation_fence()):
             yield
 
+    def _check_source(self):
+        from .profile_source import check_bundle_source
+
+        check_bundle_source(self)
+
+    def _check_loop(self):
+        loop = asyncio.get_running_loop()
+        if self._owner_loop is None:
+            self._owner_loop = loop
+        elif self._owner_loop is not loop:
+            raise TTSVoiceBundleError("operation_failed")
+
+    def _maintenance_close_admission(self):
+        self._check_loop()
+        self._maintenance_admission_closed = True
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        self._maintenance_close_admission()
+        while self._calls or self._workers or self._owned_calls:
+            if monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.01, max(0, deadline - monotonic())))
+        return not self._native_operations
+
+    async def _maintenance_resume(self):
+        self._check_loop()
+        self._check_source()
+        if self._closed:
+            raise TTSVoiceBundleError("operation_failed")
+        self._maintenance_admission_closed = False
+
+    def _run_native_worker(self, native, function, args):
+        native.thread = threading.current_thread()
+        failure = None
+        result = None
+        try:
+            native.admit()
+            native.admit()
+            for selected in native.selected:
+                native.admit(selected)
+                native.admit(selected.parent)
+            result = function(*args, _native=native)
+            return result
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            prior = len(native.errors)
+            retired = native.finish()
+            # Preserve an already evaluated durable publication acknowledgement.
+            published = (
+                native.publication
+                and native.published is not None
+                and type(result) is _WorkerOutcome
+                and result.result is True
+                and result.code is None
+            )
+            body_failed = type(result) is _WorkerOutcome and result.code is not None
+            if failure is None and not published and not body_failed:
+                for error in native.errors[prior:]:
+                    if not isinstance(error, Exception):
+                        raise error
+                if not retired:
+                    raise TTSVoiceBundleError("cleanup_failed")
+
     async def _ensure_root(self) -> None:
         async with self._root_lock:
             if self._root_identity is not None:
                 return
-            if self._closed:
+            if self._closed or self._maintenance_admission_closed:
                 raise TTSVoiceBundleError("operation_failed")
             try:
                 outcome = await self._run_worker(_prepare_root_sync, self._root)
@@ -1187,11 +1649,13 @@ class TTSVoiceBundlePortabilityService:
             )
 
     async def _admit(self, *, inspection: bool = False) -> asyncio.Task[object]:
+        self._check_loop()
+        self._check_source()
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
         if call is None:
             raise TTSVoiceBundleError("operation_failed")
         async with self._session_lock:
-            if self._closed:
+            if self._closed or self._maintenance_admission_closed:
                 raise TTSVoiceBundleError("operation_failed")
             self._expire_sessions()
             if (
@@ -1214,10 +1678,12 @@ class TTSVoiceBundlePortabilityService:
                 self._inspection_reservations -= 1
 
     async def _run_worker(
-        self, function: Callable[..., object], *args: object
+        self, function: Callable[..., object], *args: object, _selected=()
     ) -> object:
+        native = _BundleNativeOperation(self, _selected)
+        self._native_operations.add(native)
         worker: asyncio.Task[object] = asyncio.create_task(
-            asyncio.to_thread(function, *args)
+            asyncio.to_thread(self._run_native_worker, native, function, args)
         )
         self._workers.add(worker)
         try:
@@ -1229,11 +1695,15 @@ class TTSVoiceBundlePortabilityService:
         return result
 
     async def _run_worker_settled(
-        self, function: Callable[..., object], *args: object
+        self, function: Callable[..., object], *args: object, _selected=()
     ) -> tuple[Literal["cancelled"] | None, object]:
         cancellation_event = Event()
+        native = _BundleNativeOperation(self, _selected, publication=True)
+        self._native_operations.add(native)
         worker: asyncio.Task[object] = asyncio.create_task(
-            asyncio.to_thread(function, *args, cancellation_event)
+            asyncio.to_thread(
+                self._run_native_worker, native, function, (*args, cancellation_event)
+            )
         )
         self._workers.add(worker)
         try:
@@ -1266,6 +1736,7 @@ class TTSVoiceBundlePortabilityService:
                 self._root_identity,
                 source,
                 expected,
+                _selected=(source,),
             ),
         )
         if outcome.code is not None or type(outcome.result) is not _CopyResult:
@@ -1334,6 +1805,7 @@ class TTSVoiceBundlePortabilityService:
         fingerprint: _SourceFingerprint,
         evidence: _ReviewEvidence,
     ) -> TTSVoiceBundleReview:
+        self._check_source()
         async with self._session_lock:
             self._expire_sessions()
             if self._closed or len(self._sessions) >= _SESSION_LIMIT:
@@ -1503,11 +1975,13 @@ class TTSVoiceBundlePortabilityService:
     async def _consume_session(
         self, handle: object
     ) -> tuple[asyncio.Task[object], _Session]:
+        self._check_loop()
+        self._check_source()
         call = cast(asyncio.Task[object] | None, asyncio.current_task())
         if call is None:
             raise TTSVoiceBundleError("operation_failed")
         async with self._session_lock:
-            if self._closed:
+            if self._closed or self._maintenance_admission_closed:
                 raise TTSVoiceBundleError("operation_failed")
             self._expire_sessions()
             if type(handle) is not TTSVoiceBundleHandle or not handle._belongs_to(
@@ -1527,6 +2001,7 @@ class TTSVoiceBundlePortabilityService:
                 _fingerprint_source_sync,
                 session.source,
                 session.source_fingerprint,
+                _selected=(session.source,),
             ),
         )
         if outcome.code is not None or outcome.result is not True:
@@ -1698,7 +2173,7 @@ class TTSVoiceBundlePortabilityService:
             payload = encode_clone_voice_bundle(bundle)
             selected = _source_path(destination)
             control, raw_outcome = await self._run_worker_settled(
-                _publish_sync, selected, payload
+                _publish_sync, selected, payload, _selected=(selected,)
             )
             outcome = cast(_WorkerOutcome, raw_outcome)
             del payload, bundle, reference
@@ -1842,6 +2317,8 @@ class TTSVoiceBundlePortabilityService:
                 )
                 if not retained:
                     self._sessions.clear()
+                    if self._native_operations:
+                        raise TTSVoiceBundleError("cleanup_failed")
                     return
             await asyncio.gather(
                 *(asyncio.shield(task) for task in retained), return_exceptions=True

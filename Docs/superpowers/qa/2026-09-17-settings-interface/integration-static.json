@@ -1,0 +1,35 @@
+{
+  "baseline": "65cc565d84d4cc7555baa4db27c16402b32177e9",
+  "incoming": "c97a64eba5",
+  "comparison": "union of both merge parents",
+  "files": [
+    {
+      "file": "Tests/UI/test_library_ingest_option_journeys.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "Tests/UI/test_library_ingest_option_event_order.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 0,
+      "inherited_format_hunks": 0
+    },
+    {
+      "file": "Tests/UI/test_library_ingest_structural.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 5,
+      "inherited_format_hunks": 21
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "new_lint": [],
+      "new_format": [],
+      "inherited_lint_count": 5,
+      "inherited_format_hunks": 28
+    }
+  ]
+}

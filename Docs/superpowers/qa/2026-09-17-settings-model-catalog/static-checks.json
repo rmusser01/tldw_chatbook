@@ -1,0 +1,15 @@
+{
+  "settings_source": {
+    "baseline_lint": 118,
+    "current_lint": 117,
+    "added": [],
+    "syntax": "pass",
+    "sha256": "19179b3b77989d64fd862128baaf92ef51de339a504159294dbd4b2840d085e4"
+  },
+  "new_files": {
+    "lint": "pass",
+    "format": "pass",
+    "syntax": "pass"
+  },
+  "format_scope": "Only modified Settings ranges; existing whole-file lint/format debt retained."
+}

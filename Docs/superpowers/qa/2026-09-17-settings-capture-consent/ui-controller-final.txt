@@ -1,0 +1,28 @@
+..........................                                               [100%]
+============================= slowest 25 durations =============================
+13.03s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[before-replace]
+12.87s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[stale]
+12.36s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[exception]
+11.78s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_save_failure_or_stale_consent_is_retriable[cache-warning]
+11.30s call     Tests/UI/test_settings_capture_journeys.py::test_diagnostics_keyboard_reload_rebases_capture_controls_and_consent
+10.84s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size0]
+10.62s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size0]
+10.47s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[escape-size1]
+10.39s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[cancel-button-size1]
+10.23s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size0]
+10.02s call     Tests/UI/test_settings_capture_journeys.py::test_full_trace_view_requires_real_keyboard_confirmation[confirm-button-size1]
+8.13s call     Tests/UI/test_settings_capture_journeys.py::test_duplicate_full_apply_opens_one_dialog_and_commits_once
+8.06s call     Tests/UI/test_settings_capture_journeys.py::test_full_view_confirmation_uses_the_live_controller
+7.27s call     Tests/UI/test_settings_capture_journeys.py::test_departed_settings_cannot_apply_a_late_full_confirmation
+5.32s call     Tests/UI/test_settings_configuration_hub.py::test_console_capture_settings_reports_structured_mutation_outcomes[mutation_result2-Saved and active \u2014 settings cache refresh degraded]
+4.36s call     Tests/UI/test_settings_configuration_hub.py::test_console_capture_settings_reports_structured_mutation_outcomes[mutation_result1-Failed \u2014 Safe state is active for this session; file save failed]
+4.30s call     Tests/UI/test_settings_configuration_hub.py::test_console_capture_settings_ignores_retired_detail_for_disclosure
+4.21s call     Tests/UI/test_settings_configuration_hub.py::test_console_trace_viewer_full_uses_explicit_confirmation
+4.15s call     Tests/UI/test_settings_configuration_hub.py::test_console_capture_settings_reports_structured_mutation_outcomes[mutation_result0-Failed \u2014 settings changed; reload and try again]
+1.53s call     Tests/Chat/test_console_global_capture_settings.py::test_cancelled_global_capture_save_holds_reservation_until_writer_settles[True-exception]
+1.50s call     Tests/Chat/test_console_global_capture_settings.py::test_cancelled_global_capture_save_holds_reservation_until_writer_settles[False-failed]
+1.48s call     Tests/Chat/test_console_global_capture_settings.py::test_cancelled_global_capture_save_holds_reservation_until_writer_settles[False-saved]
+1.48s call     Tests/Chat/test_console_global_capture_settings.py::test_cancelled_global_capture_save_holds_reservation_until_writer_settles[True-saved]
+1.38s call     Tests/Chat/test_console_global_capture_settings.py::test_cancelled_global_capture_save_holds_reservation_until_writer_settles[False-exception]
+1.36s call     Tests/Chat/test_console_global_capture_settings.py::test_closing_opening_session_does_not_misreport_a_saved_global_policy
+26 passed, 414 deselected in 182.90s (0:03:02)

@@ -17,6 +17,14 @@ from weakref import WeakValueDictionary
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes import notes_device_state_schema
 from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
@@ -441,6 +449,24 @@ class NotesSyncResolutionHistoryRecord:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncCompletedOperation:
+    """One completed journal row, as the Manage sync folders receipts read it.
+
+    task-32534 AC#3: every write lasting sync performs must leave a visible
+    receipt. Metadata only -- the label (path, note title) is resolved from
+    the binding by the runtime, never stored here.
+    """
+
+    operation_id: str
+    binding_id: str | None
+    kind: str
+    completed_at: int
+
+    def __repr__(self) -> str:
+        return "NotesSyncCompletedOperation(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class NotesSyncLegacyMigrationRecord:
     """Bounded record for one later legacy-migration review."""
 
@@ -571,13 +597,21 @@ class NotesDeviceStateStore:
     """
 
     def __init__(self, database_path: str | Path) -> None:
-        self._database_path = Path(database_path)
+        self.is_memory_db = str(database_path) == ":memory:"
+        self._database_path = (
+            Path(":memory:") if self.is_memory_db else lexical_path(database_path)
+        )
         self._operation_locks: WeakValueDictionary[str, asyncio.Lock] = (
             WeakValueDictionary()
         )
         self._thread_local = threading.local()
         self._connections_guard = threading.Lock()
         self._connections: list[sqlite3.Connection] = []
+
+    @property
+    def db_path(self) -> Path:
+        """Expose the selected owner path for ordinary maintenance admission."""
+        return self._database_path
 
     def __repr__(self) -> str:
         return "NotesDeviceStateStore(<private>)"
@@ -592,6 +626,7 @@ class NotesDeviceStateStore:
             self._operation_locks[operation_id] = lock
         return lock
 
+    @_core_getter
     def _connect(
         self,
         *,
@@ -599,6 +634,7 @@ class NotesDeviceStateStore:
         must_exist: bool = False,
         **connection_options: object,
     ) -> sqlite3.Connection:
+        _core_access(self)
         connection = connect_private_sqlite(
             "notes.sync_state",
             self._database_path,
@@ -606,7 +642,14 @@ class NotesDeviceStateStore:
             must_exist=must_exist,
             **connection_options,
         )
-        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            _register_core_connection(self, connection)
+            _core_access(self)
+            connection.execute("PRAGMA foreign_keys = ON")
+            _core_access(self)
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     def _open_schema_ready_connection(self) -> sqlite3.Connection:
@@ -637,8 +680,16 @@ class NotesDeviceStateStore:
             raise
         return connection
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         connection = getattr(self._thread_local, "connection", None)
+        if connection is not None and _core_cached_connection(self, connection) is None:
+            self._thread_local.connection = None
+            with self._connections_guard:
+                if connection in self._connections:
+                    self._connections.remove(connection)
+            connection = None
         if connection is not None:
             return connection
         connection = self._open_schema_ready_connection()
@@ -647,6 +698,7 @@ class NotesDeviceStateStore:
             self._connections.append(connection)
         return connection
 
+    @_core_transaction
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Yield this thread's schema-ready held connection in one transaction."""
@@ -1279,6 +1331,47 @@ class NotesDeviceStateStore:
             ).fetchall()
         return tuple(str(row[0]) for row in rows)
 
+    def active_binding_path_for_note(self, note_id: str) -> tuple[str, str] | None:
+        """Return ``(root_id, relative path)`` for a note's active binding.
+
+        task-32640: the editor header answers "where does this note live?",
+        which is the one question about a binding that starts from the NOTE
+        rather than from a root. ``active_binding_note_ids`` answers the
+        reverse (root -> notes) and ``has_binding_for_note_or_path`` is a
+        per-root predicate, so neither can be pointed at this without walking
+        every root and hydrating rows the caller discards.
+
+        No index leads on ``note_id`` and this deliberately does not add one:
+        a database with no ``sqlite_stat1`` ignores an index the planner has
+        no statistics for (see the migrations README), and one scan of a
+        table that holds one row per synced file, once per note opened, is
+        not worth a schema change. ``LIMIT 1`` stops it at the first match.
+
+        Args:
+            note_id: The note whose file, if any, to name.
+
+        Returns:
+            The owning root and the note's normalized path within it, or
+            ``None`` when no active binding claims this note.
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT root_id, normalized_relative_path
+                FROM notes_sync_bindings
+                WHERE note_id = ? AND state = ?
+                ORDER BY binding_id
+                LIMIT 1
+                """,
+                (note_id, NotesSyncBindingState.ACTIVE.value),
+            ).fetchone()
+        return None if row is None else (str(row[0]), str(row[1]))
+
     def list_binding_summaries(
         self,
         root_id: str,
@@ -1755,6 +1848,35 @@ class NotesDeviceStateStore:
                 observation_token=row[6],
                 expected_note_version=row[7],
                 expected_file_digest=row[8],
+            )
+            for row in rows
+        )
+
+    def list_completed_operations(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[NotesSyncCompletedOperation, ...]:
+        """Return one root's newest completed journal rows, newest first."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT operation_id, binding_id, kind, updated_at
+                FROM notes_sync_operations
+                WHERE root_id = ? AND state = 'completed'
+                ORDER BY updated_at DESC, operation_id DESC
+                LIMIT ?
+                """,
+                (root_id, limit),
+            ).fetchall()
+        return tuple(
+            NotesSyncCompletedOperation(
+                operation_id=row[0],
+                binding_id=row[1],
+                kind=row[2],
+                completed_at=row[3],
             )
             for row in rows
         )
@@ -2681,6 +2803,7 @@ __all__ = [
     "NotesDeviceStateStore",
     "NotesSyncBindingRecord",
     "NotesSyncBindingSummary",
+    "NotesSyncCompletedOperation",
     "NotesSyncLegacyMigrationRecord",
     "NotesSyncOperationRecord",
     "NotesSyncRecoveryRecord",

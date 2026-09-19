@@ -1,0 +1,95 @@
+[
+  {
+    "pid": 89226,
+    "runner_sha256": "cf8a71f9bb447380a87ced953d0ed8c920e423d7b02d10e4bb09dee592774f39",
+    "state_seam": "controlled LibraryRagPanelState; real native widgets and refreshes",
+    "steps": [],
+    "exclusive_profile": true,
+    "waiting_for": "#library-row-browse-search",
+    "passed": false,
+    "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-16-rag-query-gate/native_check.py\", line 132, in journey\n    await press(\"#library-row-browse-search\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-16-rag-query-gate/native_check.py\", line 93, in press\n    await wait_for(lambda: bool(app.screen.query(selector)), selector)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-16-rag-query-gate/native_check.py\", line 90, in wait_for\n    raise AssertionError(label)\nAssertionError: #library-row-browse-search\n",
+    "app_run_returned": true,
+    "profile": "/private/tmp/tldw-2530-run-001",
+    "exit_status": 1,
+    "pid_absent_independently_verified": true,
+    "classification": "Runner omitted empty-Library Explore all tools navigation; not a gate regression."
+  },
+  {
+    "pid": 90078,
+    "runner_sha256": "e9da016fe4818d62864cb875cdd2a2617681b8acd724726fa59fe282779f2b52",
+    "state_seam": "controlled LibraryRagPanelState; real native widgets and refreshes",
+    "steps": [],
+    "exclusive_profile": true,
+    "waiting_for": "#library-row-browse-search",
+    "passed": false,
+    "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-16-rag-query-gate/native_check.py\", line 134, in journey\n    await press(\"#library-row-browse-search\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-16-rag-query-gate/native_check.py\", line 93, in press\n    await wait_for(lambda: bool(app.screen.query(selector)), selector)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-16-rag-query-gate/native_check.py\", line 90, in wait_for\n    raise AssertionError(label)\nAssertionError: #library-row-browse-search\n",
+    "app_run_returned": true,
+    "profile": "/private/tmp/tldw-2530-run-002",
+    "exit_status": 1,
+    "pid_absent_independently_verified": true,
+    "classification": "Runner checked Explore before navigation mounted. Runs 001/002 also redirected terminal stderr, so neither qualifies native terminal paint."
+  },
+  {
+    "pid": 90704,
+    "runner_sha256": "763353949d737783e6708142e9348a75692a46eb5e4e0bf72aa6255fbff54d90",
+    "state_seam": "controlled LibraryRagPanelState; real native widgets and refreshes",
+    "steps": [
+      {
+        "theme": "textual-dark",
+        "size": [
+          170,
+          48
+        ],
+        "during_yield_paint": " RAG Answer sends your question and the evidence to openai. Search stays local.                                              ",
+        "settled_notice_paint": " RAG Answer sends your question and the evidence to openai. Search stays local.                                              ",
+        "coherent_gate_during_and_after_yield": true,
+        "missing_scope_disables_run": true,
+        "query_focus_and_value_retained": true
+      },
+      {
+        "theme": "textual-dark",
+        "size": [
+          80,
+          24
+        ],
+        "during_yield_paint": " RAG Answer sends your question and the evidence  ",
+        "settled_notice_paint": " RAG Answer sends your question and the evidence  ",
+        "coherent_gate_during_and_after_yield": true,
+        "missing_scope_disables_run": true,
+        "query_focus_and_value_retained": true
+      },
+      {
+        "theme": "textual-light",
+        "size": [
+          170,
+          48
+        ],
+        "during_yield_paint": " RAG Answer sends your question and the evidence to openai. Search stays local.                                              ",
+        "settled_notice_paint": " RAG Answer sends your question and the evidence to openai. Search stays local.                                              ",
+        "coherent_gate_during_and_after_yield": true,
+        "missing_scope_disables_run": true,
+        "query_focus_and_value_retained": true
+      },
+      {
+        "theme": "textual-light",
+        "size": [
+          80,
+          24
+        ],
+        "during_yield_paint": " RAG Answer sends your question and the evidence  ",
+        "settled_notice_paint": " RAG Answer sends your question and the evidence  ",
+        "coherent_gate_during_and_after_yield": true,
+        "missing_scope_disables_run": true,
+        "query_focus_and_value_retained": true
+      }
+    ],
+    "exclusive_profile": true,
+    "waiting_for": "matrix size",
+    "passed": true,
+    "app_run_returned": true,
+    "profile": "/private/tmp/tldw-2530-run-003",
+    "exit_status": 0,
+    "pid_absent_independently_verified": true,
+    "classification": "Native race-state checks passed; captured compact paint clips before provider. Final runner now asserts complete painted disclosure."
+  }
+]

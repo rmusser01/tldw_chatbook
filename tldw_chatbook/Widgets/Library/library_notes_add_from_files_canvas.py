@@ -6,22 +6,32 @@ scroll body so a 60x20 terminal never hides what the user is about to do.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_note_import_state import UNIFORM_RUN_MIN
+from tldw_chatbook.Library.library_shell_state import (
+    back_cue_label,
+    library_disabled_action_label,
+    library_disabled_reason_line,
+)
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
+    LastingSyncReview,
     LastingSyncReviewRow,
     LastingSyncReviewSource,
     LibraryNotesLastingSyncSnapshot,
+    review_group_key,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictComparison,
@@ -29,6 +39,13 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
 )
 from tldw_chatbook.Notes.notes_sync_models import validate_notes_sync_opaque_id
 from tldw_chatbook.Utils.Utils import elide_path_middle
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    bounded_row_name,
+    group_heading,
+    review_row_line,
+    run_disclosure,
+    uniform_runs,
+)
 
 
 _CHOICE_SLUGS = {
@@ -241,6 +258,27 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
 
     def on_mount(self) -> None:
         self.call_after_refresh(self._schedule_conflict_focus_request)
+        self.call_after_refresh(self.sync_fold_hint)
+
+    def on_resize(self, _event: object) -> None:
+        """A viewport change can (un)cover the fold -- re-derive the hint."""
+        self.sync_fold_hint()
+
+    def sync_fold_hint(self) -> None:
+        """Show the fold indicator only while the body actually overflows.
+
+        (task-32610) Mirrors ``LibraryIngestCanvas.sync_fold_hint`` (task-3304,
+        MI-08): sizes are read from the laid-out scroll body, so this is a
+        no-op until first layout. The old heuristic named "configure" as
+        always-overflowing regardless of terminal height, printing the hint
+        above 21 blank rows on a tall pane.
+        """
+        try:
+            body = self.query_one("#notes-sync-body")
+            hint = self.query_one("#notes-sync-fold-hint", Static)
+        except NoMatches:
+            return
+        hint.display = body.virtual_size.height > body.container_size.height
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -260,42 +298,79 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         )
         with VerticalScroll(id="notes-sync-body"):
             yield from self._compose_phase()
-        if self._expects_body_overflow():
-            yield Static(
-                "Additional setup content is scrollable."
-                if self.snapshot.phase == "configure"
-                else "Additional reviewed effects are scrollable.",
-                id="notes-sync-fold-hint",
+        if self.snapshot.phase in {"review", "receipt"} and self._root_id():
+            # task-32549: "○ Resolution history" said that history was off
+            # and nothing about why -- the reason was on a tooltip, which
+            # does not render in a TUI. The shared `.library-disabled-reason`
+            # line, above the pinned bar rather than inside the label: that
+            # bar is a single `max-height: 3` row of actions, and the
+            # sentence is 33 cells wider than the label it would have to fit
+            # in a 50-column work pane at 60x24. Same treatment "○ Server
+            # notes" has carried in this canvas since task-32257.
+            #
+            # task-32610: always mounted (never conditionally composed) once
+            # a root exists, display-managed by ``_sync_history_reason`` --
+            # the in-place review update (below) recomputes it on
+            # activation instead of leaving the compose-time text stuck.
+            history_reason_static = Static(
+                self._history_disabled_reason(),
+                id="notes-sync-history-disabled-reason",
                 classes="library-disabled-reason",
                 markup=False,
             )
+            history_reason_static.display = bool(self._history_disabled_reason())
+            yield history_reason_static
+        # (task-32610) Fold indicator, task-3304/MI-08 convention: always
+        # mounted, display-managed by ``sync_fold_hint`` from the laid-out
+        # scroll body's real overflow -- never conditionally composed from a
+        # phase heuristic, which used to print the hint above 21 blank rows
+        # in "configure" regardless of whether the body actually overflowed.
+        fold_hint = Static(
+            "More below — scroll.",
+            id="notes-sync-fold-hint",
+            classes="library-disabled-reason",
+            markup=False,
+        )
+        fold_hint.display = False
+        yield fold_hint
         with Horizontal(id="notes-sync-pinned-actions", classes="ds-toolbar"):
             yield from self._compose_pinned_actions()
 
-    def _expects_body_overflow(self) -> bool:
-        """Name scrollability only for phases whose bounded body can overflow."""
+    def _history_disabled_reason(self) -> str:
+        """Why the Resolution history opener is blocked, for the screen.
 
-        if self.snapshot.phase == "configure":
-            return True
-        if self.snapshot.phase != "review":
-            return False
-        review = self.snapshot.review
-        return (
-            review.page_count > 1
-            or len(review.rows) > 1
-            or any(row.choices for row in review.rows)
+        Returns:
+            The reason sentence, or ``""`` while the opener is absent or
+            reachable.
+        """
+        if self.snapshot.phase not in {"review", "receipt"} or not self._root_id():
+            return ""
+        if self.snapshot.review.source in {"root", "migration"}:
+            return ""
+        return library_disabled_reason_line(
+            "Resolution history", "it starts after this root is activated"
         )
 
     def _compose_phase(self) -> ComposeResult:
         phase = self.snapshot.phase
         if phase == "choose":
+            # task-32612 AC#1: this used to open with a THIRD header line --
+            # "Choose the relationship before selecting a file or folder." --
+            # under the pane's own "Add files to Library notes." and the
+            # status line's "Choose how files should relate…": three
+            # near-identical sentences over two buttons. The heading above
+            # asks the question once; each option answers it.
+            #
+            # AC#2: the structural consequence is the largest difference
+            # between the two and neither sentence named it -- Import once
+            # reproduced the vault's tree (A cap 23) while lasting sync put
+            # all 54 notes flat under one managed folder (A cap 51). When
+            # task-32586 gives lasting sync its own folder-creation path,
+            # the second sentence here is what has to change with it.
             yield Static(
-                "Choose the relationship before selecting a file or folder.",
-                classes="destination-purpose",
-                markup=False,
-            )
-            yield Static(
-                "Import once — Copy files into Notes. Later changes to the originals are not tracked.",
+                "Import once — Copy files into Notes, reproducing your folder "
+                "structure as Library folders. Later changes to the originals "
+                "are not tracked.",
                 markup=False,
             )
             # task-32125: both relationships are one choice, so both buttons
@@ -308,7 +383,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 compact=True,
             )
             yield Static(
-                "Keep a folder synced — Create a lasting connection. Changes continue between the folder and Notes.",
+                "Keep a folder synced — Create a lasting connection. Changes "
+                "continue between the folder and Notes, and every note is "
+                "collected in one managed Library folder rather than your "
+                "folder structure.",
                 markup=False,
             )
             lasting = self.snapshot.lasting_available
@@ -323,15 +401,29 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             keep.tooltip = (
                 None
                 if lasting
-                else "Unavailable until the reviewed lasting-sync cutover."
+                else "Keeping a folder synced isn't ready on this profile yet."
             )
             yield keep
             if not lasting:
                 yield Static(
-                    "Unavailable until the reviewed lasting-sync cutover. Nearest valid action: Import once.",
+                    "Keeping a folder synced isn't ready on this profile yet. "
+                    "Nearest valid action: Import once.",
                     classes="library-disabled-reason",
                     markup=False,
                 )
+            # task-32612 AC#3: the third world is not on this canvas at all,
+            # and it is the one that matches "edit my vault where it is" --
+            # the reason a vault owner opened this screen. It is a MODE of
+            # Notes, reachable from the source strip directly above the
+            # canvas, so the chooser points at it rather than offering it.
+            yield Static(
+                "Neither? To edit the files where they already are, switch "
+                "the strip above to Folder files — it opens the folder "
+                "directly and imports nothing.",
+                id="notes-add-folder-files-pointer",
+                classes="destination-purpose",
+                markup=False,
+            )
             return
         if phase == "configure":
             setup = self.snapshot.setup
@@ -365,6 +457,23 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
+            # task-32535: offered only for a real vault, exactly as Import
+            # once offers it -- and saying the same thing, because the two
+            # paths now run the same pass over the same folder.
+            if setup.obsidian_vault:
+                yield Checkbox(
+                    "Obsidian vault",
+                    value=setup.obsidian_mode,
+                    id="notes-sync-obsidian",
+                )
+                yield Static(
+                    "Skips .obsidian/, .trash/ and Templates/, and empty files. "
+                    "Note properties become the title and keywords and stay in "
+                    "the note. Turning it off lasts until you quit Chatbook — "
+                    "the next start offers a vault this choice again, switched on.",
+                    classes="destination-purpose",
+                    markup=False,
+                )
             yield Static("Notes destination", markup=False)
             with Horizontal(classes="ds-toolbar"):
                 yield Button(
@@ -423,8 +532,20 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 yield from self._compose_receipts()
             yield Static(
                 f"{review.safe_count} safe · {review.attention_count} need attention · "
-                f"{review.skip_count} skipped · {review.managed_count} managed placements",
+                f"{review.skip_count} skipped · {review.managed_count} folder moves",
                 id="notes-sync-review-summary",
+                markup=False,
+            )
+            # task-32621 AC#3: this pass reads .md/.markdown/.txt only
+            # (``notes_sync_runtime._SYNC_FILE_EXTENSIONS``) and says nothing
+            # about the rest, so "0 need attention" covered a vault whose
+            # .csv and .yaml sources Import once at least reports under
+            # Failed and Skipped. Neither path has to change what it DOES --
+            # each now says which it does.
+            yield Static(
+                "Syncs .md, .markdown and .txt only; other files are left alone.",
+                id="notes-sync-review-scope",
+                classes="library-disabled-reason",
                 markup=False,
             )
             if review.stale:
@@ -433,18 +554,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     classes="library-disabled-reason",
                     markup=False,
                 )
-            for index, row in enumerate(review.rows):
-                with Vertical(
-                    id=f"notes-sync-review-row-{index}",
-                    classes="library-notes-sync-review-row",
-                ):
-                    yield Static(
-                        f"{row.category.title()} item {index + 1}",
-                        classes="destination-section",
-                        markup=False,
-                    )
-                    yield Static(row.effect, markup=False)
-                    yield from self._compose_review_row_body(index, row)
+            yield from self._compose_review_rows(review)
             if review.page_count > 1:
                 yield Static(
                     f"Page {review.page} of {review.page_count}",
@@ -485,6 +595,107 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         if phase == "history":
             yield from self._compose_history()
 
+    # task-32535: the review used to read "Safe item N / Create a Library
+    # note" sixty times over. Rows now follow Import once's grammar (path ·
+    # what happens · where), sit under a heading per effect with its count,
+    # and a uniform run collapses to one summary row with a disclosure.
+    def _compose_review_rows(self, review: LastingSyncReview) -> ComposeResult:
+        groups: dict[tuple[str, str], list[tuple[int, LastingSyncReviewRow]]] = {}
+        for index, row in enumerate(review.rows):
+            groups.setdefault(review_group_key(row), []).append((index, row))
+        # `review.rows` is ONE page: counting the heading off it renders
+        # "Create a Library note (100)" under a "240 safe" counts line on a
+        # 240-file vault. `group_totals` is counted over every page, and
+        # `group_heading` says "N of M on this page" when they differ.
+        totals = {
+            (category, effect): total
+            for category, effect, total in review.group_totals
+        }
+        for (category, effect), members in groups.items():
+            # A plan orders its actions by binding id -- a digest -- so a
+            # vault's forty-five Archive files arrive shuffled among the other
+            # folders and no run is uniform. Path order both collapses them
+            # and is the order the user reads a folder in.
+            members.sort(key=lambda member: (member[1].relative_path, member[0]))
+            yield Static(
+                group_heading(
+                    "Skipped" if category == "skipped" else effect,
+                    rendered=len(members),
+                    total=totals.get((category, effect), len(members)),
+                ),
+                classes="notes-sync-review-group-heading destination-section",
+                markup=False,
+            )
+            for run in uniform_runs(tuple(members), key=self._run_key):
+                # task-32625 AC#3, fix round 1: this branch briefly collapsed
+                # EVERY skipped run to one folder line whatever its length,
+                # which did not close the granularity disagreement -- it
+                # inverted it under eight files, where Import once still names
+                # them (review F1, proven by composing both canvases from the
+                # same four-file `.trash` fixture). Both paths use one rule
+                # now: same `UNIFORM_RUN_MIN`, same folder-keyed run, so a
+                # skip reads the same way on both screens at every length.
+                if len(run) < UNIFORM_RUN_MIN or category not in {"safe", "skipped"}:
+                    for index, row in run:
+                        yield from self._compose_review_row(index, row)
+                    continue
+                with run_disclosure(
+                    self._run_summary(run),
+                    dom_token=str(run[0][0]),
+                    id_prefix="notes-sync-run",
+                    classes="notes-sync-run",
+                ):
+                    for index, row in run:
+                        yield from self._compose_review_row(index, row)
+
+    @staticmethod
+    def _run_key(member: tuple[int, LastingSyncReviewRow]) -> tuple[str, ...]:
+        _, row = member
+        return (
+            PurePosixPath(row.relative_path).parent.as_posix(),
+            row.category,
+            row.effect,
+            row.destination,
+        )
+
+    @staticmethod
+    def _run_summary(run: tuple[tuple[int, LastingSyncReviewRow], ...]) -> str:
+        _, first = run[0]
+        folder = PurePosixPath(first.relative_path).parent.as_posix()
+        where = bounded_row_name(folder) if folder != "." else "top level"
+        count = f"{len(run)} file" if len(run) == 1 else f"{len(run)} files"
+        return review_row_line(where, count, first.effect, first.destination)
+
+    @staticmethod
+    def _review_row_line(row: LastingSyncReviewRow) -> str:
+        path = row.relative_path or row.conflict_relative_path
+        return review_row_line(
+            bounded_row_name(path) if path else "",
+            row.effect,
+            row.destination,
+        )
+
+    def _compose_review_row(
+        self, index: int, row: LastingSyncReviewRow
+    ) -> ComposeResult:
+        # task-32625 AC#2: the row's `margin: 0 0 1 0` separates its LINE
+        # from the body under it. A safe row has no body. The scoped plain
+        # class stays in the Library split beside the base row, so its more
+        # specific token rule wins without an inline visual assignment.
+        plain = not (row.conflict_eligible or row.choices)
+        review_row = Vertical(
+            id=f"notes-sync-review-row-{index}",
+            classes="library-notes-sync-review-row"
+            + (" -plain library-notes-sync-review-plain" if plain else ""),
+        )
+        with review_row:
+            yield Static(
+                self._review_row_line(row),
+                classes="notes-sync-review-line",
+                markup=False,
+            )
+            yield from self._compose_review_row_body(index, row)
+
     def _compose_review_row_body(
         self, index: int, row: LastingSyncReviewRow
     ) -> ComposeResult:
@@ -502,12 +713,6 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 classes="notes-sync-conflict-title",
                 markup=False,
             )
-            yield Static(
-                row.conflict_relative_path,
-                id=f"notes-sync-conflict-path-{index}",
-                classes="notes-sync-conflict-path",
-                markup=False,
-            )
             yield ReviewActionButton(
                 "View comparison",
                 review_root_id=self.snapshot.review.root_id,
@@ -521,7 +726,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             id=f"notes-sync-conflict-choices-{index}",
             classes="library-notes-sync-conflict-choices",
         )
-        choices_panel.display = not expanded
+        # task-32625 AC#2: this panel is empty for every safe row, and its
+        # `min-height: 1` still charged the page a row for it -- one of the
+        # three a one-line safe row cost (A cap 49). Shown only when it has
+        # something in it.
+        choices_panel.display = not expanded and (
+            row.conflict_eligible or bool(row.choices)
+        )
         with choices_panel:
             if row.conflict_eligible:
                 yield Static(
@@ -652,7 +863,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     def _compose_receipts(self) -> ComposeResult:
         if self.snapshot.receipts_unavailable:
             yield Static(
-                "At-action receipts are unavailable. Open Resolution history.",
+                "Per-change receipts aren't available here. Open Resolution history.",
                 classes="library-disabled-reason",
                 markup=False,
             )
@@ -814,7 +1025,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         phase = self.snapshot.phase
         if phase == "choose":
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -830,7 +1041,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 tooltip=setup.validation_message or None,
             )
             yield Button(
-                "Back",
+                # task-32624: was a bare "Back" -- the one spelling left
+                # unconverted when task-32553 unified every other back
+                # control on this canvas (and the app) to back_cue_label().
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -884,10 +1098,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     "migration",
                 }
                 yield ReviewActionButton(
-                    (
-                        "Resolution history"
-                        if history_reachable
-                        else "○ Resolution history"
+                    library_disabled_action_label(
+                        "Resolution history", not history_reachable
                     ),
                     review_root_id=root_id,
                     review_observation_token=self.snapshot.review.observation_token,
@@ -903,7 +1115,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     ),
                 )
             yield Button(
-                "Back",
+                # task-32624: was a bare "Back" -- the one spelling left
+                # unconverted when task-32553 unified every other back
+                # control on this canvas (and the app) to back_cue_label().
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -916,10 +1131,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     "migration",
                 }
                 yield ReviewActionButton(
-                    (
-                        "Resolution history"
-                        if history_reachable
-                        else "○ Resolution history"
+                    library_disabled_action_label(
+                        "Resolution history", not history_reachable
                     ),
                     review_root_id=root_id,
                     review_observation_token=self.snapshot.review.observation_token,
@@ -935,7 +1148,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     ),
                 )
             yield Button(
-                "Back to Notes",
+                back_cue_label("Notes"),
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -974,7 +1187,16 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         previous_phase = self.snapshot.phase
         previous_snapshot = self.snapshot
         self.snapshot = snapshot
-        if previous_phase == snapshot.phase == "configure":
+        if (
+            previous_phase == snapshot.phase == "configure"
+            # task-32535: this fast path patches the form's fields in place so
+            # a snapshot cannot eat what the user is typing. It can only do
+            # that while the form's SHAPE is unchanged -- the Obsidian row
+            # exists for a vault and not for a plain folder, so a pick that
+            # flips that answer has to rebuild.
+            and previous_snapshot.setup.obsidian_vault
+            == snapshot.setup.obsidian_vault
+        ):
             status = self.query("#notes-sync-status")
             if status:
                 status.first(Static).update(snapshot.status_line)
@@ -1011,6 +1233,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     controls.first(Button).label = (
                         f"✓ {label}" if snapshot.setup.direction == value else label
                     )
+            self.call_after_refresh(self.sync_fold_hint)
             return
         if (
             previous_phase == snapshot.phase == "review"
@@ -1042,7 +1265,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             review = snapshot.review
             summary.first(Static).update(
                 f"{review.safe_count} safe · {review.attention_count} need attention · "
-                f"{review.skip_count} skipped · {review.managed_count} managed placements"
+                f"{review.skip_count} skipped · {review.managed_count} folder moves"
             )
         apply = self.query("#notes-sync-apply")
         if apply:
@@ -1062,6 +1285,22 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 if history_reachable
                 else "Resolution history starts after this root is activated."
             )
+        # task-32610: the in-place review update above already recomputed
+        # the button's own label/tooltip -- it never touched the visible
+        # `.library-disabled-reason` line, which then stuck on its
+        # pre-activation text (a disabled control with a stale reason on
+        # screen). This fast path only runs when root_id is unchanged
+        # from the previous snapshot (the guard above in sync_state), so
+        # the Static was already composed at whatever full recompose
+        # first gave this root a non-empty root_id; it is never absent
+        # here.
+        reason_line = self.query("#notes-sync-history-disabled-reason")
+        if reason_line:
+            reason_widget = reason_line.first(Static)
+            new_reason = self._history_disabled_reason()
+            reason_widget.update(new_reason)
+            reason_widget.display = bool(new_reason)
+        self.call_after_refresh(self.sync_fold_hint)
 
         comparison = snapshot.comparison
         for index, row in enumerate(snapshot.review.rows):
@@ -1245,6 +1484,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         field = fields.get(event.input.id or "")
         if field:
             self.post_message(self.SetupChanged(field, event.value))
+
+    @on(Checkbox.Changed)
+    def _obsidian_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "notes-sync-obsidian":
+            self.post_message(
+                self.SetupChanged("obsidian_mode", "on" if event.value else "off")
+            )
 
     @on(Button.Pressed)
     def _button_pressed(self, event: Button.Pressed) -> None:

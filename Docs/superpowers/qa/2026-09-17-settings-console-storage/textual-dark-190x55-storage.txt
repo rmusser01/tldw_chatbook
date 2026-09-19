@@ -1,0 +1,55 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Storage
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes apply on next launch; active handles stay unchanged.                  │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │                                                                                                             │  │  │                                   │
+│  category search             │  │  │  Storage                                                                                                    │  │  │ Selected category: Storage        │
+│                              │  │  │  Backup & Restore                                                                                           │  │  │ No unsaved changes                │
+│  Core                        │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Guided edits: change a Storage   │
+│     Overview (view)          │  │  │ │                                                                                                        │  │  │  │  default first.                   │
+│     Providers & Models       │  │  │ │  Storage defaults                                                                                      │  │  │  │  Save (s) — no changes            │
+│     Web Search               │  │  │ │  Scope: persisted local database path defaults                                                         │  │  │  │  Revert (r) — no changes          │
+│     Speech & TTS             │  │  │ │  Activation: Changes apply on next launch; active database handles keep current paths                  │  │  │  │ Local-only: saves write your      │
+│  Interface                   │  │  │ │  Safety: Save writes config only; no files are moved or reconnected                                    │  │  │  │ config file.                      │
+│     Appearance               │  │  │ │  Config path: /private/tmp/tldw-32761-native-004/config.toml                                           │  │  │  │  Focused setting: Workspaces DB   │
+│     Theme                    │  │  │ │                                                                                                        │  │  │  │                                   │
+│     Splash Screen            │  │  │ │  Draft path check                                                                                      │  │  │  │  Purpose: Path to the local       │
+│     Console Behavior         │  │  │ │  Check mode: non-mutating; reports parent readiness for the current config runtime                     │  │  │  │  Workspaces DB file used after    │
+│  Data & Privacy              │  │  │ │  Check Storage                                                                                         │  │  │  │  restart.                         │
+│   > Storage                  │  │  │ │  Storage check: complete                                                                               │  │  │  │                                 ▆ │
+│     Workspaces               │  │  │ │  Storage defaults are valid. Changes apply on next app launch.                                         │  │  │  │  Saved as: database.              │
+│     Tool Profiles            │  │  │ │  Base data directory: /private/tmp/tldw-32761-native-004/data/db: ready                                │  │  │  │    workspaces_db_path             │
+│     Privacy & Security       │  │  │ │  ChaChaNotes DB: /private/tmp/tldw-32761-native-004/data/db: ready                                     │  │  │  │                                   │
+│     Network                  │  │  │ │  Prompts DB: /private/tmp/tldw-32761-native-004/data/db: ready                                         │  │  │  │  Save: staged - press s to        │
+│     My Profile               │  │  │ │  Media DB: /private/tmp/tldw-32761-native-004/data/db: ready                                           │  │  │  │  save, r to revert                │
+│  Troubleshooting             │  │  │ │  Research DB: /private/tmp/tldw-32761-native-004/data/db: ready                                        │  │  │  │                                   │
+│     Diagnostics (view)       │  │  │ │  Writing DB: /private/tmp/tldw-32761-native-004/data/db: ready                                         │  │  │  │  Validation: must be a safe       │
+│     About (view)             │  │  │ │  Library Collections DB: /private/tmp/tldw-32761-native-004/data/db: ready                             │  │  │  │  path; database paths must end    │
+│     Agents                   │  │  │ │  Workspaces DB: /private/tmp/tldw-32761-native-004/next-launch-textual-dark-190x55: missing, create    │  │  │  │  in .db, .sqlite, or .sqlite3     │
+│  Expert                      │  │  │ │  before restart                                                                                        │  │  │  │                                   │
+│     Internal Prompts         │  │  │ │  Storage safety: no files were created, moved, or reconnected.                                         │  │  │  │ Boundary                          │
+│     Advanced Config          │  │  │ │  Storage defaults saved. Restart Chatbook to use saved paths.                                          │  │  │  │  Restart required: saved paths    │
+│   Domain Defaults ▸ (11)     │  │  │ │                                                                                                        │  │  │  │  are picked up on next launch;    │
+│                              │  │  │ │  Database paths (configured)                                                                           │  │  │  │  active handles stay unchanged    │
+│                              │  │  │ │  These are the configured config.toml values. The files actually in use this session are listed under  │▁ │  │  │                                   │
+│                              │  │  │ │  Active files below and can differ when a user profile is set.                                         │  │  │  │  No migration: Settings does      │
+│                              │  │  │ │ Base data directory     │ /private/tmp/tldw-32761-native-004/data/db                                   │  │  │  │  not move files, create           │
+│                              │  │  │ │ ChaChaNotes DB          │ /private/tmp/tldw-32761-native-004/data/db/chachanotes.db                    │  │  │  │  directories, or reconnect        │
+│                              │  │  │ │ Prompts DB              │ /private/tmp/tldw-32761-native-004/data/db/prompts.db                        │  │  │  │  databases                        │
+│                              │  │  │ │ Media DB                │ /private/tmp/tldw-32761-native-004/data/db/media.db                          │  │  │  │                                   │
+│                              │  │  │ │ Research DB             │ /private/tmp/tldw-32761-native-004/data/db/research.db                       │  │  │  │  Runtime owner: Settings          │
+│                              │  │  │ │ Writing DB              │ /private/tmp/tldw-32761-native-004/data/db/writing.db                        │  │  │  │  persisted defaults; storage      │
+│                              │  │  │ │ Library Collections DB  │ /private/tmp/tldw-32761-native-004/data/db/library_collections.db            │  │  │  │  services active handles          │
+│                              │  │  │ │ Workspaces DB           █ te/tmp/tldw-32761-native-004/next-launch-textual-dark-190x55/workspaces.db   │  │  │  │                                   │
+│                              │  │  │ │                                                                                                        │  │  │  │  Writes allowed: Yes              │
+│                              │  │  │ │  Active files (resolved this session)                                                                  │  │  │  │                                   │
+│                              │  │  │ │  Config path: /private/tmp/                                                                            │  │  │  │  Recovery: Validate paths, save   │
+│                              │  │  │ │    tldw-32761-native-004/                                                                              │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | Esc, t check storage | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

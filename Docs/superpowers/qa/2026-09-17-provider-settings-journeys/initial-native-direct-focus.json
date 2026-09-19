@@ -1,0 +1,62 @@
+{
+  "pid": 73105,
+  "runner_sha256": "26c3195bc1c6573ad0ee7d0e6a61e78316d8d8a4b440ad0e571773e948bb18b2",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-1",
+      "saved_endpoint": "http://127.0.0.1:9100",
+      "saved_return_clean": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-2",
+      "saved_endpoint": "http://127.0.0.1:9101",
+      "saved_return_clean": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-3",
+      "saved_endpoint": "http://127.0.0.1:9102",
+      "saved_return_clean": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-4",
+      "saved_endpoint": "http://127.0.0.1:9103",
+      "saved_return_clean": true
+    }
+  ],
+  "waiting_for": "Providers & Models card",
+  "passed": true,
+  "endpoint_test_calls": 0,
+  "app_run_returned": true
+}

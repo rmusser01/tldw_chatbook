@@ -106,6 +106,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-124](124-canvas-mermaid-subset-and-immutable-runtime-profiles.md) | Accepted | Add an offline Mermaid syntax subset inside Canvas's existing zero-egress runtime, with immutable packaged profiles, security-first refusal and independent save/preview status. |
 | [ADR-125](125-lock-safe-private-sqlite-validation.md) | Accepted | Isolate live SQLite privacy/proof descriptors in bounded helpers while preserving private storage, WAL locks and metadata-only TTS startup. |
 | [ADR-127](127-fresh-install-private-data-root-recovery.md) | Accepted | Select durable home-level private storage for fresh installs blocked by shared default ancestors. |
+| [ADR-138](138-portable-workflow-definitions-and-local-execution.md) | Accepted; authoring slice active | Preserve portable workflow definitions and the sequential editor; file exchange assumes stable paths, and execution integration is deferred. |
 | [ADR-139](139-independent-buddy-conversation-and-workspace-bindings.md) | Accepted | Give one Buddy independent artwork ownership, explicit conversation/workspace binding, and directed interaction while retaining Console execution authority. |
 | [ADR-140](140-official-kokoro-pytorch-runtime.md) | Accepted | Use the official optional Kokoro PyTorch runtime with scoped MPS Fourier fallback and preserve existing TTS settings and lifecycle owners. |
 | [ADR-144](144-character-expression-playback.md) | Accepted | Present Dynamic or Static Console character expressions with bounded preparation and visibility-aware playback. |
@@ -122,6 +123,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-157](157-per-definition-child-wall-time-caps.md) | Migration sequencing superseded by ADR-158; policy retained | Allow definitions to tighten child time limits while preserving uncapped identity and capped continuation ceilings. |
 | [ADR-158](158-agent-runs-migration-order-after-worktree-qualification.md) | Accepted | Implement definition caps in AgentRuns18→19 independently of unresolved worktree execution; preserve cap policy and qualify recovery before its later migration. |
 | [ADR-159](159-console-native-reasoning-prefill.md) | Accepted | Keep native reasoning prefill adapter-qualified, with exclusive per-turn seed ownership, conversation-owned pins, and exact tool/recovery semantics. |
+| [ADR-164](164-rechunk-run-lifetime.md) | Accepted | Keep Re-chunk work and feedback for the app session so Library navigation cannot discard a running operation or its receipt. |
+| [ADR-167](167-tool-profile-write-lifetime.md) | Accepted | Keep admitted Tool Profile writes and bounded outcomes application-owned across Settings recreation and shutdown. |
 
 ## Historical Decision Material
 

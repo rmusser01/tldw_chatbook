@@ -1,0 +1,24 @@
+
+ ‹  ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Theme
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Managed in editor | Use the     │
+│     Storage                  │  │  │  editor's Apply/Save/Reset buttons      │
+│     Workspaces               │  │  │  below.                                 │
+│     Tool Profiles            │  │  │ │               Reset                │  │
+│     Privacy & Security       │  │  │ │       Generate from Primary        │  │
+│     Network                  │  │  │ │       Set as launch default        │  │
+│     My Profile               │  │  │ │                                    │  │
+│  Troubleshooting           ▇ │  │  │ │  Color Palette                     │▁ │
+│     Diagnostics (view)       │  │  │ │ Primary     █ #2277AA     #2277AA  │  │
+│     About (view)             │  │  │ │ Secondary   │ #0178D4     #0178D4  │▂ │
+│     Agents                   │  │  │ │ Accent      │ #FFA62B     #FFA62B  │  │
+│  Expert                      │  │  │ │ Background  │ #E0E0E0     #E0E0E0  │  │
+│     Internal Prompts         │  │  │ │ Surface     │ #D8D8D8     #D8D8D8  │  │
+│     Advanced Config          │  │  │ │ Panel       │ #D0D0D0     #D0D0D0  │  │
+│   Domain Defaults ▸ (11)     │  │  │ │ Foreground  │ #1F1F1F     #1F1F1F  │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

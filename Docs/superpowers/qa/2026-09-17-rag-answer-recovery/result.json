@@ -1,0 +1,116 @@
+{
+  "pid": 38931,
+  "runner_sha256": "3ba505804d5f664906754f806e4f256ccbdf8899f949cd8c3f453da4a8f6398f",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "exception",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "empty",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "exception",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "empty",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "exception",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "failure": "empty",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "exception",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "failure": "empty",
+      "query_scope_focus_retained": true,
+      "failure_run_disclosure_painted": true,
+      "notice_cleared_while_busy": true,
+      "cited_retry_answer": true,
+      "exact_local_evidence": true
+    }
+  ],
+  "waiting_for": "answer painted for inspection",
+  "real_keyword_searches": 16,
+  "controlled_provider_calls": 16,
+  "source_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

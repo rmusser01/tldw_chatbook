@@ -4,6 +4,7 @@
 # Imports
 import re
 import threading
+from dataclasses import dataclass
 from typing import List, Dict, Any, Union, Optional, Tuple
 
 #
@@ -358,13 +359,8 @@ MODEL_TOKEN_LIMITS = {
     "mistral-medium": 32000,
     "mistral-small": 32000,
     "mixtral-8x7b": 32000,
-    # Default for unknown models. 16k, not the historical 4k: this value is what
-    # every local provider (llama.cpp/ollama/vllm/koboldcpp) resolves to, since
-    # their GGUF/model names never match the table above. 4k was far below what
-    # modern local models actually serve -- a llama.cpp server advertising
-    # n_ctx=64000 was being budgeted at 4096 -- which trimmed conversation
-    # history almost immediately and cost characters their memory.
-    "default": 16384,
+    # Shared system fallback for models without server, model, or API metadata.
+    "default": 32000,
 }
 
 
@@ -483,47 +479,81 @@ def get_table_model_token_limit(model: str, provider: str = "openai") -> int | N
     return best_limit
 
 
-def get_model_token_limit(model: str, provider: str = "openai") -> int:
+SYSTEM_CONTEXT_WINDOW = 32000
+MAX_CONTEXT_WINDOW = 2**31 - 1
+PROVIDER_CONTEXT_WINDOWS = {
+    "anthropic": 200000,
+    "google": 30720,
+    "openai": 4096,
+    "mistral": 32000,
+    "mistralai": 32000,
+}
+
+
+def positive_window(value: object) -> int | None:
+    """Accept serving capacities, excluding bools and coerced strings.
+
+    Args:
+        value: Untrusted capacity reported by a server or model catalog.
+
+    Returns:
+        A positive bounded integer, or None for an invalid capacity.
     """
-    Get the input context-window token limit for a specific model.
+    return value if type(value) is int and 0 < value <= MAX_CONTEXT_WINDOW else None
 
-    Resolves in priority order: the per-model capability `context_window`
-    (config-overridable), an exact table entry, the longest matching table
-    prefix, then a conservative provider default. Fallbacks lean conservative
-    on purpose: under-estimating the window degrades gracefully (more trimming),
-    while over-estimating is the only way to overflow the model on dispatch.
+
+@dataclass(frozen=True, slots=True)
+class ContextWindowResolution:
+    """A total token window and the evidence supporting it."""
+
+    tokens: int
+    source: str
+    verified: bool
+
+
+def resolve_context_window(
+    provider: str, model: str, *, server_tokens: object = None
+) -> ContextWindowResolution:
+    """Resolve server, model/API default, then the estimated system default.
+
+    Args:
+        provider: Provider or API family used for the fallback catalog.
+        model: Selected model identifier.
+        server_tokens: Optional serving capacity obtained from metadata.
+
+    Returns:
+        The selected capacity with its source and verification status.
     """
-    provider_key = _norm_provider(provider)
+    server = positive_window(server_tokens)
+    if server is not None:
+        return ContextWindowResolution(server, "server metadata", True)
+    from tldw_chatbook.model_capabilities import get_model_capabilities
 
-    # OpenRouter IDs carry the upstream provider. Re-dispatch the full
-    # resolution chain so an upstream provider fallback remains available.
-    if provider_key == "openrouter" and "/" in model:
-        upstream_provider, upstream_model = model.split("/", 1)
-        return get_model_token_limit(upstream_model, upstream_provider)
-
-    # 1. Per-model capability context window (authoritative, config-overridable).
+    provider = provider.lower().strip()
     try:
-        from tldw_chatbook.model_capabilities import get_context_window
+        window = positive_window(
+            get_model_capabilities()
+            .get_model_capabilities(provider, model)
+            .get("context_window")
+        )
+    except Exception:  # noqa: BLE001 -- optional catalog must not block request capacity
+        window = None
+    if window is None:
+        window = positive_window(get_table_model_token_limit(model, provider))
+    if window is not None:
+        return ContextWindowResolution(window, "model catalog", True)
+    if provider == "openrouter" and "/" in model:
+        upstream, upstream_model = model.split("/", 1)
+        return resolve_context_window(upstream, upstream_model)
+    window = PROVIDER_CONTEXT_WINDOWS.get(provider)
+    if window is not None:
+        return ContextWindowResolution(window, "provider fallback", False)
+    return ContextWindowResolution(SYSTEM_CONTEXT_WINDOW, "application fallback", False)
 
-        window = get_context_window(provider, model)
-        if window is not None:
-            return window
-    except Exception as e:  # never let capability resolution break token limits
-        logger.debug(f"context_window lookup failed for {provider}/{model}: {e}")
 
-    # 2-3. Exact or longest-prefix table match.
-    table_limit = get_table_model_token_limit(model, provider)
-    if table_limit is not None:
-        return table_limit
-
-    # 4. Conservative provider default.
-    provider_defaults = {
-        "anthropic": 200000,  # every modern Claude is >= 200k; safe floor
-        "google": 30720,
-        "openai": 4096,
-        "mistral": 32000,
-    }
-    return provider_defaults.get(provider_key, MODEL_TOKEN_LIMITS["default"])
+def get_model_token_limit(model: str, provider: str = "openai") -> int:
+    """Return the shared model/API default, or the 32,000-token system default."""
+    return resolve_context_window(_norm_provider(provider), model).tokens
 
 
 def estimate_remaining_tokens(

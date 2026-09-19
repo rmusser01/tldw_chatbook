@@ -1,0 +1,12 @@
+Tests/UI/test_mcp_workbench.py: Ruff 4 inherited / 4 current / 0 new diagnostics
+tldw_chatbook/MCP/local_server_tools.py: Ruff 9 inherited / 9 current / 0 new diagnostics
+tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py: Ruff 0 inherited / 0 current / 0 new diagnostics
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py: Ruff 68 inherited / 66 current / 0 new diagnostics
+tldw_chatbook/app.py: Ruff 491 inherited / 491 current / 0 new diagnostics
+tldw_chatbook/config.py: Ruff 165 inherited / 165 current / 0 new diagnostics
+tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py: changed methods formatted; unrelated inherited formatter debt untouched
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py: changed methods formatted; unrelated inherited formatter debt untouched
+New files: Ruff clean and formatter clean.
+No duplicate task IDs across 4142 task files in backlog/tasks, backlog/completed, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+no drift: the committed inventory matches the rebuild exactly.
+diagnostic inventory verified: 607 owners, 1407 TASK-492 calls, 55 TASK-31551 calls, 7762 TASK-494 calls, 14 sink files

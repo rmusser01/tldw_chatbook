@@ -38,6 +38,7 @@ from unittest.mock import MagicMock
 import pytest
 from textual.css.query import QueryError
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
@@ -310,8 +311,11 @@ def test_raw_cli_worker_adapter_uses_its_own_group() -> None:
     )
 
 
-def test_review_selection_controller_is_late_bound_without_sibling_objects(
+@pytest.mark.asyncio
+@private_profile_test
+async def test_review_selection_controller_is_late_bound_without_sibling_objects(
     monkeypatch,
+    request,
 ) -> None:
     screen = _unmounted_console()
     controller = screen._review_selection
@@ -345,8 +349,10 @@ def test_review_selection_controller_is_late_bound_without_sibling_objects(
         change_review_provider=lambda value: (provider, value),
     )
     screen._console_runtime = lambda: SimpleNamespace(chat_controller=chat_controller)
+    from tldw_chatbook.UI.Console_Modules import capture_policy_bindings
+
     monkeypatch.setattr(
-        wiring_module,
+        capture_policy_bindings,
         "build_capture_policy_bindings",
         lambda controller, session_id, conv_id: (
             bindings,

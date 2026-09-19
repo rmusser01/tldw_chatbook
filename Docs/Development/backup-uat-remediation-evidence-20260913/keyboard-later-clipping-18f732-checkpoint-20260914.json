@@ -1,0 +1,17 @@
+{
+  "revision": "18f7321c0a19e88828e39199c84d24c92f04903b",
+  "verified_installed_files": 5349,
+  "mismatches": [],
+  "current_phase": "later credential review after untouched Abort",
+  "forward_operation": "74881582eb654f40ab27eef83b4e2c2e",
+  "later_aborted_operation": "2c96468a2d5a45c28a6a1edef986532e",
+  "visible_omissions_selected": 3,
+  "fourth_not_acknowledged": true,
+  "blocker": "fourth omission clipped, Down and PageDown do not reveal it",
+  "frames": [
+    "later18-028-after.txt",
+    "later18-030-after.txt",
+    "later18-ack-04-focus-after.ansi",
+    "later18-ack-04-page-after.ansi"
+  ]
+}

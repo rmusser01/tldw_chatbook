@@ -1,0 +1,27 @@
+{
+  "base": "0f69e0ba96",
+  "files": [
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "base_lines": 35210,
+      "current_lines": 35210,
+      "current_methods": 1320,
+      "unchanged_from_base": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+      "base_lines": 1684,
+      "current_lines": 1687
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py",
+      "base_lines": 699,
+      "current_lines": 699
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py",
+      "base_lines": null,
+      "current_lines": 49
+    }
+  ]
+}

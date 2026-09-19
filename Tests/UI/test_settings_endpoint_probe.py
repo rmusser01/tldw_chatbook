@@ -1043,7 +1043,7 @@ async def test_tts_catalog_probe_also_requests_identity_encoding() -> None:
         return httpx.Response(200, json={"data": [{"id": "tts-1"}]})
 
     outcome = await probe_settings_endpoint(
-        "https://api.openai.com/v1",
+        "http://127.0.0.1:8765/v1",
         provider="openai",
         purpose="tts_catalog",
         http_client=_client(handler),
@@ -1051,3 +1051,90 @@ async def test_tts_catalog_probe_also_requests_identity_encoding() -> None:
 
     assert seen == ["identity"]
     assert outcome.state is not SpeechTTSConnectionState.UNREACHABLE
+
+
+@pytest.mark.asyncio
+async def test_entry_credential_authenticates_models_and_ollama_fallback():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path == "/v1/models":
+            return httpx.Response(404)
+        assert request.url.path == "/api/tags"
+        if request.headers.get("Authorization") != "Bearer fixture-entry-key":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"models": [{"name": "fixture-model"}]})
+
+    async with _client(handler) as client:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:12345",
+            provider="ollama",
+            api_key="fixture-entry-key",
+            http_client=client,
+        )
+    assert outcome.state == "reachable"
+    assert outcome.model_ids == ("fixture-model",)
+    assert len(requests) == 2
+    assert all(
+        request.headers["Authorization"] == "Bearer fixture-entry-key"
+        for request in requests
+    )
+    assert "fixture-entry-key" not in repr(outcome)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credential", ["environment", "stored", "none"])
+async def test_console_entry_probe_uses_only_selected_entry_credentials(
+    monkeypatch, credential
+):
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    expected_key = {
+        "environment": "fixture-env-key",
+        "stored": "fixture-stored-key",
+        "none": None,
+    }[credential]
+    monkeypatch.setenv("ENTRY_TEST_SECRET", "fixture-env-key")
+    config = {
+        "api_settings": {"llama_cpp": {"api_key": "wrong-family-key"}},
+        "custom_endpoints": {
+            "entry": {
+                "display_name": "Entry",
+                "family": "llama_cpp",
+                "base_url": "http://127.0.0.1:9099",
+                "api_key_env": "ENTRY_TEST_SECRET"
+                if credential == "environment"
+                else None,
+                "api_key": "fixture-stored-key" if credential != "none" else None,
+            }
+        },
+    }
+    identity = ProviderDraftIdentity(
+        "llama_cpp",
+        ("llama_cpp", "http://127.0.0.1:9099"),
+        credential,
+        1,
+        1,
+        custom_endpoint_id="custom-ep:entry",
+    )
+    original_probe = probe_settings_endpoint
+
+    def handler(request):
+        assert request.url == "http://127.0.0.1:9099/v1/models"
+        expected_auth = f"Bearer {expected_key}" if expected_key else None
+        if request.headers.get("Authorization") != expected_auth:
+            return httpx.Response(401)
+        return httpx.Response(200, json={"data": [{"id": "entry-model"}]})
+
+    async with _client(handler) as client:
+
+        async def probe(*args, **kwargs):
+            return await original_probe(*args, http_client=client, **kwargs)
+
+        monkeypatch.setattr(settings_probe_module, "probe_settings_endpoint", probe)
+        outcome = await ChatScreen._test_console_connection(identity, app_config=config)
+    assert outcome.endpoint == "reachable"
+    assert outcome.model_ids == ("entry-model",)
+    assert "fixture-" not in repr(outcome)

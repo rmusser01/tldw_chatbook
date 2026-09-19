@@ -1,0 +1,7 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+1.53s call     Tests/UI/test_mcp_workbench.py::test_space_cycle_propagates_fresh_states_to_tools_mode_without_full_resync
+1.10s call     Tests/UI/test_mcp_workbench.py::test_reallow_propagates_fresh_states_to_tools_mode_without_full_resync
+
+(22 durations < 1s hidden.)
+8 passed, 342 deselected in 7.93s

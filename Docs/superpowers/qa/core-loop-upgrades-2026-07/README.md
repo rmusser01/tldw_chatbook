@@ -32,7 +32,10 @@ local 8080→9099 TCP forward so default-port detection is exercised honestly.
 ## Residuals / follow-ups
 - Settings "Provider source: Current app selection" still reflects the boot reactive after the
   one-click Console connect (Console runs llama.cpp; Settings displays OpenAI until reselected) —
-  same boot-echo family as task-177, Settings-side. Follow-up candidate.
+  same boot-echo family as task-177, Settings-side. Follow-up TASK-214.
+  **2026-09-17 update:** TASK-648 had already removed the boot selection owner;
+  TASK-214 closes the remaining retained-form refresh and sparse-draft ownership
+  defects. See [current verification](../2026-09-17-settings-saved-provider/README.md).
 - The Console "Generating…" placeholder is covered by a transcript unit test but was not visible
   in served captures during the reasoning phase — verify the live render path.
 - `console_model_popover` still renders raw provider keys (minor; modal + Settings share the

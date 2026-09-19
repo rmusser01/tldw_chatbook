@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Splash Screen
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Auto-saved | Splash changes     │
+│     Storage                  │  │  │  take effect as you make them.          │
+│     Workspaces               │  │  │ │ ┌────────────────────────────────┐ │  │
+│     Tool Profiles            │  │  │ │ │                                │ │  │
+│     Privacy & Security       │  │  │ │ │                                │ │  │
+│     Network                  │  │  │ │ │                                │ │  │
+│     My Profile               │  │  │ │ │                                │ │  │
+│  Troubleshooting           ▇ │  │  │ │ │                                │ │  │
+│     Diagnostics (view)       │  │  │ │ │                                │ │  │
+│     About (view)             │  │  │ │ │                █               │ │  │
+│     Agents                   │  │  │ │ │                                │ │▆ │
+│  Expert                      │  │  │ │ │                                │ │  │
+│     Internal Prompts         │  │  │ │ │                                │ │  │
+│     Advanced Config          │  │  │ │ └────────────────────────────────┘ │  │
+│   Domain Defaults ▸ (11)     │  │  │ │  Play selected                     │▇ │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

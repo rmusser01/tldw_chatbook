@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 from textual.app import ComposeResult
+from textual.widgets import Button, DataTable, Input, Select, Static
+
+import tldw_chatbook
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, DataTable, Input, Select, Static
-
-import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
@@ -188,9 +188,7 @@ async def test_local_tools_master_switch_renders_full_label_untruncated(width):
         # Scoped to the toggle's own row -- narrower widths legitimately
         # ellipsize OTHER controls (e.g. a server label in the filter
         # Select), so only the toggle's own row is asserted clean.
-        toggle_row = "".join(
-            segment.text for segment in strips[toggle.region.y]
-        )
+        toggle_row = "".join(segment.text for segment in strips[toggle.region.y])
         assert "…" not in toggle_row
 
 
@@ -486,14 +484,8 @@ async def test_filter_by_server_select_narrows_rows():
 
 
 @pytest.mark.asyncio
-async def test_filter_server_select_mount_does_not_spuriously_refilter():
-    """Verified Textual gotcha: mounting a Select posts a Changed event for
-    its own constructor value. The filter Select is rebuilt on every
-    `update_tools()` call (server option list can change) -- that rebuild's
-    own mount-echo must not be mistaken for a real user re-filter (which
-    here would be a no-op anyway, but this pins the guard down directly by
-    asserting the event handler's derived state stays correct across
-    several updates, not just "the app didn't crash")."""
+async def test_filter_server_refresh_preserves_all_servers_choice():
+    """Programmatic option refresh must not apply an unintended server filter."""
     app = ToolsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
@@ -615,7 +607,7 @@ async def test_server_select_options_reflect_current_catalog_and_prune_stale_fil
     """When the catalog shrinks so the currently filtered server is gone,
     the filter must reset to "All servers" instead of leaving a dangling
     filter that would (at best) show nothing or (at worst) raise trying to
-    reconstruct the Select with a value outside its new options."""
+    update the Select with a value outside its new options."""
     app = ToolsModeApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
@@ -817,8 +809,11 @@ def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert "height: auto;" in block, (
             f"{label}'s {selector!r} block is missing 'height: auto;'"
         )
-        assert "max-height: 70%;" in block, (
-            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        # ADR-161 task 11: the 70% cap is now the $ds-agentic-mcp-table-cap
+        # token (same value, probe-verified) -- pin the tokenized form.
+        assert "max-height: $ds-agentic-mcp-table-cap;" in block, (
+            f"{label}'s {selector!r} block is missing "
+            "'max-height: $ds-agentic-mcp-table-cap;'"
         )
 
 
@@ -848,8 +843,10 @@ def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() ->
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "width: 28;" in block, (
-            f"{label}'s {selector!r} block is missing 'width: 28;'"
+        # ADR-161 task 11: width 28 is now the $ds-size-28 token (same
+        # value) -- pin the tokenized form.
+        assert "width: $ds-size-28;" in block, (
+            f"{label}'s {selector!r} block is missing 'width: $ds-size-28;'"
         )
 
 
@@ -986,16 +983,20 @@ async def test_selected_server_group_sorts_first_in_the_catalog():
         await canvas.update_tools(tools)
         await pilot.pause()
         table = app.query_one("#mcp-tools-table", DataTable)
-        assert [
-            _row_texts(table, i)[0] for i in range(table.row_count)
-        ] == ["fs_read", "fs_write", "list_characters"]
+        assert [_row_texts(table, i)[0] for i in range(table.row_count)] == [
+            "fs_read",
+            "fs_write",
+            "list_characters",
+        ]
 
         await canvas.update_tools(tools, selected_server_key="builtin:tldw_chatbook")
         await pilot.pause()
         table = app.query_one("#mcp-tools-table", DataTable)
-        assert [
-            _row_texts(table, i)[0] for i in range(table.row_count)
-        ] == ["list_characters", "fs_read", "fs_write"]
+        assert [_row_texts(table, i)[0] for i in range(table.row_count)] == [
+            "list_characters",
+            "fs_read",
+            "fs_write",
+        ]
 
 
 @pytest.mark.asyncio
@@ -1095,3 +1096,371 @@ async def test_server_column_truncates_long_labels_with_ellipsis():
         short_cell = table.get_cell_at((1, 2))
         short_text = getattr(short_cell, "plain", str(short_cell))
         assert short_text == "docs"
+
+
+# TASK-32794: refresh must retain the user's live filter and keyboard owner.
+
+
+def _refresh_catalog():
+    return [
+        _tool(server_key="local:a", server_label="Alpha", name="read_a"),
+        _tool(server_key="local:b", server_label="Beta", name="read_b"),
+        _tool(server_key="local:c", server_label="Gamma", name="read_c"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_options", [False, True])
+@pytest.mark.parametrize(
+    "theme,size", [("textual-dark", (80, 24)), ("textual-light", (170, 48))]
+)
+async def test_refresh_retains_open_filter_and_uncommitted_highlight(
+    changed_options, theme, size
+):
+    from dataclasses import replace
+
+    from textual.widgets._select import SelectOverlay
+
+    app = ToolsModeBundledCSSApp()
+    app.theme = theme
+    async with app.run_test(size=size) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = _refresh_catalog()
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        select = canvas.query_one(Select)
+        select.value = "local:a"
+        select.focus()
+        await pilot.pause()
+        await pilot.press("enter", "down")
+        overlay = select.query_one(SelectOverlay)
+        assert overlay.highlighted == 2  # Beta, not yet committed.
+        assert select.value == "local:a"
+        if changed_options:
+            tools = [
+                replace(t, server_label="Aardvark") if t.server_key == "local:b" else t
+                for t in tools
+            ]
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        assert select.is_attached and select.expanded
+        assert app.focused is overlay
+        await pilot.press("enter")
+        await pilot.pause()
+        assert select.value == "local:b"
+        assert canvas.query_one(DataTable).row_count == 1
+        assert _row_texts(canvas.query_one(DataTable), 0)[0] == "read_b"
+        assert canvas.query_one("#mcp-tools-filter-text", Input).value == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("catalog_change", ["same", "remove", "rename"])
+async def test_refresh_reconciles_pending_live_choice_and_rejects_delayed_event(
+    monkeypatch, catalog_change
+):
+    from dataclasses import replace
+
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = _refresh_catalog()
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        select = canvas.query_one(Select)
+        held = []
+        handler = canvas.on_select_changed
+        post = select.post_message
+
+        def hold(message):
+            if isinstance(message, Select.Changed):
+                held.append(message)
+                return True
+            return post(message)
+
+        monkeypatch.setattr(select, "post_message", hold)
+        select.value = "local:b"
+        await pilot.pause()
+        assert len(held) == 1
+        monkeypatch.setattr(select, "post_message", post)
+        if catalog_change == "remove":
+            tools = [tools[0], tools[2]]
+        elif catalog_change == "rename":
+            tools = [
+                replace(t, server_label="Aardvark") if t.server_key == "local:b" else t
+                for t in tools
+            ]
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        current = canvas.query_one(Select)
+        want = Select.NULL if catalog_change == "remove" else "local:b"
+        assert current.value == want
+        handler(held[0])
+        await pilot.pause()
+        table = canvas.query_one(DataTable)
+        assert table.row_count == (2 if catalog_change == "remove" else 1)
+        assert canvas._filter_server_key == (
+            None if catalog_change == "remove" else "local:b"
+        )
+        # A superseded event must not undo a newer displayed choice either.
+        current.value = "local:a"
+        await pilot.pause()
+        handler(held[0])
+        assert _row_texts(table, 0)[0] == "read_a"
+        assert current.value == "local:a"
+
+
+@pytest.mark.asyncio
+async def test_filter_ignores_detached_control_with_matching_id():
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        await canvas.update_tools(_refresh_catalog())
+        await pilot.pause()
+        old = Select(
+            [("Old", "local:b")], id="mcp-tools-filter-server", value="local:b"
+        )
+        canvas.on_select_changed(Select.Changed(old, "local:b"))
+        assert canvas.query_one(DataTable).row_count == 3
+        assert canvas.query_one(Select).value is Select.NULL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transition", ["table_empty", "action_populated", "action_hidden", "other_owner"]
+)
+async def test_catalog_visibility_keeps_focus_on_a_reachable_control(transition):
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        populated = transition in {"table_empty", "other_owner"}
+        await canvas.update_tools(
+            _refresh_catalog() if populated else [],
+            empty_diagnosis=("Refresh tools.", "refresh"),
+        )
+        await pilot.pause()
+        field = canvas.query_one("#mcp-tools-filter-text", Input)
+        owner = (
+            canvas.query_one("#mcp-tools-workspace-root", Input)
+            if transition == "other_owner"
+            else canvas.query_one(DataTable)
+            if populated
+            else canvas.query_one("#mcp-tools-empty-action", Button)
+        )
+        owner.focus()
+        await pilot.pause()
+        assert app.focused is owner
+        await canvas.update_tools(
+            _refresh_catalog() if transition == "action_populated" else []
+        )
+        await pilot.pause()
+        assert app.focused is (owner if transition == "other_owner" else field)
+        focused = app.focused
+        region, clip = app.screen._compositor.visible_widgets[focused]
+        assert region.intersection(clip) == region
+        # A second refresh must not lose the replacement focus.
+        await canvas.update_tools(_refresh_catalog())
+        await pilot.pause()
+        assert app.focused is focused
+
+
+@pytest.mark.asyncio
+async def test_closed_filter_text_draft_and_row_identity_survive_refresh():
+    from dataclasses import replace
+
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = _refresh_catalog()
+        await canvas.update_tools(tools)
+        field = canvas.query_one("#mcp-tools-filter-text", Input)
+        field.value = "read"
+        await pilot.pause()
+        select = canvas.query_one(Select)
+        select.focus()
+        await pilot.pause()
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        assert app.focused is select
+        assert not select.expanded
+        table = canvas.query_one(DataTable)
+        table.focus()
+        table.move_cursor(row=1)
+        await pilot.pause()
+        await canvas.update_tools([replace(t, stale=True) for t in reversed(tools)])
+        await pilot.pause()
+        assert app.focused is table
+        assert (
+            table.coordinate_to_cell_key((table.cursor_row, 0))[0].value
+            == "local:b::read_b"
+        )
+        assert field.value == "read"
+        assert "(stale)" in _row_texts(table, table.cursor_row)[2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["option", "selection"])
+@pytest.mark.parametrize("change", ["rename", "remove"])
+async def test_menu_activation_keeps_identity_when_delivery_waits_for_refresh(
+    monkeypatch, stage, change
+):
+    from dataclasses import replace
+
+    from textual.widgets import OptionList
+    from textual.widgets._select import SelectOverlay
+
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = _refresh_catalog()
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        select = canvas.query_one(Select)
+        select.value = "local:a"
+        select.focus()
+        await pilot.pause()
+        await pilot.press("enter", "down")
+        if change == "remove":
+            await pilot.press("down")
+        overlay = select.query_one(SelectOverlay)
+        # Hold the real message queue after post_message admission. A local
+        # synchronous admission may eliminate this queued index event entirely.
+        queue = (overlay if stage == "option" else select)._message_queue
+        event_type = (
+            OptionList.OptionSelected
+            if stage == "option"
+            else SelectOverlay.UpdateSelection
+        )
+        held = []
+        put = queue.put_nowait
+
+        def delay(message):
+            if isinstance(message, event_type):
+                held.append(message)
+            else:
+                put(message)
+
+        monkeypatch.setattr(queue, "put_nowait", delay)
+        await pilot.press("enter")
+        await pilot.pause()
+        monkeypatch.setattr(queue, "put_nowait", put)
+        tools = (
+            tools[:2]
+            if change == "remove"
+            else [
+                replace(t, server_label="Aardvark") if t.server_key == "local:b" else t
+                for t in tools
+            ]
+        )
+        await canvas.update_tools(tools)
+        for message in held:
+            put(message)
+        await pilot.pause()
+        assert select.value == (Select.NULL if change == "remove" else "local:b")
+        assert canvas.query_one(DataTable).row_count == (2 if change == "remove" else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending_filter", ["server", "text"])
+async def test_explicit_tool_drill_supersedes_pending_filter_event(
+    monkeypatch, pending_filter
+):
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = _refresh_catalog()
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        control = (
+            canvas.query_one(Select)
+            if pending_filter == "server"
+            else canvas.query_one("#mcp-tools-filter-text", Input)
+        )
+        event_type = Select.Changed if pending_filter == "server" else Input.Changed
+        handler = (
+            canvas.on_select_changed
+            if pending_filter == "server"
+            else canvas.on_input_changed
+        )
+        held = []
+        post = control.post_message
+
+        def delay(message):
+            if isinstance(message, event_type):
+                held.append(message)
+                return True
+            return post(message)
+
+        monkeypatch.setattr(control, "post_message", delay)
+        control.value = "local:b" if pending_filter == "server" else "read_b"
+        await pilot.pause()
+        monkeypatch.setattr(control, "post_message", post)
+        assert len(held) == 1
+        assert await canvas.select_tool_row("local:a::read_a")
+        handler(held[0])
+        await pilot.pause()
+        table = canvas.query_one(DataTable)
+        assert (
+            table.coordinate_to_cell_key((table.cursor_row, 0))[0].value
+            == "local:a::read_a"
+        )
+        assert control.value == (Select.NULL if pending_filter == "server" else "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["same", "rename", "remove"])
+async def test_pointer_filter_choice_survives_queued_click_and_catalog_refresh(
+    monkeypatch, change
+):
+    from dataclasses import replace
+
+    from textual.events import Click
+    from textual.widgets._select import SelectOverlay
+
+    app = ToolsModeBundledCSSApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = _refresh_catalog()
+        await canvas.update_tools(tools)
+        await pilot.pause()
+        select = canvas.query_one(Select)
+        select.value = "local:a"
+        select.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        overlay = select.query_one(SelectOverlay)
+        index = 3 if change == "remove" else 2
+        region, clip = app.screen._compositor.visible_widgets[overlay]
+        painted = region.intersection(clip)
+        x, y = next(
+            (x, y)
+            for y in range(painted.y, painted.bottom)
+            for x in range(painted.x, painted.right)
+            if app.screen.get_style_at(x, y).meta.get("option") == index
+        )
+        queue = overlay._message_queue
+        held = []
+        put = queue.put_nowait
+
+        def delay(message):
+            if isinstance(message, Click):
+                held.append(message)
+            else:
+                put(message)
+
+        monkeypatch.setattr(queue, "put_nowait", delay)
+        await pilot.click(overlay, offset=(x - region.x, y - region.y))
+        await pilot.pause()
+        monkeypatch.setattr(queue, "put_nowait", put)
+        if change == "remove":
+            tools = tools[:2]
+        elif change == "rename":
+            tools = [
+                replace(t, server_label="Aardvark") if t.server_key == "local:b" else t
+                for t in tools
+            ]
+        await canvas.update_tools(tools)
+        for message in held:
+            put(message)
+        await pilot.pause()
+        assert select.value == (Select.NULL if change == "remove" else "local:b")
+        assert canvas.query_one(DataTable).row_count == (2 if change == "remove" else 1)

@@ -1,0 +1,57 @@
+{
+  "head": "dc96b849dc4f05e64843572016c63f645753b150",
+  "direct_passed": [
+    "test_workflow_is_one_read_only_exact_three_os_matrix",
+    "test_windows_failure_diagnostic_keeps_exact_read_only_commands",
+    "test_workflow_installs_only_editable_package_and_bounded_test_dependencies",
+    "test_workflow_runs_every_exact_node_once_with_only_bounded_flags",
+    "test_every_workflow_node_names_one_existing_test_function"
+  ],
+  "mutations_rejected": {
+    "wrong_baseline": [
+      "test_windows_failure_diagnostic_keeps_exact_read_only_commands"
+    ],
+    "wrong_node": [
+      "test_windows_failure_diagnostic_keeps_exact_read_only_commands"
+    ],
+    "missing_node": [
+      "test_windows_failure_diagnostic_keeps_exact_read_only_commands"
+    ],
+    "reversed_dev_candidate": [
+      "test_windows_failure_diagnostic_keeps_exact_read_only_commands"
+    ],
+    "removed_no_profile": [
+      "test_windows_failure_diagnostic_keeps_exact_read_only_commands"
+    ],
+    "broadened_failure_condition": [
+      "test_windows_failure_diagnostic_keeps_exact_read_only_commands"
+    ],
+    "permissive_primary_step": [
+      "test_workflow_is_one_read_only_exact_three_os_matrix"
+    ]
+  },
+  "seconds": 0.451,
+  "changed_ast_nodes": [
+    "Name(id='EXPECTED_STEP_NAMES', ctx=Store())",
+    "test_windows_failure_diagnostic_keeps_exact_read_only_commands"
+  ],
+  "assertions_baseline_current": 34,
+  "hashes": {
+    "Tests/CI/test_task2062_2_gguf_source_evidence.py": "3881661d90daf14e035a1043c1fa352864dd79f119b2baf7e45130227bb2e112",
+    ".github/workflows/task-2062-2-gguf-source-evidence.yml": "3c1ef3c5a2bb684dab750f28ade471453f6018de53a9f8483b3c235ec5bbe084"
+  },
+  "bandit": {
+    "baseline": {
+      "errors": [],
+      "findings": {
+        "B101": 34
+      }
+    },
+    "current": {
+      "errors": [],
+      "findings": {
+        "B101": 34
+      }
+    }
+  }
+}

@@ -469,6 +469,10 @@ async def test_narrow_compact_toolbar_groups_stay_on_one_row() -> None:
     Tests/UI/test_css_build_integrity.py), so a stacked column there would be
     clipped to its first button -- worse than the off-pane overflow the
     stacking fixes.
+
+    The folder actions answer the same rule a row at a time: task-32544's
+    packer gives the overflow a sibling ROW rather than a column, and each
+    of those rows must still paint on one line.
     """
     app = _CanvasApp(
         pane_width=38,
@@ -480,12 +484,40 @@ async def test_narrow_compact_toolbar_groups_stay_on_one_row() -> None:
     )
     async with app.run_test(size=COMPACT) as pilot:
         await pilot.pause()
-        for group in (
-            "#library-notes-transfer-actions",
-            "#library-notes-tree-actions",
-        ):
-            lines = {button.region.y for button in app.query(f"{group} Button")}
-            assert len(lines) == 1, f"{group} stacked onto {len(lines)} lines"
+        lines = {
+            button.region.y
+            for button in app.query("#library-notes-transfer-actions Button")
+        }
+        assert len(lines) == 1, f"transfer actions stacked onto {len(lines)} lines"
+
+        # The tree actions no longer live in ONE container: task-32544's
+        # packer puts the overflow in a sibling (`…-tree-actions-2`), which
+        # an id selector cannot reach, so the old
+        # `#library-notes-tree-actions Button` clause was satisfied by
+        # construction and stopped testing anything (review M4). Reach every
+        # packed row by its class, require the overflow row to actually be
+        # here at this width -- so the widened selector is proven to see the
+        # state the old one was blind to -- and forbid the shape the compact
+        # sheet clips: a COLUMN inside any one row.
+        rows = list(app.query(".library-notes-tree-action-row"))
+        assert len(rows) >= 2, (
+            "a 38-column pane no longer overflows the folder actions; this pin "
+            "only proves anything while it does"
+        )
+        painted: dict[str, int] = {}
+        for row in rows:
+            row_lines = {button.region.y for button in row.query(Button)}
+            assert len(row_lines) == 1, f"{row.id} stacked onto {len(row_lines)} lines"
+            painted.update(
+                {button.id: button.region.y for button in row.query(Button)}
+            )
+        assert set(painted) == {
+            "library-notes-folder-new",
+            "library-notes-folder-rename",
+            "library-notes-folder-move",
+            "library-notes-folder-remove",
+        }, sorted(painted)
+        assert len(set(painted.values())) == len(rows), painted
 
 
 # -- task-32123: the delete receipt's recovery actions are reachable ------

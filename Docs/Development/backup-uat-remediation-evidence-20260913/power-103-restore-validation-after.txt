@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Restoration validated
+  Profile: 7a3079e053a64b3bbd31f166ea0f2018
+
+  credential_unreadable:b2e84b21be2f888ee5c1fa9d5ceab8ec445e3e1c575f6d9312f6f26a9b7633d0                                                                     ▆
+  credential_unreadable:bc84a4b63cb256fa8cd79e3fc811187778ef1eee764083d8c31ca5fc51875c52                                                                     ▆
+  credential_unreadable:bf10bbf0e97359a767fd2483f02380edf949bf48848a94a62159b338a1ea426e
+  credential_unreadable:c1f3bf76081d4223ef82e6fbefc4b0710ec981f7a3d357e8d60544f246d73cd0
+  credential_unreadable:c50a60f9dbd448bc954ce60b5fd8c1a9cbc4ec6828268683c759635805e04264
+  credential_unreadable:c96a5a013e155c9c6dd0dcfaf8f2fea6797f9afb5a577612ad3432fe9f53f177
+  credential_unreadable:caf24bbc18399455fdcc3920a6074bfd90a4d218c18134e88e564c5c8567831c
+  credential_unreadable:cbed3286f4e35de412fe4cae137564afdcc6f52ba5e20dab84b12c66a6579a63
+  credential_unreadable:cc6856906cdd4d8b284eb78c92ea2ace7cdf6f19735e4703d97ed658ade61b92
+  credential_unreadable:d2f5c7785b45f490919425e65bcf9d619702c4daa608b48f1e8dc2474bfd28d3
+  credential_unreadable:eb7b2a7ab854a8bbe5f63396fac59c94d3a61c472ade485b8f2a2928f3aee84a
+  credential_unreadable:ef18b6e3aa6e7dac2469749d551209c427ce6e6e8f380c8543e1e8c2c532be57
+  credential_unreadable:fd1abcb28b7edc34be3045f52c5bdb440c0efa3cbf46f73512beb3004b3be16d
+  credential_unreadable:ff615957ec0266a15f5aa9c869ae9ccf3d92f6fe05e9fd3d9acd62f8aad725c5
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊                                                                                                                                                         ▎
+  ▊  Restore as isolated profile                                                                                                                         ▼  ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Choose a new folder and display name for each isolated profile. Required database and application folders are arranged automatically.
+
+  Profile 1 — new local folder
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/one                                                                  ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Profile 2 — new local folder
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/two                                                                  ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  External folder 1 — independent content
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/research                                                             ▎
+
+
+                       Inspect                                         Cancel operation                                           Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

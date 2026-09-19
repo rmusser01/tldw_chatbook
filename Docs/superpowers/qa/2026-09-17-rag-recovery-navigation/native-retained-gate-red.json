@@ -1,0 +1,57 @@
+{
+  "pid": 57497,
+  "runner_sha256": "9fa94ec78b258f4f28afe8ae08c24900e6d2abeb8f56a7fae88469a4ab609d2d",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Providers & Models",
+      "blocker": "unselected",
+      "returned_ready": false,
+      "retained": true
+    }
+  ],
+  "waiting_for": "current provider gate after return",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/native_check.py\", line 270, in journey\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/native_check.py\", line 99, in wait_for\n    raise AssertionError(f\"{label}: focus={app.screen.focused!r}\")\nAssertionError: current provider gate after return: focus=Button(id='library-rag-open-provider-settings', classes='-style-default library-canvas-action -textual-compact')\n",
+  "app_run_returned": true
+}

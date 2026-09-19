@@ -37,7 +37,7 @@ corrected below to what the code actually shows):
 ``answer_in_flight``, ``answer_in_flight_provider``, ``scope_deselected``,
 ``history_collapsed``, ``history``. It does NOT read ``answer_query``,
 ``answer_mode``, ``answer_render_key``, ``history_refresh_lock``,
-``panel_refresh_lock``, or ``scope_recovery_visible`` -- those 6 are
+``panel_refresh_lock``, or ``scope_recovery_key`` -- those 6 are
 consumed elsewhere, but every one of those "elsewhere" sites is an
 immediate sibling in the SAME lock-serialized refresh call chain this
 builder is the root of, not an independent, unrelated caller:
@@ -60,13 +60,11 @@ builder is the root of, not an independent, unrelated caller:
   ``_refresh_search_rag_panel_state_widgets``/``_mirror_library_rag_scope_
   recovery`` respectively, the last two of which call
   ``self._library_rag_panel_state()`` FRESH from inside the lock they hold.
-- ``scope_recovery_visible`` is a change-gate cache: written inside
-  ``_refresh_search_rag_panel_state_widgets`` immediately after that same
-  method calls the builder (``self._library_rag_scope_recovery_visible =
-  library_rag_scope_shows_recovery(panel_state.scope)``), and read back by
-  ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` to decide whether
-  a background snapshot changed enough to schedule
-  ``_mirror_library_rag_scope_recovery``.
+- ``scope_recovery_key`` records the rendered scope container's weak identity
+  and requested recovery visibility. Full refreshes and the mirror record what
+  they rendered; the synchronous snapshot path updates it eagerly to coalesce
+  repeats. A replacement scope container always reconciles on its first snapshot
+  (TASK-2377), without retaining an unmounted widget tree.
 
 So the correct claim is narrower and better-evidenced than "one method
 reads all 20 fields": all 20 fields are consumed inside ONE tightly-coupled,
@@ -118,16 +116,21 @@ constructor call; this dataclass's own ``history`` default (an empty tuple,
 via ``default_factory``) is therefore a momentary placeholder, identical in
 spirit to the export state object's own ``form`` field.
 """
+
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from weakref import ReferenceType
 
 from ...Library.library_rag_answer_service import LibraryRagAnswer
 from ...Library.library_rag_state import LibraryRagResultRow
 from ..destination_recovery import DestinationRecoveryState
+
+if TYPE_CHECKING:
+    from textual.containers import Vertical
 
 #: See the module docstring's note on this constant: the single
 #: authoritative home for which field names use the ``_library_search_``
@@ -232,14 +235,7 @@ class LibraryRagSearchState:
     # starts, and the next then rebuilds from state that is by then
     # settled.
     panel_refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # (task-2075 D5) Cache of the last `library_rag_scope_shows_recovery`
-    # result actually mirrored into the DOM, read by
-    # `_sync_library_rag_scope_toggle_and_run_gate_widgets` to change-gate
-    # the recovery-block mirror it schedules. `None` until the first
-    # in-place snapshot sync runs -- deliberately distinct from both
-    # `True`/`False` so that first call always reconciles the DOM
-    # against whatever `compose()` actually rendered (cheap: at most an
-    # empty remove + empty mount when nothing needs to change), while
-    # every later snapshot with an unchanged value takes the no-op path
-    # RAG-27 requires.
-    scope_recovery_visible: bool | None = None
+    # Change-gate target for one mounted scope container (TASK-2377).
+    # Weak identity invalidates compose/recompose without retaining an old tree;
+    # visibility still coalesces repeated snapshots before the mirror starts.
+    scope_recovery_key: tuple[ReferenceType[Vertical], bool] | None = None

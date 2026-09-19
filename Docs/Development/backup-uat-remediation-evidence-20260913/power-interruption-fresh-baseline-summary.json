@@ -1,0 +1,17 @@
+{
+  "baseline_source": "/private/tmp/chatbook-backup-uat-repeat-20260913-c8we5yz9/evidence/power-interruption-fresh-source-before.json",
+  "baseline_sha256": "19b5816015973b487551e4531e7c281fd626cb4d8f3d2d98be49d5bd90906b41",
+  "research_count": 1800,
+  "research_map_sha256": "94225a4e6e2d3cd5059e93cd1625482037512c6cb1ae194543a7244d1e234c49",
+  "config_sha256": "1fe222e08de364a57d5d37e7d8bfed838f3df4f06754bd8c393a3ebe23480430",
+  "notes": [
+    {
+      "note": [
+        "3f5b7b6f-a4c0-4302-b152-f2deed3a4766",
+        "Interrupt backup survival note",
+        "Saved before interruption. C8-INDEPENDENT-1800-20260913."
+      ],
+      "rows_sha256": "4e13b2697749db852ebe5e7423e0724b2ccf8ab97ab286b9bc7bda3a8c06a39d"
+    }
+  ]
+}

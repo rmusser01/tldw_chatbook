@@ -1,0 +1,32 @@
+{
+  "base_revision": "e683efb86433d3598a99e31033da38f778b59896",
+  "frozen_files": {
+    "tldw_chatbook/DB/recovery_core.py": "224093c01bdb86ff3b19ba6a4dc9a7d03b152bf770e187e00555f0314e588211",
+    "Tests/Backup_Recovery/test_core_owners.py": "db7869f7c9d9196fd8f01786095e042d5d3a92e73d3accc96541bb488d5f2d7f",
+    "Tests/Backup_Recovery/test_core_dependency_discovery.py": "fc88a201af536d5c5e17a73c1e919bb75a0e6c37118cb4e85ab7548c82b502e6"
+  },
+  "static": {
+    "ruff": {
+      "baseline": 46,
+      "current": 46,
+      "new": []
+    },
+    "bandit": {
+      "baseline": 78,
+      "current": 77,
+      "new": []
+    }
+  },
+  "installed_wheel_sha256": "a5cf213a27410c25331d007c13180cfebb37d06886e082bd2f61bf7ed166e64c",
+  "installed_files_preserved": 2866,
+  "python_files_matching_source": 2474,
+  "native_mounted_library": {
+    "classname": "Tests.Backup_Recovery.test_mounted_console_backup",
+    "name": "test_mounted_console_complete_capture_and_resumed_writes[library]",
+    "time": "46.984"
+  },
+  "independent_native_cases": "5PASS6.66s",
+  "author_cases": "22PASS11.17s plus4finalnativePASS6.07s",
+  "method": "native fixture and installed Textual harness; not keyboard acceptance",
+  "native_windows": "Pending; original Windows validation reason not retained"
+}

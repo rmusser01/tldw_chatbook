@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+2.68s call     Tests/UI/test_library_ingest_structural.py::test_invalid_saved_stt_provider_is_visible_and_can_be_reset_to_auto
+
+(2 durations < 1s hidden.)
+1 passed in 3.77s

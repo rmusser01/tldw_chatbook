@@ -165,6 +165,43 @@ def test_an_obsidian_callout_keeps_its_words_and_drops_its_marker():
     assert render_obsidian_callouts("# Plain\n\n> quoted\n") == "# Plain\n\n> quoted\n"
 
 
+def test_the_seeded_callout_form_renders_as_a_labelled_quote():
+    """task-32551 AC#2/#3: the exact shape the critique's power profile
+    seeds -- a bodyless ``> [!warning]`` closing a task list -- reaches
+    Preview as a labelled quote, marker and all gone.
+
+    Re-derived live at dev 2f97a42c9a on that seeded note: Preview already
+    painted "▌ Warning The preview and the editor disagree about callouts",
+    so critique #3's "literal [note]" observation does NOT reproduce at this
+    dev (task-32249 had landed). Pinned through ``render_preview_source`` --
+    the function Preview actually renders from -- rather than the rewrite
+    alone, so the whole chain is covered, including the task-32551 H1 drop
+    running immediately before it.
+    """
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+        render_preview_source,
+    )
+
+    seeded = (
+        "# Markdown showcase\n"
+        "\n"
+        "- [x] Render headings\n"
+        "- [ ] Render the callout\n"
+        "\n"
+        "> [!warning]\n"
+        "> The preview and the editor disagree about callouts; that is the"
+        " point of this note.\n"
+    )
+    rendered = render_preview_source(seeded, title="Markdown showcase")
+
+    assert "[!warning]" not in rendered, rendered
+    assert "> **Warning**" in rendered, rendered
+    assert "> The preview and the editor disagree" in rendered, rendered
+    # task-32551 AC#1: and the body's opening H1 is the title line Preview
+    # already paints above it, so it is not painted a second time.
+    assert "# Markdown showcase" not in rendered, rendered
+
+
 def test_a_fenced_example_of_callout_syntax_is_left_alone():
     """Review F8: a note that DOCUMENTS callouts kept its example verbatim."""
     from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
@@ -186,12 +223,17 @@ def test_a_fenced_example_of_callout_syntax_is_left_alone():
 
 
 def test_a_nested_callout_and_an_acronym_type_survive_the_rewrite():
-    """Review F8: `> > [!note]` matched one `>`, and `[!TODO]` became `Todo`."""
+    """Review F8: `> > [!note]` matched one `>`, and `[!TODO]` became `Todo`.
+
+    The two trailing spaces are task-32620 AC#3's hard break; see
+    ``test_a_callout_header_is_broken_from_its_body`` in
+    Tests/UI/test_library_notes_w5_import_preview.py for why they are there.
+    """
     from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
 
-    assert render_obsidian_callouts("> > [!tip] Nested\n") == "> > **Tip: Nested**\n"
-    assert render_obsidian_callouts("> [!TODO] Ship it\n") == "> **TODO: Ship it**\n"
-    assert render_obsidian_callouts("> [!todo]\n") == "> **Todo**\n"
+    assert render_obsidian_callouts("> > [!tip] Nested\n") == "> > **Tip: Nested**  \n"
+    assert render_obsidian_callouts("> [!TODO] Ship it\n") == "> **TODO: Ship it**  \n"
+    assert render_obsidian_callouts("> [!todo]\n") == "> **Todo**  \n"
 
 
 @pytest.mark.asyncio

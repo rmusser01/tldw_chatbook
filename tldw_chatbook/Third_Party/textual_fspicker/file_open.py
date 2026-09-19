@@ -33,6 +33,7 @@ class FileOpen(BaseFileDialog):
         must_exist: bool = True,
         default_file: str | Path | None = None,
         offer_select_folder: bool = False,
+        notes_context: str = "",
     ) -> None:
         """Initialise the `FileOpen` dialog.
 
@@ -48,6 +49,8 @@ class FileOpen(BaseFileDialog):
                 "Select folder" action returning the directory being
                 viewed (task-2222) -- for callers that accept either a
                 file or a folder.
+            notes_context: Which Library Notes folder door this is, if any;
+                see `FileSystemPickerScreen.__init__` (task-32643).
 
         Notes:
             `open_button` and `cancel_button` can either be strings that
@@ -61,24 +64,21 @@ class FileOpen(BaseFileDialog):
             cancel_button=cancel_button,
             filters=filters,
             default_file=default_file,
+            notes_context=notes_context,
         )
         self._must_exist = must_exist
         """Must the file exist?"""
         self._offer_select_folder = offer_select_folder
         """Offer the "select the folder being viewed" action?"""
+        self.RETURNS_A_FOLDER = offer_select_folder
+        """Answer the base's one focus fact per instance (task-32606).
 
-    def _hint_text(self) -> str:
-        """Name both actions once "Select folder" is offered (task-32122).
-
-        Neither ``FileOpen(offer_select_folder=True)`` nor the vendored
-        ``SelectDirectory`` had any on-screen hint distinguishing "Enter
-        descends" from "the folder-confirming button uses this one" --
-        AC#4 requires that hint actually render.
+        This dialog decides at construction whether its result can be a
+        folder, so it shadows the ClassVar instead of declaring it. With it
+        on, ``FileSystemPickerScreen._focus_initial_widget`` opens on the
+        path field (task-32540); a plain file-only ``FileOpen`` (character
+        import, skill folders, TTS models, ...) keeps browsing-first focus.
         """
-        if not self._offer_select_folder:
-            return ""
-        open_label = self._label(self._select_button, "Open")
-        return f"Enter {open_label}  ·  Select folder to use this folder"
 
     def _should_return(self, candidate: Path) -> bool:
         """Perform the final checks on the chosen file.

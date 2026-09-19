@@ -1,0 +1,13 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_generation_nonfinite_value_is_rejected_before_persistence ________
+Tests/UI/test_settings_generation_default_journeys.py:188: in test_generation_nonfinite_value_is_rejected_before_persistence
+    assert not mutations
+E   AssertionError: assert not [({'api_settings.openai': {'model_defaults': {'model-a': {'temperature': nan, 'max_tokens': 8192, 'streaming': True}, 'model-b': {'temperature': 0.8, 'top_p': 0.9}}}}, {})]
+============================= slowest 25 durations =============================
+2.09s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_nonfinite_value_is_rejected_before_persistence
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_nonfinite_value_is_rejected_before_persistence
+1 failed, 12 deselected in 3.80s

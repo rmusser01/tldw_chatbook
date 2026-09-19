@@ -12,11 +12,13 @@ session switches are observed at call time rather than frozen at construction.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TYPE_CHECKING
 
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
@@ -522,26 +524,66 @@ class ConsolePromptQueueUIController:
         self._sync_ui = sync_ui
 
     async def handle_primary_intent(
-        self, session_id: str, *, action: str, expected_revision: int
+        self,
+        session_id: str,
+        *,
+        action: str,
+        expected_revision: int,
+        on_recovery_complete: Callable[[], None] | None = None,
     ) -> None:
-        """Apply the shelf's state-specific primary action and repaint."""
+        """Apply the shelf's state-specific primary action and repaint.
+
+        Args:
+            session_id: Session whose recovery or queue action is requested.
+            action: Recovery action or prompt-queue mutation to apply.
+            expected_revision: Queue revision used to reject stale mutations.
+            on_recovery_complete: Optional synchronous callback for response
+                recovery actions (retry_response, retry_anyway, discard). Runs
+                after the action exits, including refusal, error or cancellation,
+                and before repainting. Other actions do not invoke it.
+
+        Raises:
+            Exception: Propagates action failures. Completion or repaint failures
+                propagate if no action failure is already being preserved.
+            asyncio.CancelledError: Propagates action cancellation. Cancellation
+                during completion or repaint also propagates unless preserving
+                an earlier action failure or cancellation.
+        """
 
         if action.startswith("turn-recovery:"):
             await self._handle_turn_recovery_intent(session_id, action)
             return
         if action in {"retry_response", "retry_anyway", "discard"}:
-            controller = self._chat_controller_accessor()
-            result = (
-                await controller.discard_dispatch_recovery(session_id)
-                if action == "discard"
-                else await controller.retry_dispatch_recovery(session_id)
-            )
-            if not result.accepted:
-                self._notify(
-                    result.visible_copy or "That recovery action is unavailable.",
-                    "warning",
+            action_error: BaseException | None = None
+            try:
+                controller = self._chat_controller_accessor()
+                result = (
+                    await controller.discard_dispatch_recovery(session_id)
+                    if action == "discard"
+                    else await controller.retry_dispatch_recovery(session_id)
                 )
-            await self._sync_ui()
+                if not result.accepted:
+                    self._notify(
+                        result.visible_copy or "That recovery action is unavailable.",
+                        "warning",
+                    )
+            except (Exception, asyncio.CancelledError) as exc:
+                action_error = exc
+                raise
+            finally:
+                # Controller cleanup releases the model-owned action claim,
+                # including cancellation. Release this click before repainting.
+                try:
+                    if on_recovery_complete is not None:
+                        on_recovery_complete()
+                    await self._sync_ui()
+                except (Exception, asyncio.CancelledError) as exc:
+                    if action_error is None:
+                        raise
+                    logger.warning(
+                        "Recovery repaint failed during action unwind ({})",
+                        type(exc).__name__,
+                    )
             return
         if action == "toggle-pause":
             await self.handle_pause_intent(

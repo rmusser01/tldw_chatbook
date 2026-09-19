@@ -1,0 +1,112 @@
+.....FF
+=================================== FAILURES ===================================
+___________ test_dirty_provider_switch_discard_removes_hidden_draft ____________
+
+    @pytest.mark.asyncio
+    async def test_dirty_provider_switch_discard_removes_hidden_draft() -> None:
+        app = _PanelHarness(configure_provider="audio_cpp")
+        async with app.run_test(size=(150, 80)) as pilot:
+>           panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_settings_speech_tts_panel.py:1217:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = _PanelHarness(title='_PanelHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'})
+selector = '#panel'
+expect_type = <class 'tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel.SpeechTTSSettingsPanel'>
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+
+        base_node = self._get_dom_base()
+
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#panel' on Screen(id='_default')
+
+.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+
+During handling of the above exception, another exception occurred:
+
+    @pytest.mark.asyncio
+    async def test_dirty_provider_switch_discard_removes_hidden_draft() -> None:
+        app = _PanelHarness(configure_provider="audio_cpp")
+>       async with app.run_test(size=(150, 80)) as pilot:
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_settings_speech_tts_panel.py:1216:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+.venv/lib/python3.12/site-packages/textual/app.py:3493: in _process_messages
+    await run_process_messages()
+.venv/lib/python3.12/site-packages/textual/app.py:3432: in run_process_messages
+    await self._dispatch_message(events.Compose())
+.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+.venv/lib/python3.12/site-packages/textual/app.py:4065: in on_event
+    await super().on_event(event)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/_callback.py:58: in _invoke
+    result = await result
+             ^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/app.py:3548: in _on_compose
+    widgets = [*self.screen._nodes, *compose(self)]
+                                     ^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/textual/compose.py:54: in compose
+    child = next(iter_compose)
+            ^^^^^^^^^^^^^^^^^^
+Tests/UI/test_settings_speech_tts_panel.py:180: in compose
+[Repeated traceback bodies omitted; summary follows.]
+(21 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_speech_tts_panel.py::test_dirty_provider_switch_discard_removes_hidden_draft
+FAILED Tests/UI/test_settings_speech_tts_panel.py::test_invalid_global_default_renders_an_adjacent_field_error
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 2 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+2 failed, 5 passed, 215 deselected in 3.74s

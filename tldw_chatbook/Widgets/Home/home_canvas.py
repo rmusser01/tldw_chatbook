@@ -32,7 +32,7 @@ class HomeCanvas(RecomposeCaptureGuard, Vertical):
         super().__init__(**kwargs)
         self.canvas = canvas
         self.action_button_factory = action_button_factory
-        self.styles.width = "13fr"
+        self.add_class("w-13fr")
         self.styles.min_width = 40
 
     def sync_state(self, canvas: HomeCanvasState) -> None:
@@ -94,10 +94,10 @@ class HomeCanvas(RecomposeCaptureGuard, Vertical):
             markup=False,
         )
         action_row = Vertical(id="home-canvas-actions")
-        action_row.styles.height = "auto"
+        action_row.add_class("h-auto")
         with action_row:
             toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.styles.height = "auto"
+            toolbar.add_class("h-auto")
             with toolbar:
                 for control in self.canvas.actions:
                     yield self.action_button_factory(

@@ -13,10 +13,52 @@ RESET = ROOT / "tldw_chatbook/css/core/_reset.tcss"
 BUTTONS = ROOT / "tldw_chatbook/css/components/_buttons.tcss"
 FORMS = ROOT / "tldw_chatbook/css/components/_forms.tcss"
 LISTS = ROOT / "tldw_chatbook/css/components/_lists.tcss"
-AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
+
+
+def _detok(value: str) -> str:
+    """Resolve the ADR-161 sizing-scale tokens to their literal values."""
+    resolved = value
+    for pattern, repl in (
+        (r"\$ds-space-(\d+)", r"\1"),
+        (r"\$ds-size-(\d+)", r"\1"),
+        (r"\$ds-percent-(\d+)", r"\1%"),
+        (r"\$ds-fr-(\d+)", r"\1fr"),
+        (r"\$ds-width-full", "100%"),
+        (r"\$ds-height-full", "100%"),
+        (r"\$ds-width-fill", "1fr"),
+        (r"\$ds-height-fill", "1fr"),
+    ):
+        resolved = re.sub(pattern, repl, resolved)
+    return resolved
+
+
+class _AgenticFamilySources:
+    """ADR-161 task 10: the agentic terminal's vocabulary was carved into
+    per-purpose source sheets (console/library/settings/home/destination,
+    plus the ds-primitives family and the shared-shell chrome that stayed
+    in the monolith). Contracts that read "the source" read the union --
+    every rule exists in exactly one of these sheets."""
+
+    _PATHS = (
+        ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss",
+        ROOT / "tldw_chatbook/css/components/_ds_primitives.tcss",
+        ROOT / "tldw_chatbook/css/features/_console.tcss",
+        ROOT / "tldw_chatbook/css/features/_console_panels.tcss",
+        ROOT / "tldw_chatbook/css/features/_library.tcss",
+        ROOT / "tldw_chatbook/css/features/_library_panels.tcss",
+        ROOT / "tldw_chatbook/css/features/_settings.tcss",
+        ROOT / "tldw_chatbook/css/features/_home.tcss",
+        ROOT / "tldw_chatbook/css/layout/_destination.tcss",
+    )
+
+    def read_text(self, encoding: str = "utf-8") -> str:
+        return _detok(
+            "\n".join(p.read_text(encoding=encoding) for p in self._PATHS)
+        )
+
+
+AGENTIC = _AgenticFamilySources()
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
-NAVIGATION = ROOT / "tldw_chatbook/css/components/_navigation.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
@@ -24,13 +66,13 @@ SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
-# TASK-25812: the console/library/settings-owned rules were split out of the
-# boot bundle into per-screen sheets the app loads lazily. Contracts that
+# TASK-25812 + ADR-161 task 10: the library/settings-owned rules were split
+# out of the boot bundle into per-screen sheets the app loads lazily (the
+# console sheet was dissolved -- its rules ride the bundle). Contracts that
 # read "the generated CSS" read the union.
 _SPLIT_SHEETS = tuple(
     ROOT / "tldw_chatbook/css" / name
     for name in (
-        "screen_agentic_console.tcss",
         "screen_agentic_library.tcss",
         "screen_agentic_settings.tcss",
     )
@@ -38,8 +80,10 @@ _SPLIT_SHEETS = tuple(
 
 
 def _bundle_union_text() -> str:
-    return "\n".join(
-        path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS)
+    return _detok(
+        "\n".join(
+            path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS)
+        )
     )
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
@@ -48,6 +92,10 @@ FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
 UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
+#: ADR-161 task 8a: the wizard status-item rules (base + completed/active/
+#: error) promote bare into the status family's owning sheet; the wizard
+#: sheet keeps only Import's scoped `.warning` state.
+STATUS = ROOT / "tldw_chatbook/css/components/_status.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
@@ -449,8 +497,9 @@ def assert_wizard_selection_active_contracts(text: str) -> None:
     for selector in (
         ".content-type-card.selected",
         ".preset-card.selected",
-        "ProgressStep .status-item.active",
-        "ImportProgressStep .status-item.active",
+        # ADR-161 task 8a: promoted from ProgressStep/ImportProgressStep
+        # scoped rules (declaration-identical) into components/_status.tcss.
+        ".status-item.active",
         "SmartContentTree Tree > .selected-node",
     ):
         assert_readable_selected_state_contract(css_block(text, selector))
@@ -646,7 +695,7 @@ def test_library_list_row_focus_uses_readable_non_obscuring_contract():
     ``.library-media-row-selected`` already uses, never an outline.
     """
     for label, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         for selector in (
@@ -874,7 +923,7 @@ def test_console_structural_separators_use_visible_column_line_token():
 @pytest.mark.unit
 def test_console_settings_modal_select_uses_compact_focus_outline():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Select")
@@ -899,7 +948,7 @@ def test_console_settings_modal_select_uses_compact_focus_outline():
 def test_console_settings_modal_focused_inputs_keep_value_row_visible():
     """Focused settings inputs must keep Textual's editable value row visible."""
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Input")
@@ -917,7 +966,7 @@ def test_console_settings_modal_focused_inputs_keep_value_row_visible():
 @pytest.mark.unit
 def test_console_settings_modal_select_current_preserves_visible_value_row():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         current = css_block(text, "ConsoleSettingsModal Select > SelectCurrent")
@@ -940,7 +989,7 @@ def test_console_settings_modal_select_current_preserves_visible_value_row():
 @pytest.mark.unit
 def test_console_settings_modal_select_overlay_is_readable():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
@@ -979,7 +1028,7 @@ def test_console_transcript_focus_uses_stable_border_geometry():
     flattening reclaimed.
     """
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "#console-native-transcript")
@@ -1000,7 +1049,7 @@ def test_console_transcript_focus_uses_stable_border_geometry():
 @pytest.mark.unit
 def test_console_transcript_selected_message_uses_selected_contract_without_geometry():
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         selected = css_block(text, ".console-transcript-message-selected")
@@ -1010,7 +1059,12 @@ def test_console_transcript_selected_message_uses_selected_contract_without_geom
 
 
 def test_settings_compact_input_focus_preserves_single_row_content():
-    text = AGENTIC.read_text(encoding="utf-8")
+    # ADR-161 task 9: .settings-compact-input moved (tokenized) to the forms
+    # owning sheet -- a documented variant of form-input with a second
+    # surface (the pattern gallery), so it rides the boot bundle; the
+    # contract itself is unchanged. `text-style: bold` arrived as its token
+    # ($ds-text-strong = bold).
+    text = FORMS.read_text(encoding="utf-8")
     block = css_block(text, ".settings-compact-input:focus")
     assert "border: none;" in block
     assert "border-bottom:" not in block
@@ -1021,7 +1075,7 @@ def test_settings_compact_input_focus_preserves_single_row_content():
     # Underline was dropped deliberately (2026-07-11 UAT): underlined
     # placeholders read as snake_case tokens. Bold + background still
     # satisfies the non-obscuring focus contract (no border/outline rows).
-    assert "text-style: bold;" in block
+    assert "text-style: $ds-text-strong;" in block
     assert "underline" not in block
 
 
@@ -1123,32 +1177,13 @@ def test_top_navigation_inline_focus_uses_hybrid_contract():
     assert_non_obscuring_focus(active_focus)
 
 
-def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
-    text = BASE_COMPONENTS.read_text(encoding="utf-8")
-    hover = css_block(text, "NavigationButton:hover")
-    assert_native_row_hover_state_contract(hover)
-    # TASK-16811: the token-dependent .active/:focus states moved into
-    # css/components/_navigation.tcss -- inside the widget's DEFAULT_CSS the
-    # local `$ds-*:` "fallbacks" they required silently shadowed the bundle's
-    # real focus tokens (unfocused .active rendered $surface, not #51677e).
-    # The widget source must stay free of local $ds declarations.
-    assert "$ds-focus-bg:" not in text and "$ds-focus-fg:" not in text
-    nav_text = NAVIGATION.read_text(encoding="utf-8")
-    focus = css_block(nav_text, "NavigationButton:focus")
-    active = css_block(nav_text, "NavigationButton.active")
-    active_focus = css_block(nav_text, "NavigationButton.active:focus")
-    assert_non_obscuring_focus(focus)
-    assert "$ds-focus-bg" in focus or "$ds-surface-raised" in focus
-    assert_readable_selected_state_contract(active)
-    assert_no_dominant_selected_geometry(active)
-    assert_non_obscuring_focus(active_focus)
-    assert "$ds-focus-bg" in active_focus or "$ds-surface-raised" in active_focus
-
-
-def test_shared_section_container_collapse_button_hover_is_non_obscuring():
-    text = BASE_COMPONENTS.read_text(encoding="utf-8")
-    hover = css_block(text, ".collapse-button:hover")
-    assert_native_row_hover_state_contract(hover)
+# test_shared_navigation_button_uses_non_obscuring_active_and_focus_states and
+# test_shared_section_container_collapse_button_hover_is_non_obscuring were
+# removed with tldw_chatbook/Widgets/base_components.py (ADR-161 task 2):
+# they asserted solely on that dead module's NavigationButton and
+# SectionContainer sources. The NavigationButton type-selector rules still
+# sitting in css/components/_navigation.tcss are dead selectors for the same
+# removed widget and are governed by the later component-pattern CSS work.
 
 
 @pytest.mark.unit
@@ -1339,7 +1374,13 @@ def test_wizard_progress_default_css_matches_active_state_contract():
 
 
 def test_wizard_selection_states_are_readable_without_dominant_fill():
-    assert_wizard_selection_active_contracts(WIZARDS.read_text(encoding="utf-8"))
+    assert_wizard_selection_active_contracts(
+        # The status-item rules live in the status owning sheet since
+        # ADR-161 task 8a; the card/tree selectors stay in the wizards sheet.
+        WIZARDS.read_text(encoding="utf-8")
+        + "\n"
+        + STATUS.read_text(encoding="utf-8")
+    )
 
 
 def test_bundled_wizard_selection_states_match_source_contracts():
@@ -1806,7 +1847,7 @@ def test_library_rag_result_card_focus_uses_stable_border_geometry():
     background/color, so "keyboard is here" never reads as "this evidence
     is selected"."""
     for _, text in (
-        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("agentic family source sheets", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, ".library-rag-result-card")
@@ -1963,7 +2004,16 @@ def test_library_notes_focus_cues_are_visible_without_obscuring_content():
             block = css_block(text, selector)
             assert "outline: heavy" not in block
             assert "reverse" not in block
-            assert "border: solid $ds-input-focus-accent;" in block
+            # task-32613 AC#1: `heavy`, not `solid`. The old accent-coloured
+            # `solid` was the SAME glyph the blurred border already painted,
+            # so the only thing that changed on focus was colour and the two
+            # scroll owners were the one pair of Notes stops invisible in a
+            # monochrome dump. `heavy` is still one cell, still non-obscuring
+            # (it repaints border cells, not content), and `outline: none`
+            # keeps the reset's `*:focus { outline: solid }` from painting
+            # `solid` back over it.
+            assert "border: heavy $ds-input-focus-accent;" in block
+            assert "outline: none;" in block
             assert "background: $ds-input-focus-bg;" in block
 
         conflict = css_block(text, "#library-note-conflict-copy:focus")

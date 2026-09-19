@@ -1,0 +1,13 @@
+tldw_chatbook/Backup_Recovery/age_worker.py text eol=lf
+
+# Canvas manifests verify these exact packaged bytes across platforms.
+tldw_chatbook/Canvas/static/MERMAID_THIRD_PARTY_LICENSES.txt -text
+tldw_chatbook/Canvas/static/THIRD_PARTY_LICENSES.txt -text
+tldw_chatbook/Canvas/static/canvas_renderer.js -text
+tldw_chatbook/Canvas/static/canvas_renderer_v2.js -text
+tldw_chatbook/Canvas/static/canvas_runtime_worker.js -text
+tldw_chatbook/Canvas/static/canvas_runtime_worker_v2.js -text
+tldw_chatbook/Canvas/static/mermaid-runtime-manifest.json -text
+tldw_chatbook/Canvas/static/mermaid-subset.json -text
+tldw_chatbook/Canvas/static/quickjs-runtime.js -text
+tldw_chatbook/Canvas/static/runtime-manifest.json -text

@@ -1,5 +1,88 @@
 # Lessons: verifying against the real thing
 
+## Private config and data paths do not replace a private recovery HOME
+
+**TASK-32749, 2026-09-17.** The first integration probe selected private config
+and data paths before imports, but startup refused with `recovery_scope_uncertain`:
+incoming recovery ownership also derives a fixed control root from HOME. A fresh
+probe set HOME and USERPROFILE inside its owned profile before imports and reached
+the real app. Keep that refusal as an unqualified attempt; do not relax admission
+or reuse the user's recovery root to make a visual probe run. Verify the actual
+roots, process exit and default-file fingerprints separately.
+
+## Keep Textual's rendering stream attached to the native terminal
+
+**TASK-2530, 2026-09-16.** Two private audit launches redirected stderr to a
+file. They still constructed LinuxDriver and could save compositor SVGs, while
+tmux showed no app: Textual's console was rendering into the redirected stream.
+Those attempts also stopped on an early navigation check and were not counted
+as native qualification. The final runner asserts `app.console.file.isatty()`,
+keeps both output streams attached, and uses the private app log for diagnostics.
+Driver identity plus an SVG alone does not prove terminal-backed rendering.
+
+
+## Complete terminal capability probes before driving text input
+
+**TASK-32667, 2026-09-16.** Native queue run-002 timed out in preflight even
+though its private source existed. The captured input contained a trailing
+`[?1;2;4c`; the image library had queried terminal capabilities after Textual
+owned stdin, and the reply became path text. Its log also reported a probe
+timeout. The final audit runner invokes the real cached `probe_terminal()` before
+`app.run()`, as that dependency requires. This qualifies the queue journey with
+an explicitly primed terminal probe; it does not qualify the app's ordinary
+lazy image-probe startup ordering. Both failed-run exit receipts were checked
+before starting a fresh profile.
+
+
+## Clear exit receipts before reusing a native probe session
+
+**TASK-32603, 2026-09-14.** A compact Prompt journey wrote successful UI
+results while its process remained active. Its exit file still contained zero
+from an earlier run. Checking the terminal's current process caught the stale
+receipt before closeout; the final compact shutdown was left unqualified.
+Remove prior completion files before launch or use a unique run directory, and
+tie the exit receipt to the current process/run. UI assertions and shutdown are
+separate evidence. The owned session was closed and process absence checked.
+
+**TASK-32666, 2026-09-16.** The same audit mistake recurred with a different
+signal: tmux reported `zsh` while the native runner's `app_run_returned` and exit
+receipt were still absent. Closing that session invalidated its shutdown
+qualification. After confirming its process was gone, fresh runs recorded both
+receipts and healthy private persistence before cleanup. A terminal command name
+alone does not establish application exit.
+
+## Screen worker waits can include unrelated app jobs
+
+**TASK-32462, 2026-09-14.** A native Library probe copied
+`screen.workers.wait_for_complete()` from a small mounted harness and stalled
+with Notes already rendered. That manager included long-lived app workers,
+not just the Library projection. A retry warned that the first audit process
+still held the profile; checking its exact command confirmed the stale probe.
+The first process was terminated, and a final run asserted exclusive profile
+ownership, waited for Library's rendered snapshot generation, retained Notes
+focus through three refreshes, and saved a Prompt before exiting 0.
+
+Wait for the specific domain's completion state in the real app. A worker wait
+that terminates in a minimal test harness need not terminate with the app's
+background services present. Confirm the old probe exited before reusing its
+profile; a successful second window does not prove sole ownership.
+
+
+## A dismissed modal may still report is_mounted
+
+**TASK-32709, 2026-09-16.** A mounted model-popover Escape regression showed
+`is_mounted=True` after the screen left the stack. A delayed resolver that
+suppressed cancellation then changed that dismissed popover's context window
+from 32,000 to 12,000. Another gated test exercised model A → B → A, where
+target equality alone accepted the original A's late result.
+
+Async modal publication must check screen-stack ownership and an operation
+generation, as well as mount state and target identity. Cancellation alone is
+not evidence that a callback cannot finish. The regression tests in
+`Tests/UI/test_console_popover_context_window.py` and
+`Tests/UI/test_console_context_window_modal.py` hold the old work across the
+navigation boundary before releasing it.
+
 ## A process's No route to host can be an app privacy denial
 
 **TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
@@ -112,6 +195,13 @@ The subsequent UAT retention loop also sent Enter twice within Textual Button's
 waiting only for completion misreported a ten-minute operation timeout. Wait for
 the control to accept keyboard input and separately bound operation admission;
 do not infer that a server request exists just because the harness sent a key.
+
+**TASK-32739, 2026-09-17.** The Settings discovery audit repeated this trap:
+its loopback 503 returned while Discover still had `-active`, and an immediate
+Enter retry sent no request. The corrected runner waits for that class to clear
+before retrying. A separate fixture mistake added `llama_cpp` beside the existing
+`Llama_cpp` list, correctly triggering ambiguous-provider recovery. Reuse the
+exact saved catalog key when qualifying persistence rather than adding an alias.
 
 ---
 
@@ -672,6 +762,13 @@ without a dependency, the warning must state the actual current consequences —
 written for an old architecture ("commands execute when you stop") becomes actively
 misleading after a rework and nobody re-reads it unless a review targets it.
 
+**Later incident (TASK-32822, 2026-09-18).** A shutdown database probe run with
+bare `python3`/SQLite 3.51.0 could not open six private databases read-only. The
+identical probe using the app's `.venv` Python 3.12/SQLite 3.49.1 passed all ten
+without changing the database files. Run lifecycle probes with the same explicit
+interpreter as the app and record the runtime; this observation alone does not
+establish a SQLite compatibility defect or database corruption.
+
 ---
 
 ## Scratch-profile live launches: copy `chromadb/` too, expect a config rewrite, and the real provider lever is `[API] default_api` (PR-3 Task 8, 2026-08-03)
@@ -824,21 +921,31 @@ never asks who else was supposed to construct it that way.
 
 ---
 
-## `save_screenshot` does not render the toast rack — probe `app._notifications`
+## Notification storage and visible toast behavior need separate checks
 
 **What happened.** TASK-2154.16 (FB-05) added an error toast on Console stream
 failure. The notification fired correctly — visible in `app._notifications` with
 `severity="error"`, alive 2.5s after posting — yet the UAT SVG capture
 (`app.save_screenshot`, Textual 8.2.8) showed no trace of it, and neither did a
 control probe that called `notify()` manually and screenshotted 0.3s later. The
-toast rack is simply absent from SVG exports in this Textual version, so "toast
-visible in capture" is unprovable by screenshot and a fix can look broken when it
-is not.
+toast rack was absent from SVG exports in that pilot configuration, so a
+screenshot alone could not establish whether the notification was posted.
 
-**What to do.** To verify toast behavior in a pilot session, assert on
-`app._notifications` (message text + severity + that it is still alive after the
-expected interval), not on the SVG/PNG capture. Use captures for transcript/row
-content only.
+**Follow-up incident (TASK-32629, 2026-09-15).** Prompt Copy/Export journeys
+passed in the headless production-CSS harness, but the same sequence under
+`LinuxDriver` at 80×24 stacked two toasts over focused Copy and the FileSave
+Save button. Waiting for the action to paint merely waited 1–3 seconds for
+toast expiry. This native run's SVG did contain the toast rack; the
+[before capture](../../Docs/superpowers/qa/2026-09-15-prompt-export/before-picker-80.svg)
+shows both notices covering Save. Inline Prompt status feedback resolved the
+obstruction without moving focus or rebuilding fields.
+
+**What to do.** Assert notification text and severity in `app._notifications`
+to establish posting, then check the next focused control in the actual native
+journey to establish visibility. Do not generalize one headless driver's toast
+capture behavior to every runtime, or mask obstruction by waiting for expiry.
+Inspect the rendered native capture and terminal output when they disagree with
+a headless check.
 
 ---
 
@@ -2739,6 +2846,16 @@ harness and read `screen.focused`. And when a control's focus treatment is a
 colour swap that its own selected/active state also uses, that is itself the
 bug worth filing — a reader cannot see focus there either.
 
+**Refinement (TASK-32787, 2026-09-18): calling `focus()` is not evidence
+that it succeeded.** The second Tool Profile recreation native fixture tried to
+focus Import while a real service lock kept the listing in its loading state.
+Import was disabled, so Textual correctly retained category focus. A helper that
+checked geometry alone accepted the no-op and the later focus assertion failed.
+The final helper checks enabled state and `screen.focused is widget`, while the
+journey deliberately preserves category focus until Import becomes available.
+All four final recreation cells pass. Pair actual identity with rendered focus
+and visibility checks; none of the three substitutes for the others.
+
 ## "The key is being swallowed" — check the framework binds it at all before hunting the swallower (task-32247, 2026-09-11)
 
 **What happened.** The task recorded, as an inferred cause, "Textual's
@@ -2843,3 +2960,336 @@ a hard exit is observed, capture `tmux capture-pane -p -S -200` from the pane
 *before* relaunching if the server is still up; once `kill-server` or a
 relaunch runs, the scrollback is gone. The product-side half — persisting the
 raising frame in the diagnostic — is task-32533 AC#3.
+
+## "The list is not on screen in editor mode" is a `compose()` claim, not a screen claim
+
+**TASK-32461, Library ▸ Prompts dirty vetoes, 2026-09-14.** Two of the three
+refusals to be wired sit on the prompt-row press and the **Select** button —
+both in the Prompts *list*. `LibraryPromptsCanvas.compose` switches wholesale
+(`if self.mode == "editor": yield from self._compose_editor(); return`), and
+the rows are only built in `_compose_list`, so reading the widget said the list
+and a dirty editor cannot coexist and both seams are defensive-only. The plan
+that followed was "pin them, they are unreachable live". At 235x52 the real
+screen paints the list pane and the editor pane side by side — the Library
+reader shell hosts both — so pressing a row and pressing **Select** on a dirty
+editor are ordinary gestures, and both refusals were captured live in minutes.
+
+**What to do.** Reachability is a property of the composed SCREEN, not of one
+widget's `compose`. Before writing off a seam as unreachable, put the state on
+screen once at the review width and look; a shell that hosts two panes, an
+adaptive reader layout, or a modal over a live canvas all defeat the single-
+widget reading. Write "unreachable" only about a path you tried to reach —
+here exactly one of the three genuinely was (the deep link: every route to it
+is itself vetoed while the editor is dirty), and that one is worth stating
+because it is now evidence, not an assumption.
+
+### Correction: do NOT tee this app's stderr in the tmux launch line
+
+**TASK-32461 fix round 1, 2026-09-14.** Following the entry above, the live
+run was launched as
+`… -m tldw_chatbook.app 2>>"$PROFILE/stderr.log"`. The app started (the pane's
+process was `python3.12`) but the pane rendered **blank** — 52 empty lines from
+`capture-pane` — and `stderr.log` filled with the rendered frames themselves
+(`[25;2H[38;2;163;164;166;48;2;25;29;33m …`). Relaunching the identical command
+without the redirect rendered normally on the first capture. Whatever the
+mechanism (the app writes its paint through a stream that follows the stderr
+redirect when stderr is not a tty), the cost is a silent blank pane that looks
+like a crashed app.
+
+**What to do.** Launch without the redirect, and get the traceback the other
+way when you need it: `tmux capture-pane -p -S -200` from the pane *before*
+relaunching, or start the app under `script`/a wrapper that keeps stderr a tty.
+Verify the first capture actually shows the nav bar before driving anything —
+a blank capture after 25s is this, not a slow start.
+
+## A surviving app is no longer evidence of no crash (task-32533, 2026-09-14)
+
+**What happened.** task-32533 stopped an unhandled widget-handler exception from
+exiting the app: the screen stays and a toast names the site. That is the right
+product behaviour and it silently retires the review signal every live walk had
+relied on — "the app is still up, so nothing crashed". It was already misleading
+during this very task: at 12:42:49 the Notes folder dialog raised
+`InvalidSelectValueError` on a fresh profile, the app kept running and kept
+logging for five more minutes, and the only trace was one line in
+`tldw_cli_app.log`. Whoever was driving would have walked straight past it.
+Worse, the toast is mounted into the current screen's `ToastRack` and repainted
+through that screen — when the raising pump *is* the screen, the notification
+may never appear at all, so the capture can look completely clean.
+
+**What to do.** After every live walk, before writing the verdict:
+
+```
+grep -nE "unhandled_exception|app_stopping" "$PROFILE/data/<users_name>/tldw_cli_app.log"
+```
+
+Zero new lines is the pass, not a live app. Cite the grep in the report the way
+captures are cited. A surviving `unhandled_exception` line now carries
+`raise_*`/`site_*` and `widget_type`/`widget_id`, so it names the site in one
+read — but only if someone looks.
+
+**Which frames mean "a pump's own handler raised".** The keep-alive that creates
+this blind spot is deliberately narrow, and getting the frame list right took
+reading `textual/message_pump.py` rather than guessing: `on_idle` handlers are
+invoked inline in `_process_messages_loop` with no frame of their own, and
+`_pre_process` mount failures — the P0's own path, a `Select` that dies while
+mounting — carry `_dispatch_message` *without* `_process_messages_loop`. So all
+three of `_dispatch_message`, `_flush_next_callbacks` and
+`_process_messages_loop` are needed and none is redundant; matching only
+`_dispatch_message` (the first version) was an accident of which path the P0
+happened to hit, and it silently left `call_after_refresh` and `on_idle`
+failures exiting the app. The App's own pump is excluded (`pump is not self`):
+skipping `super()` there breaks the *application* loop with no return code and
+no `panic()`. Evidence for that one is sharper than the reasoning was — with the
+clause removed, the pin does not fail an assertion, it hangs the pilot for 35 s
+and dies on `WaitForScreenTimeout`, which is the silent vanish itself.
+
+## A scan-filter change turns the files it stops visiting into "Recently deleted" — only a profile that already used the feature shows it (task-32552, 2026-09-13)
+
+**What happened.** task-32552 hid every dot-directory from the Folder files
+walk (`.obsidian` and `.trash` had differed only by whether one held a
+Markdown file). Every test was green on fresh in-memory replicas. The first
+live run on the wave's scratch profile — whose replica had indexed
+`.trash/Old idea.md` on the previous launch — listed that file under
+**Recently deleted**: the reconcile tombstones any replica row the walk no
+longer reports, and a file the walk now skips looks exactly like a file that
+was removed. The file was still on disk (Restore would have said "exists"),
+and it stayed searchable through the replica's FTS.
+
+**What to do.** When a change narrows what an indexed walk visits, run the
+fixed build against a profile that indexed the old set — a fresh fixture
+cannot show the migration — and decide explicitly what the index does with
+the rows it will never see again (here: forget them, `FileNotesReplica.
+forget_file`, never tombstone). Pin it with a replica seeded by hand
+(`Tests/Notes/test_file_notes_service.py::test_a_file_indexed_under_a_dot_
+directory_is_forgotten_not_recently_deleted`).
+
+## Check notification overlays on the active screen (TASK-32696, 2026-09-16)
+
+The first Recent imports native capture batch waited for `app.query("Toast")`
+to be empty, yet six inspected images still carried import-finished notices.
+The query did not inspect the pushed Library screen. Waiting on
+`app.screen.query("Toast")` produced the clean confirmation batch without
+suppressing notifications or changing product behavior. Scope screenshot-readiness
+checks to the surface actually being captured; a successful empty query alone
+is not evidence that the picture is unobscured.
+
+## A "Verified against" stamp verifies what it names, not the page around it (task-32558, 2026-09-14)
+
+**task-32558, 2026-09-14.** `Docs/User_Guide/library/file-notes.md` told
+readers the Session Git panel is headed "Prepare session for commit", with
+the scope line "Session paths only · stages complete file state" and the
+keyboard guide "Up/Down Select | Tab Actions | Enter Run | Esc Back". All
+three were true once. All three were rewritten by commit `67fec3f350`
+(task-15122) on **2026-08-11** and the page was never touched. Between then
+and the sweep this page received **fifteen** "Verified against" stamps,
+across **six** dates. Counted, not remembered: the pre-sweep file carries 17
+stamps and 2 of them predate the rewrite (both 2026-08-07), so 15 fall in the
+window —
+
+```
+git show <pre-sweep-rev>:Docs/User_Guide/library/file-notes.md \
+  | grep -o '^\*Verified against [^(]*— 20[0-9-]*' | sed 's/.*— //' \
+  | sort | uniq -c
+```
+
+**Three** of the fifteen named this panel. Two of those three were live walks
+against a real git-backed vault that drove it end to end —
+`fix/library-notes-w3-pickers-git` (2026-09-11, "keyboard staging and a real
+commit") and `fix/library-notes-wave3-docs` (2026-09-12, "Trust and check
+status → … → committed"). The third, `fix/library-notes-w4-import-kbd`
+(2026-09-14), **captured the panel's own header control** and cited the
+capture — and **all three true strings sit inside that same captured frame**.
+`wave4-caps/import-kbd/import-21-back-cue-files.txt` paints `‹ Files` (the
+control the stamp quoted) at `:16`, then `Review session changes` at `:17`,
+`Review and commit only notes changed during this Chatbook session.` at
+`:19`, and `Up/Down select · Tab actions · Enter run · Esc back` at `:20`.
+The stamp read one line of that frame, quoted it, and shipped — while the
+lines under it contradicted three sentences of the page it was stamping.
+Each stamp was honest: each verified the claim it named. None
+re-read the chapter it sat in. The false sentences survived all fifteen, and
+`grep -rF "Prepare session for commit" tldw_chatbook/` — no hits at all —
+would have found them in one second on any of those six days.
+
+Same sweep, same disease elsewhere: `file-notes.md` described a "Chunking
+Lab | Try selected text" strip under every Library canvas that task-32064 had
+already removed (and said its removal was "tracked as task-32064", which was
+Done); `console.md` said the Get started card has two actions, while its own
+task-32555 stamp, in the page's own stamp section, names three. The wave had
+already found eight authoritative-sounding false guide sentences before this
+sweep started; the sweep itself found nine more, on pages that between them
+carried dozens of stamps. None of the seventeen was found by the stamp
+process.
+
+**What to do.**
+
+1. **Grep the quoted strings, don't re-read the prose.** A guide sentence
+   that quotes what the app prints is falsifiable in one command. Extract
+   every quoted string on a page you are stamping and `grep -rF` each against
+   `tldw_chatbook/`; composed lines (f-strings) need the longest literal run.
+   Most hits are noise; the misses are the list worth reading.
+   `scripts/check_guide_claim_strings.py <page>` does exactly this and is in
+   the tree — run it before you stamp anything. It prints a read-list and
+   exits 0 on purpose, because a guide legitimately quotes strings no source
+   emits (historical "(Was …)" clauses, composed examples, the reader's own
+   input). Making it a `Tests/Docs/` gate, with those exceptions in a
+   reviewed allowlist, is **task-32589**.
+2. **A stamp should say what was CHECKED, not only what was fixed.** Listing
+   the claims that HELD is what makes the next sweep cheaper and what stops a
+   reader assuming an unstamped paragraph was looked at. The task-32558
+   stamps do this deliberately.
+3. **Say which half of a correction you walked.** Some of this sweep's fixes
+   came from a capture (the empty-profile rail, the 100x30 heading clip) and
+   some from reading the widget's `compose` (the Session Git strings, the
+   Console card's third action). The stamps name which is which, because a
+   stamp that implies a walk it did not do is the failure stamps exist to
+   prevent.
+4. **When a task that a guide cites as "tracked" closes, the citation is now
+   a claim.** `grep -n "tracked as task-" Docs/` and check each one's status
+   before stamping; three of this wave's false sentences were of exactly that
+   shape.
+
+## A correction in a lessons file must stay next to the entry it corrects (task-32558, 2026-09-14)
+
+**Wave 4, PR #2678 conflict resolution, 2026-09-14.** `dev` and the P0 branch
+had both appended sections to `lessons-live-verification.md`, and the house
+rule for that conflict is "compose both, dev's block first". Here that rule
+happened to be right for a reason bigger than the rule: dev's block contained
+a **correction to a lesson one of this wave's own earlier agents had
+written** — teeing the app's stderr into the tmux launch line makes the pane
+render blank and fills the log with rendered frames, which the earlier entry
+had recommended. Resolving the conflict by ordering the blocks any other way,
+or by deduplicating the two nearly-identical launch-recipe sections, would
+have parked the correction somewhere a reader of the original entry never
+reaches.
+
+These files are append-only and long. A reader arrives by grep, reads the
+entry the grep hit, and leaves. A correction three thousand lines away is a
+correction nobody receives, and the entry it corrects goes on being followed
+— which is exactly how the tee-stderr advice was still in use after it had
+been disproved.
+
+**What to do.** When composing lessons files across a merge, or adding a
+census, caveat or reversal to an existing entry: put it immediately under
+that entry's own heading, not in a new section at the end, and say what it
+corrects. The task-32558 wave-4 self-supplied-pin census in
+`lessons-testing-evidence.md` is placed that way on purpose and says so in
+its first line. Never reorder a block that contains a correction away from
+its subject to satisfy a merge convention; the convention is a tiebreaker for
+independent additions, not a licence to separate the two.
+
+## Cite by name inside the artefact you are editing; cite by number only into another file (task-32558, 2026-09-14)
+
+**Three occurrences in one task, 2026-09-14 — and the third was inside the fix
+for the second.** A pointer that says *where* something is decays the next time
+anything is inserted above it. A pointer that says *what* it is does not.
+
+1. A `console.md` stamp said the task-32555 stamp was "four paragraphs below"
+   the Get started card. It was ~455 lines below, in the page's own "Verified
+   against" section. Caught in review round 1.
+2. A lesson entry said "the false heading is three lines above the control it
+   captured". In the cited capture the real heading is one line *below* — the
+   direction inverted and the count wrong in both. Caught in re-review round 1,
+   after shipping into three committed files.
+3. Fixing (2), the replacement stamp cited the two corrected sentences as
+   `:22-25` and `:323-326` — **already off by one from its own rewrap in the
+   same commit**, and pointing *inside the page that contained them*, so every
+   future edit to that page would move them again. Caught by me, re-reading my
+   own fix.
+
+Each of the three was written by someone who had just looked at the thing. The
+position was true at the moment of writing and false by the time it was read.
+
+**The rule, and the reason it is not "be careful with line numbers".** A
+citation into the artefact you are editing is invalidated *by your own edit* —
+you cannot be careful enough, because the act of writing the citation can move
+what it points at. A citation into a different file, or into a frozen capture
+under `wave4-caps/`, is invalidated only by someone editing that other thing,
+which is a normal staleness problem and a much slower one.
+
+So:
+
+- **Inside the file you are editing** — name the section, the heading, the step
+  ("step 5 of Common tasks", "the Scoped exports paragraph", "this same
+  Verified-against section"). Never a line number, never "N paragraphs
+  above/below".
+- **Into another source file** — line numbers are good and worth keeping
+  (`library_notes_canvas.py:1842`), because the reader can check them and your
+  edit cannot move them.
+- **Into a capture** — line numbers are the *best* form, because the capture is
+  immutable evidence (`import-21-back-cue-files.txt:17`).
+- **Positional adjacency claims** ("three lines above", "four paragraphs
+  below") — do not write them at all. State the relationship that is checkable
+  instead: "all three true strings are inside that same captured frame" is both
+  stronger and unfalsifiable-by-drift.
+
+**Refinement (task-32605, 2026-09-15): "another file" is not far enough — it
+has to be a file your branch does not touch.** A review round on task-32605
+whose entire purpose was citation accuracy — its two findings were a wrong
+mechanism and an off-by-one — corrected an AC to cite
+`notes_sync_runtime.py:2154-2157`, `:3283-3284` and `:2692`. All three were
+exact when written. The *next commit in the same round* added two import lines
+and a three-line annotation above them, and shipped the AC two-to-three lines
+stale. The citation pointed into another file, which the rule above permits,
+but that file was one this branch was itself editing. So the decay mechanism is
+not "the artefact you are editing" — it is **any file your own commits move**,
+and a line number written mid-branch is a prediction about your own future
+diff. Cite those by symbol with the file and no line number
+(`_blocked_plan_status` in `notes_sync_runtime.py`, not `:2154-2157`); grep
+finds a symbol after any rewrite, and a reader who greps never learns the
+number was wrong. Line numbers stay right for files outside the branch's diff
+and best of all for frozen captures.
+
+
+## Debounced grid refresh can replace a search query (TASK-32816)
+
+The Appearance layout repair passed its existing filter tests, but native
+run 001 typed `rocket` and ended with `ket`, selecting a ticket on Enter.
+`EmojiGrid.populate_grid` briefly focused an icon; the modal returned focus to
+its search Input, whose default select-on-focus behavior selected the typed
+prefix. Later keystrokes replaced that prefix. The existing filter test assigned
+`Input.value` directly and could not expose this interaction.
+
+For search controls that rebuild focusable children, verify actual keystrokes
+with pauses beyond the debounce interval and assert both text and cursor/selection.
+Preserve the search cursor on programmatic refocus. The two-theme failing test,
+minimal `select_on_focus=False` repair and corrected native captures are retained
+in `Docs/superpowers/qa/2026-09-18-console-appearance/README.md`.
+
+
+## A CSS route tour can leave a native compiler alive (TASK-32818, 2026-09-18)
+
+During TASK-32816 verification, both private CSS-tour runs printed their
+passing assertion but exceeded 180 seconds during teardown. A child-side timed
+stack dump identified Runner.close draining an executor worker in Meetings
+prepare → system_audio_tap.ensure_helper → swiftc. Cancelling a Textual worker
+does not stop its synchronous subprocess. The CSS-only builder now isolates
+only its instance's tap probe; real owner/preparation, screens, fifteen route
+sentinels and source limits remain, and both tours terminate normally. A passing
+dot is not a completed test; inspect child cleanup and retain the nonzero run.
+This fixture isolation does not establish production audio/compiler shutdown.
+
+
+## Paging can push compact modal actions outside the clip
+
+PR2707 Qodo follow-up (TASK32824): three Persona paging rows passed keyboard Apply
+assertions, but the real 80×24 default modal painted no action buttons. Focus and
+Enter still reached the clipped Apply control. The form used auto height inside a
+capped dialog. A compositor-region regression now requires the whole action to be
+visible; the form fills remaining space and scrolls, with validation errors and
+actions outside the scroller. Keep the existing error-paint assertion too: making
+the form scroll initially hid the unavailable-Persona explanation.
+
+## Assert painted button labels, and use real role enums (TASK-32826–32828)
+
+**2026-09-18, Debian SSH verification.** The conversation action label tests
+passed while the actual menu clipped “Change icon and colour…” and the unread
+button painted `[unread` without its closing bracket. Textual's internal
+`line_pad` consumes two cells even when CSS padding is zero. Shorter menu copy
+and `styles.line_pad = 0` on the fixed icon target resolved the captures. Assert
+painted strips with literal Rich Text (plain bracketed strings are parsed as
+markup), not just the label property or outer geometry.
+
+The same run exposed `ConsoleMessageRole.ASSISTANT` in usage rows and counted
+assistant estimates as input. Existing cost tests used strings; a parameterized
+case with the production enum failed. Normalize its `.value` before string
+conversion and include the real enum in boundary tests.

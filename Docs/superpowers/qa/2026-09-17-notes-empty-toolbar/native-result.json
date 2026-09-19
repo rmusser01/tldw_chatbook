@@ -1,0 +1,190 @@
+{
+  "pid": 22778,
+  "runner_sha256": "3eff8b2ebd2611fa4bdd64c4a0e233883151f27c7510c81d12c53c0db5581c1c",
+  "source_hashes": {
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": "5fd858c62eb16233976c4bd09bcb0ad8038736d9213b5eeeca743df840d042a6",
+    "tldw_chatbook/Widgets/Console/console_bounded_section.py": "cae8e50e9cacf5b5609ffaeaef1481171e25e99be0c534543addb5459e0123b8",
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": "6a383d528a16396f38678bbe2973cd4bd02868806944afa0c2062dc197c4a55a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a34cfafccea5c5e0ef18989cbf94731b373f9449438bc391b1a1badbd4d74dd5",
+    "tldw_chatbook/css/screen_agentic_library.tcss": "59be3f4aa8edb3a6e9192870426e5d056c909097fcb0d122e02c0c905d89b1da"
+  },
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ]
+    }
+  ],
+  "waiting_for": "Notices clear",
+  "action_rows": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "contract_width": 72,
+      "content_width": 68,
+      "actions": [
+        {
+          "label": "New folder",
+          "disabled": false,
+          "region": [
+            46,
+            21,
+            14,
+            1
+          ]
+        },
+        {
+          "label": "\u25cb Add to folder",
+          "disabled": true,
+          "region": [
+            61,
+            21,
+            19,
+            1
+          ]
+        },
+        {
+          "label": "\u25cb Move note",
+          "disabled": true,
+          "region": [
+            81,
+            21,
+            15,
+            1
+          ]
+        },
+        {
+          "label": "\u25cb Remove placement",
+          "disabled": true,
+          "region": [
+            46,
+            22,
+            22,
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "contract_width": 32,
+      "content_width": 32,
+      "actions": [
+        {
+          "label": "New folder",
+          "disabled": false,
+          "region": [
+            6,
+            12,
+            14,
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "contract_width": 72,
+      "content_width": 68,
+      "actions": [
+        {
+          "label": "New folder",
+          "disabled": false,
+          "region": [
+            46,
+            21,
+            14,
+            1
+          ]
+        },
+        {
+          "label": "\u25cb Add to folder",
+          "disabled": true,
+          "region": [
+            61,
+            21,
+            19,
+            1
+          ]
+        },
+        {
+          "label": "\u25cb Move note",
+          "disabled": true,
+          "region": [
+            81,
+            21,
+            15,
+            1
+          ]
+        },
+        {
+          "label": "\u25cb Remove placement",
+          "disabled": true,
+          "region": [
+            46,
+            22,
+            22,
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "contract_width": 32,
+      "content_width": 32,
+      "actions": [
+        {
+          "label": "New folder",
+          "disabled": false,
+          "region": [
+            6,
+            12,
+            14,
+            1
+          ]
+        }
+      ]
+    }
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

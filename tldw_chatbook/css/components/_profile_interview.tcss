@@ -1,4 +1,9 @@
 /* Personal Context interview and deterministic final review. */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales + named
+   \$ds-profile-link-modal-* geometry), transcribed value-identically from
+   the raw literals; comments stay load-bearing. */
+
 
 ProfileInterviewScreen,
 ProfileInterviewCancelModal,
@@ -13,44 +18,44 @@ PersonalContextLinkModal {
 #personal-context-review-modal,
 #personal-context-link-modal,
 #profile-interview-cancel-modal {
-    min-width: 0;
+    min-width: $ds-size-0;
     border: round $surface-lighten-2;
     background: $panel;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
 }
 
 #profile-interview-shell {
-    width: 76;
-    max-width: 96%;
-    height: 22;
-    max-height: 96%;
+    width: $ds-size-76;
+    max-width: $ds-percent-96;
+    height: $ds-size-22;
+    max-height: $ds-percent-96;
 }
 
 #personal-context-review-modal {
-    width: 96;
-    max-width: 96%;
-    height: 90%;
-    max-height: 30;
+    width: $ds-size-96;
+    max-width: $ds-percent-96;
+    height: $ds-percent-90;
+    max-height: $ds-size-30;
 }
 
 #personal-context-link-modal {
-    width: 88;
-    max-width: 96%;
-    height: 82%;
-    max-height: 28;
+    width: $ds-profile-link-modal-cols;
+    max-width: $ds-percent-96;
+    height: $ds-profile-link-modal-body-share;
+    max-height: $ds-size-28;
 }
 
 #profile-interview-cancel-modal {
-    width: 64;
-    max-width: 92%;
+    width: $ds-size-64;
+    max-width: $ds-percent-92;
     height: auto;
-    min-height: 14;
+    min-height: $ds-size-14;
 }
 
 .profile-interview-title {
-    width: 100%;
-    height: 1;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $accent;
     text-style: bold;
 }
@@ -59,10 +64,10 @@ PersonalContextLinkModal {
 .profile-interview-state,
 .profile-interview-progress,
 .profile-interview-copy {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .profile-interview-disclosure,
@@ -73,56 +78,67 @@ PersonalContextLinkModal {
 
 .profile-interview-state {
     background: $surface;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+/* Keep the current question beside the focused answer at 80x24. These
+   disclosures remain visible without spending a blank row after each one. */
+#profile-interview-shell .profile-interview-disclosure,
+#profile-interview-shell .profile-interview-state,
+#profile-interview-shell .profile-interview-progress,
+#profile-interview-question,
+#profile-interview-answer,
+#profile-interview-error {
+    margin-bottom: $ds-space-0;
 }
 
 #profile-interview-body,
 #personal-context-review-list,
 #personal-context-link-review-list {
-    width: 100%;
-    min-width: 0;
-    height: 1fr;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-height-fill;
 }
 
 .personal-context-link-decision-row {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     background: $surface;
 }
 
 .profile-interview-question {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 2;
-    margin: 0 0 1 0;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     text-style: bold;
 }
 
 .profile-interview-error,
 .personal-context-review-warning {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $warning;
     background: $warning 10%;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #profile-interview-answer,
 .personal-context-review-row Input,
 .personal-context-review-row Select,
 .personal-context-proposal-field {
-    width: 100%;
-    min-width: 0;
-    height: 3;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
     border: none;
     border-left: solid $surface-lighten-2;
     background: $surface-darken-1;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #profile-interview-answer:focus,
@@ -134,55 +150,66 @@ PersonalContextLinkModal {
     text-style: bold;
 }
 
+/* The global outline paints over the first input row, where Input renders
+   its value. Use the token focus surface and side edge without covering it. */
+#profile-interview-answer:focus,
+PersonalContextReviewModal .personal-context-review-row Input.personal-context-review-input:focus {
+    outline: none;
+    border: none;
+    border-left: solid $ds-input-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 .profile-interview-actions {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
     layout: grid;
     grid-size: 2;
     grid-columns: 1fr 1fr;
     grid-gutter: 0 1;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .profile-interview-actions Button {
-    width: 100%;
-    min-width: 0;
-    height: 3;
-    margin: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
+    margin: $ds-space-0;
 }
 
 .profile-interview-cancel-actions {
-    width: 100%;
-    min-width: 0;
-    height: 3;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
 }
 
 .profile-interview-cancel-actions Button {
-    width: 1fr;
-    min-width: 0;
-    height: 3;
-    margin: 0 1 0 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 .personal-context-review-row {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
     border-bottom: solid $surface-lighten-1;
-    padding: 0 1 1 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .personal-context-review-row Checkbox {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 3;
+    min-height: $ds-size-3;
     text-style: bold;
 }
 
 .personal-context-review-row Button {
-    width: 100%;
-    min-width: 0;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }

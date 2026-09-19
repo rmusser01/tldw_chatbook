@@ -268,6 +268,7 @@ def _minimal_library_screen() -> LibraryScreen:
     screen.refresh = MagicMock()
     screen.call_after_refresh = MagicMock()
     screen._refresh_library_ingest_canvas_preserving_context = MagicMock()
+    screen._update_library_ingest_option_group = MagicMock()
     screen.app_instance = MagicMock()
     screen.app_instance.library_ingest_jobs = LibraryIngestJobRegistry()
     screen.app_instance._resolve_ingest_backend = lambda: "local"
@@ -748,7 +749,9 @@ def test_option_reset_disarms_pending_consent_before_repaint(tmp_path):
         screen.handle_library_ingest_option_reset(event)
 
     assert screen._ingest_state.start_consent is None
-    screen._refresh_library_ingest_canvas_preserving_context.assert_called_once_with()
+    screen._update_library_ingest_option_group.assert_called_once_with(
+        "generic", reset_values=True
+    )
 
 
 @pytest.mark.parametrize("is_folder", [False, True], ids=["file", "folder"])

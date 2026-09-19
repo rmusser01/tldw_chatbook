@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+2.66s call     Tests/UI/test_pattern_gallery_command.py::test_gallery_palette_command_loads_and_opens_on_demand[None]
+2.58s call     Tests/UI/test_pattern_gallery_command.py::test_gallery_palette_command_loads_and_opens_on_demand[Pattern Gallery]
+
+(4 durations < 1s hidden.)
+2 passed in 6.28s

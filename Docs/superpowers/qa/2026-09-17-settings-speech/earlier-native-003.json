@@ -1,0 +1,17 @@
+{
+  "pid": 46152,
+  "cells": [],
+  "runner_sha256": "f2c94c03195dfbcdaf188f69dd598c45d746602adc803c4b04c2912dbe19875e",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "29b4eaaed23a9ec03a6888bdbdd7b935e5b25162959586371f1188acecea3441",
+    "tldw_chatbook/UI/Screens/settings_speech_tts.py": "c7ac398248f1d514c16b8990023ecf328ceba82e7f322a3fe1c2dfe8fc46fd2b",
+    "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": "f989d53819382068c867003f688d2eddec81d6b32abd26d9adacf9d9a885cfda",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a34cfafccea5c5e0ef18989cbf94731b373f9449438bc391b1a1badbd4d74dd5",
+    "tldw_chatbook/css/features/_settings.tcss": "414659e2b12db71fa846c0a1e16a7d4a3739bd2c67de45bcae13dd90796157ae",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "a8f7b6e91b7c8397d837e8ce09b145b5d35bf8cffc1a68ee9642448e45448a30"
+  },
+  "waiting_for": "Speech panel",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-speech/native_check.py\", line 189, in journey\n    speed = await tab_to(\"#settings-speech-speed\")\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-speech/native_check.py\", line 119, in tab_to\n    geometry\nAssertionError: #settings-speech-speed\n",
+  "app_run_returned": true
+}

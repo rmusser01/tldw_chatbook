@@ -1,0 +1,87 @@
+/* ========================================
+ * FEATURES: Home
+ * ========================================
+ * ADR-161 task 10: the home-only vocabulary (triage grid, rail rows,
+ * next-action callout, canvas actions) extracted from
+ * components/_agentic_terminal.tcss and tokenized on arrival. The shared
+ * agentic-shell comma rules (all-shells heights/strips/regions) are NOT
+ * home vocabulary; they stay in components/_agentic_terminal.tcss chrome.
+ * ======================================== */
+
+
+#home-triage-grid {
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+#home-header-line {
+    height: $ds-home-compact-row-height;
+    min-height: $ds-home-compact-row-height;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    border: none;
+}
+
+#home-rail,
+#home-canvas {
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+.home-rail-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.home-rail-row-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.home-rail-section-body {
+    height: auto;
+    min-height: $ds-size-0;
+}
+
+.home-rail-empty-copy {
+    color: $ds-text-muted;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#home-next-action-callout {
+    color: $ds-text-muted;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#home-canvas-actions .ds-toolbar {
+    height: auto;
+    min-height: $ds-home-control-button-height;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+.home-canvas-action {
+    height: $ds-home-control-button-height;
+    min-height: $ds-home-control-button-height;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: none;
+}

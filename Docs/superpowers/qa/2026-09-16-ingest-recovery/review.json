@@ -1,0 +1,7 @@
+{
+  "reviewer": "/root/ingest_provider_review",
+  "mode": "independent read-only review",
+  "actionable_findings": [],
+  "conclusion": "Existing option synchronizer updates provider status/chooser and gate while retaining editors. Its active-Import guard preserves newer navigation. Tests cross real picker dismissal and worker result delivery; native retains retry routing and replaces only model admission and dispatch.",
+  "limits": "Reviewer did not independently execute tests or native journeys; root owns runtime qualification."
+}

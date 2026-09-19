@@ -3,6 +3,10 @@
  * ========================================
  * Scheduling workbench specific styles
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent/fr scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* The liveness Static + bottom status strip are auto-height siblings of
  * #scheduling-workbench (redesign PR-4 task 5 retired the TabbedContent
@@ -10,8 +14,8 @@
  * workbench row measures its fr children against the whole content area
  * and overflows past the footer. */
 #schedules-shell {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 /* redesign PR-2, Task 3: the bottom status strip (plan ruling 4) -- it sits
@@ -29,15 +33,15 @@
 }
 
 #scheduling-status-strip > SyncStatusWidget {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #scheduling-workbench {
     layout: horizontal;
-    height: 1fr;
-    min-height: 10;
-    padding: 1;
-    margin: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-10;
+    padding: $ds-space-1;
+    margin: $ds-space-0;
     overflow: hidden;
     border: solid $ds-grid-line;
 }
@@ -46,9 +50,9 @@
  * expressed with fr units so the three panes share leftover space with the
  * fixed-width vertical dividers. This avoids percentage-based overflow/wrapping
  * and differs from workflows/acp which use a 25/50/25 fr ratio. */
-#scheduling-list-pane { width: 3fr; min-width: 30; border: solid $ds-grid-line; padding: 1; }
-#scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
-#scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
+#scheduling-list-pane { width: $ds-fr-3; min-width: $ds-size-30; border: solid $ds-grid-line; padding: $ds-space-1; }
+#scheduling-detail-pane { width: $ds-fr-4; min-width: $ds-size-52; border: solid $ds-grid-line; padding: $ds-space-1; }
+#scheduling-inspector-pane { width: $ds-fr-2; min-width: $ds-size-34; border: solid $ds-grid-line; padding: $ds-space-1; }
 
 /* UAT display blocker (finding 2): both detail panes are a plain
  * `Vertical` (`overflow: hidden hidden` by default) taller than their
@@ -74,7 +78,7 @@ TaskDetail, DefinitionDetail {
 /* The queue table must fill its pane, or empty queues collapse to a single
  * clipped row at short heights (80x24). */
 #scheduling-task-table {
-    height: 1fr;
+    height: $ds-height-fill;
 }
 
 /* redesign PR-4, task 5: the Automations tab's own three-pane split
@@ -85,7 +89,7 @@ TaskDetail, DefinitionDetail {
 #scheduling-automation-detail-empty-state {
     color: $text-muted;
     text-align: center;
-    padding: 3 1;
+    padding: $ds-space-3 $ds-space-1;
 }
 
 /* The two detail panes' body cards: the definitions pane's question and
@@ -93,18 +97,18 @@ TaskDetail, DefinitionDetail {
 #scheduling-automation-detail-question,
 #scheduling-task-detail-body-card {
     height: auto;
-    padding: 1;
-    margin-bottom: 1;
+    padding: $ds-space-1;
+    margin-bottom: $ds-space-1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $text;
 }
 
 #scheduling-queue-filter {
-    height: 1;
+    height: $ds-size-1;
     border: none;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     background: $surface-darken-1;
 }
 
@@ -112,15 +116,15 @@ TaskDetail, DefinitionDetail {
  * buttons, same height:1/border:none idiom the filter Input above uses,
  * so the row costs one line rather than a full 3-row Button box. */
 #scheduling-queue-chips {
-    height: 1;
-    margin: 0 0 1 0;
+    height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #scheduling-queue-chips .scheduling-queue-chip {
-    height: 1;
+    height: $ds-size-1;
     border: none;
-    min-width: 8;
-    margin-right: 1;
+    min-width: $ds-size-8;
+    margin-right: $ds-space-1;
     background: $surface-darken-1;
 }
 
@@ -132,17 +136,17 @@ TaskDetail, DefinitionDetail {
  * at the widths where the four chips are gone. */
 #scheduling-chip-cycle {
     display: none;
-    height: 1;
+    height: $ds-size-1;
     border: none;
     width: auto;
-    min-width: 8;
+    min-width: $ds-size-8;
     background: $surface-darken-1;
 }
 
 /* Compact mode: the filter's margin row goes to the table (80x24 has
  * exactly one spare row; without this the queue shows only the filter). */
 #scheduling-workbench.compact #scheduling-queue-filter {
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 /* The four chips collapse into the cycling control rather than the whole
@@ -150,7 +154,7 @@ TaskDetail, DefinitionDetail {
  * keeps a filter affordance at the floor. The row's own bottom margin
  * goes to the table for the same reason the filter's does. */
 #scheduling-workbench.compact #scheduling-queue-chips {
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 #scheduling-workbench.compact #scheduling-queue-chips .scheduling-queue-chip {
@@ -168,14 +172,14 @@ TaskDetail, DefinitionDetail {
  * border is already the visible edge, and 4 rows of pane chrome is a
  * sixth of an 80x24 terminal. */
 #scheduling-workbench.compact #scheduling-list-pane {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
     border: none;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 /* redesign PR-4, task 6: this used to pin the rail to 24 columns, which
@@ -185,18 +189,18 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-workbench {
  * the width with the detail pane (which keeps its own min-width) fits the
  * header on one row again and gives the table back its space. */
 SchedulesWorkbench.schedules-workbench-compact #scheduling-list-pane {
-    width: 1fr;
-    min-width: 28;
+    width: $ds-width-fill;
+    min-width: $ds-size-28;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-detail-pane {
-    width: 1fr;
-    min-width: 32;
+    width: $ds-width-fill;
+    min-width: $ds-size-32;
 }
 
 SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
-    width: 20;
-    min-width: 16;
+    width: $ds-size-20;
+    min-width: $ds-size-16;
 }
 
 /* Pane headers */
@@ -206,9 +210,9 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-automation-detail-header {
     text-style: bold;
     color: $text;
-    padding: 0 0 0 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-0;
     border-bottom: solid $ds-grid-line;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #scheduling-list-header {
@@ -216,12 +220,12 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 }
 
 #scheduling-list-header #scheduling-list-title {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #scheduling-new-task {
     width: auto;
-    min-width: 9;
+    min-width: $ds-size-9;
 }
 
 /* redesign PR-2, Task 3: the rail's Mark-all-read button -- hidden by
@@ -229,8 +233,8 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * visibility), same height:auto row as Create above it. */
 #scheduling-mark-all-read {
     width: auto;
-    min-width: 9;
-    margin-left: 1;
+    min-width: $ds-size-9;
+    margin-left: $ds-space-1;
 }
 
 /* redesign PR-4, task 2: the rail's Results relocation affordance,
@@ -238,26 +242,26 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * (never hidden, unlike Mark-all-read). */
 #scheduling-results-badge {
     width: auto;
-    min-width: 9;
-    margin-left: 1;
+    min-width: $ds-size-9;
+    margin-left: $ds-space-1;
 }
 
 /* Empty state */
 #scheduling-task-detail-empty-state {
     color: $text-muted;
     text-align: center;
-    padding: 3 1;
+    padding: $ds-space-3 $ds-space-1;
 }
 
 /* Lifecycle action row */
 #scheduling-task-detail-lifecycle {
     height: auto;
-    padding: 1 0;
-    margin-top: 1;
+    padding: $ds-space-1 $ds-space-0;
+    margin-top: $ds-space-1;
 }
 
 #scheduling-task-detail-lifecycle Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* redesign PR-4, task 4: the legacy transfer action row (schedules-
@@ -269,20 +273,20 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * list, same auto-height shape as the lifecycle row above. */
 #scheduling-task-detail-secondary-actions {
     height: auto;
-    padding: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* task-31823: shared by BOTH panes' secondary-actions buttons (reminder
  * + definition) -- a plain class on each Button, never an
  * ancestor-scoped bare-type rule. */
 .detail-secondary-action-button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
-    margin-top: 1;
-    width: 100%;
+    margin-top: $ds-space-1;
+    width: $ds-width-full;
     text-style: bold;
 }
 
@@ -294,7 +298,7 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-task-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* schedules-redesign PR-3, Task 4: the definitions pane's header
@@ -304,18 +308,18 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * selectors share this declaration rather than one id-scoped rule. */
 #scheduling-automation-detail-lifecycle {
     height: auto;
-    padding: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #scheduling-automation-detail-lifecycle .detail-lifecycle-button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* task-31823: the definitions pane's own second compact action row --
  * `.detail-secondary-action-button` above already covers the buttons. */
 #scheduling-automation-detail-secondary-actions {
     height: auto;
-    padding: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Same pair as the reminder pane's rule above: docked + pushed instance. */
@@ -323,14 +327,14 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-definition-detail-overlay .follow-why {
     color: $text-muted;
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Status badge base (detail pane) */
 #scheduling-task-status-badge {
     width: auto;
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     text-style: bold;
     color: $text;
     border: none;
@@ -371,42 +375,42 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-task-inspector-empty-state {
     color: $text-muted;
     text-align: center;
-    padding: 3 1;
+    padding: $ds-space-3 $ds-space-1;
 }
 
 /* Inspector metadata */
 #scheduling-inspector-metadata {
     height: auto;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-1;
 }
 
 #scheduling-inspector-metadata Horizontal {
     height: auto;
-    width: 100%;
-    padding: 0;
-    margin: 0;
+    width: $ds-width-full;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
 }
 
 .scheduling-inspector-label {
     color: $text-muted;
-    padding: 0 1 0 0;
-    width: 10;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    width: $ds-size-10;
 }
 
 .scheduling-inspector-value {
     color: $text;
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
 }
 
 #scheduling-conflict-card {
     height: auto;
-    margin-top: 1;
+    margin-top: $ds-space-1;
 }
 
 #scheduling-conflict-card.conflict {
     border: solid $error;
-    padding: 1;
+    padding: $ds-space-1;
     color: $error;
     background: $error 10%;
 }
@@ -421,7 +425,7 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     color: $text-muted;
     text-style: italic;
     height: auto;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 /* Compact mode (see SchedulesWorkbench.on_resize): the screen header
@@ -440,7 +444,7 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 #scheduling-workbench.compact #scheduling-new-task,
 #scheduling-workbench.compact #scheduling-mark-all-read,
 #scheduling-workbench.compact #scheduling-results-badge {
-    height: 1;
+    height: $ds-size-1;
     border: none;
     background: $surface-darken-1;
 }
@@ -457,27 +461,27 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
  * appears. */
 DetailValueRow {
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 DetailValueRow .detail-value-row-line {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 DetailValueRow .detail-value-row-label {
     color: $ds-text-muted;
     width: auto;
-    min-width: 0;
-    height: 1;
-    padding: 0 1 0 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 DetailValueRow .detail-value-row-value {
     color: $ds-text-primary;
-    width: 1fr;
-    min-width: 0;
-    height: 1;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
     text-align: right;
     text-wrap: nowrap;
     text-overflow: ellipsis;
@@ -485,11 +489,11 @@ DetailValueRow .detail-value-row-value {
 
 DetailValueRow .detail-value-row-affordance {
     color: $ds-text-disabled-readable;
-    width: 2;
-    min-width: 2;
-    height: 1;
+    width: $ds-size-2;
+    min-width: $ds-size-2;
+    height: $ds-size-1;
     text-align: right;
-    padding: 0 0 0 1;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 /* schedules-redesign PR-3, Task 1: the affordance's live state. `:focus-
@@ -506,8 +510,8 @@ DetailValueRow:hover .detail-value-row-affordance {
 
 DetailValueRow .detail-value-row-error {
     color: $ds-status-error-readable;
-    width: 1fr;
-    height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
@@ -534,10 +538,10 @@ DetailValueRow .detail-value-row-error {
 }
 
 .detail-value-row-owner-actions .detail-owner-action-button {
-    height: 1;
-    min-width: 8;
+    height: $ds-size-1;
+    min-width: $ds-size-8;
     border: none;
-    margin: 0 0 0 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 /* 31712 AC#4: Textual's own `Collapsible`/`Contents` body chrome --
@@ -560,12 +564,12 @@ DetailGroup {
     background: $ds-surface-panel;
     border: none;
     border-top: hkey $ds-grid-line;
-    padding-bottom: 0;
-    margin-bottom: 0;
+    padding-bottom: $ds-space-0;
+    margin-bottom: $ds-space-0;
 }
 
 DetailGroup Contents {
-    padding: 0 0 0 3;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-3;
 }
 
 /* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay
@@ -579,5 +583,5 @@ DetailGroup Contents {
  * bare-type fastpath ratchet (PR-3's `test_ancestor_scoped_bare_type_
  * rule_count_is_a_ratchet`). */
 .workbench-host-body {
-    height: 1fr;
+    height: $ds-height-fill;
 }

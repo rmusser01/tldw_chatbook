@@ -1,0 +1,42 @@
+{
+  "pid": 81320,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "name": "native-edit-81320-170",
+      "saved_version": 2,
+      "disclosure_preserved_body": true,
+      "save_focus": true,
+      "cancel_focus": "library-skill-row-native-edit-81320-170",
+      "exact_allowlist": true,
+      "dirty_escape_preserved": true,
+      "discard_preserved_saved_content": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "name": "native-edit-81320-80",
+      "saved_version": 2,
+      "disclosure_preserved_body": true,
+      "save_focus": true,
+      "cancel_focus": "library-skill-row-native-edit-81320-170",
+      "exact_allowlist": true,
+      "dirty_escape_preserved": true,
+      "discard_preserved_saved_content": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "normal_quit_requested": true,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "shell_return_observed": true
+}

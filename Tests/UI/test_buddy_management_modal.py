@@ -3,8 +3,10 @@
 import importlib.util
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Input, Select, Switch
+
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 
 
 def modal_module():
@@ -20,7 +22,10 @@ def modal_module():
 
 
 @pytest.mark.asyncio
-async def test_cancel_returns_no_mutation_after_staged_changes():
+@private_profile_test
+async def test_cancel_returns_no_mutation_after_staged_changes(
+    request,
+):
     m = modal_module()
     result = []
     app = App()
@@ -35,7 +40,10 @@ async def test_cancel_returns_no_mutation_after_staged_changes():
 
 
 @pytest.mark.asyncio
-async def test_apply_captures_explicit_binding_and_static_preference():
+@private_profile_test
+async def test_apply_captures_explicit_binding_and_static_preference(
+    request,
+):
     m = modal_module()
     from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 
@@ -63,7 +71,10 @@ async def test_apply_captures_explicit_binding_and_static_preference():
 
 
 @pytest.mark.asyncio
-async def test_invalid_artwork_keeps_form_open_with_recovery_copy():
+@private_profile_test
+async def test_invalid_artwork_keeps_form_open_with_recovery_copy(
+    request,
+):
     m = modal_module()
     result = []
     app = App()
@@ -81,7 +92,8 @@ async def test_invalid_artwork_keeps_form_open_with_recovery_copy():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 40), (60, 20)])
-async def test_actions_remain_visible_and_fields_keyboard_accessible(size):
+@private_profile_test
+async def test_actions_remain_visible_and_fields_keyboard_accessible(request, size):
     m = modal_module()
     app = App()
     async with app.run_test(size=size) as pilot:
@@ -103,7 +115,10 @@ async def test_actions_remain_visible_and_fields_keyboard_accessible(size):
 
 
 @pytest.mark.asyncio
-async def test_apply_failure_preserves_form_and_blocks_dismissal_while_saving():
+@private_profile_test
+async def test_apply_failure_preserves_form_and_blocks_dismissal_while_saving(
+    request,
+):
     import asyncio
 
     m = modal_module()
@@ -138,7 +153,8 @@ async def test_apply_failure_preserves_form_and_blocks_dismissal_while_saving():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (80, 24), (120, 40)])
-async def test_preview_pointer_focus_and_disclosed_geometry_fit(size):
+@private_profile_test
+async def test_preview_pointer_focus_and_disclosed_geometry_fit(request, size):
     from textual.widgets import Collapsible
 
     m = modal_module()
@@ -184,7 +200,8 @@ async def test_preview_pointer_focus_and_disclosed_geometry_fit(size):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["conversation", "workspace"])
-async def test_current_persona_name_is_literal_text(kind):
+@private_profile_test
+async def test_current_persona_name_is_literal_text(request, kind):
     from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 
     m = modal_module()
@@ -205,7 +222,10 @@ async def test_current_persona_name_is_literal_text(kind):
 
 
 @pytest.mark.asyncio
-async def test_buddy_form_rejects_overlong_archive_at_shared_input_boundary():
+@private_profile_test
+async def test_buddy_form_rejects_overlong_archive_at_shared_input_boundary(
+    request,
+):
     m = modal_module()
     app = App()
     async with app.run_test() as pilot:
@@ -218,7 +238,10 @@ async def test_buddy_form_rejects_overlong_archive_at_shared_input_boundary():
 
 
 @pytest.mark.asyncio
-async def test_artwork_paging_retains_selected_label_and_staged_choice():
+@private_profile_test
+async def test_artwork_paging_retains_selected_label_and_staged_choice(
+    request,
+):
     m = modal_module()
     all_rows = tuple((f"[bold]Buddy {index}[/bold]", str(index)) for index in range(5))
 
@@ -259,7 +282,10 @@ async def test_artwork_paging_retains_selected_label_and_staged_choice():
 
 
 @pytest.mark.asyncio
-async def test_petdex_staging_is_discarded_on_cancel_and_character_uses_selected_owner():
+@private_profile_test
+async def test_petdex_staging_is_discarded_on_cancel_and_character_uses_selected_owner(
+    request,
+):
     from types import SimpleNamespace
 
     m = modal_module()

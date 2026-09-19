@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Failed: opening profile
+  Review the selected file and local folders, then try again. Open the detailed recovery evidence if the problem continues. (backup_operation_failed)
+
+  • runtime / scheduler heartbeat
+  • runtime / source state
+  • runtime / sync state
+  • skills
+  • study / local
+  • subscriptions / assets
+  • tamagotchi / config
+  • tokenizers / custom
+  • tts / profile store
+  • tts / references
+  • tts / voices
+  • ui / emoji recents
+  • ui / state
+  • ui / themes
+  • workspaces / change tracking                                                                                                                             ▇
+  • writing / local
+   Open in new process
+
+  a88f5897259c45e9bd10448de500fd6b
+  /private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/two/config/config.toml
+  /private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/restore-locations/two/data                                                                 ▂
+  restoration_validated
+  Needs setup
+  Review these features in their settings before enabling them:
+  • actor packs / import staging
+  • agents / history
+  • audio / history
+  • cache / model catalog
+  • chat / attachments
+  • chat / dictionaries
+  • chat / dictionary history
+  • chat / grammars
+  • chat / prompt history
+  • chat / prompts
+
+
+                                Cancel operation                                                                     Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

@@ -1,0 +1,65 @@
+{
+  "base": "eda1d6bd65",
+  "distinct_passed": 271,
+  "distinct_inherited_failures": 1,
+  "count_basis": "175 canvas/governance +72 existing keyboard/consent +24 final new journeys =271. Overlapping reruns counted once.",
+  "runs": [
+    {
+      "log": "entry-red2.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_entry_journeys.py",
+      "passed": 16,
+      "failed": 8,
+      "seconds": 24.81,
+      "note": "Pre-fix: clipped missing-path, empty-folder, invalid-option and consent text at72x18 in both themes.",
+      "log_sha256": "0c8b63e6e32bfc729c5fa445cd349d5885bd545ef02d784c3cc2d5ae50673e77"
+    },
+    {
+      "log": "entry-green.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_entry_journeys.py",
+      "passed": 24,
+      "failed": 0,
+      "seconds": 25.37,
+      "log_sha256": "8b02ba6f9357fca6a134e3dedf3bcd7b24c493791c774c6e0aa8cc32a6537254"
+    },
+    {
+      "log": "canvas-governance.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_canvas.py Tests/UI/test_library_ingest_structural.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py",
+      "passed": 175,
+      "failed": 1,
+      "seconds": 66.97,
+      "note": "Inherited Parakeet directory-row overflow; baseline reproduction below.",
+      "log_sha256": "0ff4d74dab772b8ede81300537cc5e328d4c1b87efc82409809da9aa080408cc"
+    },
+    {
+      "log": "keyboard-consent.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_entry_journeys.py Tests/UI/test_library_ingest_keyboard.py Tests/UI/test_library_ingest_clear_focus.py Tests/UI/test_library_ingest_inline_consent.py",
+      "passed": 76,
+      "failed": 20,
+      "seconds": 92.68,
+      "note": "A test-only lint repair changed CSS_PATH from list to unsupported tuple, preventing20 new render tests from mounting. Corrected to ClassVar[list[str]]; final24-case rerun below supersedes all new cases here.72 existing neighboring tests passed.",
+      "log_sha256": "57c5637a4dd39e8da845375ecbe3799ad581b106da1f565ea6e613465b72f49c"
+    },
+    {
+      "log": "parakeet-base.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_canvas.py::test_parakeet_directory_row_fits_real_eighty_column_viewport",
+      "passed": 0,
+      "failed": 1,
+      "seconds": 2.37,
+      "note": "Ran with all three modified production files temporarily replaced by exact eda1d6bd65 bytes, restored in finally. Same94-column button edge beyond78-column row.",
+      "log_sha256": "4a6ff0eb0d4cd44234bc8c58eea5b9108c5598a9ef1e4cd1889b5a16a7fc9270"
+    },
+    {
+      "log": "entry-final.txt",
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_ingest_entry_journeys.py",
+      "passed": 24,
+      "failed": 0,
+      "seconds": 29.78,
+      "log_sha256": "2dbf1046fb49bd2be2a025aae11d23d7dece3258b1c6a0b7561be7eb8872ba16"
+    }
+  ],
+  "new_ruff_diagnostics": 0,
+  "native_run": "run-002",
+  "native_visual_inspection": "Six SVGs rendered and inspected in one batched pass.",
+  "full_suite_run": false,
+  "review": "Independent read-only review found no actionable defects."
+}

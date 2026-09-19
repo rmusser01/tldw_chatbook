@@ -15,6 +15,8 @@ from typing import Mapping
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from loguru import logger as loguru_logger
 from rich.cells import cell_len
 from textual import events
@@ -25,7 +27,10 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+)
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.selection import Selection
@@ -245,6 +250,8 @@ _RAIL_STYLE_TEST_PREFERENCES = LibraryRailPreferences()
 
 class _LibraryRailStyleContractHarness(ConsolidatedCSSApp):
     """Mount the production rail in the grid relationship it uses in Library."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     CSS = """
     #rail-style-contract-host {
@@ -2249,12 +2256,9 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
             assert screen.query_one(
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
             ).has_focus, f"unexpected focus after graduation: {screen.focused!r}"
-            assert notifications[-1] == (
-                "Library tools are now available.",
-                {"severity": "information"},
-            )
-            # task-32063: the toast is the only surface; the canvas line that
-            # used to repeat it is gone.
+            # task-32063 made the toast the only surface; task-32555 AC#2
+            # dropped it too -- the rail growing is the evidence.
+            assert notifications == []
             assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
@@ -2301,7 +2305,7 @@ async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> No
 
             assert screen.query_one("#library-note-work-pane")
             assert creation_action.has_focus
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
@@ -2316,7 +2320,7 @@ async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> No
             await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
             await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
             await pilot.pause()
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2354,7 +2358,7 @@ async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_swi
                 message="note evidence did not graduate before the source switch",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2370,7 +2374,7 @@ async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_swi
             )
             await pilot.pause()
 
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2400,7 +2404,7 @@ async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() 
                 message="note evidence did not graduate before the direct open",
             )
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2435,7 +2439,7 @@ async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() 
             )
             await pilot.pause()
 
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 lifecycle_status.renderable
             )
@@ -2485,7 +2489,7 @@ async def test_library_cancelled_source_switch_keeps_the_notes_database_source(
                 screen._notes_state.source
                 == library_screen_module.LIBRARY_NOTES_SOURCE_DATABASE
             )
-            assert notifications == ["Library tools are now available."]
+            assert notifications == []  # task-32555 AC#2: the toast is dropped
             assert "Library tools are now available." not in str(
                 screen.query_one("#library-lifecycle-status", Static).renderable
             )
@@ -8229,7 +8233,7 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
         await pilot.pause()
         await pilot.pause()
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert "Select a provider/model" in _visible_text(screen)
+        assert "No analysis provider is configured" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -8299,18 +8303,16 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         # that (the pre-Task-7 bug), Run would be enabled here. It must
         # stay blocked because no credential resolves for that provider.
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        # ...and the copy must name the CREDENTIAL, not the provider (PR-T2
-        # review round 3, finding I1). This assertion previously read
-        # `"Select a provider/model" in ...` -- which was the regression:
-        # Task 7 widened this branch to cover "endpoint named, credential
-        # missing", making it the only way a user with a configured
-        # provider reaches the block, and the inherited copy then told them
-        # to select the provider they had already selected and pointed at
-        # Console controls instead of at a key.
+        # TASK-32236 moved the technical credential remedy to the recovery
+        # record/log. The painted surface names the Settings destination.
         visible = _visible_text(screen)
-        assert "Select a provider/model" not in visible
-        assert "OPENAI_API_KEY" in visible
-        assert "api_settings.openai" in visible
+        assert "No analysis provider is configured" in visible
+        assert "OPENAI_API_KEY" not in visible
+        assert "api_settings.openai" not in visible
+        assert screen.query_one("#library-rag-open-provider-settings", Button)
+        recovery = screen._library_rag_panel_state().query_state.recovery_copy
+        assert "OPENAI_API_KEY" in recovery
+        assert "api_settings.openai" in recovery
 
 
 @pytest.mark.asyncio
@@ -19204,9 +19206,12 @@ async def test_library_shell_notes_multiselect_replaces_normal_action_groups():
         assert not screen.query("#library-notes-transfer-actions")
         assert len(list(screen.query("#library-notes-selection-actions"))) == 1
         assert len(list(screen.query("#library-notes-selection-status"))) == 1
+        # task-32549: with nothing checked this line carries the count AND
+        # the action that zero blocks, because "○ Export selected" beside it
+        # states no reason of its own and this strip has no cells for one.
         assert (
             str(screen.query_one("#library-notes-selection-status", Static).renderable)
-            == "0 selected"
+            == "0 selected — Export selected unavailable"
         )
 
 
@@ -22833,9 +22838,12 @@ async def test_library_shell_note_use_in_console_triggers_handoff():
         await pilot.pause()
         await pilot.pause()
 
+        # task-32536 fix round 1: the note is already a member here (the gate
+        # is open), so the line says what happened without claiming a link
+        # this press did not make.
         assert str(
             screen.query_one("#library-note-transfer-status", Static).renderable
-        ) == ("Use in Console complete.")
+        ) == ("Use in Console complete — Staged in Console.")
 
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]
@@ -22869,10 +22877,12 @@ async def test_library_shell_note_console_failure_stays_visible_with_recovery():
 
         assert (
             str(screen.query_one("#library-note-transfer-status", Static).renderable)
-            == "Use in Console failed — check Console readiness and try again."
+            == "Can't use this note in Console — Console could not take it. Next: try again."
         )
         assert screen._notes_state.operation is not None
         assert screen._notes_state.operation.running is False
+    # task-32536 AC#2: the status line is the one message -- no toast beside it.
+    app.notify.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -22889,13 +22899,14 @@ async def test_library_shell_note_use_in_console_without_open_note_notifies():
         await _wait_for_library_shell(screen, pilot)
 
         assert screen._notes_state.selected_note_id == ""
-        screen._open_selected_library_note_handoff()
+        blocker, linked = screen._open_selected_library_note_handoff()
         await pilot.pause()
 
     app.open_chat_with_handoff.assert_not_called()
-    app.notify.assert_called_once()
-    message = app.notify.call_args.args[0]
-    assert "Open a note" in message
+    # task-32536 AC#2: the blocker is returned for the status line, not toasted.
+    app.notify.assert_not_called()
+    assert "open a note" in blocker.lower()
+    assert linked == ""
 
 
 def test_library_note_css_bounds_editor_body_and_mutes_meta():
@@ -24446,7 +24457,10 @@ async def test_library_note_60x20_temporary_region_allocation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_note_compact_labels_round_trip_without_recompose() -> None:
+@private_profile_test
+async def test_library_note_compact_labels_round_trip_without_recompose(
+    request,
+) -> None:
     selector = "#library-notes-select-all"
     compact_label = "All 2"
     wide_label = "Select all 2 shown"
@@ -25124,7 +25138,7 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         for _ in range(120):
             if (
-                screen._media_state.selected_media_id == "media-1"
+                screen._media_state.reader_session.loaded_id == "local:media:1"
                 and screen._media_state.view == "viewer"
             ):
                 break
@@ -25137,7 +25151,7 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
         assert any(
-            call["media_id"] == "media-1"
+            call["media_id"] == 1
             for call in app.media_reading_scope_service.detail_calls
         )
 
@@ -32922,7 +32936,8 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
             focus_generation=stale_generation
         )
 
-        screen.query_one("#library-note-preview").press()
+        screen.query_one("#library-note-preview").focus()
+        await pilot.press("enter")
         await _wait_for_display(screen, pilot, "#library-note-preview-region")
         preview = screen.query_one("#library-note-preview-region")
         screen._mark_library_notes_user_interaction()
@@ -33277,7 +33292,12 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         screen.query_one("#library-note-preview").press()
         await wait_footer("pgup/pgdn scroll | esc notes")
         screen.query_one("#library-note-context").press()
-        await wait_footer("enter run action | esc note")
+        # task-32607 AC#1: the Info tier no longer renders its literal
+        # "enter run action" on every stop. Entry focus lands on the
+        # context scroll region, which owns no Enter, so the honest tier
+        # here is the exit alone; the per-control "enter <verb>" chips are
+        # pinned by name in Tests/UI/test_library_notes_w5_kbd_focus.py.
+        await wait_footer("esc note")
 
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
@@ -33304,7 +33324,8 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
         await wait_footer("enter confirm | esc cancel")
         await pilot.press("escape")
-        await wait_footer("enter run action | esc note")
+        # task-32607 AC#1: see above -- no generic "run action" chip.
+        await wait_footer("esc note")
         await pilot.press("escape")
         await wait_footer("pgup/pgdn scroll | esc notes")
 
@@ -33364,18 +33385,21 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             await _wait_for_condition(
                 pilot,
                 lambda: footer_shortcuts() == expected,
-                message=f"Footer did not settle to {expected!r}.",
+                message=lambda: (
+                    f"Footer did not settle to {expected!r}; "
+                    f"got {footer_shortcuts()!r}."
+                ),
             )
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         screen.query_one("#library-notes-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-notes-selection-actions")
         await wait_footer("enter select | esc done")
         await pilot.press("escape")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         # task-32128: the sort strip is not reachable from a folder tree
         # (no Sort control there), so its footer state is covered by the
@@ -33388,14 +33412,14 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         await wait_footer("enter create | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         screen.query_one("#library-notes-add-from-files").press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
         await wait_footer("enter act | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("ctrl+n new | / find | esc rail")
+        await wait_footer("n new | / find | g folder | esc rail")
 
         await pilot.press("escape")
         await _wait_for_condition(

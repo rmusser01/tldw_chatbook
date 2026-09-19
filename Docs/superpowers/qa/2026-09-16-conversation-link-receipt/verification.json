@@ -1,0 +1,42 @@
+{
+  "baseline": "33079ca5a2",
+  "runs": [
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_crit10_layout.py Tests/UI/test_library_crit8_conversation_handoff.py Tests/UI/test_library_conversations_continuity.py Tests/UI/test_library_conversation_reader.py",
+      "passed": 112,
+      "failed": 0,
+      "seconds": 130.36,
+      "phase": "Before the additional stale-list case and narrowed registry error catch."
+    },
+    {
+      "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_crit10_layout.py Tests/UI/test_design_token_governance.py Tests/UI/test_component_pattern_governance.py Tests/UI/test_css_bundle_sync_guard.py",
+      "passed": 59,
+      "failed": 0,
+      "warnings": 3,
+      "seconds": 67.2,
+      "phase": "Final code: 28 layout/action cases, including all six receipt regressions, and 31 governance/bundle checks."
+    }
+  ],
+  "distinct_passing_tests": 144,
+  "red_evidence": [
+    {
+      "cases": 5,
+      "failed": 5,
+      "phase": "Baseline production implementation: retained/recomposed workspace hops and delayed Undo after different/missing/unavailable context."
+    },
+    {
+      "cases": 1,
+      "failed": 1,
+      "phase": "Removed only workspace-block guard: stale hidden Undo wrongly removed Alpha membership. Restored guard passed in final run."
+    }
+  ],
+  "discarded_fixture": "Duplicate workspace display names are rejected by registry validation; those fixture failures are excluded from regression evidence.",
+  "native_phase": "Four successful native journeys preceded the catch narrowing; final unavailable-registry test covers the actual WorkspaceRegistryServiceError contract. No successful-path behavior changed.",
+  "full_suite_run": false,
+  "receipts": {
+    "targeted-tests.txt": "8053795ec37a3d96311f0a8c0d62d07ee4b6828d52f030fd353f9dc89b5987a2",
+    "final-tests.txt": "85ac2863d3923501bc936bb1a8089092e328b0ec0a2003b1328014fc47ee2be8",
+    "final-red.txt": "0b1625f2495f27962a587ceb9cf648a3ac652139ce1cc48c897075ba725295fb",
+    "stale-guard-red.txt": "5a59e8ee3bc139dd0beebfb3ab03c8ea889583bafbc3e436eff51166a792fa84"
+  }
+}

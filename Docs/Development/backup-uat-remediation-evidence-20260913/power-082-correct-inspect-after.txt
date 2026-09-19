@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Archive verified
+  /private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/power-multi-initialized.tldw-backup.zip.age
+
+
+  Backup archive
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  /private/tmp/chatbook-backup-uat-repeat-20260913-07b3zfn3/power/power-multi-initialized.tldw-backup.zip.age                                            ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+   Choose archive
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+  ▊  Archive password, if encrypted                                                                                                                         ▎
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+  Archive verified
+  Files: 3868 · Payload bytes: 54226805
+  Consistency: partial
+  Credentials: include
+  Contents: Other saved data, Chat attachments, Chat dictionaries, Profile settings, Previous settings, Agent history, Notes and chats, Evaluation results,
+  Library collections, Library imports, Media library, Saved prompts, Scheduled tasks, Subscriptions, Workspaces, Evaluation definitions, MCP server
+  settings, Note sync settings, Notifications, Persona artwork, Bundled persona artwork, Quizzes, Runtime settings, Study progress, Interface preferences,
+  External files
+  Required capabilities:
+  Excluded profile:ded67f38c03a6792f29fbf7c:external.models: intentionally_excluded
+  Excluded profile:ded67f38c03a6792f29fbf7c:server.data: intentionally_excluded
+  Excluded profile:ded67f38c03a6792f29fbf7c:actor_packs.import_staging:454d741526b1b0b1238482efd9c8fce70d1e3556decd99e6d408c17c91c1f052: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:agents.history:b20e434fd9de7d3d7d5d62dcef7063830c77ec7f2d3075e067014b372f181b64: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:agents.history:b1af1d109486f76c10e614b5c805c62372ff3187f8f5b6f08e9d42458fca49cb: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:agents.history:580f30e0a068ec9c9b256870b85fc2d21bd6cb1c20a4060a749f9f34fc2de83a: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:audio.history: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:cache.model_catalog: intentionally_excluded
+  Excluded profile:ded67f38c03a6792f29fbf7c:chat.dictionary_history: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:chat.grammars: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:chat.prompt_history: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:chat.prompts: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:chat.rag_context: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:chatbooks.archives: unused
+  Excluded profile:ded67f38c03a6792f29fbf7c:chatbooks.registry: unused
+
+
+                       Inspect                                         Cancel operation                                           Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

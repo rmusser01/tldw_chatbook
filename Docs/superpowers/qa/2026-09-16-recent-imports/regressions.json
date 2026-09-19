@@ -1,0 +1,18 @@
+{
+  "before_fix": {
+    "completed_failures": 4,
+    "interrupted_remaining": 2,
+    "causes": [
+      "Open Recent collapsed on queue rebuild at both sizes",
+      "Explicitly closed Recent lost title focus to Keywords at both sizes"
+    ]
+  },
+  "after_fix": {
+    "recent_cases_passed": 6,
+    "grouped_cases_passed": 2
+  },
+  "test_harness_corrections": [
+    "A second Enter during Textual active press flash is ignored; await flash end before deliberate confirmation.",
+    "Native second-size history contains cleared entries from first size; assert dismissed only for this group, retaining history."
+  ]
+}

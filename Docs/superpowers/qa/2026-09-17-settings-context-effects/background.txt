@@ -1,0 +1,11 @@
+...............                                                          [100%]
+============================= slowest 25 durations =============================
+11.50s call     Tests/UI/test_console_background_effects.py::test_console_workbench_scope_does_not_start_transcript_effect
+11.06s call     Tests/UI/test_console_background_effects.py::test_console_background_disabled_does_not_start_active_effect
+9.38s call     Tests/UI/test_console_background_effects.py::test_console_transcript_scope_mounts_effect_without_hiding_transcript
+2.86s call     Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-light]
+2.75s call     Tests/UI/test_console_background_effects.py::test_effect_is_painted_in_empty_transcript_space_without_changing_messages[textual-dark]
+1.13s call     Tests/UI/test_console_background_effects.py::test_background_layer_does_not_change_scrollback_or_reconcile_rows
+
+(19 durations < 1s hidden.)
+15 passed in 44.45s

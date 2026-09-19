@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+9.64s call     Tests/UI/test_mcp_tools_column_readability.py::test_production_tools_keep_tool_and_state_visible_without_reload[textual-light]
+9.19s call     Tests/UI/test_mcp_tools_column_readability.py::test_production_tools_keep_tool_and_state_visible_without_reload[textual-dark]
+6.10s call     Tests/UI/test_mcp_tools_column_readability.py::test_catalog_size_and_scrollbar_changes_keep_complete_allow_state
+4.81s call     Tests/UI/test_mcp_tools_column_readability.py::test_unicode_filter_refresh_and_reflow_preserve_exact_tool[True]
+4.59s call     Tests/UI/test_mcp_tools_column_readability.py::test_unicode_filter_refresh_and_reflow_preserve_exact_tool[False]
+
+(10 durations < 1s hidden.)
+5 passed in 36.20s

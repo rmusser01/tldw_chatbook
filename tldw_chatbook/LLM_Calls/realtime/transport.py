@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+
 from ...Utils.optional_deps import require_dependency
 from ...Utils.tls_trust import ssl_context_for_transport
 
@@ -93,6 +95,7 @@ class WsTransport:
         self._ws: ClientConnection | None = None
         self._closed = False
 
+    @_provider_recovery.unqualified
     async def connect(self, url: str, headers: dict[str, str]) -> None:
         """Open the WebSocket connection.
 

@@ -126,6 +126,28 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # cannot see them.
         "glob_files",
         "grep_files",
+        # TASK-32646: current runtime and Console names reported by the
+        # four-source drift guard; keep the editor's collision warning honest.
+        "discard_agent_worktree",
+        "fork_chat",
+        "merge_agent_worktree",
+        "new_chat",
+        "prepare_managed_skill_promotion",
+        "read_agent_messages",
+        "report_to_supervisor",
+        "context",
+        "doctor",
+        "emergency-stop",
+        "endpoint",
+        "help",
+        "model",
+        "new",
+        "redirect",
+        "sessions",
+        "settings",
+        "steer",
+        "temp",
+        "workspace",
     )
 )
 
@@ -808,6 +830,11 @@ def skill_trust_header_line(posture: str, blocked_count: int) -> tuple[str, str]
         (posture is ``"ready"`` with nothing blocked -- shown but with no
         action), or ``None`` to hide the header entirely.
     """
+    if posture == "recovery_review":
+        return (
+            "Restored skill permissions are inactive. Review the current local files to set up fresh trust.",
+            "recovery_review",
+        )
     if posture == "needs_setup":
         # task-32363 (critique #10, B D5): with no trust store every skill
         # reads "needs review", including ones approved earlier -- the list

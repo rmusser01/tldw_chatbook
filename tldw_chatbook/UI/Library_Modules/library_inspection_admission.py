@@ -228,7 +228,15 @@ async def _flush_library_navigation_sources(self, *, is_current) -> bool:
     if not is_current() or note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
         return False
     prompt_allowed = await self._flush_library_prompt_save()
-    if not is_current() or not prompt_allowed:
+    if not is_current():
+        return False
+    if not prompt_allowed:
+        # task-32461 AC#5 (fix round 1): the FOURTH sibling, and the one route
+        # that actually fires -- every navigation INTO Library (palette route,
+        # Console hand-off, legacy alias) crosses this barrier, and it refused
+        # in silence five lines above a skill veto that speaks. Same sentence
+        # as the other seven call sites, and the same shape as that twin.
+        self._notify_prompt_dirty_veto()
         return False
     skill_allowed = await self._flush_library_skill_save()
     if not is_current():

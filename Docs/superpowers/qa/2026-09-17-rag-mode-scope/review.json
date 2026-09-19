@@ -1,0 +1,10 @@
+{
+  "reviewer": "rag_heading_review",
+  "base": "ce3da505d2",
+  "findings": [],
+  "scope": "Production focus repair, sixteen keyboard/race tests and native runner; read-only review while targeted tests ran.",
+  "closeout_review": {
+    "findings": [],
+    "scope": "QA README, result/lifecycle, guide and audit; counts, semantics and evidence limits consistent."
+  }
+}

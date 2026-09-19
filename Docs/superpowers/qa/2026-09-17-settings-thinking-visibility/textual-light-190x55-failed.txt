@@ -1,0 +1,55 @@
+                                                                                                                                           ╭─────────────╮
+ ‹ 1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                           │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │                                                                                                             │  │  │                                   │
+│  category search             │  │  │  Console Behavior                                                                                           │  │  │ Selected category: Console        │
+│                              │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Behavior                          │
+│  Core                        │  │  │ │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ No unsaved changes                │
+│     Overview (view)          │  │  │ │ │                                                                                                    │ │  │  │  │  Guided edits: change a field     │
+│     Providers & Models       │  │  │ │ │  Start here                                                                                        │ │  │  │  │  first.                           │
+│     Web Search               │  │  │ │ │ ▐X▌ Show model thinking (Off)                                                                      │ │  │  │  │  Save (s) — no changes            │
+│     Speech & TTS             │  │  │ │ │  Applies immediately. Thinking remains part of the conversation even when hidden.                  │ │  │  │  │  Revert (r) — no changes          │
+│  Interface                   │  │  │ │ │  Save failed; setting restored.                                                                    │ │▅ │  │  │ Local-only: saves write your      │
+│     Appearance               │  │  │ │ │  Toggle again to retry.                                                                            │ │  │  │  │ config file.                      │
+│     Theme                    │  │  │ │ │                                                                                                    │ │  │  │  │                                   │
+│     Splash Screen            │  │  │ │ │  Local reasoning history                                                                           │ │  │  │  │  Threshold: Minimum pasted        │
+│   > Console Behavior         │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  │  chunk size before collapse       │
+│  Data & Privacy              │  │  │ │ │ ▊  Automatic (recommended)                                                                    ▼  ▎ │ │  │  │  │                                   │
+│     Storage                  │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │ Focused field guide               │
+│     Workspaces               │  │  │ │ │                                                                                                    │ │  │  │  │  Purpose: Show or hide captured   │
+│     Tool Profiles            │  │  │ │ │  These device-local controls refine Conversation Auto. Conversation Include and Exclude override   │ │  │  │  │  model-thinking rows.             │
+│     Privacy & Security       │  │  │ │ │  them, and Required continuation remains intact. Automatic follows reviewed templates; unknown     │ │  │  │  │                                   │
+│     Network                  │  │  │ │ │  templates keep the server default. All available sends every compatible field, but the server     │ │  │  │  │  Consequences: Presentation       │
+│     My Profile               │  │  │ │ │  template can still omit older reasoning.                                                          │ │  │  │  │  only; capture, saved history,    │
+│  Troubleshooting             │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  │  replay, and token accounting     │
+│     Diagnostics (view)       │  │  │ │ │ ▊  ▶ Override current Console model                                                              ▎ │ │  │  │  │  continue.                        │
+│     About (view)             │  │  │ │ │ ▊                                                                                                ▎ │ │  │  │  │                                   │
+│     Agents                   │  │  │ │ │ ▊                                                                                                ▎ │ │  │  │  │  Saved as: console.               │
+│  Expert                      │  │  │ │ │ ▊                                                                                                ▎ │ │  │  │  │    show_model_thinking          ▃ │
+│     Internal Prompts         │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │                                   │
+│     Advanced Config          │  │  │ │ │                                                                                                    │ │  │  │  │  Applies: Immediately; the        │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  Conversation Auto: template checked on next send                                                  │ │  │  │  │  prior value is restored if       │
+│                              │  │  │ │ │  Conversation context and memory ↓                                                                 │ │  │  │  │  saving fails.                    │
+│                              │  │  │ │ │  Also in this category: rail presentation, paste handling, images, agent limits, selection side    │ │  │  │  │                                   │
+│                              │  │  │ │ │  chat, and generation defaults.                                                                    │ │  │  │  │ Override rules                    │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │  Priority: active Console         │
+│                              │  │  │ │ │  Exchange capture                                                                                  │ │  │  │  │  session, then provider+model     │
+│                              │  │  │ │ │ ▐X▌ Capture future exchanges                                                                       │ │  │  │  │  profile, then these global       │
+│                              │  │  │ │ │ ▐X▌ Mask PII in future traces                                                                      │ │  │  │  │  fallbacks                        │
+│                              │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │                                   │
+│                              │  │  │ │ │ Trace viewer            │ Safe                                                                 ▼ │ │ │  │  │  │  Scope:  response fallbacks and   │
+│                              │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  paste display settings           │
+│                              │  │  │ │ │ Capture, PII masking, and viewing are separate. PII masking is irreversible for provider-only      │ │  │  │  │                                   │
+│                              │  │  │ │ │ trace data but never rewrites the saved conversation. New traces reference saved messages instead  │ │  │  │  │  Save: staged - press s to        │
+│                              │  │  │ │ │ of copying the transcript. Safe and Full view the same trace; credentials stay blocked in both,    │ │  │  │  │  save, r to revert                │
+│                              │  │  │ │ │ and older trace formats remain readable.                                                           │ │  │  │  │                                   │
+│                              │  │  │ │ │  Apply exchange capture                                                                            │ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+ Presentation only. Off hides actual model-thinking rows; capture, saved history, replay, and token accounting continue.
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

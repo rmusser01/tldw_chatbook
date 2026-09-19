@@ -1,0 +1,9 @@
+Tests/UI/test_dialog_action_alignment.py
+Tests/UI/test_roleplay_recovery_layout.py
+Tests/UI/test_pattern_gallery_layout.py
+Tests/UI/test_pattern_gallery_command.py
+Tests/UI/test_pattern_gallery_snapshots.py
+Tests/UI/test_design_token_governance.py
+Tests/UI/test_css_bundle_sync_guard.py
+Tests/Performance/test_boot_css_byte_budget.py
+Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet

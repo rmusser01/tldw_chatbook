@@ -52,7 +52,10 @@ class CharacterExpressionAvatar(Widget):
         self._disposed = False
         self._graphics: Any = None
         self._surface: Static | None = None
-        self.styles.width, self.styles.height = box
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.remove_class(*(name for name in self.classes if name.startswith("w-")))
+        # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
+        self.set_styles(width=box[0], height=box[1])
 
     @property
     def current_image(self) -> Any | None:
@@ -64,7 +67,10 @@ class CharacterExpressionAvatar(Widget):
     def compose(self) -> ComposeResult:
         surface = Static("Preparing expression…")
         self._surface = surface
-        surface.styles.width, surface.styles.height = self._box
+        surface.remove_class(*(name for name in surface.classes if name.startswith("h-")))
+        surface.remove_class(*(name for name in surface.classes if name.startswith("w-")))
+        # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
+        surface.set_styles(width=self._box[0], height=self._box[1])
         yield surface
 
     def on_mount(self) -> None:
@@ -177,8 +183,11 @@ class CharacterExpressionAvatar(Widget):
                                 )
 
                         self._graphics = FixedImage(image)
-                        self._graphics.styles.width, self._graphics.styles.height = (
-                            self._box
+                        self._graphics.remove_class(*(name for name in self._graphics.classes if name.startswith("h-")))
+                        self._graphics.remove_class(*(name for name in self._graphics.classes if name.startswith("w-")))
+                        # ds-runtime: The owning rail fits this image box to its measured columns and image aspect ratio.
+                        self._graphics.set_styles(
+                            width=self._box[0], height=self._box[1]
                         )
                         await self.mount(self._graphics)
                         if not self._current():

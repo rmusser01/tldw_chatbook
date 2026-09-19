@@ -126,6 +126,8 @@ class PromptCollectionManagerModal(
         self._request_token = 0
         self._catalog = begin_prompt_collection_catalog(query="", request_token=1)
         self._outcome = ""
+        self._search_draft = ""
+        self._name_draft = ""
         self._retry_action: (
             tuple[Literal["load", "create", "rename"], int | None, str] | None
         ) = None
@@ -146,7 +148,7 @@ class PromptCollectionManagerModal(
                 markup=False,
             )
             yield Input(
-                value=self._catalog.query,
+                value=self._search_draft,
                 placeholder="Search collections… (Enter)",
                 id="prompt-collection-manager-search",
                 disabled=self._mutation_in_flight,
@@ -223,6 +225,7 @@ class PromptCollectionManagerModal(
             load_more.display = self._catalog.has_more
             yield load_more
             yield Input(
+                value=self._name_draft,
                 placeholder="Collection name",
                 id="prompt-collection-manager-new-name",
                 disabled=self._mutation_in_flight,
@@ -294,6 +297,15 @@ class PromptCollectionManagerModal(
             break
 
     def _refresh(self, *, focus_id: str | None = None) -> None:
+        # Selection, paging and outcomes replace the modal's children. Carry
+        # their live drafts forward, including text not submitted as a search.
+        for control_id, attribute in (
+            ("prompt-collection-manager-search", "_search_draft"),
+            ("prompt-collection-manager-new-name", "_name_draft"),
+        ):
+            for control in self.query(f"#{control_id}").results(Input):
+                setattr(self, attribute, control.value)
+                break
         self.refresh(recompose=True)
         if focus_id is not None:
             self.call_after_refresh(self._focus_control, focus_id)
@@ -623,7 +635,7 @@ class PromptCollectionManagerModal(
         if self._mutation_in_flight:
             return
         self._request_token += 1
-        self.dismiss(
+        self._dismiss_manager(
             PromptCollectionManagerResult(
                 mode=self._mode,
                 manager_token=self._manager_token,
@@ -653,4 +665,23 @@ class PromptCollectionManagerModal(
                     break
             return
         self._request_token += 1
-        self.dismiss_safe_once(None)
+        self._dismiss_manager(None)
+
+    def _dismiss_manager(self, result: PromptCollectionManagerResult | None) -> None:
+        if not self.dismiss_safe_once(result):
+            return
+        revealed = self.app.screen
+        opener = revealed.focused
+
+        def reveal_opener() -> None:
+            # Textual skips scrolling when set_focus receives the already
+            # focused widget. Info may have exposed it below a compact viewport.
+            if (
+                opener is not None
+                and opener.is_attached
+                and self.app.screen is revealed
+                and revealed.focused is opener
+            ):
+                opener.scroll_visible(animate=False, immediate=True)
+
+        revealed.call_after_refresh(reveal_opener)

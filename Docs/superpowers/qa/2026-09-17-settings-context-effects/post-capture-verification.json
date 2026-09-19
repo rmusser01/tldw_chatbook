@@ -1,0 +1,13 @@
+{
+  "native_run": "009",
+  "changed_sources": {
+    "tldw_chatbook/Widgets/Console/console_background_effect.py": {
+      "captured_sha256": "dd0d09d97c0781d6c67315291ee2d17dee2c824d56e6e8ae9cb77b821fd36a25",
+      "final_sha256": "163dd65f1bec64466251595423d2c54258a47d458520c464c68f29c88c3736c6"
+    }
+  },
+  "change": "_sync_timer also requires is_attached; this is the only production change after native capture.",
+  "targeted_evidence": "background.txt: 15 passed, including retained mount callback released after removal and production ancestor-layer paint checks.",
+  "native_captures_visually_inspected": 12,
+  "native_capture_source_matches_all_other_recorded_files": true
+}

@@ -1,0 +1,50 @@
+  warnings.warn(
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/__main__.py", line 6, in <module>
+    raise SystemExit(main_cli_runner())
+                     ^^^^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/cli.py", line 68, in main_cli_runner
+    from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/app.py", line 123, in <module>
+    from tldw_chatbook.Chat.chat_conversation_scope_service import (
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Chat/__init__.py", line 8, in <module>
+    from .server_chat_conversation_service import ServerChatConversationService
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Chat/server_chat_conversation_service.py", line 7, in <module>
+    from tldw_chatbook.runtime_policy.bootstrap import (
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/runtime_policy/bootstrap.py", line 12, in <module>
+    from tldw_chatbook.Utils.tls_trust import httpx_verify
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Utils/tls_trust.py", line 32, in <module>
+    from ..config import get_cli_setting
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/config.py", line 9725, in <module>
+    load_cli_config_and_ensure_existence()
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/config.py", line 6259, in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Backup_Recovery/config_participants.py", line 235, in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Backup_Recovery/config_participants.py", line 167, in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Backup_Recovery/raw_participants.py", line 684, in _scope
+    state.leases.append(storage.acquire_storage(
+                        ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Backup_Recovery/storage_admission.py", line 718, in acquire_storage
+    return _acquire_storage(path, attempt, related_paths=related_paths)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Backup_Recovery/storage_admission.py", line 788, in _acquire_storage
+    names = _scope(
+            ^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-repeat-20260913-3omce9z4/installed/tldw_chatbook/Backup_Recovery/storage_admission.py", line 704, in _scope
+    raise bootstrap.RecoveryRequired("storage_scope_not_enrolled")
+tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: storage_scope_not_enrolled
+
+Pane is dead (status 1, Sun Sep 13 17:54:40 2026)

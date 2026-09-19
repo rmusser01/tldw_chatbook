@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││             Local workspace, web, and Watchlists tools: on ▸              ││                                             │
+│ Source                                     ││  Available by default. Calls still follow Ask, Allow, or Off              ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  permissions.                                                             ││  Why · Off — enable it to let MCP clients   │
+│ ▊  Local                              ▼  ▎ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root      ││  use chatbook's tools.                      │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊  Workspace root (blank uses the app folder)         ▎                  ││  Add server                                 │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                  ││  stat — Virtual CLI (read-only)             │
+│ Servers                                    ││  Enabled. The next Console agent run will use this setting; calls still   ││                                             │
+│  ◦ off (opt-in) · ⌂ built-in               ││  follow Ask, Allow, or Off permissions.                                   ││  Read-only virtual command: stat PATH. No   │
+│     All servers                            ││                                                                           ││  host shell is invoked. Permission is       │
+│   ◦ ⌂ tldw_chatbook (built-in)             ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││  independent from equivalent filesystem     │
+│                                            ││  ▊  stat                                   ▎▊  All servers          ▼  ▎  ││  and Git tools.                             │
+│                                            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││  Tags: —                                    │
+│                                            ││                                                                           ││                                             │
+│                                            ││  Tool                              State  Server                    Tags  ││  Parameters: form                           │
+│                                            ││  fs_write                          Ask    Local workspace, web, a…  mutat ││                                             │
+│                                            ││  git_diff                          Ask    Local workspace, web, a…  —     ││  Tool testing is unavailable from this      │
+│                                            ││  git_status                        Ask    Local workspace, web, a…  —     ││  policy view.                               │
+│                                            ││  watchlists_get_operation_status   Ask    Local workspace, web, a…  —     ││  stat — Virtual CLI (read-only)             │
+│                                            ││  watchlists_get_operations_status  Ask    Local workspace, web, a…  —     ││                                             │
+│                                            ││  watchlists_search_items           Ask    Local workspace, web, a…  —     ││  Permission: Ask                            │
+│                                            ││  watchlists_set_briefing_schedule  Ask    Local workspace, web, a…  mutat ││                                             │
+│                                            ││  git_diff                          Ask    Virtual CLI (read-only)   —     ││  Inherited from the global default.         │
+│                                            ││  git_status                        Ask    Virtual CLI (read-only)   —     ││                                             │
+│                                            ││  stat                              Ask    Virtual CLI (read-only)   —     ││  Change in Permissions                      │
+│                                            ││                                                                ▌          ││    Advanced…                                │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+│                                            ││                                                                           ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

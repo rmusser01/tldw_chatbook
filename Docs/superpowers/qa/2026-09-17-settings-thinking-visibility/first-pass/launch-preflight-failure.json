@@ -1,0 +1,6 @@
+{
+  "pid": 48717,
+  "exit_code": 1,
+  "phase": "before app imports",
+  "error": "Private data directories must exist before launch"
+}

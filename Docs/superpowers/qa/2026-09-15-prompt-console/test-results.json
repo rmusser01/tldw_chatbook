@@ -1,0 +1,11 @@
+{
+  "ui_dialog_controller_handoff": 170,
+  "parser_and_console_consumer": 118,
+  "library_governance_wiring": 37,
+  "distinct_passed": 369,
+  "full_suite": false,
+  "initial_escape_regressions": 4,
+  "warnings": "Existing temporary-directory cleanup warnings",
+  "console_controller_wiring": 44,
+  "paint_regressions": 4
+}

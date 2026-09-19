@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Backup_Recovery import visual_identity_participants as visual_lifetime
 
 LOCAL_OWNER_ID: Final = 0
 
@@ -26,6 +27,7 @@ class VisualIdentityRepository:
         """
         self.db = db
 
+    @visual_lifetime.repository_guard
     def find_pack_by_source_id(
         self, source_id: str, *, include_deleted: bool = False
     ) -> dict[str, Any] | None:
@@ -69,6 +71,7 @@ class VisualIdentityRepository:
                     return pack
         return None
 
+    @visual_lifetime.repository_guard
     def get_active_actor_pack(
         self, actor_kind: str, actor_id: int | str
     ) -> dict[str, Any] | None:
@@ -133,6 +136,7 @@ class VisualIdentityRepository:
                 "assets": self.list_version_assets(version["id"]),
             }
 
+    @visual_lifetime.repository_guard
     def list_version_assets(self, version_id: int) -> list[dict[str, Any]]:
         """List a version's non-deleted assets in deterministic label order.
 
@@ -177,6 +181,7 @@ class VisualIdentityRepository:
             raise ValueError("visual_identity_asset_pack_mismatch")
         return assets
 
+    @visual_lifetime.repository_guard
     def activate_pack(
         self,
         *,
@@ -277,7 +282,7 @@ class VisualIdentityRepository:
                     )
                 ):
                     raise ValueError("visual_identity_binding_changed")
-            if publication_guard is not None and not publication_guard():
+            if publication_guard is not None and not visual_lifetime.evaluate_repository_publication_guard(publication_guard):
                 raise ValueError("visual_identity_publication_changed")
             pack_id = int(
                 self.db.execute_query(
@@ -328,6 +333,7 @@ class VisualIdentityRepository:
                 raise RuntimeError("activated_visual_identity_pack_not_found")
             return active
 
+    @visual_lifetime.repository_guard
     def publish_version(
         self,
         pack_id: int,
@@ -431,7 +437,7 @@ class VisualIdentityRepository:
                 )
                 if reserved.rowcount != 1:
                     raise ValueError("visual_identity_binding_changed")
-            if publication_guard is not None and not publication_guard():
+            if publication_guard is not None and not visual_lifetime.evaluate_repository_publication_guard(publication_guard):
                 raise ValueError("visual_identity_publication_changed")
 
             version_number = int(
@@ -476,6 +482,7 @@ class VisualIdentityRepository:
                 raise RuntimeError("published_visual_identity_pack_not_found")
             return active
 
+    @visual_lifetime.repository_guard
     def count_active_pack_bindings(self, pack_id: int) -> int:
         """Return the number of active actor bindings for one local pack."""
 
@@ -489,6 +496,7 @@ class VisualIdentityRepository:
         ).fetchone()
         return int(row[0])
 
+    @visual_lifetime.repository_guard
     def archive_pack(self, pack_id: int) -> dict[str, Any]:
         """Soft-archive a pack.
 
@@ -503,6 +511,7 @@ class VisualIdentityRepository:
         """
         return self._set_pack_status(pack_id, "archived", include_deleted=False)
 
+    @visual_lifetime.repository_guard
     def mark_pack_deleted(self, pack_id: int) -> dict[str, Any]:
         """Soft-delete a pack while retaining its rows.
 
@@ -517,6 +526,7 @@ class VisualIdentityRepository:
         """
         return self._set_pack_status(pack_id, "deleted", include_deleted=True)
 
+    @visual_lifetime.repository_guard
     def mark_binding_deleted(
         self, actor_kind: str, actor_id: int | str
     ) -> dict[str, Any]:

@@ -288,12 +288,16 @@ async def _request_models(
     client: httpx.AsyncClient,
     url: str,
     timeout: float,
+    api_key: str | None = None,
 ) -> SettingsEndpointProbeOutcome:
+    headers = {"Accept-Encoding": "identity"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
         async with client.stream(
             "GET",
             url,
-            headers={"Accept-Encoding": "identity"},
+            headers=headers,
             timeout=timeout,
             follow_redirects=False,
         ) as response:
@@ -556,6 +560,7 @@ async def probe_settings_endpoint(
     base_url: str,
     *,
     provider: str = "custom",
+    api_key: str | None = None,
     purpose: SettingsEndpointProbePurpose | str = (
         SettingsEndpointProbePurpose.CHAT_CATALOG
     ),
@@ -572,6 +577,7 @@ async def probe_settings_endpoint(
             or full models form.
         provider: Canonical provider key controlling endpoint interpretation
             and the Ollama fallback. Defaults to ``custom`` for legacy callers.
+        api_key: Optional resolved credential for this exact endpoint.
         purpose: Explicit chat or TTS catalog contract. Defaults to chat to
             preserve the shared helper's existing Settings behavior.
         timeout: Per-request timeout in seconds.
@@ -615,13 +621,16 @@ async def probe_settings_endpoint(
             client,
             resolution.models_url,
             timeout,
+            api_key,
         )
         if outcome.state == "model_listing_unavailable" and provider_key in {
             "ollama",
             "local_ollama",
         }:
             root = resolution.models_url.removesuffix("/v1/models")
-            outcome = await _request_models(client, f"{root}/api/tags", timeout)
+            outcome = await _request_models(
+                client, f"{root}/api/tags", timeout, api_key
+            )
     except Exception:  # noqa: BLE001 - helper contract is explicitly no-raise.
         outcome = _failure("connection_error", "unreachable: connection error")
     finally:

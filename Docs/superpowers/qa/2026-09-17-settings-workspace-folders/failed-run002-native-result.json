@@ -1,0 +1,30 @@
+{
+  "pid": 85580,
+  "cells": [],
+  "runner_sha256": "8234e130cca397faae73f124b316597de225014ad063b5a8b246d8fe9d8a095f",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "56d3c3579519f2d460d644471a3288b78b269917c173a5ee7acaaa0d0120e18f",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "da2e73f4102cebaa79523005310b96bfe101e39b1c2ca0d25138946267f05865",
+    "tldw_chatbook/css/features/_settings.tcss": "2675c80e7d902b8a36c5314eceb91c751ecbfed3a57143cf3cbdba0c81703711",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "ee38b76e4364a9a2649ae098d236fcc818e7d0816d30c2a75935af9f57099285",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Workspace pane settled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "workspace_setup": "Two named workspaces seeded via the real registry",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-folders/native_check.py\", line 271, in journey\n    await feedback(\"Folder removed.\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-folders/native_check.py\", line 200, in feedback\n    painted(app.focused)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-folders/native_check.py\", line 174, in painted\n    region, clip = app.screen._compositor.visible_widgets[widget]\n                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^\nKeyError: Button(id='settings-workspace-folder-add', classes='-textual-compact -style-default')\n",
+  "app_run_returned": true
+}

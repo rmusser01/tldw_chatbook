@@ -1,0 +1,345 @@
+"""TASK-32791 native MCP root drafts, receipts and ordered persistence.
+
+Usage: native_check.py PRIVATE_PROFILE TMUX_SOCKET SESSION
+All workflow and fixture writes stay in the private profile.
+"""
+
+import asyncio
+import hashlib
+import json
+import os
+import runpy
+import subprocess
+import sys
+import traceback
+from pathlib import Path
+
+
+def main():
+    root = Path(sys.argv[1]).resolve()
+    socket, session = sys.argv[2:4]
+    (root / "launch.json").write_text(json.dumps({"pid": os.getpid()}))
+    qa = Path(__file__).resolve().parents[1]
+    runpy.run_path(str(qa / "2026-09-16-ingest-lifecycle/native_check.py"))[
+        "validate_profile"
+    ](root)
+    evidence = root / "evidence"
+    evidence.mkdir(exist_ok=False)
+    os.environ.update(
+        HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
+        TLDW_CONFIG_PATH=str(root / "config.toml"),
+        XDG_DATA_HOME=str(root / "data"),
+        XDG_CONFIG_HOME=str(root / "config"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+    )
+    for key in (
+        "NO_COLOR",
+        "OPENAI_API_KEY",
+        "LLAMA_CPP_API_KEY",
+        "SEARX_URL",
+        "SERPER_API_KEY",
+    ):
+        os.environ.pop(key, None)
+
+    from textual.css.query import NoMatches, QueryError
+    from textual_image._terminal import probe_terminal
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Utils.app_shutdown import claim_process_exit
+
+    claim_process_exit()
+    probe_terminal()
+    app = TldwCli()
+    source = Path(__file__).resolve().parents[4]
+    result = {
+        "pid": os.getpid(),
+        "cells": [],
+        "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "source_hashes": {
+            p: hashlib.sha256((source / p).read_bytes()).hexdigest()
+            for p in (
+                "tldw_chatbook/app.py",
+                "tldw_chatbook/MCP/root_settings.py",
+                "tldw_chatbook/UI/Screens/mcp_screen.py",
+                "tldw_chatbook/UI/MCP_Modules/mcp_rail.py",
+                "tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py",
+                "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+                "tldw_chatbook/css/components/_agentic_terminal.tcss",
+                "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py",
+                "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+                "tldw_chatbook/Tool_Packs/service.py",
+                "tldw_chatbook/Tool_Packs/export.py",
+                "tldw_chatbook/Tool_Packs/publication.py",
+                "tldw_chatbook/Tool_Packs/activation.py",
+                "tldw_chatbook/Tool_Packs/importer.py",
+                "tldw_chatbook/Tool_Packs/removal.py",
+                "tldw_chatbook/Widgets/enhanced_file_picker.py",
+                "tldw_chatbook/Widgets/Settings_Widgets/tool_pack_import_review.py",
+                "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py",
+                "tldw_chatbook/Workspaces/agent_provisioning.py",
+                "tldw_chatbook/UI/Screens/settings_screen.py",
+                "tldw_chatbook/Widgets/workspace_persona_default.py",
+                "tldw_chatbook/Widgets/workspace_create_modal.py",
+                "tldw_chatbook/Character_Chat/local_character_persona_service.py",
+                "tldw_chatbook/css/tldw_cli_modular.tcss",
+                "tldw_chatbook/css/features/_settings.tcss",
+                "tldw_chatbook/css/core/_variables.tcss",
+                "tldw_chatbook/css/components/_dialogs.tcss",
+                "tldw_chatbook/css/widget_defaults_scoped.tcss",
+                "tldw_chatbook/css/widget_defaults_self.tcss",
+                "tldw_chatbook/css/screen_agentic_settings.tcss",
+                "tldw_chatbook/Workspaces/registry_service.py",
+                "tldw_chatbook/config.py",
+            )
+        },
+    }
+
+    def record():
+        (evidence / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+
+    async def tmux(*args):
+        return await asyncio.to_thread(
+            subprocess.run,
+            ["/opt/homebrew/bin/tmux", "-L", socket, *args],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+    async def journey(pilot):
+        import threading
+        import tomllib
+
+        from textual.widgets import Button
+
+        from tldw_chatbook.config import get_cli_setting
+        from tldw_chatbook.UI.MCP_Modules import mcp_workbench as module
+        from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+        async def wait_for(predicate, label):
+            result["waiting_for"] = label
+            record()
+            deadline = asyncio.get_running_loop().time() + 35
+            while asyncio.get_running_loop().time() < deadline:
+                try:
+                    if predicate():
+                        await settle()
+                        return
+                except (NoMatches, QueryError):
+                    pass
+                await pilot.pause(0.03)
+            raise AssertionError(label)
+
+        async def settle():
+            await pilot.pause()
+            await pilot.wait_for_scheduled_animations()
+            await pilot.pause()
+
+        def visible(control):
+            region, clip = app.screen._compositor.visible_widgets[control]
+            assert region.intersection(clip) == region
+
+        async def focus(selector):
+            control = app.screen.query_one(selector)
+            assert not control.disabled
+            control.focus()
+            await settle()
+            assert app.focused is control
+            visible(control)
+            if isinstance(control, Button):
+                await wait_for(lambda: not control.has_class("-active"), "Button ready")
+            return control
+
+        def paint(region):
+            return "\n".join(
+                strip.crop(region.x, region.right).text
+                for strip in app.screen._compositor.render_strips()[
+                    region.y : region.bottom
+                ]
+            )
+
+        async def capture(stem):
+            await wait_for(lambda: not app.screen.query("Toast"), "Notices clear")
+            app.save_screenshot(stem + ".svg", path=str(evidence))
+            pane = await tmux("capture-pane", "-p", "-t", session)
+            (evidence / (stem + ".txt")).write_text(pane.stdout)
+
+        try:
+            assert app._instance_lock_status.acquired
+            assert type(app._driver).__name__ == "LinuxDriver"
+            assert sys.stdout.isatty() and sys.stderr.isatty()
+            assert app.console.file.isatty()
+            result.update(driver="LinuxDriver", tty_streams=True, lock_acquired=True)
+            await wait_for(lambda: getattr(app, "_ui_ready", False), "Startup")
+            result["live_database_attributes"] = sorted(
+                key
+                for key, value in vars(app).items()
+                if key.endswith("_db") and value is not None
+            )
+            await app.handle_screen_navigation(NavigateToScreen("mcp"))
+            await wait_for(
+                lambda: getattr(app.screen, "screen_name", None) == "mcp",
+                "MCP destination",
+            )
+            workbench = app.screen.workbench
+            await wait_for(
+                lambda: (
+                    not workbench.is_loading
+                    and not workbench._reloading
+                    and bool(workbench.query("#mcp-tools-table"))
+                ),
+                "MCP loaded",
+            )
+            workbench.set_mode("tools")
+            await settle()
+            canvas = workbench.query_one(MCPToolsMode)
+            result["fixture_setup"] = (
+                "Fresh private configuration and real production navigation, "
+                "keyboard root edits, shared path validation and atomic config writes. "
+                "One write is held before persistence to exercise a newer draft. "
+                "No tools or provider requests executed."
+            )
+
+            async def edit(value):
+                field = await focus("#mcp-tools-workspace-root")
+                await pilot.press("home", "shift+end", "backspace", *value)
+                await wait_for(lambda: field.value == value, "Root edited")
+                return field
+
+            async def save():
+                await focus("#mcp-tools-workspace-save")
+                await pilot.press("enter")
+
+            def receipt():
+                return str(canvas.query_one("#mcp-tools-workspace-status").renderable)
+
+            def saved():
+                return tomllib.loads((root / "config.toml").read_text())["console"][
+                    "workspace_root"
+                ]
+
+            for theme in ("textual-dark", "textual-light"):
+                for size in ((80, 24), (170, 48)):
+                    stem = f"{theme}-{size[0]}x{size[1]}"
+                    app.theme = theme
+                    await tmux(
+                        "resize-window",
+                        "-t",
+                        session,
+                        "-x",
+                        str(size[0]),
+                        "-y",
+                        str(size[1]),
+                    )
+                    await wait_for(
+                        lambda size=size: (app.size.width, app.size.height) == size,
+                        "Terminal resized",
+                    )
+                    field = await edit(str(root / "missing"))
+                    await save()
+                    await wait_for(
+                        lambda: "not saved" in receipt(), "Validation receipt"
+                    )
+                    assert field.value == str(root / "missing")
+                    await workbench._sync_children()
+                    await settle()
+                    assert (
+                        field.value == str(root / "missing")
+                        and "not saved" in receipt()
+                    )
+                    visible(canvas.query_one("#mcp-tools-workspace-status"))
+                    await capture(stem + "-invalid")
+                    valid = root / (stem + "-root")
+                    valid.mkdir()
+                    await edit(str(valid))
+                    await save()
+                    await wait_for(
+                        lambda: "Saved local MCP" in receipt(), "Saved receipt"
+                    )
+                    assert saved() == str(valid) and get_cli_setting(
+                        "console", "workspace_root"
+                    ) == str(valid)
+                    visible(canvas.query_one("#mcp-tools-workspace-status"))
+                    await capture(stem + "-saved")
+                    await edit("")
+                    await save()
+                    await wait_for(
+                        lambda: saved() == "" and "Saved local MCP" in receipt(),
+                        "Blank root saved",
+                    )
+                    assert field.value == ""
+                    result["cells"].append(
+                        {
+                            "theme": theme,
+                            "size": size,
+                            "validation_keeps_draft": True,
+                            "refresh_preserves_error": True,
+                            "retry_saves_private_config": True,
+                            "blank_saves_current_directory_fallback": True,
+                        }
+                    )
+                    record()
+
+            entered, release = threading.Event(), threading.Event()
+            real_write = module._persist_mcp_workspace_root
+
+            def held(request):
+                entered.set()
+                assert release.wait(20)
+                return real_write(request)
+
+            module._persist_mcp_workspace_root = held
+            try:
+                field = await edit(str(valid))
+                await save()
+                await wait_for(entered.is_set, "Admitted save held")
+                await edit("newer-unsaved-root")
+                await capture("pending-newer-draft")
+                release.set()
+                await wait_for(
+                    lambda: "Saved local MCP" in receipt(), "Older save completed"
+                )
+                assert field.value == "newer-unsaved-root" and "not saved" in receipt()
+                assert saved() == str(valid)
+                await workbench._sync_children()
+                await settle()
+                assert field.value == "newer-unsaved-root"
+                await capture("saved-newer-draft")
+            finally:
+                release.set()
+                module._persist_mcp_workspace_root = real_write
+            for mode in ("servers", "tools"):
+                await focus("#mcp-mode-" + mode)
+                await pilot.press("enter")
+                await settle()
+            assert field.value == "newer-unsaved-root"
+            result["newer_draft_preserved_after_completion_and_navigation"] = True
+            await edit("")
+            await save()
+            await wait_for(
+                lambda: saved() == "" and "Saved local MCP" in receipt(),
+                "Final blank save",
+            )
+            result["passed"] = True
+        except Exception:  # noqa: BLE001 - retain failed-run diagnostics
+            result.update(
+                passed=False,
+                error=traceback.format_exc(),
+                focused_id=getattr(app.focused, "id", None),
+                focused_region=str(getattr(app.focused, "region", None)),
+            )
+            app.save_screenshot("failed-state.svg", path=str(evidence))
+        finally:
+            record()
+            await tmux("send-keys", "-t", session, "C-q")
+
+    app.run(auto_pilot=journey, size=(170, 48))
+    result.update(app_run_returned=True)
+    record()
+    raise SystemExit(0 if result.get("passed") else 1)
+
+
+if __name__ == "__main__":
+    main()

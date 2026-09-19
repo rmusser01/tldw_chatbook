@@ -1,0 +1,47 @@
+{
+  "pid": 86287,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "listing_and_parent_navigation_visible": true,
+      "typed_path_validation_and_recovery": true,
+      "empty_listing_parent_visible": true,
+      "select_cancel_and_import_context_retained": true,
+      "resize_preserves_path_selection_and_focus": false,
+      "same_folder_error_clears": true,
+      "long_path_checks": false,
+      "jobs_queued": 0
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "listing_and_parent_navigation_visible": true,
+      "typed_path_validation_and_recovery": true,
+      "empty_listing_parent_visible": true,
+      "select_cancel_and_import_context_retained": true,
+      "resize_preserves_path_selection_and_focus": true,
+      "same_folder_error_clears": true,
+      "long_path_checks": true,
+      "jobs_queued": 0
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "real_availability": {
+    "audio_processing": false,
+    "parakeet_onnx": false
+  },
+  "ui_availability_simulated": [
+    "audio_processing",
+    "parakeet_onnx"
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

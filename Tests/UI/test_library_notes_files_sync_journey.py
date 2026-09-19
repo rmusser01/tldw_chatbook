@@ -9,12 +9,13 @@ import hashlib
 import inspect
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 import subprocess
 import sys
 import textwrap
 from types import SimpleNamespace
-from typing import Callable
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -538,7 +539,7 @@ async def test_activating_a_lasting_root_refreshes_a_seeded_notes_list(
             )
             activate.press()
             await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
-            assert "3 applied · durable receipt recorded" in _painted_text(host)
+            assert "3 applied · listed under Receipts" in _painted_text(host)
             assert database.count_notes() == 5
 
             screen.query_one("#notes-sync-back", Button).press()
@@ -842,7 +843,21 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
         purpose = str(
             screen.query_one("#library-notes-database-purpose", Static).renderable
         )
-        assert "Library notes" in str(authority.renderable)
+        source_strip = screen.query_one("#library-notes-source-strip")
+        assert "Library notes | Folder files" in _painted_widget_text(
+            host, source_strip
+        )
+        assert screen.query_one("#library-notes-source-database").has_class("-selected")
+        assert not screen.query_one("#library-notes-source-files").has_class(
+            "-selected"
+        )
+        # Below 64 columns the source strip owns the noun, leaving room for
+        # the complete status and next action (task-32360).
+        status = "Ready · Next: Create a note or add from files."
+        expected_authority = status if size[0] < 64 else f"Library notes · {status}"
+        assert str(authority.renderable) == expected_authority
+        assert _painted_widget_text(host, authority) == expected_authority
+        assert "Library's own database" in purpose
         assert "use Sync to mirror" not in purpose
         assert "switch to Folder files" in purpose
         assert "choose Add from files" in purpose
@@ -883,11 +898,13 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((120, 36), (60, 20)))
 async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
+    size: tuple[int, int],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exercise check/review/cancel and a fresh durable import in one screen."""
+    """Review/cancel, import to SQLite, and reopen the receipt at both sizes."""
     notes_path = tmp_path / "notes.sqlite"
     receipt_path = tmp_path / "import-receipts.sqlite"
     source = tmp_path / "review-me.md"
@@ -916,7 +933,7 @@ async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
     host = _JourneyHarness(app)
 
     try:
-        async with host.run_test(size=(120, 36)) as pilot:
+        async with host.run_test(size=size) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-notes", Button).press()
@@ -990,6 +1007,30 @@ async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
             assert receipt.imported == 1
             assert folders.get_folder_by_path(("Inbox",)) is not None
             assert receipt_path.exists()
+
+            receipt_widget = screen.query_one("#note-import-receipt")
+            assert _painted_widget_text(host, receipt_widget) == "1 note created"
+            back = screen.query_one("#library-notes-import-back", Button)
+            back.focus()
+            await pilot.pause()
+            assert screen.focused is back
+            assert str(back.label) in _painted_widget_text(host, back)
+            await pilot.press("enter")
+            reopen = await _wait_for_selector(
+                screen, pilot, "#library-notes-import-receipt"
+            )
+            reopen.focus()
+            await pilot.pause()
+            assert screen.focused is reopen
+            assert str(reopen.label) in _painted_widget_text(host, reopen)
+            await pilot.press("enter")
+            receipt_widget = await _wait_for_selector(
+                screen, pilot, "#note-import-receipt"
+            )
+            assert _painted_widget_text(host, receipt_widget) == "1 note created"
+            assert controller.snapshot.receipt is receipt
+            assert controller.snapshot.latest_receipt is receipt
+            assert database.count_notes() == 1
     finally:
         interop.close_all_user_connections()
         database.close_connection()
@@ -1296,7 +1337,7 @@ async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
             controller._state = replace(  # noqa: SLF001 - mounted receipt setup
                 controller.snapshot,
                 phase="receipt",
-                receipt_line="1 applied · durable receipt recorded",
+                receipt_line="1 applied · listed under Receipts",
             )
             controller._publish()  # noqa: SLF001 - mounted receipt setup
             undo = await _wait_for_selector(screen, pilot, "#notes-sync-receipt-undo-0")
@@ -1433,7 +1474,7 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         assert not activate.disabled
         activate.press()
         await _wait_for_selector(screen, pilot, "#notes-sync-receipt")
-        assert "1 applied · durable receipt recorded" in _painted_text(activation_host)
+        assert "1 applied · listed under Receipts" in _painted_text(activation_host)
         assert ("activate_root", "setup-root", token) in runtime.calls
 
     runtime.roots = (
@@ -2192,3 +2233,235 @@ async def test_session_git_executes_stage_commit_cancel_push_cancel_and_result(
         await workspace.shutdown()
         owner.shutdown()
         replica.close()
+
+
+# ---------------------------------------------------------------------------
+# task-32604: a Chatbook edit inside an active "Both ways" root
+# ---------------------------------------------------------------------------
+
+
+def _production_note_session_port(
+    database: CharactersRAGDB,
+    interop: NotesInteropService,
+    owner: NotesSyncRuntimeOwner | None,
+) -> Any:
+    """Build the shipped Library save seam over real Notes authorities."""
+
+    from datetime import datetime, timezone
+
+    from tldw_chatbook.UI.Library_Modules.note_session_port import (
+        _LibraryDatabaseNoteSessionPort,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    return _LibraryDatabaseNoteSessionPort(
+        run_service_call=LibraryScreen._run_library_service_call,
+        notes_scope_service=NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+            folder_repository=LocalNoteFolderRepository(database),
+        ),
+        notes_service=interop,
+        user_id="user-1",
+        clock=lambda: datetime.now(timezone.utc),
+        notes_sync_runtime=lambda: owner,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_chatbook_note_save_reaches_the_file_of_an_active_both_ways_root(
+    tmp_path: Path,
+) -> None:
+    """task-32604 AC#2/AC#4: the editor's save seam signals the sync runtime.
+
+    The polling watcher signs filesystem metadata only, so before this the
+    note side produced no hint at all and the pending ``update_file`` was
+    never run -- the file kept its old bytes until something touched the
+    disk. Drives the shipped ``_LibraryDatabaseNoteSessionPort`` over the
+    production runtime/executor/filesystem stack.
+    """
+
+    from tldw_chatbook.Library.library_notes_session import PortSaveKind
+    from tldw_chatbook.Library.library_notes_state import DatabaseNoteSavePayload
+
+    notes_path, state_path, sync_root = _seed_real_conflict_authority(
+        tmp_path, diverge=False
+    )
+    target = sync_root / "note.md"
+    assert target.read_text(encoding="utf-8") == "baseline"
+    owner, database, interop, _controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    try:
+        port = _production_note_session_port(database, interop, owner)
+        note = database.get_note_by_id("note-1")
+        assert note is not None
+        reply = await port.save_note(
+            "note-1",
+            int(note["version"]),
+            DatabaseNoteSavePayload(
+                title="Joined conflict",
+                body="edited in Chatbook",
+                keywords=(),
+                revision=1,
+            ),
+        )
+        assert reply.kind is PortSaveKind.SAVED
+        await owner.settle()
+        assert target.read_text(encoding="utf-8") == "edited in Chatbook"
+        receipts = await owner.write_receipts("root-1")
+        assert [receipt.kind for receipt in receipts] == ["update_file"]
+        assert receipts[0].relative_path == "note.md"
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+
+@pytest.mark.asyncio
+async def test_a_note_save_without_a_runtime_still_returns_its_saved_reply(
+    tmp_path: Path,
+) -> None:
+    """task-32604: harnesses without a lasting-sync runtime save unchanged."""
+
+    from tldw_chatbook.Library.library_notes_session import PortSaveKind
+    from tldw_chatbook.Library.library_notes_state import DatabaseNoteSavePayload
+
+    notes_path, _state_path, _sync_root = _seed_real_conflict_authority(
+        tmp_path, diverge=False
+    )
+    database = CharactersRAGDB(notes_path, client_id="task-32604-no-runtime")
+    interop = NotesInteropService(
+        base_db_directory=notes_path.parent,
+        api_client_id="task-32604-no-runtime",
+        global_db_to_use=database,
+    )
+    try:
+        port = _production_note_session_port(database, interop, None)
+        note = database.get_note_by_id("note-1")
+        assert note is not None
+        reply = await port.save_note(
+            "note-1",
+            int(note["version"]),
+            DatabaseNoteSavePayload(
+                title="Joined conflict",
+                body="no runtime here",
+                keywords=(),
+                revision=1,
+            ),
+        )
+        assert reply.kind is PortSaveKind.SAVED
+        assert database.get_note_by_id("note-1")["content"] == "no runtime here"
+    finally:
+        interop.close_all_user_connections()
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_check_changes_reprojects_a_root_holding_an_unwritten_note_edit(
+    tmp_path: Path,
+) -> None:
+    """task-32604 AC#1/AC#3: no "✓ Up to date" over a pending ``update_file``.
+
+    The runtime already republishes ``changes_available``/``review_changes``
+    during a manual check; ``sync_now`` never re-projected the row, so the
+    roots list kept the projection it held before the check -- and the
+    canvas offers Review only for ``review_changes``.
+    """
+
+    notes_path, state_path, sync_root = _seed_real_conflict_authority(
+        tmp_path, diverge=False
+    )
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    try:
+        controller.refresh_roots()
+        assert controller.snapshot.roots[0].status == "up_to_date"
+        note = database.get_note_by_id("note-1")
+        assert note is not None
+        assert database.update_note(
+            "note-1",
+            {"title": "Joined conflict", "content": "note side only"},
+            int(note["version"]),
+        )
+        await controller.sync_now("root-1")
+        row = controller.snapshot.roots[0]
+        assert row.status == "changes_available"
+        assert row.status_label == "◌ Changes available"
+        assert row.next_action == "review_changes"
+        assert row.next_action_label == "Review changes"
+        assert controller.snapshot.phase == "review"
+        assert controller.snapshot.status_line == (
+            "Manual check finished. 1 change to review."
+        )
+        # The check itself stays mutation-free.
+        assert (sync_root / "note.md").read_text(encoding="utf-8") == "baseline"
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+
+@pytest.mark.asyncio
+async def test_check_changes_on_a_clean_root_says_nothing_to_review(
+    tmp_path: Path,
+) -> None:
+    """task-32604 AC#3: an empty plan is named, not offered as a review."""
+
+    notes_path, state_path, _sync_root = _seed_real_conflict_authority(
+        tmp_path, diverge=False
+    )
+    owner, database, interop, controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    try:
+        await controller.sync_now("root-1")
+        assert controller.snapshot.status_line == "Nothing to review."
+        assert controller.snapshot.phase == "roots"
+        assert controller.snapshot.roots[0].status == "up_to_date"
+        assert controller.snapshot.roots[0].next_action == "sync_now"
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)
+
+
+@pytest.mark.asyncio
+async def test_check_changes_lands_on_the_review_it_built_in_a_mounted_screen(
+    tmp_path: Path,
+) -> None:
+    """task-32604 AC#3: "Check changes" reaches the effects it just planned."""
+
+    notes_path, state_path, _sync_root = _seed_real_conflict_authority(
+        tmp_path, diverge=False
+    )
+    owner, database, interop, _controller = await _start_real_conflict_stack(
+        notes_path, state_path
+    )
+    try:
+        note = database.get_note_by_id("note-1")
+        assert note is not None
+        assert database.update_note(
+            "note-1",
+            {"title": "Joined conflict", "content": "note side only"},
+            int(note["version"]),
+        )
+        app = _build_test_app()
+        _seed_conversations(app, [], notes=_two_notes())
+        app.notes_sync_runtime_owner = owner
+        host = _JourneyHarness(app)
+        async with host.run_test(size=(80, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-notes-manage-sync-folders")
+            screen.query_one("#library-notes-manage-sync-folders", Button).press()
+            check = await _wait_for_selector(screen, pilot, "#notes-sync-root-check-0")
+            assert screen._notes_state.view == "lasting_roots"
+            check.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.view == "lasting_add",
+                message="Check changes never reached the review it built",
+            )
+            assert screen._notes_state.lasting_origin == "roots"
+            controller = screen._library_notes_sync_controller
+            assert controller.snapshot.phase == "review"
+            assert controller.snapshot.review.safe_count == 1
+    finally:
+        await _close_real_conflict_stack(owner, database, interop)

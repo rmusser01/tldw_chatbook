@@ -1,0 +1,31 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+F--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+F                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[True] _
+Tests/UI/test_console_live_work_handoffs.py:2418: in test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+    assert (
+E   AssertionError: assert 'pending' == 'settled'
+E
+E     - settled
+E     + pending
+_ test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[False] _
+Tests/UI/test_console_live_work_handoffs.py:2418: in test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch
+    assert (
+E   AssertionError: assert 'pending' == 'settled'
+E
+E     - settled
+E     + pending
+============================= slowest 25 durations =============================
+7.29s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[True]
+6.99s call     Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[False]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[True]
+FAILED Tests/UI/test_console_live_work_handoffs.py::test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch[False]
+2 failed, 65 deselected in 16.45s

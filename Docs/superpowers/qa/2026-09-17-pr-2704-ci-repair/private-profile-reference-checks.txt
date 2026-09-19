@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+20.25s call     Tests/UI/test_pr2704_gguf_probe.py::test_probe
+6.90s call     Tests/UI/test_pr2704_gguf_probe.py::test_reference_catalog_layout[size2]
+6.82s call     Tests/UI/test_pr2704_gguf_probe.py::test_reference_catalog_layout[size1]
+6.73s call     Tests/UI/test_pr2704_gguf_probe.py::test_reference_catalog_layout[size0]
+2.55s call     Tests/UI/test_pr2704_gguf_probe.py::test_reference_gallery_snapshot[textual-light]
+2.35s call     Tests/UI/test_pr2704_gguf_probe.py::test_reference_gallery_snapshot[textual-dark]
+
+(12 durations < 1s hidden.)
+6 passed in 46.98s

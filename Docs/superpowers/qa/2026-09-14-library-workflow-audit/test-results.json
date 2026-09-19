@@ -1,0 +1,34 @@
+{
+  "workflow-tests.log": [
+    "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff",
+    "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_local_workspace_mouse_clicks",
+    "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_library_details_section_renders_grouped_headers_and_drops_policy_prose",
+    "FAILED Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_preserves_rail_scroll",
+    "FAILED Tests/UI/test_library_modal_dismissal.py::test_library_modal_inventory_matches_declared_edges_bidirectionally",
+    "FAILED Tests/UI/test_library_notes_files_sync_journey.py::test_database_notes_import_once_journey_is_painted_focused_and_retained[size1]",
+    "6 failed, 198 passed, 2 warnings in 156.52s (0:02:36)"
+  ],
+  "rag-responsiveness-tests.log": [
+    "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_resize_gate_skips_library_query_work_on_non_crossing_frames",
+    "FAILED Tests/UI/test_library_resize_focus_gates_t23025.py::test_tab_focus_path_library_query_volume_is_bounded",
+    "2 failed, 21 passed, 2 warnings in 25.79s"
+  ],
+  "workspace-root-cause.log": [
+    "FAILED Tests/UI/_library_audit_diagnostics.py::test_workspace_projection_and_painted_receipt_agree",
+    "1 failed, 2 warnings in 3.46s"
+  ],
+  "capture-round1.log": [
+    "FAILED Tests/UI/_library_audit_capture.py::test_capture_library[search-False-textual-dark]",
+    "FAILED Tests/UI/_library_audit_capture.py::test_capture_library[search-False-textual-light]",
+    "2 failed, 18 passed, 2 warnings in 68.67s (0:01:08)"
+  ],
+  "confirm-round2.log": [
+    "FAILED Tests/UI/_library_audit_diagnostics.py::test_workspace_with_production_styles[test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff]",
+    "FAILED Tests/UI/_library_audit_diagnostics.py::test_workspace_with_production_styles[test_library_details_section_renders_grouped_headers_and_drops_policy_prose]",
+    "FAILED Tests/UI/_library_audit_diagnostics.py::test_query_cost_sites[test_resize_gate_skips_library_query_work_on_non_crossing_frames]",
+    "FAILED Tests/UI/_library_audit_diagnostics.py::test_query_cost_sites[test_tab_focus_path_library_query_volume_is_bounded]",
+    "FAILED Tests/UI/_library_audit_diagnostics.py::test_rail_fold_focus_paint[textual-dark]",
+    "FAILED Tests/UI/_library_audit_diagnostics.py::test_rail_fold_focus_paint[textual-light]",
+    "6 failed, 4 passed, 2 warnings in 20.32s"
+  ]
+}

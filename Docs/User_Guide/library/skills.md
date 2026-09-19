@@ -33,7 +33,7 @@ editor in create mode.
 ## Layout tour
 
 ```text
-Library rail                 Skills list / editor
+Library rail                 Skills list + selected Skill
 ┌────────────────────┐       ┌──────────────────────────────────────────┐
 │ Browse             │       │ Skills (N)                               │
 │   Skills           │  ───▶ │ Filter skills…                           │
@@ -63,8 +63,11 @@ The list canvas, top to bottom:
   or Import skill… above." (a filter with no matches shows "No skills match your
   filter." instead).
 
-Clicking a row opens the **editor**, with the **Trust** panel below it —
-the canvas scrolls, so the trust panel may sit below the fold.
+Select a row with **Enter** to open **Overview** in the work pane. Choose
+**Edit**, **Trust**, or **Files** above it for that part of the Skill. The list
+stays mounted beside the work pane. At narrow widths, the vertical **Skills**
+grip reveals the list; **Back to list**, **Discard changes**, and new-draft
+**Cancel** reveal it and return keyboard focus there.
 
 ## Features & controls
 
@@ -97,7 +100,14 @@ chrome is drawn; this matches every other Library list.
 **Import skill…** opens an inline row: an input with placeholder "SKILL.md file
 or skill folder path… or GitHub/zip URL", plus **Browse…** (pick a
 SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
-**Cancel**. A `http(s)://` value fetches the skill from that URL.
+**Cancel**. Browsing and submission use separate rows, and the list's Sort and
+Import actions stay readable in the narrow Skills pane. A `http(s)://` value
+fetches the skill from that URL.
+
+You can open Import while a Skill is selected. Save or discard any unsaved
+edits first. After an error, focus returns to the path; after a successful
+import, it moves to **Review…**. Cancelling the candidate chooser returns to
+the preserved path. These returns respect a later keyboard focus change.
 
 Only one skill import runs at a time. While Chatbook shows
 `Inspecting/importing…`, the path, Browse, Browse folder, Import, and Cancel
@@ -267,7 +277,27 @@ this skill. Try again." If the skill changed elsewhere while you were
 editing, a banner offers one way out: "This skill changed elsewhere —
 Reload discards your edit and refetches it." with a **Reload** button.
 Leaving with unsaved edits is refused: "Unsaved skill changes — Save or
-Discard changes first."
+Discard changes first." **Discard changes** returns to the saved Skill list
+without writing the draft; **Cancel** abandons a new Skill and returns to Browse
+Skills. After an existing Skill saves, keyboard focus moves from Save to **Back
+to list**. A field or pane selected while saving keeps focus. Text entered
+while the write is running stays marked unsaved; save again to persist it.
+
+### Files
+
+Select **Files** to see supporting-file paths relative to the Skill folder,
+their byte sizes, and a **binary** label for binary files. An empty file is
+listed as **0 bytes**; a Skill without supporting files says **No supporting
+files.** The instruction body in `SKILL.md` is available under **Edit**.
+
+This is a read-only inventory of file metadata. Long paths wrap. With focus
+in the Work pane, use **Up/Down**, **Page Up/Page Down**, or **Home/End** to
+scroll. **Home** brings the mode controls back into view after a long list.
+Use **Tab/Shift+Tab** to reach **Files** or **Edit**, then **Enter** to select it.
+
+Switching between **Edit** and **Files** preserves unsaved description and
+instruction changes. Return to **Edit** to save or discard them. Viewing the
+inventory does not change the supporting files or their trust approval.
 
 ### Applying an Agent Lesson proposal
 
@@ -318,7 +348,9 @@ parentheses when something differs from the trusted baseline.
   trust passphrase to make the reviewed files the new trusted baseline.").
   If the files changed again in between: "Skill files changed after the
   review was captured, so it was discarded. Press Review changes again,
-  then Approve."
+  then Approve." Review stays visible while the captured preview expands.
+  Successful approval returns keyboard focus to the **Trust** tab and refreshes
+  the skill's state in Items.
 - **Unlock** — enabled only while trust is locked for the session.
 - **Scripts** — the panel states either "Scripts: you are asked to confirm
   each time this skill runs a script." or "Scripts: this skill may run its

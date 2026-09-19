@@ -1,0 +1,15 @@
+{
+  "tree": "336c272dab58d2116055d3f335437e5f46af60c7",
+  "archive_sha256": "e11915a78c0d0b6029de6300851d3bd5e49c21e28dd25374336fe62d2f5bd13c",
+  "payloads_verified": 135,
+  "bytes_verified": 26860280,
+  "notes": [
+    [
+      "15ea0d57-199a-41cd-b929-8be5e875ead6",
+      "Before replacement acceptance note 336",
+      "Restore this original note on rollback. REPLACE-IQJA-336-20260913."
+    ]
+  ],
+  "consistency": "coherent",
+  "credential_policy": "exclude"
+}

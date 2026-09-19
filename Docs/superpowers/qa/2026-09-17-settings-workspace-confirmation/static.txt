@@ -1,0 +1,5 @@
+Ruff check and format --check: both changed test modules and native_check.py pass.
+Settings module Ruff baseline116/current116; introduced code/message diagnostics0.
+git diff --check passes.
+Backlog guard:4122 task files, unique IDs and Windows-compatible paths.
+Diagnostic inventory:607 owners,1407 TASK-492 calls,55 TASK-31551 calls,7761 TASK-494 calls,14 sinks.

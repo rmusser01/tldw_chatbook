@@ -1,0 +1,275 @@
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+____________ test_ancestor_scoped_bare_type_rule_count_is_a_ratchet ____________
+
+self = <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1793/test_ancestor_scoped_bare_type0/private-profile-process/pytest.log
+E           -library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+E               res = hook_impl.function(*args)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/main.py", line 408, in pytest_runtestloop
+E               item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+E               return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+E               return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+E               res = hook_impl.function(*args)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+E               runtestprotocol(item, nextitem=nextitem)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 139, in runtestprotocol
+E               reports.append(call_and_report(item, "call", log))
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 249, in call_and_report
+E               call = CallInfo.from_call(
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 361, in from_call
+E               result: TResult | None = func()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 250, in <lambda>
+E               lambda: runtest_hook(item=item, **kwds),
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+E               return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+E               return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+E               res = hook_impl.function(*args)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+E               item.runtest()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 569, in runtest
+E               super().runtest()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 1707, in runtest
+E               self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+E               return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+E               return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+E               res = hook_impl.function(*args)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/python.py", line 167, in pytest_pyfunc_call
+E               result = testfunction(**testargs)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py", line 905, in inner
+E               runner.run(coro, context=context)
+E             File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E               return self._loop.run_until_complete(task)
+E             File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+E               self.run_forever()
+E             File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+E               self._run_once()
+E             File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1999, in _run_once
+E               handle._run()
+E             File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/events.py", line 88, in _run
+E               self._context.run(self._callback, *self._args)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/message_pump.py", line 566, in _process_messages
+E               if not await self._pre_process():
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/message_pump.py", line 599, in _pre_process
+E               await self._dispatch_message(events.Compose())
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/message_pump.py", line 727, in _dispatch_message
+E               await self.on_event(message)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/message_pump.py", line 808, in on_event
+E               await self._on_message(event)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/message_pump.py", line 829, in _on_message
+E               await invoke(method, message)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/_callback.py", line 96, in invoke
+E               return await _invoke(callback, *params)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/_callback.py", line 58, in _invoke
+E               result = await result
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/widget.py", line 4714, in _on_compose
+E               await self._compose()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/screen.py", line 1486, in _compose
+E               await super()._compose()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/widget.py", line 4718, in _compose
+E               widgets = [*self._pending_children, *compose(self)]
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/textual/compose.py", line 54, in compose
+E               child = next(iter_compose)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Navigation/base_app_screen.py", line 390, in compose
+E               yield from self._compose_content_or_failure()
+E           > File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Navigation/base_app_screen.py", line 443, in _compose_content_or_failure
+E               yield from self.compose_content()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/chat_screen.py", line 16063, in compose_content
+E               control_state = self._build_console_control_state(pending_launch)
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/chat_screen.py", line 11574, in _build_console_control_state
+E               provider, model, settings = self._active_console_provider_model_display()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/chat_screen.py", line 9807, in _active_console_provider_model_display
+E               display = self._active_console_provider_model_display_uncached()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Screens/chat_screen.py", line 9816, in _active_console_provider_model_display_uncached
+E               settings = self._session._ensure_active_console_session_settings()
+E             File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/UI/Console_Modules/session.py", line 3518, in _ensure_active_console_session_settings
+E               creating_blank_session = store.active_session_id is None
+E           AttributeError: 'NoneType' object has no attribute 'active_session_id'
+E           2026-09-18 01:09:02.329 | INFO     | tldw_chatbook.Chat.console_runtime:dispose:4758 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+E           2026-09-18 01:09:04.228 | INFO     | tldw_chatbook.app:_push_initial_screen:16850 - Screen navigation: Pushed initial ChatScreen (target=chat)
+E           2026-09-18 01:09:04.332 | INFO     | tldw_chatbook.app:_setup_buffered_logging:12142 - Persistent logging handler set up for screen navigation
+E           2026-09-18 01:09:04.432 | INFO     | tldw_chatbook.app:on_unmount:19400 - Local MCP client sessions disconnected
+E           2026-09-18 01:09:04.435 | INFO     | tldw_chatbook.app:on_unmount:19410 - Artifact share stopped (if running)
+E           2026-09-18 01:09:04.439 | INFO     | tldw_chatbook.app:on_unmount:19424 - Server context provider cached client closed
+E           2026-09-18 01:09:04.456 | INFO     | tldw_chatbook.app:on_unmount:19439 - TTS resources cleaned up properly
+E           2026-09-18 01:09:04.464 | INFO     | tldw_chatbook.app:on_unmount:19470 - DB size update timer stopped during unmount.
+E           2026-09-18 01:09:04.468 | ERROR    | tldw_chatbook.app:on_unmount:19603 - Error checking active threads: [Errno 1] Operation not permitted (originated from sysctl() malloc 1/3)
+E           2026-09-18 01:09:04.473 | INFO     | tldw_chatbook.app:on_unmount:19622 - --- App Unmounted (Loguru) ---
+E           ╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:16658 in on_mount         │
+E           │                                                                              │
+E           │   16655 │   │   # view-clear consumes the ACTIVE conversation's FLEET_UNSEEN │
+E           │   16656 │   │   # (Task 4's stated ordering hazard: read marks BEFORE activa │
+E           │   16657 │   │   self._fleet._claim_console_fleet_wake_marks()                │
+E           │ ❱ 16658 │   │   self._console_auto_speak.mount()                             │
+E           │   16659 │   │                                                                │
+E           │   16660 │   │   # Claim this visit before Textual posts its mount-time Scree │
+E           │   16661 │   │   # That handler waits behind the same successful full reconci │
+E           │                                                                              │
+E           │ ╭─────────────── locals ────────────────╮                                    │
+E           │ │ ordered_resume_pending = False        │                                    │
+E           │ │                   self = ChatScreen() │                                    │
+E           │ ╰───────────────────────────────────────╯                                    │
+E           │                                                                              │
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/Widgets/Console/console_auto_speak_consent.py:216   │
+E           │ in mount                                                                     │
+E           │                                                                              │
+E           │    213 │   │   if self._mounted:                                             │
+E           │    214 │   │   │   return                                                    │
+E           │    215 │   │   self._mounted = True                                          │
+E           │ ❱  216 │   │   self._unsubscribe = self._store_accessor().subscribe_message_ │
+E           │    217 │   │   │   self._on_message_completed                                │
+E           │    218 │   │   )                                                             │
+E           │    219 │   │   self.sync_controls()                                          │
+E           │                                                                              │
+E           │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+E           │ │ self = <tldw_chatbook.Widgets.Console.console_auto_speak_consent.Consol… │ │
+E           │ │        object at 0x1153b3410>                                            │ │
+E           │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E           ╰──────────────────────────────────────────────────────────────────────────────╯
+E           AttributeError: 'NoneType' object has no attribute 'subscribe_message_completed'
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:12242 Splash screen enabled: True
+E           INFO     root:app.py:12255 Creating splash screen - duration: 7.0, card: random
+E           INFO     root:app.py:12270 Splash screen yielded, returning early from compose
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+E           ERROR    tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=unhandled_exception component=app exception_type=AttributeError raise_function=mount raise_line=216 raise_module=tldw_chatbook.Widgets.Console.console_auto_speak_consent site_function=mount site_line=216 site_module=tldw_chatbook.Widgets.Console.console_auto_speak_consent widget_type=ChatScreen
+E           INFO     tldw_chatbook.diagnostics.ui:persistent_diagnostics.py:247 event=event_loop_stall active_timers=ui-heartbeat active_workers=- component=ui lag_ms=1873 mounts=0 removes=0 threshold_ms=250
+E           INFO     root:app.py:19249 --- App Unmounting ---
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_stopping component=app
+E           ============================= slowest 25 durations =============================
+E           18.54s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E           2.19s setup    Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E
+E           (1 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E           1 failed in 21.99s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 01:08:42.429 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-18 01:08:42.482 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6134 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_cy48k8kt/config/config.toml
+2026-09-18 01:08:42.484 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6163 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_cy48k8kt/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-18 01:08:42.485 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6172 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_cy48k8kt/config/config.toml
+2026-09-18 01:08:42.486 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6239 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-18 01:08:42.487 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6243 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-18 01:08:42.498 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 01:08:42.499 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 01:08:42.499 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 01:08:42.500 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 01:08:42.546 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_cy48k8kt/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 01:08:42.546 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 01:08:42.547 | INFO     | tldw_chatbook.config:<module>:9753 - Default API Endpoint (from config.py global scope): openai
+2026-09-18 01:08:42.547 | DEBUG    | tldw_chatbook.config:<module>:9776 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-18 01:08:42.803 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 01:08:42.992 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 01:08:43.198 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 01:08:43.198 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 01:08:43.199 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================= slowest 25 durations =============================
+24.46s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+8.32s call     Tests/UI/test_profile_interview_answer_journeys.py::test_review_payload_value_remains_readable_while_focused
+1.13s setup    Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+1 failed, 1 passed, 13 deselected in 35.02s

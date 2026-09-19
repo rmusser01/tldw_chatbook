@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐┌─────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │    Media (1)              ││ Search everything, pick a section, or add something new.                            │ │
+│ │    Conversations (1)      ││                                                                                     │ │
+│ │    Notes (2)              ││ Notes (2) · Media (1) · Conversations (1)                                           │ │
+│ │    Prompts — reuse        ││ From your Library                                                                   │ │
+│ │    Skills (0)           ▁ ││  Notes · Workspace B research note                                                  │ │
+│ │    Collections (0)        ││  Media · Workspace A transcript                                                     │ │
+│ │    Search / RAG           ││  Conversations · Workspace B planning chat                                          │ │
+│ │ ────────────────────────  ││ Quick actions                                                                       │ │
+│ │ Create               ▾    ││                                                                                     │ │
+│ │    New note               ││      Import…         New note         Search                                        │ │
+│ │    New prompt             ││                                                                                     │ │
+│ │    New skill              ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Study                ▾    ││                                                                                     │ │
+│ │    Study decks            ││                                                                                     │ │
+│ │    Flashcards             ││                                                                                     │ │
+│ │    Quizzes                ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Import / Export      ▾    ││                                                                                     │ │
+│ │    Import…                ││                                                                                     │ │
+│ │    Export                 ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Details              ▾    ││                                                                                     │ │
+│ │  Status                   ││                                                                                     │ │
+│ │  Source · Local           ││                                                                                     │ │
+│ │  Notes 2 · Media 1 ·      ││                                                                                     │ │
+│ │    Conversations 1        ││                                                                                     │ │
+│ │ ────────────────────────▆ ││                                                                                     │ │
+│ │ Diagnostics          ▸    ││                                                                                     │ │
+│ │                           ││                                                                                     │ │
+│ │  Workspace                ││                                                                                     │ │
+│ │  Active · Workspace A     ││                                                                                     │ │
+│ │  Handoff ·                ││                                                                                     │ │
+│ │    unavailable until      ││                                                                                     │ │
+│ │    sources exist          ││                                                                                     │ │
+│ │  ▾ scroll for more        ││                                                                                     │ │
+│ └───────────────────────────┘└─────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | i import content | ctrl+n new note | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

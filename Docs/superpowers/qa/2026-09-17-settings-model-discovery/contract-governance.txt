@@ -1,0 +1,17 @@
+.................................................................        [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+16.54s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+15.36s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+2.73s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+
+(22 durations < 1s hidden.)
+65 passed, 3 warnings in 37.40s

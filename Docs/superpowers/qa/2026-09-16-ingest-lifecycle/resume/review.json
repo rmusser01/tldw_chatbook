@@ -1,0 +1,12 @@
+{
+  "reviewer": "/root/ingest_success_review",
+  "mode": "independent read-only harness and evidence review",
+  "corrections": [
+    "Assert Open labels and saved-body markers are compositor-painted.",
+    "Assert retry lineage and duplicate identity after fresh-process reopening.",
+    "Pin imported application path and record exact runner hash."
+  ],
+  "final_result": "No remaining actionable harness findings.",
+  "caveat": "Preserve the caught ChatScreen _sidebar_state_save_timer errors. Visual inspection and authoritative final database checks are separate parent work.",
+  "reviewer_executed_tests_or_native_runs": false
+}

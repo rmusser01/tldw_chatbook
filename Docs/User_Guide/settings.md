@@ -172,10 +172,15 @@ page links to each backend's setup guide and displays these restrictions.
 
 ### Core — Overview
 
-A read-out grouped as **Provider readiness**, **Storage**, **Privacy**,
-**Server, sync, workspace, and handoff**, **Manual sync**, and **Where changes
-happen** (one line each for what Settings, Console, MCP, ACP, and sync own),
-plus three buttons.
+Overview leads with configuration readiness, the last connection test,
+storage/privacy, and sync status. **Open Providers & Models**, **Open Storage**,
+and **Open Privacy & Security** take you to the corresponding settings. Use
+**Tab** to reach each action; the detail pane scrolls to the focused control,
+and paired actions stack at compact widths.
+
+**Advanced / Diagnostics** holds server, workspace, handoff and manual-sync
+details. **Where changes happen** explains which destination owns each change.
+**Backup & Restore** opens the separate backup workflow.
 
 | Button | What it does |
 |---|---|
@@ -192,15 +197,53 @@ The biggest page, and where to start.
 | **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, plus "Manual / custom provider"), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
 | **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
-| **Automatic refresh** | **Auto-refresh model lists on startup**, **Refresh after (hours):**, and per-provider **auto-refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
+| **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
 | **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text; fields a provider doesn't support are hidden, not greyed. Global fallbacks live under Console Behavior. |
 
-**Test Provider** — "Runs a local readiness check; URL-based local providers
-also get a short live endpoint probe." It tests your *draft*, so you can check
-before saving; the result ends "status=ready" or "status=blocked", and the probe
-reports "reachable", "reachable (N models)", or a named failure ("timeout",
-"connection refused", "HTTP \<status\>"). A successful **Save** deliberately
-clears the previous verdict — run **Test Provider** again afterwards.
+Use **Tab** to reach the discovered-model list, arrow keys to move, and
+**Space** to check a model. Checked rows survive leaving this category and
+returning within Settings. **Save selected** immediately appends those exact
+model IDs to that provider’s saved list. If Model is empty, the first newly
+saved ID fills it as an unsaved draft; an existing Model value is kept.
+**Clear** removes discovered results and their typeahead suggestions, while
+keeping the saved list. A failed save or clear keeps the checked rows for retry.
+Changing provider, endpoint or credentials clears the old results; a delayed
+operation cannot replace the new form’s results or Model value.
+
+Open **Generation defaults** to edit overrides for the selected provider and
+model. Supported controls remain reachable with **Tab**; unsupported controls
+are hidden. Leave an override blank and save to remove it and inherit the
+fallback. Invalid or non-finite numbers keep the draft for correction. **Revert**
+lets you keep editing or discard the draft. The section remembers whether
+you opened or closed it while moving between Settings categories; resizing or
+editing keeps the active generation field in view.
+
+Automatic refresh shows whether changes are saving, saved, or could not be saved.
+If a write fails, your choices remain visible when you leave this category and
+return; choose **Retry** after making the config file writable. The interval
+accepts fractional hours; **0** refreshes on every launch. Empty, negative, and
+invalid values explain how to recover without replacing the saved interval.
+Changing these controls does not record startup consent.
+
+**Test Provider** checks your current draft before saving. URL-based local
+providers also get a short endpoint or model-listing probe. The result separates
+configuration readiness, endpoint/model-listing evidence, and whether generation
+was tested. A successful model listing does not prove that generation works.
+If the tested values change, run **Test Provider** again.
+
+Model and Endpoint edits stay as a draft when you visit another destination and
+return to Settings. Use **Tab** to move between fields. While typing, press
+**Esc**, then **s** to save or **r** to revert. Revert asks first: **Keep editing**
+retains the draft; **Discard changes** restores the saved values. Saving writes
+the provider settings locally and clears the unsaved marker; it does not test
+the endpoint. Reopening this page shows the saved model and endpoint.
+
+A clean form follows changes to the saved default provider, model and endpoint
+when you return. An unsaved edit stays attached to the provider and model you
+were editing, even if another action changes the defaults. This also applies
+to API mode, credential-source and generation-profile edits. **Discard changes**
+loads the latest saved defaults. Existing Console chats retain their own session
+selection; new chats inherit the saved defaults.
 
 #### QwenCloud
 
@@ -382,6 +425,9 @@ its tooltip and the result line name exactly what resets — global defaults
 and the selected provider, with saved credentials and environment-owned
 values untouched), **Open Speech Lab**.
 
+The Voice value dropdown shares a row with **Browse in Speech Lab** when
+there is room; narrow forms stack them. Both remain reachable with Tab.
+
 **This is the one draft category that will not let you walk away silently.**
 Leaving Speech & TTS with unsaved edits raises "Unsaved global Speech & TTS
 settings — Save these application-wide changes before continuing, or discard
@@ -394,8 +440,8 @@ Speech & TTS resolves this draft: save or discard first" (task-2708).
 "Settings owns launch visual defaults. Open the Theme category for full theme
 editing and deeper visual preview." **Global visual defaults** holds **Theme**,
 **Palette limit (themes)**, **Web font size (px)**, and **Density**; **Motion
-and scrolling** holds **Animations** and **Smooth scrolling**, each a button
-whose label is its state (Enabled / Disabled). **Shared Library rail**
+and scrolling** holds **Character expressions**, an **Animations** checkbox,
+and **Reduce motion**, **ASCII glyphs**, and **Smooth scrolling** toggles. **Shared Library rail**
 remembers whether the rail and destination Items panes are open. **Automatic
 width** follows the 3:13 Library-to-canvas proportion plus five cells, bounded to 29–39 cells
 when space allows.
@@ -431,7 +477,9 @@ to…" list without a restart (built-ins can't be overwritten, and saving over
 another saved theme asks first); **Reset** reloads it as last saved; **Generate
 from Primary** derives a palette from the primary colour; **Set as launch
 default** writes the saved theme's name to `general.default_theme` so it
-loads at startup. **Color Palette** is ten hex boxes, Primary through Error,
+loads at startup. Appearance reflects that saved default immediately while
+retaining any explicitly staged theme choice or other unsaved Appearance edits.
+**Color Palette** is ten hex boxes, Primary through Error,
 each with a swatch showing the colour and its hex; an invalid value marks the
 box and the swatch reads "invalid". **Color Presets** fill the colour chosen in
 the **Presets fill** box (Primary by default), by click or by focusing a swatch
@@ -447,8 +495,13 @@ Auto-saved. Under **Startup defaults**, **Default card**, **Enabled**, **Show
 progress**, and **Skip on keypress** save the moment you change them, while
 **Duration (s)** and **Animation speed (x)** save when you press **Enter** in
 the box. **Gallery** lists every card with a live preview — **Play selected**
-replays it, **Set as default** points the startup card at it. Everything here
-takes effect **at the next launch**; the gallery preview is the only in-session
+replays it; **Default card** above the gallery selects the startup card.
+A pending write shows **Saving** without moving keyboard focus. A failed file
+write restores the saved value; a successful write followed by a configuration
+refresh failure keeps the saved value and reports the refresh problem.
+Newer text typed while a write is pending stays in the box; press Enter again
+after it finishes to save that edit.
+These preferences take effect **at the next launch**; the gallery preview is the only in-session
 feedback.
 
 **Skip on keypress** does what it says as of TASK-21591: with it on (the
@@ -462,24 +515,45 @@ fix the setting was inert: the splash was never focused, so it never saw a key.
 
 ### Interface — Console Behavior
 
-Drafted, with one exception.
+Most controls are drafted. Groups marked **applies immediately** save as you edit.
 
 | Group | What's in it |
 |---|---|
 | **Model thinking presentation** | **Show model thinking** is on by default and applies immediately. Off hides displayable and **Thinking · unavailable** rows only; capture, persistence, replay policy, and token accounting continue unchanged. This is a device-local presentation preference, not a request for hidden chain-of-thought. |
+| **Exchange capture** | Capture future exchanges, optional PII masking, and Safe/Full viewing are separate choices. Use **Apply exchange capture** to save; choosing Full requires **View Full** confirmation. See [trace viewer consent and recovery](console/semantic-trace-capture.md#safe-and-full-are-views-of-one-trace). |
 | **Rail presentation** | **Stack collapsed rail labels** is off by default, so the collapsed handles read **Context ▸** and **Inspector** horizontally. Turn it on to use narrower three-column handles with the letters stacked upright. Save the category, then return to Console to see the new style; no restart is required. |
 | **Status row placement** | An **Above composer**/**Below composer** toggle, above by default: where the Console status-chip row (Provider, Model, Tools, …) sits relative to the composer input. Writes immediately — no save, no draft — and takes effect when you return to Console. |
 | **Composer paste handling** | An Enabled/Disabled toggle plus **Threshold (chars)** (1–100000): "Collapse large pasted chunks only when they exceed the threshold." Normal typing stays literal and the message actually sent is unchanged. |
 | **Chat images** | One Enabled/Disabled toggle, off by default: "Render images linked in assistant replies (remote fetch)." and "Off by default: fetching a model-suggested link reveals your IP address to that host." Like Status row placement, **this control writes immediately** — pressing it takes effect at once ("Linked images in replies will now render."), with no save and no draft. |
 | **Parallel agent runs** | **Max parallel agent runs**, read live, so it applies to the running app once saved. |
 | **Agent tool-result display cap** | **Display cap (chars)** (20–2000): how much of a tool result Console shows *you*, which is not what the model saw. Open a run's "View full log" to read past it. |
+| **Permission summaries** | **Off** by default. **Fallback (no rationale)** or **Every approval** sends a bounded excerpt of user/assistant conversation text to your designated provider/model for an advisory summary. Mode, provider and model save immediately; summaries do not decide approvals. |
 | **Global fallback defaults** | The same ~14 sampling and transport fields as Providers & Models, but app-wide: "Used when no provider+model profile or active Console session overrides them." Precedence runs active session, then provider + model profile, then these. |
+| **Conversation context & memory** | Automatic/custom context budget; Ask/Automatic/Off compaction; summary representation; **Compact at (%)** and **Reduce context to (%)**; summary token limit; failure behavior and carry-forward mode. **Edit summary prompt** opens the matching Internal Prompts entry. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
 
-Two honest limits: fallbacks reach **new or default sessions**, not a
-conversation already open; and "Workbench (advanced)" under **Scope** is
-silently downgraded — "Workbench scope is not available in this build; using
-Transcript scope."
+The **Show model thinking** result stays beside its checkbox when you reopen
+Settings. A failed save restores the previous value; fix the config-file problem
+and toggle again to retry. Pending writes keep your latest choice when you leave
+Settings. **Saved. Reload settings to refresh.** means the file was saved but
+live settings could not refresh; use **Diagnostics → Reload Config** or restart.
+
+Permission-summary results appear inside their group. **Changes not saved** keeps
+your edits when you switch categories or reopen Settings; correct the config-file
+problem and choose **Retry**. The previously saved choice remains active until a
+write succeeds. If the file was saved but live settings could not refresh, restart
+Chatbook or reload the configuration before relying on the new choice.
+
+Global sampling fallbacks reach **new or default sessions**, not a conversation
+already open. Context defaults follow the conversation's existing override
+precedence. The target percentage must stay at least 15 points below the trigger;
+invalid ratios and frame rates stay in the draft until corrected or reverted.
+
+Saved background effects apply to the existing Console when you return, including
+when a save finishes after leaving Settings. Disabling them stops the animation
+without changing transcript content. **Workbench (advanced)** scope falls back
+to **Transcript**, with an explanation beside the controls. Frame rates accept
+1–12; a non-finite value in a hand-edited configuration loads the default of 6.
 
 The current conversation's **Thinking history replay** control lives in its
 Console settings, because Auto/Include/Exclude is durable conversation state,

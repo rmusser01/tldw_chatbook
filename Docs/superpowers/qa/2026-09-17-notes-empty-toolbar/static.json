@@ -1,0 +1,31 @@
+{
+  "baseline": "36164f9ccc44760346b5a23f283c1ce5526238d8",
+  "syntax_files": 5,
+  "files": [
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_notes_canvas.py",
+      "new_lint": [],
+      "new_format": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_empty_toolbar.py",
+      "new_lint": [],
+      "new_format": []
+    },
+    {
+      "file": "Tests/UI/test_library_notes_w4_layout.py",
+      "new_lint": [],
+      "new_format": []
+    },
+    {
+      "file": "Tests/UI/test_library_shell.py",
+      "new_lint": [],
+      "new_format": []
+    },
+    {
+      "file": "Docs/superpowers/qa/2026-09-17-notes-empty-toolbar/native_check.py",
+      "new_lint": [],
+      "new_format": []
+    }
+  ]
+}

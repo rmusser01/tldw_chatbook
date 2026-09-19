@@ -202,11 +202,37 @@ CSS_MODULES = [
     "layout/_windows.tcss",
     "layout/_tabs.tcss",
     "layout/_sidebars.tcss",
-    "layout/_panes.tcss",
+    # ADR-161 task 10: the destination-* workbench wrappers consolidated
+    # here from layout/_panes.tcss (deleted -- it contained only these
+    # rules) plus the two destination-only rules that rode the
+    # agentic-terminal monolith. Same manifest slot as _panes, so cascade
+    # order for the surviving rules is unchanged.
+    "layout/_destination.tcss",
     "layout/_containers.tcss",
     # 3. Components - Reusable UI (depends on core + layout)
+    # ADR-161 task 9: the ds-primitives family's owning sheet (.ds-panel/
+    # .ds-toolbar/.ds-field-row/.ds-info-callout/.ds-approval-card/
+    # .ds-destination-header + .density-* variants), extracted from
+    # components/_agentic_terminal.tcss and tokenized. FIRST among the
+    # component sheets -- the atomic layer every other component family
+    # composes from. Tie semantics of the move (task-9 review correction):
+    # sheets BETWEEN this entry and the old monolith position could NOT
+    # override these rules at equal specificity before the move and now can.
+    # That is neutral in practice only because single-definition governance
+    # keeps conflicting definitions from existing; it is not "exactly as they
+    # did" ordering (the move was probe-verified computed-style-neutral).
+    "components/_ds_primitives.tcss",
     "components/_buttons.tcss",
     "components/_forms.tcss",
+    # ADR-161 task 4: the titled-section vocabulary's owning sheet
+    # (.section-title/.section-header/.subsection-title winners). Inserted
+    # directly after _forms.tcss per the consolidation plan; the rules it
+    # carries moved OUT of later sheets (_shared_components and three
+    # feature-sheet duplicates), so the surviving copies still later in
+    # this manifest (features/_chat.tcss's .section-header variant,
+    # stats_screen.css's screen copy) keep winning their shared properties
+    # exactly as before the move.
+    "components/_sections.tcss",
     "components/_lists.tcss",
     "components/_navigation.tcss",
     "components/_change_review.tcss",
@@ -232,6 +258,21 @@ CSS_MODULES = [
     # bundle cascade is byte-for-byte equivalent for the relocated rules.
     "components/_shared_components.tcss",
     # 4. Features - Application Specific (depends on all above)
+    # ADR-161 task 10: the agentic-surface vocabularies carved out of
+    # components/_agentic_terminal.tcss (TASK-24451 closed). Adjacent and in
+    # this order by design: the library split treats its two sheets as one
+    # ordered stream (see split_owned_modules), and the carve validated
+    # that intra-vocabulary comma-member tie order survives the move. The
+    # console pair rides the bundle directly (its old generated sheet was
+    # boot-parsed anyway -- see TldwCli.CSS_PATH history); the library pair
+    # and _settings.tcss are the split SOURCES for the lazily-loaded
+    # screen_agentic_{library,settings}.tcss sheets.
+    "features/_console.tcss",
+    "features/_console_panels.tcss",
+    "features/_library.tcss",
+    "features/_library_panels.tcss",
+    "features/_settings.tcss",
+    "features/_home.tcss",
     "features/_chat.tcss",
     # task-577 T4: "features/_chat_tabs.tcss" removed -- every selector in it
     # (chat-tab-bar, .chat-tab, .chat-session, .close-tab-button,
@@ -287,22 +328,39 @@ CSS_MODULES = [
     "features/_research_workspace.tcss",
     "features/_logs.tcss",
     "features/_writing.tcss",
+    "features/_workflows.tcss",
     "features/config_search.tcss",
     "features/feature_alerts.tcss",
+    # ADR-161 task 5: the pattern gallery's layout glue (dialog/nav preview
+    # frames, speaker-accent switch). Family styling stays in the owning
+    # component sheets the gallery composes.
+    "features/_pattern_gallery.tcss",
     # 5. Utilities - Helpers and Overrides (can override anything)
     "utilities/_helpers.tcss",
     "utilities/_states.tcss",
     "utilities/_overrides.tcss",
 ]
 
-#: TASK-25812 (owner decision 2026-08-31: "split-by-screen"): the module whose
-#: single-screen rules are split OUT of the boot bundle and onto the owning
-#: screens' ``CSS_PATH``. Measured 2026-08-30: this one file was 283 KB (32%
-#: of boot CSS bytes), 1,251 rules, and ~54 ms of the ~191 ms pre-first-paint
-#: parse -- while ChatScreen, the first real screen, is constructed ~1.5 s
-#: AFTER first paint. Textual loads a screen's ``CSS_PATH`` lazily on first
-#: visit (``App._load_screen_css``), so the moved rules parse then instead.
-AGENTIC_SPLIT_MODULE = "components/_agentic_terminal.tcss"
+#: TASK-25812 (owner decision 2026-08-31: "split-by-screen"): single-screen
+#: rules are split OUT of the boot bundle and onto the owning screens'
+#: ``CSS_PATH``. Measured 2026-08-30: the original agentic-terminal module
+#: was 283 KB (32% of boot CSS bytes), 1,251 rules, and ~54 ms of the
+#: ~191 ms pre-first-paint parse -- while ChatScreen, the first real
+#: screen, is constructed ~1.5 s AFTER first paint. Textual loads a
+#: screen's ``CSS_PATH`` lazily on first visit (``App._load_screen_css``),
+#: so the moved rules parse then instead.
+#:
+#: ADR-161 task 10 (2026-09-14): the agentic-terminal monolith was carved
+#: into per-vocabulary SOURCE sheets, and the splits now operate on those:
+#: the LIBRARY vocabulary (features/_library.tcss +
+#: features/_library_panels.tcss) and the SETTINGS vocabulary
+#: (features/_settings.tcss) feed lazily-loaded generated sheets exactly as
+#: the monolith did -- probe-verified selector-set-identical moves. The
+#: CONSOLE vocabulary (features/_console.tcss + _console_panels.tcss) is
+#: deliberately NOT split: its generated sheet always rode the boot parse
+#: (TldwCli.CSS_PATH loads it eagerly because the Console is the initial
+#: tab), so the split indirection was dropped and the bytes ride the
+#: bundle directly. The monolith remainder is shared agentic-shell chrome.
 
 #: Owner -> (token prefix, generated sheet). A rule block moves to a sheet
 #: only when EVERY ``#id``/``.class`` token in its selector belongs to that
@@ -311,7 +369,6 @@ AGENTIC_SPLIT_MODULE = "components/_agentic_terminal.tcss"
 #: cache is an ``LRUCache(64)`` per stylesheet and TASK-15450 measured 94
 #: sources making every parse run fully cold (125-380 ms).
 AGENTIC_SPLIT_SHEETS = {
-    "console": "screen_agentic_console.tcss",
     "library": "screen_agentic_library.tcss",
     "settings": "screen_agentic_settings.tcss",
 }
@@ -324,33 +381,11 @@ AGENTIC_SPLIT_SHEETS = {
 #: to the Settings sheet would leave Personas' policy-rule labels unstyled
 #: until Settings is first visited. Add a token here (with the compose site
 #: that pins it) rather than weakening the classifier.
-AGENTIC_SPLIT_PINNED_TOKENS = {
-    "settings-input-label",
-    # The `console-*` DESIGN VOCABULARY (Qodo review of PR #2281, finding 1):
-    # these carry a legacy Console prefix but are composed app-wide -- Evals,
-    # MCP, Lab, Personas, Library and the shared destination rail all yield
-    # them. The first cross-surface audit missed every one of these because
-    # it filtered ABSOLUTE paths for the substring "console" and the
-    # worktree directory was named console-inspect-burndown, so every path
-    # matched "home" and the console audit was vacuous. Re-audited with
-    # repo-relative paths; compose sites per token are in the PR record.
-    "console-action-primary",
-    "console-action-secondary",
-    "console-action-subdued",
-    "console-modal-header",
-    "console-rail-collapse-button",
-    "console-rail-handle",
-    "console-rail-handle-badge",
-    "console-rail-handle-button",
-    "console-rail-handle-button-vertical",
-    "console-rail-handle-vertical",
-    "console-rail-header",
-    "console-rail-section-header",
-    "console-rail-section-title",
-    "console-rail-section-toggle",
-    "console-rail-title",
-    "console-workspace-action",
-}
+#: (ADR-161 task 10: the sixteen console-* pins from the Qodo review of
+#: PR #2281 became moot when the console split was dissolved -- every
+#: console rule rides the boot bundle now -- and the settings pin moved to
+#: the settings split below.)
+SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label"})
 
 _SPLIT_HEADER = """/* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
@@ -366,15 +401,21 @@ _SPLIT_HEADER = """/* ========================================
 
 @dataclasses.dataclass(frozen=True)
 class ScreenOwnedSplit:
-    """One bundle module whose single-owner rules move to lazy screen sheets.
+    """One set of bundle modules whose single-owner rules move to lazy
+    screen sheets.
 
     TASK-24459 generalization of the TASK-25812 agentic split: the same
     conservative classifier (a block moves only when EVERY ``#id``/``.class``
     token in its selector belongs to one owner's prefix vocabulary), the same
-    demotion pass against later cascade order, one spec per module.
+    demotion pass against later cascade order, one spec per split. ADR-161
+    task 10 made ``modules`` a tuple so a vocabulary split across two source
+    sheets (ceiling limit) still feeds ONE generated sheet per owner: the
+    classifier and demotion run over the concatenated unit sequence in
+    ``CSS_MODULES`` order, so intra-vocabulary tie order is preserved.
 
     Attributes:
-        module: ``CSS_MODULES`` entry to split.
+        modules: ``CSS_MODULES`` entries to split, in manifest order (kept
+            adjacent in the manifest so nothing sits between siblings).
         sheets: Owner key -> generated sheet filename.
         prefixes: Owner key -> selector-token prefixes claiming that owner
             (a token matches when equal to a prefix or starting with
@@ -383,24 +424,40 @@ class ScreenOwnedSplit:
             an owner (composed by widgets on other surfaces).
     """
 
-    module: str
+    modules: tuple[str, ...]
     sheets: dict[str, str]
     prefixes: dict[str, tuple[str, ...]]
     pinned: frozenset[str]
 
 
 #: Every screen-owned split the build performs. Adding a module here requires
-#: the owner audit the agentic split documented (AGENTIC_SPLIT_PINNED_TOKENS):
-#: verify each moved token's compose sites live only on the owning screen,
-#: with repo-relative paths. The build refuses cross-split selector overlap
-#: (see ``build_screen_owned_sheets``), because two lazily-loaded sheets have
+#: the owner audit the agentic split documented (see
+#: ``SETTINGS_SPLIT_PINNED_TOKENS`` for the shape): verify each moved token's
+#: compose sites live only on the owning screen, with repo-relative paths.
+#: The build refuses cross-split selector overlap (see
+#: ``build_screen_owned_sheets``), because two lazily-loaded sheets have
 #: visit-order-dependent cascade order between them.
 SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
+    # ADR-161 task 10: the library vocabulary's split source (carved out of
+    # the agentic-terminal monolith 2026-09-14). The generated sheet and its
+    # moved selector set are IDENTICAL to the pre-carve agentic split's
+    # library owner (asserted during the carve); lazily loaded by
+    # LibraryScreen's CSS_PATH.
     ScreenOwnedSplit(
-        module=AGENTIC_SPLIT_MODULE,
-        sheets=AGENTIC_SPLIT_SHEETS,
-        prefixes={owner: (owner,) for owner in AGENTIC_SPLIT_SHEETS},
-        pinned=frozenset(AGENTIC_SPLIT_PINNED_TOKENS),
+        modules=("features/_library.tcss", "features/_library_panels.tcss"),
+        sheets={"library": "screen_agentic_library.tcss"},
+        prefixes={"library": ("library",)},
+        pinned=frozenset(),
+    ),
+    # ADR-161 task 10: the settings vocabulary's split source. The
+    # `settings-input-label` pin is the original TASK-25812 one: it is
+    # composed by Widgets/Persona_Widgets/personas_policy_rules_editor.py,
+    # so its rule must ride the boot bundle, not the lazy settings sheet.
+    ScreenOwnedSplit(
+        modules=("features/_settings.tcss",),
+        sheets={"settings": "screen_agentic_settings.tcss"},
+        prefixes={"settings": ("settings",)},
+        pinned=SETTINGS_SPLIT_PINNED_TOKENS,
     ),
     # TASK-24459: 39.7 KB of the 40.5 KB module is `evals-*`-pure; the two
     # non-pure blocks (`ds-recovery-callout`, `is-active` tokens) stay in
@@ -408,7 +465,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # consumer lives under UI/Evals/ or UI/Screens/evals_screen.py
     # (audited 2026-09-04 with repo-relative paths).
     ScreenOwnedSplit(
-        module="features/_evals.tcss",
+        modules=("features/_evals.tcss",),
         sheets={"evals": "screen_feature_evals.tcss"},
         prefixes={"evals": ("evals",)},
         pinned=frozenset(),
@@ -420,9 +477,21 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # the bundle because their tokens carry no owner prefix -- the
     # conservative classifier keeps them without needing a pin list.
     ScreenOwnedSplit(
-        module="features/_scheduling.tcss",
+        modules=("features/_scheduling.tcss",),
         sheets={"scheduling": "screen_feature_scheduling.tcss"},
         prefixes={"scheduling": ("scheduling", "schedules")},
+        pinned=frozenset(),
+    ),
+    # TASK-32601: defer workflow-owned ids/classes until route entry. Bare
+    # types and shared helper classes remain in the boot bundle under the
+    # existing conservative partition; no new loading mechanism is needed.
+    # Exact-token consumer audit (2026-09-15, repo-relative paths): moved
+    # tokens occur only in UI/Workflows_Modules/ and workflows_screen.py;
+    # a no-owner negative control detects the same consumer hits.
+    ScreenOwnedSplit(
+        modules=("features/_workflows.tcss",),
+        sheets={"workflows": "screen_feature_workflows.tcss"},
+        prefixes={"workflows": ("workflow", "workflows")},
         pinned=frozenset(),
     ),
     # TASK-32187: the largest un-split bundle module (57,721 B). Its token
@@ -448,9 +517,9 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # set. The audit's filter was negative-controlled first (an owner glob
     # matching nothing flagged 128/132), because an earlier cross-surface
     # audit filtered ABSOLUTE paths and was silently vacuous
-    # (see AGENTIC_SPLIT_PINNED_TOKENS).
+    # (see the pinned-token note above).
     ScreenOwnedSplit(
-        module="features/_watchlists.tcss",
+        modules=("features/_watchlists.tcss",),
         sheets={"watchlists": "screen_feature_watchlists.tcss"},
         prefixes={
             "watchlists": (
@@ -473,7 +542,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
 )
 
 _SPLITS_BY_MODULE: dict[str, ScreenOwnedSplit] = {
-    split.module: split for split in SCREEN_OWNED_SPLITS
+    module: split for split in SCREEN_OWNED_SPLITS for module in split.modules
 }
 
 _VARIABLE_DEF_RE = re.compile(r"^\$[\w-]+\s*:[^;{}]*;\s*$", re.M)
@@ -580,7 +649,7 @@ def _unit_selector_set(unit: str) -> set[str]:
 
 
 def _later_module_selectors(
-    css_dir: Path | None, after_module: str = AGENTIC_SPLIT_MODULE
+    css_dir: Path | None, after_module: str
 ) -> set[str]:
     """Selectors of every ``CSS_MODULES`` entry AFTER ``after_module``.
 
@@ -617,73 +686,56 @@ def _later_module_selectors(
     return selectors
 
 
-def split_agentic_terminal(
-    text: str, css_dir: Path | None = None
-) -> tuple[str, dict[str, str]]:
-    """Split the agentic-terminal module into a bundle remainder + sheets.
+def split_owned_modules(
+    texts: list[str], split: ScreenOwnedSplit, later_selectors: set[str]
+) -> tuple[list[str], dict[str, str]]:
+    """Split a screen-owned split's modules into remainders + sheets.
 
-    Back-compat entry for the TASK-25812 split; the general machinery is
-    ``split_owned_module``.
-
-    Args:
-        text: The full source text of ``AGENTIC_SPLIT_MODULE``.
-        css_dir: Root of the modular stylesheets, used to seed the
-            cascade-order demotion with LATER modules' selectors. ``None``
-            limits demotion to intra-module ordering (unit tests).
-
-    Returns:
-        ``(remainder, {owner: moved_css})``. Concatenating the remainder and
-        every moved block in original order reproduces ``text`` exactly.
-
-    Raises:
-        AssertionError: If the partition is not lossless.
-    """
-    return split_owned_module(text, _SPLITS_BY_MODULE[AGENTIC_SPLIT_MODULE], css_dir)
-
-
-def split_owned_module(
-    text: str, split: ScreenOwnedSplit, css_dir: Path | None = None
-) -> tuple[str, dict[str, str]]:
-    """Split one screen-owned module into a bundle remainder + sheets.
+    The unit sequences of every module in ``split.modules`` are processed as
+    ONE ordered stream (manifest order), so a vocabulary split across two
+    source sheets (ADR-161 task 10 ceiling split) keeps its intra-vocabulary
+    tie order. The demotion pass seeds with selectors of every module AFTER
+    the split's last sibling: siblings sit adjacent in the manifest, so
+    nothing but the intra pass applies between them.
 
     Args:
-        text: The full source text of ``split.module``.
+        texts: Full source texts of ``split.modules``, in manifest order.
         split: The split spec (owners, prefixes, pins).
-        css_dir: Root of the modular stylesheets, used to seed the
-            cascade-order demotion with LATER modules' selectors. ``None``
-            limits demotion to intra-module ordering (unit tests).
+        later_selectors: Selectors of modules after the split's last module
+            (``_later_module_selectors(css_dir, split.modules[-1])``).
 
     Returns:
-        ``(remainder, {owner: moved_css})``. Concatenating the remainder and
-        every moved block in original order reproduces ``text`` exactly.
+        ``(remainders, {owner: moved_css})``: one remainder per input text
+        and one concatenation per owner. Zip-joining the remainders and
+        re-splitting per module reproduces the inputs exactly.
 
     Raises:
         AssertionError: If the partition is not lossless.
     """
-    units = _split_top_level_units(text)
-    assert "".join(units) == text, (
-        f"{split.module} split partition is not lossless -- refusing to "
+    per_module_units = [_split_top_level_units(text) for text in texts]
+    assert "".join("".join(u) for u in per_module_units) == "".join(texts), (
+        f"{split.modules} split partition is not lossless -- refusing to "
         "build, because a lossy split silently drops live CSS"
     )
+    units = [u for module_units in per_module_units for u in module_units]
     owners: list[str | None] = [_unit_owner(unit, split) for unit in units]
 
     # Cascade-order safety (found live: `#settings-category-pane`). A moved
     # block parses AFTER the whole bundle, so a kept block LATER in this
-    # module that shares a selector -- previously winning the tie by source
+    # stream that shares a selector -- previously winning the tie by source
     # order -- would now lose to it. Demote any moved block whose selector
     # set intersects a later kept block's, iterating to a fixpoint because a
     # demotion makes that block "kept" for the ones before it. Different
     # owners cannot collide (each owner's selectors carry only its own
     # tokens), and kept-before-moved pairs keep their relative order, so
-    # this is the only inversion the split can create within the module.
+    # this is the only inversion the split can create within the stream.
     unit_selectors = [_unit_selector_set(unit) for unit in units]
-    later_modules = _later_module_selectors(css_dir, split.module)
     changed = True
     while changed:
         changed = False
         # Seeded with LATER modules' selectors (Qodo #2281 finding: the
         # intra-module pass alone was blind to features/utilities ties).
-        kept_later: set[str] = set(later_modules)
+        kept_later: set[str] = set(later_selectors)
         for index in range(len(units) - 1, -1, -1):
             if owners[index] is not None and unit_selectors[index] & kept_later:
                 owners[index] = None
@@ -691,24 +743,44 @@ def split_owned_module(
             if owners[index] is None:
                 kept_later |= unit_selectors[index]
 
-    remainder: list[str] = []
+    remainder_parts: list[list[str]] = [[] for _ in texts]
     moved: dict[str, list[str]] = {owner: [] for owner in split.sheets}
-    for unit, owner in zip(units, owners):
+    bounds = []
+    cursor = 0
+    for module_units in per_module_units:
+        bounds.append((cursor, cursor + len(module_units)))
+        cursor += len(module_units)
+    for index, (unit, owner) in enumerate(zip(units, owners)):
+        module_index = next(
+            mi for mi, (lo, hi) in enumerate(bounds) if lo <= index < hi
+        )
         if owner is None:
-            remainder.append(unit)
+            remainder_parts[module_index].append(unit)
         else:
             moved[owner].append(unit)
-    return "".join(remainder), {
+    return ["".join(parts) for parts in remainder_parts], {
         owner: "".join(parts) for owner, parts in moved.items()
     }
 
 
-def _agentic_variables_preamble(css_dir: Path) -> str:
-    """Every top-level ``$var: value;`` visible to the agentic module.
+def split_owned_module(
+    text: str, split: ScreenOwnedSplit, css_dir: Path | None = None
+) -> tuple[str, dict[str, str]]:
+    """Split ONE module's text per its split spec (single-text entry).
 
-    Back-compat entry; the general form is ``_module_variables_preamble``.
+    Back-compat shape kept for the integrity tests' unit contracts: the
+    given text is treated as the split's whole source stream, with demotion
+    seeded from modules after the split's LAST sibling when ``css_dir`` is
+    provided. Production builds use ``split_owned_modules`` over every
+    module of the split; this entry is only exact for single-module splits
+    (evals/scheduling/watchlists) or when the text already concatenates the
+    full split source.
     """
-    return _module_variables_preamble(css_dir, AGENTIC_SPLIT_MODULE)
+    later: set[str] = set()
+    if css_dir is not None:
+        later = _later_module_selectors(css_dir, split.modules[-1])
+    remainders, moved = split_owned_modules([text], split, later)
+    return remainders[0], moved
 
 
 def _module_variables_preamble(css_dir: Path, module: str) -> str:
@@ -754,24 +826,34 @@ def _build_one_split(
     Returns:
         Mapping of sheet filename to the whitespace-normalised selectors it
         carries (for the cross-split disjointness guard), or ``None`` when
-        the module is absent from this build.
+        the split's modules are absent from this build.
     """
-    source = css_dir / split.module
-    if split.module not in CSS_MODULES or not source.is_file():
+    if not all(module in CSS_MODULES for module in split.modules):
         # The manifest is the authority on what this build contains: a tree
         # built from a patched/partial CSS_MODULES (the staleness test's
         # scratch checkout, an embedder vendoring a subset) simply has no
         # module to split. Skipping is correct there; a REAL missing module
         # is caught loudly by build_css()'s own missing-modules check.
-        print(f"Screen-owned split skipped ({split.module}): not in this build")
+        print(f"Screen-owned split skipped ({split.modules}): not in this build")
         return None
-    text = source.read_text(encoding="utf-8")
-    _, moved = split_owned_module(text, split, css_dir=css_dir)
-    preamble = _module_variables_preamble(css_dir, split.module)
+    texts = []
+    for module in split.modules:
+        source = css_dir / module
+        if not source.is_file():
+            print(f"Screen-owned split skipped ({split.modules}): not on disk")
+            return None
+        texts.append(source.read_text(encoding="utf-8"))
+    later = _later_module_selectors(css_dir, split.modules[-1])
+    _, moved = split_owned_modules(texts, split, later)
+    # Only core/_variables.tcss defines top-level variables today, so the
+    # preamble is identical for any module position; anchor it to the LAST
+    # sibling anyway ("visible to the module" semantics).
+    preamble = _module_variables_preamble(css_dir, split.modules[-1])
+    module_label = " + ".join(split.modules)
     moved_selectors: dict[str, set[str]] = {}
     for owner, filename in split.sheets.items():
         content = (
-            _SPLIT_HEADER.format(owner=owner, module=split.module)
+            _SPLIT_HEADER.format(owner=owner, module=module_label)
             + preamble
             + moved[owner]
         )
@@ -781,19 +863,10 @@ def _build_one_split(
             selectors |= _unit_selector_set(unit)
         moved_selectors[filename] = selectors
     print(
-        f"Screen-owned split complete ({split.module}): "
+        f"Screen-owned split complete ({module_label}): "
         + ", ".join(f"{owner}={len(moved[owner]):,}B" for owner in split.sheets)
     )
     return moved_selectors
-
-
-def build_agentic_split(css_dir: Path, output_dir: Path) -> None:
-    """Write the three per-screen sheets split from the agentic module.
-
-    Back-compat entry for the TASK-25812 sheets only; a full build runs
-    ``build_screen_owned_sheets``.
-    """
-    _build_one_split(css_dir, output_dir, _SPLITS_BY_MODULE[AGENTIC_SPLIT_MODULE])
 
 
 def build_screen_owned_sheets(css_dir: Path, output_dir: Path) -> None:
@@ -829,8 +902,11 @@ def build_screen_owned_sheets(css_dir: Path, output_dir: Path) -> None:
                 seen[selector] = filename
 
 
+_without_source_comments = widget_css.without_source_comments
+
+
 def build_css(css_dir: Path, output_file: Path) -> None:
-    """Concatenate all declared CSS modules into a single file.
+    """Concatenate declared CSS modules, retaining prose in source files only.
 
     Args:
         css_dir: Root directory containing the modular stylesheets.
@@ -863,20 +939,35 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     # Collect all CSS content
     combined_css = [header]
 
+    # ADR-161 task 10: multi-module splits must classify their modules as
+    # ONE ordered stream (see split_owned_modules), so every split's
+    # remainders are precomputed here and the loop below consumes them.
+    split_remainders: dict[str, str] = {}
+    seen_split_ids: set[int] = set()
+    for module in CSS_MODULES:
+        split = _SPLITS_BY_MODULE.get(module)
+        if split is None or id(split) in seen_split_ids:
+            continue
+        seen_split_ids.add(id(split))
+        texts = [(css_dir / m).read_text(encoding="utf-8") for m in split.modules]
+        later = _later_module_selectors(css_dir, split.modules[-1])
+        remainders, _ = split_owned_modules(texts, split, later)
+        for m, r in zip(split.modules, remainders):
+            split_remainders[m] = r
+
     for index, module in enumerate(CSS_MODULES, start=1):
         print(f"Processing CSS module {index} of {len(CSS_MODULES)}")
         content = (css_dir / module).read_text(encoding="utf-8")
-        split = _SPLITS_BY_MODULE.get(module)
-        if split is not None:
+        if module in split_remainders:
             # TASK-25812/TASK-24459: only the multi-screen remainder rides
             # the boot bundle; the single-owner rules ship as the per-screen
             # sheets `build_screen_owned_sheets` writes, parsed on first
             # visit to the owning screen instead of before first paint.
-            content, _ = split_owned_module(content, split, css_dir=css_dir)
+            content = split_remainders[module]
 
         # Add module separator
         combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
-        combined_css.append(content)
+        combined_css.append(_without_source_comments(content))
 
         # Ensure there's a newline at the end
         if not content.endswith("\n"):
@@ -887,6 +978,19 @@ def build_css(css_dir: Path, output_file: Path) -> None:
 
     print("CSS build complete")
     print(f"Total size: {len(''.join(combined_css)):,} characters")
+
+
+def design_token_preamble(css_dir: Path) -> str:
+    """Read central token declarations for isolated widget-default builds.
+
+    Args:
+        css_dir: Root directory containing ``core/_variables.tcss``.
+
+    Returns:
+        Declarations in source order, ready for per-block variable isolation.
+    """
+    source = (css_dir / "core/_variables.tcss").read_text(encoding="utf-8")
+    return "\n".join(_VARIABLE_DEF_RE.findall(source)) + "\n"
 
 
 def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
@@ -905,9 +1009,15 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
         ValueError: If a ``BUNDLED_CSS`` declaration cannot be lifted.
     """
     blocks = widget_css.iter_blocks(css_dir.parent, widget_css.WIDGET_ATTR)
+    # TASK-32816: Textual variables are per stylesheet source. Resolve the
+    # central design tokens using the existing per-block isolation pass;
+    # theme references remain dynamic and local fallbacks cannot leak. No
+    # token preamble or additional stylesheet source is emitted at runtime.
+    tokens = widget_css.resolve_variable_definitions(design_token_preamble(css_dir))
     own, scoped = widget_css.render_stylesheets(
         blocks,
         "Widget DEFAULT_CSS (widget-defaults tier), lifted from Python sources",
+        variables=tokens,
         # TASK-15998: scope EVERY selector of a comma list, exactly as the
         # screen sheets below already do. Textual's scoped-DEFAULT_CSS parser
         # prefixes only the LAST selector of a comma list, so `A, .b {…}`
@@ -1058,7 +1168,7 @@ def _remove_stale_split_sheets(css_dir: Path, stage: Path) -> None:
         stage: The staging directory the just-finished build wrote into.
     """
     for split in SCREEN_OWNED_SPLITS:
-        if (css_dir / split.module).is_file():
+        if all((css_dir / module).is_file() for module in split.modules):
             continue
         for filename in split.sheets.values():
             if not (stage / filename).is_file():

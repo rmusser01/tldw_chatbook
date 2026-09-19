@@ -3,11 +3,15 @@
  * ======================================== 
  * Base window styles and window management
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 /* Base style for ALL windows. The watcher will set display: True/False */
 .window {
-    height: 100%;
-    width: 100%;
+    height: $ds-height-full;
+    width: $ds-width-full;
     layout: horizontal; /* Or vertical if needed by default */
     overflow: hidden;
 }

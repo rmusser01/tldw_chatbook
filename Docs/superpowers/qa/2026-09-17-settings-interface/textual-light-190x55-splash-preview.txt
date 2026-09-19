@@ -1,0 +1,55 @@
+                                                                                                                                             ╭─────────────╮
+ ‹  ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meeting  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Splash Screen
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Auto-saved | Splash changes take effect as you make them.                                           │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │                                                                                                             │  │  │                                   │
+│  category search             │  │  │  Splash Screen                                                                                              │  │  │ Selected category: Splash Screen  │
+│                              │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                │
+│  Core                        │  │  │ │                                                                                                        │  │  │  │  Splash defaults: applies         │
+│     Overview (view)          │  │  │ │  Startup defaults                                                                                      │  │  │  │  immediately - no Save needed.    │
+│     Providers & Models       │  │  │ │  applies immediately - no Save needed; text fields apply on Enter                                      │  │  │  │ Local-only: saves write your      │
+│     Web Search               │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ config file.                      │
+│     Speech & TTS             │  │  │ │ Default card            │ default (default)                                                        ▼ │ │  │  │  │ Affects startup splash screen     │
+│  Interface                   │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │ behavior.                         │
+│     Appearance               │  │  │ │ Enabled             ▐X…On                                                                              │  │  │  │ Focused field guide               │
+│     Theme                    │  │  │ │ Show progress       ▐X…Off                                                                             │  │  │  │  Config section: splash_screen    │
+│   > Splash Screen            │  │  │ │ Skip on keypress    ▐X…Off                                                                             │  │  │  │                                   │
+│     Console Behavior         │  │  │ │ Duration (s)            │ 1.75                                                                         │  │  │  │  Save: applies immediately - no   │
+│  Data & Privacy              │  │  │ │ Animation speed (x)     │ 1.5                                                                          │  │  │  │  Save needed                      │
+│     Storage                  │  │  │ │                                                                                                        │  │  │  │                                   │
+│     Workspaces               │  │  │ │  Gallery                                                                                               │  │  │  │  Runtime owner: Splash Screen     │
+│     Tool Profiles            │  │  │ │ ┌───────────────────────────────────────────┐┌───────────────────────────────────────────────────────┐ │  │  │  │  viewer                           │
+│     Privacy & Security       │  │  │ │ │ default (default)                         ││                                                       │ │  │  │  │                                   │
+│     Network                  │  │  │ │ │ tldw chatbook (matrix)                    ││╔══════════════════════════════════════════════════════│ │  │  │  │  Writes allowed: Yes              │
+│     My Profile               │  │  │ │ │ glitch (glitch)                           ││                     ════════════╗                     │ │  │  │  │                                   │
+│  Troubleshooting             │  │  │ │ │ retro (retro)                             ││                           ║                           │ │  │  │  │  Owns: splash_screen              │
+│     Diagnostics (view)       │  │  │ │ │ tech_pulse (tech_pulse)                   ││                           ║                           │ │  │  │  │                                   │
+│     About (view)             │  │  │ │ │ TLDW CHATBOOK (code_scroll)               ││        ║  ████████╗██╗     ██████╗ ██╗    ██╗         │ │  │  │  │  Affected config: splash_screen   │
+│     Agents                   │  │  │ │ │ minimal_fade (minimal_fade)               ││                           ║                           │ │  │  │  │  section defaults and card        │
+│  Expert                      │  │  │ │ │ blueprint (blueprint)                     ││        ║  ╚══██╔══╝██║     ██╔══██╗██║    ██║         │ │  │  │  │  selection                        │
+│     Internal Prompts         │  │  │ │ │ arcade_high_score (arcade_high_score)     ││                           ║                           │ │  │  │  │                                   │
+│     Advanced Config          │  │  │ │ │ TLDW CHATBOOK v2.0 (digital_rain)         ││        ║     ██║   ██║     ██║  ██║██║ █╗ ██║         │ │  │  │  │  Recovery: reset defaults from    │
+│   Domain Defaults ▸ (11)     │  │  │ │ │ loading_bar (loading_bar)                 ││                           ║                           │ │  │  │  │  this category or edit            │
+│                              │  │  │ │ │ Hyperdrive Initializing... (starfield)    ││        ║     ██║   ██║     ██║  ██║██║███╗██║         │ │  │  │  │  splash_screen values in          │
+│                              │  │  │ │ │ terminal_boot (terminal_boot)             ││                           ║                           │ │  │  │  │  Advanced Config                  │
+│                              │  │  │ │ │ glitch_reveal (glitch_reveal)             ││        ║     ██║   ███████╗██████╔╝╚███╔███╔╝         │ │  │  │  │                                   │
+│                              │  │  │ │ │ ascii_morph (ascii_morph)                 ││                           ║                           │ │  │  │  │  Boundary: changes are saved      │
+│                              │  │  │ │ │ Cellular Automata Initializing...         ││         ║     ╚═╝   ╚══════╝╚═════╝  ╚══╝╚══╝         │ │  │  │  │  immediately; no shared Settings  │
+│                              │  │  │ │ │ (game_of_life)                            ││                           ║                           │ │  │  │  │  draft state                      │
+│                              │  │  │ │ │ TLDW Chatbook (scrolling_credits)         ││                           ║                           │ │  │  │  │                                   │
+│                              │  │  │ │ │ spotlight_reveal (spotlight_reveal)       ││                           ║                           │ │  │  │  │                                   │
+│                              │  │  │ │ │ Frequency Analysis Engaged (sound_bars)   ││          ║           too long; didn't watch           │ │  │  │  │                                   │
+│                              │  │  │ │ │ TLDW Reflections (raindrops_pond)         ││                           ║                           │ │  │  │  │                                   │
+│                              │  │  │ │ │ pixel_zoom (pixel_zoom)                   ││              ║                  chatbook              │ │  │  │  │                                   │
+│                              │  │  │ │ └───────────────────────────────────────────┘└───────────────────────────────────────────────────────┘ │  │  │  │                                   │
+│                              │  │  │ │  Play selected                                                                                         │  │  │  │                                   │
+│                              │  │  │ │  Playing preview of default.                                                                           │  │  │  │                                   │
+│                              │  │  │ └────────────────────────────────────────────────────────────────────────────────────────────────────────┘▇ │  │  │                                   │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

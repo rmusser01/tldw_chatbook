@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import AgentDefinition
+from tldw_chatbook.Agents.agent_models import AgentDefinition, definition_from_row
 from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
 from tldw_chatbook.DB.AgentRuns_DB import (
     AgentRunsDB,
@@ -21,7 +21,11 @@ from tldw_chatbook.Tools.raw_cli_executor import (
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    database = AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 def test_create_and_get_run(db):
@@ -661,7 +665,7 @@ _LEGACY_V1_AGENT_RUNS_DDL = """
 """
 
 
-def test_opening_legacy_v1_db_migrates_column_and_create_run_works(tmp_path):
+def test_opening_legacy_v1_db_migrates_column_and_create_run_works(request, tmp_path):
     legacy_path = tmp_path / "legacy_agent_runs.db"
     conn = sqlite3.connect(str(legacy_path))
     try:
@@ -680,15 +684,17 @@ def test_opening_legacy_v1_db_migrates_column_and_create_run_works(tmp_path):
     assert "assistant_message_id" not in cols
 
     migrated = AgentRunsDB(legacy_path, client_id="test")
+    request.addfinalizer(migrated.close)
     run_id = migrated.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="y"
     )
     assert migrated.get_run(run_id)["assistant_message_id"] == "y"
 
 
-def test_reopening_same_file_twice_is_idempotent(tmp_path):
+def test_reopening_same_file_twice_is_idempotent(request, tmp_path):
     path = tmp_path / "agent_runs.db"
     first = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(first.close)
     first.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="a"
     )
@@ -696,6 +702,7 @@ def test_reopening_same_file_twice_is_idempotent(tmp_path):
     # Re-opening must not raise (guarded ALTER is a no-op once the column
     # already exists) and the second instance must still work correctly.
     second = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(second.close)
     run_id = second.create_run(
         conversation_id="c", agent_kind="primary", assistant_message_id="b"
     )
@@ -709,9 +716,10 @@ def test_reopening_same_file_twice_is_idempotent(tmp_path):
 # process) such rows are swept to 'error'. ---
 
 
-def test_orphaned_running_runs_reconciled_on_open(tmp_path):
+def test_orphaned_running_runs_reconciled_on_open(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
     db1 = AgentRunsDB(db_path)
+    request.addfinalizer(db1.close)
     r_run1 = db1.create_run(conversation_id="c1", agent_kind="primary")
     r_run2 = db1.create_run(conversation_id="c2", agent_kind="primary")
     r_done = db1.create_run(conversation_id="c3", agent_kind="primary")
@@ -724,6 +732,7 @@ def test_orphaned_running_runs_reconciled_on_open(tmp_path):
     # order-dependent test hazard).
     AgentRunsDB._swept_paths.discard(db1.db_path_str)
     db2 = AgentRunsDB(db_path)
+    request.addfinalizer(db2.close)
 
     run1 = db2.get_run(r_run1)
     run2 = db2.get_run(r_run2)
@@ -735,15 +744,17 @@ def test_orphaned_running_runs_reconciled_on_open(tmp_path):
     assert done["result"] == "the answer"
 
 
-def test_reconcile_preserves_existing_result(tmp_path):
+def test_reconcile_preserves_existing_result(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
     db1 = AgentRunsDB(db_path)
+    request.addfinalizer(db1.close)
     rid = db1.create_run(conversation_id="c", agent_kind="primary")
     db1.set_status(rid, "running", result="partial output")  # running WITH a result
     # Simulate a fresh process opening the same file (scoped to this
     # test's own path -- see the discard() comment above).
     AgentRunsDB._swept_paths.discard(db1.db_path_str)
     db2 = AgentRunsDB(db_path)
+    request.addfinalizer(db2.close)
     row = db2.get_run(rid)
     assert row["status"] == "error"
     assert row["result"] == "partial output"  # COALESCE keeps it
@@ -962,12 +973,15 @@ def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
     reopened.close()
 
 
-def test_reconcile_idempotent_same_process(tmp_path):
+def test_reconcile_idempotent_same_process(request, tmp_path):
     db_path = tmp_path / "agent_runs.db"
     db1 = AgentRunsDB(db_path)
+    request.addfinalizer(db1.close)
     db1.create_run(conversation_id="c", agent_kind="primary")
     # second open in the SAME process (guard already set by db1) is a no-op
-    assert AgentRunsDB(db_path).reconcile_orphaned_runs() == 0
+    reopened = AgentRunsDB(db_path)
+    request.addfinalizer(reopened.close)
+    assert reopened.reconcile_orphaned_runs() == 0
 
 
 def test_reconcile_skips_memory_db():
@@ -977,9 +991,7 @@ def test_reconcile_skips_memory_db():
     assert ":memory:" not in AgentRunsDB._swept_paths
 
 
-def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
-    tmp_path, monkeypatch
-):
+def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(request, tmp_path, monkeypatch):
     """A transient failure (e.g. a locked DB) during the sweep must NOT
     register the path -- otherwise no later AgentRunsDB(path) construction
     in this process ever retries, silently defeating AC#2's crash-recovery
@@ -989,6 +1001,7 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
     # Seed a file with an orphaned 'running' row, as a prior process would
     # have left the table before crashing again.
     setup = AgentRunsDB(db_path)
+    request.addfinalizer(setup.close)
     rid = setup.create_run(conversation_id="c", agent_kind="primary")
     path_str = setup.db_path_str
     # Simulate a fresh process: this path hasn't been swept yet.
@@ -1011,6 +1024,7 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
     # but the failed sweep must leave the path unregistered and the row
     # untouched.
     db2 = AgentRunsDB(db_path)
+    request.addfinalizer(db2.close)
     assert path_str not in AgentRunsDB._swept_paths
     assert db2.get_run(rid)["status"] == "running"
 
@@ -1021,25 +1035,28 @@ def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
     assert path_str in AgentRunsDB._swept_paths
 
 
-def test_file_db_uses_wal_and_busy_timeout(tmp_path):
+def test_file_db_uses_wal_and_busy_timeout(request, tmp_path):
     db = AgentRunsDB(tmp_path / "agent_runs.db")
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
-def test_memory_db_skips_wal():
+def test_memory_db_skips_wal(request, ):
     # :memory: cannot use WAL; must not raise and must stay 'memory'
     db = AgentRunsDB(":memory:")
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "memory"
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
-def test_latest_primary_run_targets_newest_primary_only(tmp_path):
+def test_latest_primary_run_targets_newest_primary_only(request, tmp_path):
     """Qodo (PR #872): the Stop-path lookup must be a single bounded query,
     and interleaved newer SUBAGENT runs must not hide the newest primary."""
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    request.addfinalizer(db.close)
 
     old_primary = db.create_run(conversation_id="c1", agent_kind="primary", task="a")
     newer_primary = db.create_run(conversation_id="c1", agent_kind="primary", task="b")
@@ -1233,12 +1250,14 @@ def test_enabled_only_filter(db):
     assert len(db.list_agent_definitions()) == 2
 
 
-def test_definitions_survive_reopen_and_migration_is_idempotent(tmp_path):
+def test_definitions_survive_reopen_and_migration_is_idempotent(request, tmp_path):
     path = tmp_path / "agent_runs.db"
     first = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(first.close)
     first.create_agent_definition(_defn())
     first.close()
     second = AgentRunsDB(path, client_id="test")  # re-runs _initialize_schema
+    request.addfinalizer(second.close)
     assert [r["name"] for r in second.list_agent_definitions()] == ["researcher"]
     with second.connection() as conn:
         versions = {
@@ -1342,7 +1361,7 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
         assert [tuple(row) for row in caps] == sorted(
             [(deleted_id, None), (disabled_id, None), (live_id, None)]
         )
-        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 20
+        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
         capped_id = first.create_agent_definition(
             _defn(
                 name="migrated-capped",
@@ -1371,6 +1390,8 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
         assert expected_uncapped is not None
         assert expected_capped == {
             "id": capped_id,
+            "provider": "",
+            "params": {},
             "name": "migrated-capped",
             "description": "Created after v18 migration.",
             "instructions": "Work within the migrated cap.",
@@ -1383,6 +1404,8 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
         }
         assert expected_uncapped == {
             "id": uncapped_id,
+            "provider": "",
+            "params": {},
             "name": "migrated-uncapped",
             "description": "Created after v18 migration without a cap.",
             "instructions": "Use inherited timing policy.",
@@ -1426,7 +1449,7 @@ def test_v18_upgrade_is_guarded_when_definition_cap_column_already_exists(tmp_pa
                 "SELECT MAX(version) FROM schema_version"
             ).fetchone()[0]
         assert columns.count("max_wall_seconds") == 1
-        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 20
+        assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
     finally:
         database.close()
 
@@ -1484,7 +1507,7 @@ def test_create_run_definition_fields_default_none(db):
     assert run["definition_fingerprint"] is None
 
 
-def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
+def test_agent_runs_columns_backfilled_on_old_file(request, tmp_path):
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
     # Simulate a pre-v5 file: the v4-era 12-column table, no new columns.
@@ -1499,6 +1522,7 @@ def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
     conn.commit()
     conn.close()
     db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
@@ -1570,18 +1594,19 @@ _LEGACY_PRE_V11_DDL = """
 """
 
 
-def test_schema_version_constant_agrees_with_the_version_table(tmp_path):
+def test_schema_version_constant_agrees_with_the_version_table(request, tmp_path):
     """task-15669 AC#1/#3 (folded into v11 per coordinator ruling #3): the
     constant CLAUDE.md points every schema change at must agree with the
     highest version a freshly created database actually records -- and
     this test fails if the two ever diverge again."""
     db = AgentRunsDB(tmp_path / "fresh.db", client_id="test")
+    request.addfinalizer(db.close)
     with db.connection() as conn:
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
 
 
-def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
+def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(request, tmp_path):
     """Migration idempotency (plan red): a pre-v11 file gains the column
     via the guarded ALTER on first open, and a second open is a no-op."""
     path = tmp_path / "legacy_pre_v11.db"
@@ -1600,6 +1625,7 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
     assert "resumed_from_run_id" not in cols
 
     first = AgentRunsDB(path, client_id="test")
+    request.addfinalizer(first.close)
     run_id = first.create_run(
         conversation_id="c",
         agent_kind="subagent",
@@ -1615,7 +1641,10 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
 
     # Open TWICE (the plan's wording): the guarded ALTER must be a no-op.
     second = AgentRunsDB(path, client_id="test")
-    second_id = second.create_run(conversation_id="c", agent_kind="subagent", task="t2")
+    request.addfinalizer(second.close)
+    second_id = second.create_run(
+        conversation_id="c", agent_kind="subagent", task="t2"
+    )
     assert second.get_run(second_id)["resumed_from_run_id"] is None
     assert second.get_run(run_id)["resumed_from_run_id"] == "prior-run"
 
@@ -1673,7 +1702,7 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert "spawn_event_id" in columns
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 20
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
     parent = first.create_run(conversation_id="c", agent_kind="primary")
     child = first.create_run(
         conversation_id="c",
@@ -1729,7 +1758,7 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
     assert "CHECK(transition_revision > 0)" in table_sql
     assert "CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL)" in table_sql
     assert "idx_console_activity_receipts_unseen" in indexes
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 20
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 21
     assert database.receipt_capability_available is True
 
 
@@ -1831,7 +1860,7 @@ def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
         assert (
             conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
             == AgentRunsDB._CURRENT_SCHEMA_VERSION
-            == 20
+            == 21
         )
         assert (
             conn.execute("SELECT 1 FROM schema_version WHERE version = 15").fetchone()
@@ -2005,3 +2034,216 @@ def test_receipt_operations_raise_focused_error_when_capability_is_unavailable(
 
     with pytest.raises(ConsoleActivityReceiptsUnavailable):
         database.list_unseen_console_activity()
+
+
+# --- Task 4 (ADR-147, TASK-32477): schema v21 -- preset routing columns on
+# agent_definitions, resolved-target snapshot on agent_runs. ---
+
+
+def test_schema_v21_definition_columns(db):
+    with db.connection() as conn:
+        cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(agent_definitions)"
+            ).fetchall()
+        }
+    assert {"provider", "params_json"} <= cols
+
+
+def test_schema_v21_run_snapshot_columns(db):
+    with db.connection() as conn:
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+    assert {
+        "resolved_provider",
+        "resolved_model",
+        "resolved_base_url",
+        "resolved_params_json",
+    } <= cols
+
+
+def test_definition_round_trip_with_routing(db):
+    defn = AgentDefinition(
+        name="implementer",
+        instructions="Implement the task.",
+        provider="custom-ep:qwen-local",
+        model="qwen3.8-27b",
+        params=(("temperature", 0.2),),
+    )
+    defn_id = db.create_agent_definition(defn)
+    # Row dicts carry the Task 3 contract: provider verbatim, params
+    # JSON-decoded (same contract as tool_allowlist).
+    loaded = db.get_agent_definition(defn_id)
+    assert loaded["provider"] == "custom-ep:qwen-local"
+    assert loaded["params"] == {"temperature": 0.2}
+    rebuilt = definition_from_row(loaded)
+    assert rebuilt.provider == "custom-ep:qwen-local"
+    assert rebuilt.params == (("temperature", 0.2),)
+
+
+def test_definition_legacy_defaults(db):
+    defn_id = db.create_agent_definition(
+        AgentDefinition(name="reader", instructions="Read files.")
+    )
+    loaded = db.get_agent_definition(defn_id)
+    assert loaded["provider"] == "" and loaded["params"] == {}
+    rebuilt = definition_from_row(loaded)
+    assert rebuilt.provider == "" and rebuilt.params == ()
+
+
+def test_run_snapshot_persists(db):
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_model="qwen3.8-27b",
+        resolved_base_url="http://127.0.0.1:8080",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    row = db.get_run(run_id)
+    assert row["resolved_provider"] == "custom-ep:qwen-local"
+    assert row["resolved_model"] == "qwen3.8-27b"
+    assert row["resolved_base_url"] == "http://127.0.0.1:8080"
+    assert row["resolved_params_json"] == '{"temperature": 0.2}'
+
+
+def test_run_snapshot_defaults_null(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    row = db.get_run(run_id)
+    assert row["resolved_provider"] is None
+    assert row["resolved_model"] is None
+    assert row["resolved_base_url"] is None
+    assert row["resolved_params_json"] is None
+
+
+#: The pre-v21 shape: both tables as the v12-era DDL left them -- every
+#: column EXCEPT the v21 routing/snapshot ones (and the v13-v20 columns
+#: the intervening dev migrations add, which this test does not assert on).
+_LEGACY_PRE_V21_DDL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        parent_run_id TEXT,
+        agent_kind TEXT NOT NULL,
+        task TEXT,
+        status TEXT NOT NULL,
+        steps TEXT NOT NULL DEFAULT '[]',
+        result TEXT,
+        budget TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        assistant_message_id TEXT,
+        agent_definition TEXT,
+        definition_fingerprint TEXT,
+        wake_delivered_at TEXT,
+        resumed_from_run_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_definitions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        instructions TEXT NOT NULL DEFAULT '',
+        tool_allowlist TEXT NOT NULL DEFAULT '[]',
+        model TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+"""
+
+
+def test_pre_v21_db_gains_v21_columns_on_open(tmp_path):
+    """ALTER path (the two PRAGMA tests above cover the fresh-DDL path): a
+    pre-v21 file gains all six columns via the guarded ALTERs on open, and
+    writes through them work."""
+    path = tmp_path / "legacy_pre_v21.db"
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(_LEGACY_PRE_V21_DDL)
+        conn.commit()
+    finally:
+        conn.close()
+
+    db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    with db.connection() as conn:
+        run_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+        def_cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(agent_definitions)"
+            ).fetchall()
+        }
+    assert {
+        "resolved_provider",
+        "resolved_model",
+        "resolved_base_url",
+        "resolved_params_json",
+    } <= run_cols
+    assert {"provider", "params_json"} <= def_cols
+
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    assert db.get_run(run_id)["resolved_provider"] == "custom-ep:qwen-local"
+    defn_id = db.create_agent_definition(
+        AgentDefinition(
+            name="implementer",
+            instructions="Implement the task.",
+            provider="custom-ep:qwen-local",
+            params=(("temperature", 0.2),),
+        )
+    )
+    assert db.get_agent_definition(defn_id)["params"] == {"temperature": 0.2}
+
+
+def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_path):
+    path = tmp_path / "routing-v20.db"
+    database = AgentRunsDB(path)
+    definition_id = database.create_agent_definition(_defn(max_wall_seconds=12.5))
+    run_id = database.create_run(conversation_id="c", agent_kind="primary")
+    with database.connection() as conn:
+        for column in ("provider", "params_json"):
+            conn.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
+        for column in ("resolved_provider", "resolved_model", "resolved_base_url", "resolved_params_json"):
+            conn.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
+        conn.execute("DELETE FROM schema_version WHERE version > 20")
+        before = _snapshot_v18_data(conn)
+        worktree_schema = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'"
+        ).fetchone()[0]
+    database.close()
+    for _ in range(2):
+        database = AgentRunsDB(path)
+        try:
+            assert database.get_agent_definition(definition_id)["max_wall_seconds"] == 12.5
+            assert database.get_agent_definition(definition_id)["provider"] == ""
+            assert database.get_run_resolved_target(run_id) is None
+            with database.connection() as conn:
+                after = _snapshot_v18_data(conn)
+                # The new snapshot columns append to the historical run shape.
+                after["agent_runs"] = [row[:-4] for row in after["agent_runs"]]
+                assert after == before
+                assert conn.execute("SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'").fetchone()[0] == worktree_schema
+                assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 21
+                assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        finally:
+            database.close()

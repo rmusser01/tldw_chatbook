@@ -1,0 +1,77 @@
+[
+  {
+    "type": "Label",
+    "id": null,
+    "classes": [
+      "section-title"
+    ],
+    "dev_region": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "before_repair_region": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "computed_changes": {
+      "margin": [
+        "Spacing(top=0, right=0, bottom=1, left=0)",
+        "Spacing(top=0, right=0, bottom=2, left=0)"
+      ]
+    }
+  },
+  {
+    "type": "Static",
+    "id": null,
+    "classes": [
+      "section-title"
+    ],
+    "dev_region": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "before_repair_region": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "computed_changes": {
+      "margin": [
+        "Spacing(top=0, right=0, bottom=1, left=0)",
+        "Spacing(top=0, right=0, bottom=2, left=0)"
+      ]
+    }
+  },
+  {
+    "type": "Label",
+    "id": null,
+    "classes": [
+      "section-title"
+    ],
+    "dev_region": [
+      27,
+      6,
+      23,
+      1
+    ],
+    "before_repair_region": [
+      27,
+      6,
+      23,
+      1
+    ],
+    "computed_changes": {
+      "margin": [
+        "Spacing(top=0, right=0, bottom=1, left=0)",
+        "Spacing(top=0, right=0, bottom=2, left=0)"
+      ]
+    }
+  }
+]

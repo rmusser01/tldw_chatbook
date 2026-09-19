@@ -1,0 +1,65 @@
+FFFF.FFF                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_rechunk_feedback_survives_mode_and_scope_recompose[size0-textual-dark] __
+Tests/UI/test_library_rag_rechunk_feedback.py:113: in test_rechunk_feedback_survives_mode_and_scope_recompose
+    assert (
+E   AssertionError: assert (False, False, '') == (True, True, 'Re-chunking…')
+E
+E     At index 0 diff: False != True
+E     Use -v to get more diff
+_ test_rechunk_feedback_survives_mode_and_scope_recompose[size0-textual-light] _
+Tests/UI/test_library_rag_rechunk_feedback.py:113: in test_rechunk_feedback_survives_mode_and_scope_recompose
+    assert (
+E   AssertionError: assert (False, False, '') == (True, True, 'Re-chunking…')
+E
+E     At index 0 diff: False != True
+E     Use -v to get more diff
+_ test_rechunk_feedback_survives_mode_and_scope_recompose[size1-textual-dark] __
+Tests/UI/test_library_rag_rechunk_feedback.py:113: in test_rechunk_feedback_survives_mode_and_scope_recompose
+    assert (
+E   AssertionError: assert (False, False, '') == (True, True, 'Re-chunking…')
+E
+E     At index 0 diff: False != True
+E     Use -v to get more diff
+_ test_rechunk_feedback_survives_mode_and_scope_recompose[size1-textual-light] _
+Tests/UI/test_library_rag_rechunk_feedback.py:113: in test_rechunk_feedback_survives_mode_and_scope_recompose
+    assert (
+E   AssertionError: assert (False, False, '') == (True, True, 'Re-chunking…')
+E
+E     At index 0 diff: False != True
+E     Use -v to get more diff
+______ test_completed_rechunk_receipt_is_retained_and_wraps[False-size1] _______
+Tests/UI/test_library_rag_rechunk_feedback.py:168: in test_completed_rechunk_receipt_is_retained_and_wraps
+    assert RECEIPT in _painted_text(screen, summary)
+E   AssertionError: assert '1 re-chunked, 1 skipped, 0 failed; re-index skipped (semantic index unavailable)' in '1 re-chunked, 1 skipped, 0 failed; re-index'
+E    +  where '1 re-chunked, 1 skipped, 0 failed; re-index' = _painted_text(LibraryScreen(classes='shell-header-compact'), Static(id='library-rag-rechunk-summary', classes='h-1 library-rag-quiet-line'))
+_______ test_completed_rechunk_receipt_is_retained_and_wraps[True-size0] _______
+Tests/UI/test_library_rag_rechunk_feedback.py:164: in test_completed_rechunk_receipt_is_retained_and_wraps
+    assert summary.display and str(summary.renderable) == RECEIPT
+E   AssertionError: assert (False)
+E    +  where False = Static(id='library-rag-rechunk-summary', classes='h-1 library-rag-quiet-line').display
+_______ test_completed_rechunk_receipt_is_retained_and_wraps[True-size1] _______
+Tests/UI/test_library_rag_rechunk_feedback.py:164: in test_completed_rechunk_receipt_is_retained_and_wraps
+    assert summary.display and str(summary.renderable) == RECEIPT
+E   AssertionError: assert (False)
+E    +  where False = Static(id='library-rag-rechunk-summary', classes='h-1 library-rag-quiet-line').display
+============================= slowest 25 durations =============================
+2.53s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size1-textual-dark]
+2.43s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size1-textual-light]
+2.05s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size0-textual-dark]
+1.98s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size0-textual-light]
+1.51s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_completed_rechunk_receipt_is_retained_and_wraps[True-size1]
+1.23s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_completed_rechunk_receipt_is_retained_and_wraps[False-size1]
+1.21s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_completed_rechunk_receipt_is_retained_and_wraps[True-size0]
+1.09s call     Tests/UI/test_library_rag_rechunk_feedback.py::test_completed_rechunk_receipt_is_retained_and_wraps[False-size0]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size0-textual-dark]
+FAILED Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size0-textual-light]
+FAILED Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size1-textual-dark]
+FAILED Tests/UI/test_library_rag_rechunk_feedback.py::test_rechunk_feedback_survives_mode_and_scope_recompose[size1-textual-light]
+FAILED Tests/UI/test_library_rag_rechunk_feedback.py::test_completed_rechunk_receipt_is_retained_and_wraps[False-size1]
+FAILED Tests/UI/test_library_rag_rechunk_feedback.py::test_completed_rechunk_receipt_is_retained_and_wraps[True-size0]
+FAILED Tests/UI/test_library_rag_rechunk_feedback.py::test_completed_rechunk_receipt_is_retained_and_wraps[True-size1]
+7 failed, 1 passed in 16.56s

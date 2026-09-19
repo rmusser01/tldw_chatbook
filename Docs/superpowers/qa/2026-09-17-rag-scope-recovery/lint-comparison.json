@@ -1,0 +1,17 @@
+{
+  "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": {
+    "baseline": 2,
+    "current": 2,
+    "new": []
+  },
+  "tldw_chatbook/UI/Library_Modules/library_rag_search_state.py": {
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "baseline": 205,
+    "current": 205,
+    "new": []
+  }
+}

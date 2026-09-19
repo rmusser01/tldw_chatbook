@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+38.80s call     Tests/UI/test_workspace_persona_creation.py::test_console_bootstrap_workspace_activation_and_details_use_target_default
+13.17s call     Tests/UI/test_workspace_persona_creation.py::test_create_choice_survives_folder_recompose_and_saves[author]
+12.64s call     Tests/UI/test_workspace_persona_creation.py::test_create_choice_survives_folder_recompose_and_saves[WorkspacePersonaChoice.NONE]
+6.91s call     Tests/UI/test_workspace_persona_creation.py::test_read_write_create_requires_visible_confirmation
+6.40s call     Tests/UI/test_workspace_persona_creation.py::test_default_modal_cancel_preserves_and_apply_clears
+
+(10 durations < 1s hidden.)
+5 passed in 80.74s (0:01:20)

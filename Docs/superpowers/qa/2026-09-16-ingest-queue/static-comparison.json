@@ -1,0 +1,48 @@
+{
+  "base": "631cd05954",
+  "files": [
+    {
+      "path": "Tests/UI/test_library_ingest_option_event_order.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_structural.py",
+      "base_diagnostics": 5,
+      "current_diagnostics": 5,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py",
+      "base_diagnostics": 10,
+      "current_diagnostics": 10,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "base_diagnostics": 205,
+      "current_diagnostics": 205,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "base_diagnostics": 6,
+      "current_diagnostics": 6,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_queue_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-16-ingest-queue/native_check.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "new_diagnostics": 0
+}

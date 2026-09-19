@@ -1,0 +1,28 @@
+[
+  {
+    "width": 170,
+    "private_db_paths_checked": 11,
+    "private_data_dir": true,
+    "persisted": {
+      "id": 6,
+      "name": "Prompt continuity audit 170 64023",
+      "user_prompt": "Retain this message template after saving.",
+      "version": 1,
+      "deleted": 0,
+      "prompt_format": "structured"
+    }
+  },
+  {
+    "width": 80,
+    "private_db_paths_checked": 11,
+    "private_data_dir": true,
+    "persisted": {
+      "id": 5,
+      "name": "Prompt continuity audit 80 64024",
+      "user_prompt": "Retain this message template after saving.",
+      "version": 1,
+      "deleted": 0,
+      "prompt_format": "structured"
+    }
+  }
+]

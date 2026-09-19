@@ -1744,9 +1744,10 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        "tldw_chatbook/Backup_Recovery/native_qualification.json",
         SEMANTIC_TRACE_MIGRATION_PATH,
         SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
@@ -1755,9 +1756,10 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        "tldw_chatbook/Backup_Recovery/native_qualification.json",
         SEMANTIC_TRACE_MIGRATION_PATH,
         SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
     development_launcher = "scripts/run_speculative_voice_dev.py"
@@ -2986,8 +2988,22 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         target,
         built_distributions.source_root,
     )
+    app_only_probe = r"""
+from importlib.metadata import requires
+import os
+import re
+from tldw_chatbook.Chat.console_voice_settings import speculative_voice_qualified
+requirements = requires("tldw_chatbook") or []
+assert not any(re.match(r"tldw[-_.]voice[-_.]aec(?:[\s<>=!~;@\[]|$)", item.strip(), re.I) for item in requirements)
+for ordinary in ("pyaudio", "sounddevice", "webrtcvad-wheels"):
+    assert any(item.lower().startswith(ordinary) and 'extra == "speech-recording"' in item for item in requirements)
+os.environ["TLDW_DEV_SPECULATIVE_VOICE"] = "1"
+assert speculative_voice_qualified() is False
+print("installed-app-only-voice-gate-ok")
+"""
     with _read_only_installed_tree(target):
         results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
+        results.append(_run_child([sys.executable, "-c", app_only_probe], run_root, env))
 
         script_path = os.pathsep.join(
             str(path) for path in (target / "bin", target / "Scripts")

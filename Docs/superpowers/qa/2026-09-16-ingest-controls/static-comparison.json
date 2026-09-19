@@ -1,0 +1,60 @@
+{
+  "base": "b1303615d6",
+  "files": [
+    {
+      "path": "Tests/UI/test_library_canvas_scoped_sync.py",
+      "base_diagnostics": 1,
+      "current_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_canvas.py",
+      "base_diagnostics": 7,
+      "current_diagnostics": 7,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_inline_consent.py",
+      "base_diagnostics": 1,
+      "current_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_retry_last.py",
+      "base_diagnostics": 2,
+      "current_diagnostics": 2,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "base_diagnostics": 205,
+      "current_diagnostics": 205,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "base_diagnostics": 6,
+      "current_diagnostics": 6,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_option_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_ingest_option_event_order.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-16-ingest-controls/native_check.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "new_diagnostics": 0
+}

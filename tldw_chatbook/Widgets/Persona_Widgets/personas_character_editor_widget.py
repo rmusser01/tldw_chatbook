@@ -1296,14 +1296,15 @@ class PersonasCharacterEditorWidget(Container):
         thumb = _S(renderable)
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
-            thumb.styles.width, thumb.styles.height = grid_size
+            # ds-runtime: match the rendered image cell grid.
+            thumb.set_styles(width=grid_size[0], height=grid_size[1])
         else:
             # Per explicit_cell_size's documented contract, fall back to the
             # box dimensions when the grid can't be read (e.g. rich_pixels
             # Pixels, which is baked for the box anyway) - same fallback as
             # ChatScreen._build_character_avatar_widget.
-            thumb.styles.width = _THUMB_BOX_COLS
-            thumb.styles.height = _THUMB_BOX_LINES
+            thumb.add_class("w-24")
+            thumb.add_class("h-10")
         holder.mount(thumb)
 
     def expression_character_id(self) -> int | None:
@@ -1378,14 +1379,15 @@ class PersonasCharacterEditorWidget(Container):
         thumb = _S(renderable)
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
-            thumb.styles.width, thumb.styles.height = grid_size
+            # ds-runtime: match the rendered image cell grid.
+            thumb.set_styles(width=grid_size[0], height=grid_size[1])
         else:
             # Per explicit_cell_size's documented contract, fall back to the
             # box dimensions when the grid can't be read (e.g. rich_pixels
             # Pixels, which is baked for the box anyway) - same fallback as
             # ChatScreen._build_character_avatar_widget.
-            thumb.styles.width = _THUMB_BOX_COLS
-            thumb.styles.height = _THUMB_BOX_LINES
+            thumb.add_class("w-24")
+            thumb.add_class("h-10")
         holder.mount(thumb)
 
     def set_style_readout(self, text: str) -> None:

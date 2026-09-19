@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -66,7 +67,8 @@ async def _open_settings(pilot):
     return _active_destination_screen(pilot.app)
 
 
-async def test_category_switch_rebuilds_only_the_two_category_panes():
+@private_profile_test
+async def test_category_switch_rebuilds_only_the_two_category_panes(request):
     """AC#1: a rail click leaves every widget that does not read the
     category's content exactly where it was."""
     host = DestinationHarness(_build_test_app(), "settings")
@@ -75,7 +77,9 @@ async def test_category_switch_rebuilds_only_the_two_category_panes():
         before = _identities(screen, _STABLE)
         nav_before = id(screen.query_one(MainNavigationBar))
 
-        await pilot.click("#settings-category-storage")
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        await pilot.press("enter")
         await _settle(pilot)
 
         assert _identities(screen, _STABLE) == before, (
@@ -88,7 +92,8 @@ async def test_category_switch_rebuilds_only_the_two_category_panes():
         assert "Storage" in _text(screen.query_one("#settings-category-label", Static))
 
 
-async def test_category_switch_moves_the_active_rail_marker():
+@private_profile_test
+async def test_category_switch_moves_the_active_rail_marker(request):
     """The rail is no longer rebuilt, so the active marker has to be patched
     onto the surviving buttons -- with the same result as a fresh compose."""
     host = DestinationHarness(_build_test_app(), "settings")
@@ -98,7 +103,9 @@ async def test_category_switch_moves_the_active_rail_marker():
             "settings-active-section"
         )
 
-        await pilot.click("#settings-category-storage")
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        await pilot.press("enter")
         await _settle(pilot)
 
         assert screen.query_one("#settings-category-storage", Button).has_class(
@@ -109,21 +116,25 @@ async def test_category_switch_moves_the_active_rail_marker():
         )
 
 
-async def test_category_switch_lands_focus_on_the_selected_rail_button():
+@private_profile_test
+async def test_category_switch_lands_focus_on_the_selected_rail_button(request):
     """What the recompose provided via `_pending_category_focus_value`: after
     a switch, focus is on the newly selected category button."""
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(160, 45)) as pilot:
         screen = await _open_settings(pilot)
 
-        await pilot.click("#settings-category-storage")
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        await pilot.press("enter")
         await _settle(pilot)
 
         assert screen.active_category == "storage"
         assert getattr(host.focused, "id", None) == "settings-category-storage"
 
 
-async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size():
+@private_profile_test
+async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size(request):
     """Compact geometry is only measured at a compact size.
 
     The compact classes used to be re-applied by `compose_content` on every
@@ -152,7 +163,8 @@ async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size():
         )
 
 
-async def test_same_category_rebuild_keeps_focus_on_the_control_used():
+@private_profile_test
+async def test_same_category_rebuild_keeps_focus_on_the_control_used(request):
     """A SAME-category pane rebuild must not throw focus into the rail.
 
     Workspaces rebuilds its pane in place (row click, "Show archived"), which
@@ -203,7 +215,8 @@ def _sync_row_texts(screen) -> list[str]:
     return rows
 
 
-async def test_sync_row_refresh_patches_rows_without_rebuilding_the_screen():
+@private_profile_test
+async def test_sync_row_refresh_patches_rows_without_rebuilding_the_screen(request):
     """AC#1: the sync rows update in place; nothing outside them moves."""
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(160, 45)) as pilot:
@@ -242,7 +255,8 @@ async def test_sync_row_refresh_patches_rows_without_rebuilding_the_screen():
         assert "ready" in summary and "none" in summary
 
 
-async def test_sync_row_regions_repaint_when_the_row_SET_changes():
+@private_profile_test
+async def test_sync_row_regions_repaint_when_the_row_SET_changes(request):
     """A run result renames a row and appends two more -- the region rebuild
     is what makes a variable row set possible at all (a per-row
     `Static.update` patch could not express it)."""
@@ -266,7 +280,8 @@ async def test_sync_row_regions_repaint_when_the_row_SET_changes():
         )
 
 
-async def test_sync_rows_refresh_runs_once_per_visit(monkeypatch):
+@private_profile_test
+async def test_sync_rows_refresh_runs_once_per_visit(request, monkeypatch):
     """AC#3: on_mount and the mount's own ScreenResume must not both run it.
 
     Replays the two hooks against a fully MOUNTED screen deliberately. Their

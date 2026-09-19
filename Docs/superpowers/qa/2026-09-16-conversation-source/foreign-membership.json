@@ -1,0 +1,12 @@
+[
+  {
+    "workspace_id": "source-other-workspace",
+    "item_type": "conversation",
+    "item_id": "d06d68d9-4cd1-5dec-b0fd-702a2442792a",
+    "role": "source",
+    "transfer_policy": "reference",
+    "title": "Source audit Foreign",
+    "created_at": "2026-09-17T01:17:11.205549+00:00",
+    "membership_id": "workspace-link-aec956e0b0bf49e989702a2252b491cc"
+  }
+]

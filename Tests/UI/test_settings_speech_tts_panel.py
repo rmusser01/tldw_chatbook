@@ -14,6 +14,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -1211,7 +1212,8 @@ async def test_every_leave_guard_waits_for_an_existing_save_instead_of_discardin
 
 
 @pytest.mark.asyncio
-async def test_dirty_provider_switch_discard_removes_hidden_draft() -> None:
+@private_profile_test
+async def test_dirty_provider_switch_discard_removes_hidden_draft(request) -> None:
     app = _PanelHarness(configure_provider="audio_cpp")
     async with app.run_test(size=(150, 80)) as pilot:
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
@@ -2513,7 +2515,8 @@ async def test_invalid_save_is_field_specific_and_posts_no_event() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_global_default_renders_an_adjacent_field_error() -> None:
+@private_profile_test
+async def test_invalid_global_default_renders_an_adjacent_field_error(request) -> None:
     app = _PanelHarness(configure_provider="openai")
     async with app.run_test(size=(150, 60)) as pilot:
         app.query_one("#settings-speech-speed", Input).value = "not-a-speed"
@@ -3078,9 +3081,10 @@ async def test_credential_editor_is_a_bounded_modal_with_real_styles() -> None:
 
 
 @pytest.mark.asyncio
-async def test_panel_tracks_dirty_state_and_revert_restores_the_saved_snapshot() -> (
-    None
-):
+@private_profile_test
+async def test_panel_tracks_dirty_state_and_revert_restores_the_saved_snapshot(
+    request,
+) -> None:
     app = _PanelHarness(configure_provider="audio_cpp")
     async with app.run_test(size=(150, 60)) as pilot:
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
@@ -3181,7 +3185,10 @@ async def test_restore_defaults_clears_replaced_validation_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dirty_provider_switch_cancel_preserves_visible_owner_and_draft() -> None:
+@private_profile_test
+async def test_dirty_provider_switch_cancel_preserves_visible_owner_and_draft(
+    request,
+) -> None:
     app = _PanelHarness(configure_provider="audio_cpp")
     async with app.run_test(size=(150, 60)) as pilot:
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
@@ -3237,7 +3244,8 @@ async def test_settings_generic_save_and_revert_actions_route_to_speech_panel() 
 
 
 @pytest.mark.asyncio
-async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
+@private_profile_test
+async def test_details_and_scope_start_collapsed_on_every_mount(request) -> None:
     app = _StyledPanelHarness(
         configure_provider="audio_cpp",
         observation=_audio_cpp_observation(),
@@ -3298,7 +3306,8 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
 
 
 @pytest.mark.asyncio
-async def test_production_bundle_applies_speech_disclosure_styles() -> None:
+@private_profile_test
+async def test_production_bundle_applies_speech_disclosure_styles(request) -> None:
     sheet_css = _SETTINGS_SHEET.read_text(encoding="utf-8")
     for selector in (
         "#settings-speech-details,\n#settings-speech-scope-inspector",
@@ -3389,9 +3398,10 @@ async def test_managed_guided_selection_provenance_stays_in_collapsed_details() 
 
 
 @pytest.mark.asyncio
-async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blur() -> (
-    None
-):
+@private_profile_test
+async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blur(
+    request,
+) -> None:
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         screen = await _open_speech_tts(host, pilot)
@@ -3458,14 +3468,13 @@ async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blu
 
 
 @pytest.mark.asyncio
-async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> None:
-    host = DestinationHarness(_build_test_app(), "settings")
-    # Tall enough that the actions row is genuinely on-screen: this test
-    # exercises the real hit-tested mouse path from a focused field, so the
-    # buttons must be clickable, not pressed programmatically. (The panel
-    # mounts ~115 rows; at the usual (190, 55) the actions sit below nested
-    # folds and scroll_visible cannot reach them.)
-    async with host.run_test(size=(190, 130)) as pilot:
+@private_profile_test
+async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused(
+    request,
+) -> None:
+    host = _StyledDestinationHarness(_build_test_app(), "settings")
+    # Scroll the real document to each click target without moving field focus.
+    async with host.run_test(size=(190, 55)) as pilot:
         screen = await _open_speech_tts(host, pilot)
         panel = screen.query_one(
             "#settings-speech-tts-panel",
@@ -3498,19 +3507,29 @@ async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> 
         endpoint.focus()
         await pilot.pause()
         assert pilot.app.focused is endpoint
-        await pilot.click("#settings-speech-save")
+        target = screen.query_one("#settings-speech-save", Button)
+        target.scroll_visible(animate=False)
+        await pilot.pause()
+        assert pilot.app.focused is endpoint
+        assert await pilot.click("#settings-speech-save")
         request_save.assert_called_once_with()
 
         endpoint.focus()
         await pilot.pause()
         assert pilot.app.focused is endpoint
-        await pilot.click("#settings-speech-revert")
+        target = screen.query_one("#settings-speech-revert", Button)
+        target.scroll_visible(animate=False)
+        await pilot.pause()
+        assert pilot.app.focused is endpoint
+        assert await pilot.click("#settings-speech-revert")
         revert_to_saved.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
+@private_profile_test
 async def test_speech_disclosures_and_actions_remain_reachable(
+    request,
     terminal_size: tuple[int, int],
 ) -> None:
     host = _StyledDestinationHarness(_build_test_app(), "settings")
@@ -3536,7 +3555,10 @@ async def test_speech_disclosures_and_actions_remain_reachable(
 
 
 @pytest.mark.asyncio
-async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus() -> None:
+@private_profile_test
+async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus(
+    request,
+) -> None:
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         screen = await _open_speech_tts(host, pilot)
@@ -3545,9 +3567,7 @@ async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus() ->
             SpeechTTSSettingsPanel,
         )
         model = screen.query_one("#settings-speech-model-value", Select)
-        dirty_value = (
-            "tts-1-hd" if model.value != "tts-1-hd" else "tts-1"
-        )
+        dirty_value = "tts-1-hd" if model.value != "tts-1-hd" else "tts-1"
         model.value = dirty_value
         model.focus()
         panel._ask_leave_choice = AsyncMock(return_value="cancel")
@@ -4339,34 +4359,26 @@ async def test_unknown_saved_voice_stays_selectable_as_custom() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_entry_modal_sets_voice_id() -> None:
+@private_profile_test
+async def test_custom_entry_modal_sets_voice_id(request) -> None:
     """Picking Custom… opens the free-text editor; a confirmed ID becomes
     the draft value and stays selected after the card rebuild."""
-    app = _PanelHarness(
-        state=_kokoro_defaults_state(), configure_provider="kokoro"
-    )
+    app = _PanelHarness(state=_kokoro_defaults_state(), configure_provider="kokoro")
     async with app.run_test(size=(150, 60)) as pilot:
         voice = app.query_one("#settings-speech-voice-value", Select)
         voice.value = speech_tts_settings_panel_module._CUSTOM_ID_SENTINEL
         await pilot.pause()
 
         modal = app.screen
-        assert isinstance(
-            modal, speech_tts_settings_panel_module._CustomIdModal
-        )
-        modal.query_one("#settings-speech-custom-id-value", Input).value = (
-            "af_sky"
-        )
+        assert isinstance(modal, speech_tts_settings_panel_module._CustomIdModal)
+        modal.query_one("#settings-speech-custom-id-value", Input).value = "af_sky"
         await pilot.click("#settings-speech-custom-id-confirm")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
         assert panel.state.defaults.voice_id == "af_sky"
-        assert (
-            app.query_one("#settings-speech-voice-value", Select).value
-            == "af_sky"
-        )
+        assert app.query_one("#settings-speech-voice-value", Select).value == "af_sky"
         # A Save racing the rebuild must not clobber the confirmed ID.
         panel._collect_visible_state()
         assert panel.state.defaults.voice_id == "af_sky"
@@ -4395,7 +4407,9 @@ async def test_browse_voices_button_navigates_to_speech_lab() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_local_provider_forms_surface_dependency_and_model_guidance(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The install extra and the model-download story live in the Kokoro
@@ -4408,18 +4422,12 @@ async def test_local_provider_forms_surface_dependency_and_model_guidance(
             stt=False, kokoro=False, chatterbox=False, higgs=False
         ),
     )
-    app = _PanelHarness(
-        state=_kokoro_defaults_state(), configure_provider="kokoro"
-    )
+    app = _PanelHarness(state=_kokoro_defaults_state(), configure_provider="kokoro")
     async with app.run_test(size=(150, 60)):
-        status = app.query_one(
-            "#settings-speech-kokoro-dependency-status", Static
-        )
+        status = app.query_one("#settings-speech-kokoro-dependency-status", Static)
         assert "tldw_chatbook[local_tts]" in str(status.renderable)
         assert "not installed" in str(status.renderable)
-        guidance = app.query_one(
-            "#settings-speech-kokoro-model-guidance", Static
-        )
+        guidance = app.query_one("#settings-speech-kokoro-model-guidance", Static)
         assert "kokoro-v0_19.onnx" in str(guidance.renderable)
 
 @pytest.mark.asyncio

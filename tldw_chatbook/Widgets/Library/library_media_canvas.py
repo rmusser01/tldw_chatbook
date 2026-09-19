@@ -342,7 +342,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # ellipsizing. task-14900's side-by-side split needs the panes to
         # divide the REAL width, so the canvas must be bounded like the
         # viewer already is.
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         # task-32060: and NO min-width. task-30043 lowered this floor from 40
         # to 36 because a floor above the slot overflows it and clips every
         # child instead of ellipsizing -- but 36 has the same defect one step
@@ -735,7 +735,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 button._library_media_selected and not compact and not select_mode,
                 "library-media-row-selected",
             )
-            button.styles.height = row_height
+            button.set_class(compact, "h-1")
+            button.set_class(not compact, "h-2")
             button.styles.min_height = row_height
             self._gate_mutation_action(button, label_rest.lstrip())
         try:
@@ -1013,12 +1014,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # recovery-action budget is unaffected -- that count is about the
         # empty page's own body, and this lives on the title row.
         title_row = Horizontal(id="library-media-title-row")
-        title_row.styles.height = "auto"
+        title_row.add_class("h-auto")
         with title_row:
             title_static = Static(title, id="library-media-title")
             # A Static defaults to 1fr inside a Horizontal and would swallow
             # the whole row, pushing the button out of view (live-verified).
-            title_static.styles.width = "auto"
+            title_static.add_class("w-auto")
             yield title_static
             sets_btn = Button(
                 "Sets",
@@ -1037,7 +1038,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # scope_line; an empty Static would just spend a row saying nothing.
         if self.canvas.scope_line:
             scope_row = Horizontal(id="library-media-scope-row")
-            scope_row.styles.height = "auto"
+            scope_row.add_class("h-auto")
             with scope_row:
                 # Width comes from `.library-media-scope-line` (1fr +
                 # ellipsis), not an inline style: an auto-width Static
@@ -1058,7 +1059,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         tooltip="Clear the filter and type this line states.",
                     )
         filter_row = Horizontal(classes="ds-toolbar")
-        filter_row.styles.height = "auto"
+        filter_row.add_class("h-auto")
         with filter_row:
             yield Input(
                 value=self.canvas.query,
@@ -1287,7 +1288,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
         for row_id, row_buttons in toolbar_rows:
             row = Horizontal(id=row_id, classes="ds-toolbar")
-            row.styles.height = "auto"
+            row.add_class("h-auto")
             row.display = toolbar_visible
             with row:
                 for button in row_buttons:
@@ -1314,7 +1315,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             choices.highlighted = highlighted
-            choices.styles.height = min(8, max(1, len(options)))
+            # ds-runtime: option count from the current media type catalog
+            choices.set_styles(height=min(8, max(1, len(options))))
             yield choices
         if sort_choices_visible:
             # task-31235 (critique #3 P1): a vertical OptionList exactly like
@@ -1341,7 +1343,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             sort_choices.highlighted = sort_highlighted
-            sort_choices.styles.height = min(8, max(1, len(sort_options)))
+            sort_choices.add_class("h-4")
             yield sort_choices
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
@@ -1369,11 +1371,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # task-30043: bound the copy to the pane so the safety
                 # sentence WRAPS -- unbounded, it clipped mid-word ("You can
                 # und / restore later from Tr") at the narrow pane width.
-                confirm_copy.styles.width = "1fr"
-                confirm_copy.styles.height = "auto"
+                confirm_copy.add_class("w-fill")
+                confirm_copy.add_class("h-auto")
                 yield confirm_copy
             action_row = Horizontal(classes="ds-toolbar")
-            action_row.styles.height = "auto"
+            action_row.add_class("h-auto")
             with action_row:
                 # Bug found via task-2853's OWN live tmux verification
                 # (reproduced against pre-task-8 HEAD too, so it predates
@@ -1420,7 +1422,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 actions_row = Horizontal(
                     id="library-media-select-actions", classes="ds-toolbar"
                 )
-                actions_row.styles.height = "auto"
+                actions_row.add_class("h-auto")
                 with actions_row:
                     yield self._clear_selection_button()
                     yield from self._select_mode_bulk_buttons()
@@ -1481,7 +1483,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 analyze_row = Horizontal(
                     id="library-media-select-analyze", classes="ds-toolbar"
                 )
-                analyze_row.styles.height = "auto"
+                analyze_row.add_class("h-auto")
                 with analyze_row:
                     yield self._analyze_selected_button()
                 if self.analysis_action_reason:
@@ -1500,7 +1502,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 danger_row = Horizontal(
                     id="library-media-select-danger", classes="ds-toolbar"
                 )
-                danger_row.styles.height = "auto"
+                danger_row.add_class("h-auto")
                 with danger_row:
                     yield self._delete_selected_button()
             # task-31631 AC#3: Done closes the select-mode block on its own
@@ -1521,7 +1523,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             done_row = Horizontal(
                 id="library-media-select-done", classes="ds-toolbar"
             )
-            done_row.styles.height = "auto"
+            done_row.add_class("h-auto")
             with done_row:
                 yield select_btn
 
@@ -1554,7 +1556,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-media-bulk-delete-receipt",
                 classes="library-media-receipt",
             )
-            receipt.styles.height = "auto"
+            receipt.add_class("h-auto")
             with receipt:
                 yield Static(
                     # task-4025 (ADR-055 Pattern A): the receipt names the
@@ -1570,7 +1572,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 actions = Horizontal(
                     classes="ds-toolbar library-media-receipt-actions"
                 )
-                actions.styles.height = "auto"
+                actions.add_class("h-auto")
                 with actions:
                     # task-31220: NOT ``_gate_stale_action``. Undo restores
                     # exactly the ids this receipt names, so it is the
@@ -1608,7 +1610,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-media-review-dismiss-receipt",
                 classes="library-media-receipt",
             )
-            dismiss_receipt.styles.height = "auto"
+            dismiss_receipt.add_class("h-auto")
             with dismiss_receipt:
                 yield Static(
                     f"✓ dismissed · {dismissed_set_name}",
@@ -1619,7 +1621,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 set_actions = Horizontal(
                     classes="ds-toolbar library-media-receipt-actions"
                 )
-                set_actions.styles.height = "auto"
+                set_actions.add_class("h-auto")
                 with set_actions:
                     # Final review I-3: NOT ``_gate_stale_action``, for the
                     # same reason the bulk-delete receipt's Undo above is
@@ -1682,7 +1684,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-media-analyze-receipt",
                 classes="library-media-receipt",
             )
-            analyze_receipt.styles.height = "auto"
+            analyze_receipt.add_class("h-auto")
             with analyze_receipt:
                 yield Static(
                     analyze_copy,
@@ -1693,7 +1695,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 analyze_actions = Horizontal(
                     classes="ds-toolbar library-media-receipt-actions"
                 )
-                analyze_actions.styles.height = "auto"
+                analyze_actions.add_class("h-auto")
                 with analyze_actions:
                     if analyze_choice:
                         skip = Button(
@@ -1881,7 +1883,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             row.selected and not self.compact and not select_mode,
                             "library-media-row-selected",
                         )
-                        button.styles.height = row_height
+                        button.add_class("h-1" if self.compact else "h-2")
                         button.styles.min_height = row_height
                         # task-31220: a row OPEN is a read, so it is gated
                         # only while a write is actually unsettled -- never by
@@ -1903,7 +1905,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     markup=False,
                 )
                 toolbar = Horizontal(classes="ds-toolbar")
-                toolbar.styles.height = "auto"
+                toolbar.add_class("h-auto")
                 with toolbar:
                     # Opens the selected item in the IN-LIBRARY media viewer
                     # (nav stays on Library), distinct from the full viewer's

@@ -1,0 +1,42 @@
+{
+  "payload": {
+    "target_id": "28d88341-0023-55a5-8789-71b05bf35e59",
+    "item_type": "conversation",
+    "source_id": "28d88341-0023-55a5-8789-71b05bf35e59",
+    "snippet": "Conversation excerpt:\nuser: DarkWide user source body: exact [text], caf\u00e9.\n\nassistant: DarkWide assistant source body: exact [text], caf\u00e9.\n\nConversation: Source audit DarkWide\nConversation ID: 28d88341-0023-55a5-8789-71b05bf35e59\nMessages: 2\nWorkspace: Default\nUpdated: 2026-09-17 02:03:00.200000+00:00\nSource authority: local",
+    "suggested_prompt": "Use this conversation as source context for my next question.",
+    "runtime_backend": "local",
+    "source_selector_state": "local",
+    "metadata": {
+      "conversation_id": "28d88341-0023-55a5-8789-71b05bf35e59",
+      "conversation_title": "Source audit DarkWide",
+      "message_count_label": "Messages: 2",
+      "workspace_label": "Workspace: Default",
+      "updated_label": "Updated: 2026-09-17 02:03:00.200000+00:00",
+      "source_authority": "local"
+    },
+    "evidence_bundle": {
+      "bundle_id": "28d88341-0023-55a5-8789-71b05bf35e59",
+      "query": "Use this conversation as source context for my next question.",
+      "source": "library",
+      "status": "available",
+      "metadata": {},
+      "references": [
+        {
+          "evidence_id": "S1",
+          "source_id": "28d88341-0023-55a5-8789-71b05bf35e59",
+          "source_type": "conversation",
+          "title": "Source audit DarkWide",
+          "snippet": "Conversation excerpt:\nuser: DarkWide user source body: exact [text], caf\u00e9.\n\nassistant: DarkWide assistant source body: exact [text], caf\u00e9.\n\nConversation: Source audit DarkWide\nConversation ID: 28d88341-0023-55a5-8789-71b05bf35e59\nMessages: 2\nWorkspace: Default\nUpdated: 2026-09-17 02:03:00.200000+00:00\nSource authority: local",
+          "authority_label": "local",
+          "source_owner": "local",
+          "status": "available",
+          "metadata": {},
+          "snippet_truncated": false,
+          "original_snippet_char_count": 326
+        }
+      ]
+    }
+  },
+  "context": "[S1] CHAT HISTORY \u2014 Source audit DarkWide\nConversation excerpt:\nuser: DarkWide user source body: exact [text], caf\u00e9.\n\nassistant: DarkWide assistant source body: exact [text], caf\u00e9.\n\nConversation: Source audit DarkWide\nConversation ID: 28d88341-0023-55a5-8789-71b05bf35e59\nMessages: 2\nWorkspace: Default\nUpdated: 2026-09-17 02:03:00.200000+00:00\nSource authority: local"
+}

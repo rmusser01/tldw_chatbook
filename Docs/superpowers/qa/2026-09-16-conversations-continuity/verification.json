@@ -1,0 +1,53 @@
+{
+  "baseline": "0f7cb59e41",
+  "initial_targeted_run": {
+    "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_conversations_continuity.py Tests/UI/test_library_conversation_reader.py Tests/UI/test_library_conversations_characterization.py Tests/UI/test_library_adaptive_reader_shell.py Tests/UI/test_library_adaptive_reader_closeout.py Tests/UI/test_library_prompt_resize_focus.py Tests/UI/test_library_ingest_resize_focus.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py Tests/UI/test_component_pattern_governance.py",
+    "passed": 166,
+    "failed": 4,
+    "seconds": 309.29
+  },
+  "final_focused_run": {
+    "command": ".venv/bin/python -m pytest -q Tests/UI/test_library_conversations_continuity.py Tests/UI/test_library_conversation_reader.py::test_conversations_global_f6_cycles_visible_destination_roles Tests/UI/test_library_conversation_reader.py::test_conversations_escape_moves_to_nearest_visible_prior_role",
+    "passed": 12,
+    "failed": 0,
+    "seconds": 32.18
+  },
+  "distinct_passing_checks": 170,
+  "count_explanation": "158 unchanged neighboring passes from initial run plus12 final focused passes (10 continuity and2 corrected keyboard tests).",
+  "baseline_regression_run": {
+    "original_continuity_cases": 8,
+    "failed": 6,
+    "passed": 2
+  },
+  "focus_guard_mutation": {
+    "failed": 2,
+    "deselected": 8,
+    "restored": true
+  },
+  "unchanged_baseline_failures": [
+    "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",
+    "Tests/UI/test_library_adaptive_reader_closeout.py::test_notes_branch_paging_is_contained_focusable_and_collapsible_in_production_shell[size3]"
+  ],
+  "baseline_neighbor_replay": {
+    "passed": 2,
+    "failed": 2
+  },
+  "full_suite_run": false,
+  "warnings": [
+    "Existing pytest temporary-directory cleanup warning (directory not empty).",
+    "Governance AST scan reported existing invalid escape sequences."
+  ],
+  "css_rebuilt_with": "python tldw_chatbook/css/build_css.py",
+  "governance_passed": [
+    "design tokens",
+    "generated CSS bundle synchronization",
+    "component patterns"
+  ],
+  "new_python_files_lint_clean": true,
+  "ruff_format_checked_clean": [
+    "Tests/UI/test_library_conversations_continuity.py",
+    "Docs/superpowers/qa/2026-09-16-conversations-continuity/native_check.py",
+    "tldw_chatbook/Widgets/Library/library_conversation_reader.py",
+    "tldw_chatbook/Widgets/Library/library_conversations_canvas.py"
+  ]
+}

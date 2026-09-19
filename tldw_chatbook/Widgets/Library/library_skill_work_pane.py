@@ -76,7 +76,7 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
         state = self.editor_state
         if self.reader_mode == "overview":
             region = Vertical(id="library-skill-overview-region")
-            region.styles.height = "auto"
+            region.add_class("h-auto")
             with region:
                 yield Static(state.name, classes="destination-section", markup=False)
                 yield Static(
@@ -105,13 +105,13 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
             return
         if self.reader_mode == "edit":
             region = Vertical(id="library-skill-edit-region")
-            region.styles.height = "auto"
+            region.add_class("h-auto")
             with region:
                 yield from self._compose_editor()
             return
         if self.reader_mode == "trust":
             region = Vertical(id="library-skill-trust-region")
-            region.styles.height = "auto"
+            region.add_class("h-auto")
             with region:
                 review_identity = skill_review_identity_line(self.active_review)
                 yield Static(
@@ -122,7 +122,7 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
                 yield from self._compose_trust_panel(state)
             return
         region = Vertical(id="library-skill-files-region")
-        region.styles.height = "auto"
+        region.add_class("h-auto")
         with region:
             yield Static(
                 "Supporting files", classes="destination-section", markup=False
@@ -142,7 +142,7 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
     def _compose_mode_strip(self) -> ComposeResult:
         """Render the four explicit Skills work modes."""
         toolbar = Horizontal(id="library-skill-mode-strip", classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.add_class("h-auto")
         with toolbar:
             for mode, label in (
                 ("overview", "Overview"),
@@ -178,5 +178,52 @@ class LibrarySkillWorkPane(LibrarySkillsListCanvas):
             getattr(self, key, object()) == value for key, value in kwargs.items()
         ):
             return
+        if kwargs.get("import_in_flight") and not self.import_in_flight:
+            focused = self.app.focused
+            if focused is not None and self in focused.ancestors:
+                # The accepted import disables every form control. Detach its
+                # outgoing focus before same-ID preservation can retain one.
+                self.screen.set_focus(None)
         self.reader_mode = requested
         super().sync_state(**kwargs)
+
+    def _after_recompose(self) -> None:
+        super()._after_recompose()
+        self.call_after_refresh(self.restore_workflow_focus)
+
+    def restore_workflow_focus(self) -> None:
+        """Keep the current workflow reachable without replacing newer focus."""
+        if (
+            not self.is_attached
+            or self.app.screen is not self.screen
+            or not self.is_on_screen
+            or self._recompose_required
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None:
+            if self not in focused.ancestors or not focused.is_attached:
+                return
+            if not focused.disabled:
+                focused.scroll_visible(animate=False)
+                return
+            # A trust transition can disable the modal's return target.
+            self.screen.set_focus(None)
+        if self.import_open:
+            if self.import_in_flight:
+                return
+            selector = (
+                "#library-skills-import-review"
+                if self.import_review_name
+                else "#library-skills-import-path"
+            )
+        elif self.mode == "editor" and self.reader_mode == "trust":
+            selector = "#library-skill-trust-review"
+            candidates = self.query(selector)
+            if not candidates or candidates.first().disabled:
+                selector = "#library-skill-mode-trust"
+        else:
+            return
+        candidates = self.query(selector)
+        if candidates:
+            candidates.first().focus()

@@ -1,0 +1,16 @@
+{
+  "calls": {
+    "_active_library_rail:4906:#library-rail": 4,
+    "_library_focusable:7173:#library-search-input": 1
+  },
+  "query_elapsed_ns": {
+    "_active_library_rail:4906:#library-rail": 29750,
+    "_library_focusable:7173:#library-search-input": 15625
+  },
+  "signatures": [
+    {
+      "width": 170,
+      "changes": []
+    }
+  ]
+}

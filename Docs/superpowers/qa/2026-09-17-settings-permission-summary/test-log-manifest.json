@@ -1,0 +1,62 @@
+[
+  {
+    "file": "red-original.txt",
+    "original_sha256": "470e8c8d0cb8575910644ceef47bb049b265612de2829426d123a872ca932a07",
+    "stored_sha256": "b053fccd1516396d688db3bf7f43f35cf97db0c84145d9c233770dc10e548c28"
+  },
+  {
+    "file": "red-runtime-projection.txt",
+    "original_sha256": "03de3447280436b1e12e6c10940ff1c4808e267c41208a51cc039fef841eb506",
+    "stored_sha256": "915796686592b2b8e407a09b3c56e68d0c5acc68f6f1d2fcd739524ae5b38c5b"
+  },
+  {
+    "file": "red-cache-recovery.txt",
+    "original_sha256": "b1b51df01b663df6bf30d489be4fc3081f0abfc2630ba70ba2bd85ac06bff45e",
+    "stored_sha256": "a794279d8f5a6f1d5efb2cbd67df92d9f0b0c34aa0f0e6a85acf564ba908738e"
+  },
+  {
+    "file": "red-publication-interleave.txt",
+    "original_sha256": "2f8380c28529bf70a3527d576e2751c499fd049484967afa6e08c17b887c3a39",
+    "stored_sha256": "4592424f7e763eccde7066261ea4d9b049f12576efb0d2b5e50f223fe74f6c05"
+  },
+  {
+    "file": "related-final.txt",
+    "original_sha256": "3569737305b1c03e8a02bac94831e482ba49d07ffbdc7108d241ae88cabec7f5",
+    "stored_sha256": "1ac7b3cdf7eea988fa0c3c3feb32c0f0031a6e0de0f721880a869166ecc6a580"
+  },
+  {
+    "file": "wiring-baseline.txt",
+    "original_sha256": "4def63c1f1c3468b7c94b0fe4612ff890414df1f9b73544d997acd7385ff7a41",
+    "stored_sha256": "e44f22226a684c2fbccc3437956fd9619ff258e68ebba674f2677a8d08eb5625"
+  },
+  {
+    "file": "preflight.txt",
+    "original_sha256": "287251205645eb5f2661fd0f15ba60ad049381c2819f7c4d1a0353bdc2a2a711",
+    "stored_sha256": "287251205645eb5f2661fd0f15ba60ad049381c2819f7c4d1a0353bdc2a2a711"
+  },
+  {
+    "file": "ui-final.txt",
+    "original_sha256": "bacc02c7e222c4b254c7b500b86788d7780b42522e83fe1c87a8a0168c3e8909",
+    "stored_sha256": "bacc02c7e222c4b254c7b500b86788d7780b42522e83fe1c87a8a0168c3e8909"
+  },
+  {
+    "file": "red-retry-guidance.txt",
+    "original_sha256": "415cb58ffdfc4560c4e67a74b278f69af1e6e1837d3d8b294b13e2a448ed5caa",
+    "stored_sha256": "afa3dcd71f678a33112d05cc102ad5a7a7a774e116fbede37d597e3d9bb6ba27"
+  },
+  {
+    "file": "static-small.txt",
+    "original_sha256": "afa20b27dacc9bf0aba3c1d265964c21e04ab42f6e39e2dd4769718ceded003a",
+    "stored_sha256": "afa20b27dacc9bf0aba3c1d265964c21e04ab42f6e39e2dd4769718ceded003a"
+  },
+  {
+    "file": "static-large.json",
+    "original_sha256": "1c62029ff34608fd4736376774dc5979d53ec123077bac5bf02590ba7cf83c68",
+    "stored_sha256": "1c62029ff34608fd4736376774dc5979d53ec123077bac5bf02590ba7cf83c68"
+  },
+  {
+    "file": "task-id-audit.json",
+    "original_sha256": "cf01bdbaa69d1f4e1f688de477ecf44cbb347c46328d8c2bda687a2e1b3acc14",
+    "stored_sha256": "cf01bdbaa69d1f4e1f688de477ecf44cbb347c46328d8c2bda687a2e1b3acc14"
+  }
+]

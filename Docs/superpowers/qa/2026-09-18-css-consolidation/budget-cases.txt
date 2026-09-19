@@ -1,0 +1,4 @@
+Tests/UI/test_widget_css_consolidation.py::test_full_destination_tour_stays_under_the_parse_cache_cliff
+Tests/UI/test_css_parse_cache_modal_probe.py
+Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+Tests/Performance/test_boot_css_byte_budget.py

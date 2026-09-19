@@ -40,20 +40,15 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
 
     BINDINGS: ClassVar = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    # Styling lives in DEFAULT_CSS, not BUNDLED_CSS, on purpose: BUNDLED_CSS
-    # from every widget is merged into the generated boot bundle
-    # (css/widget_defaults_self.tcss), and both the boot-parsed byte budget
-    # and the bare-type rule census (Tests/Performance/
-    # test_boot_css_byte_budget.py, test_textual_css_fastpath.py) sit at zero
-    # headroom. DEFAULT_CSS parses when this dialog mounts — runtime, not
-    # boot — so the share dialog adds zero stylesheet-budget footprint.
-    DEFAULT_CSS = """
+    # TASK-32813 pays for consolidation through generated-comment removal
+    # and indexed subjects, retaining the existing boot performance limits.
+    BUNDLED_CSS = """
     ArtifactShareDialog { align: center middle; background: $background 70%; }
-    ArtifactShareDialog > VerticalScroll {
+    ArtifactShareDialog > VerticalScroll.artifact-share-dialog-verticalscroll {
         width: 76; max-width: 96%; height: auto; max-height: 90%;
         background: $surface; border: solid $primary; padding: 1 2;
     }
-    ArtifactShareDialog Input, ArtifactShareDialog RadioSet, ArtifactShareDialog SelectionList {
+    ArtifactShareDialog Input.artifact-share-dialog-input, ArtifactShareDialog RadioSet, ArtifactShareDialog SelectionList {
         margin-bottom: 1;
     }
     ArtifactShareDialog #share-dialog-status { color: $warning; }
@@ -70,7 +65,7 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
         self._active_share_notice = active_share_notice
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with VerticalScroll(classes="artifact-share-dialog-verticalscroll"):
             yield Static("Share artifacts", markup=False)
             yield Static(
                 "Recipients browse a temporary web page and download only the "
@@ -79,9 +74,15 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
                 markup=False,
             )
             if self._active_share_notice:
-                yield Static(self._active_share_notice, markup=False, id="share-active-note")
+                yield Static(
+                    self._active_share_notice, markup=False, id="share-active-note"
+                )
             yield Static("Share name (page title)", markup=False)
-            yield Input(placeholder="Shared artifacts", id="share-name")
+            yield Input(
+                placeholder="Shared artifacts",
+                id="share-name",
+                classes="artifact-share-dialog-input",
+            )
             yield Static("Artifacts", markup=False)
             yield SelectionList(
                 *(
@@ -94,15 +95,36 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
                 ),
                 id="share-artifact-list",
             )
-            yield Checkbox("Require a password (single shared login)", False, id="share-auth-toggle")
-            yield Input(placeholder="Username", id="share-username")
-            yield Input(placeholder="Password", password=True, id="share-password")
+            yield Checkbox(
+                "Require a password (single shared login)",
+                False,
+                id="share-auth-toggle",
+            )
+            yield Input(
+                placeholder="Username",
+                id="share-username",
+                classes="artifact-share-dialog-input",
+            )
+            yield Input(
+                placeholder="Password",
+                password=True,
+                id="share-password",
+                classes="artifact-share-dialog-input",
+            )
             yield Static("Who can reach it", markup=False)
             with RadioSet(id="share-bind"):
-                yield RadioButton("This computer only (localhost)", value=True, id="share-bind-loopback")
+                yield RadioButton(
+                    "This computer only (localhost)",
+                    value=True,
+                    id="share-bind-loopback",
+                )
                 yield RadioButton("Local network (all interfaces)", id="share-bind-lan")
             yield Static("Port (blank = pick automatically)", markup=False)
-            yield Input(placeholder="auto", id="share-port")
+            yield Input(
+                placeholder="auto",
+                id="share-port",
+                classes="artifact-share-dialog-input",
+            )
             yield Static(
                 "Sharing without a password on the local network exposes these "
                 f"artifacts to everyone on that network. Type '{_CONFIRM_PHRASE}' "
@@ -110,7 +132,11 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
                 markup=False,
                 id="share-confirm-label",
             )
-            yield Input(placeholder=_CONFIRM_PHRASE, id="share-confirm")
+            yield Input(
+                placeholder=_CONFIRM_PHRASE,
+                id="share-confirm",
+                classes="artifact-share-dialog-input",
+            )
             yield Static("", markup=False, id="share-dialog-status")
             with Horizontal():
                 yield Button("Start sharing", id="share-start", variant="primary")
@@ -122,9 +148,12 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
 
     def _selected_records(self) -> list[dict[str, Any]]:
         selected_ids = {
-            str(value) for value in self.query_one("#share-artifact-list", SelectionList).selected
+            str(value)
+            for value in self.query_one("#share-artifact-list", SelectionList).selected
         }
-        return [record for record in self._records if str(record.get("id")) in selected_ids]
+        return [
+            record for record in self._records if str(record.get("id")) in selected_ids
+        ]
 
     def _bind_choice(self) -> str:
         return (
@@ -185,7 +214,9 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
         username = self.query_one("#share-username", Input).value.strip()
         password = self.query_one("#share-password", Input).value
         if self._auth_enabled() and (not username or not password):
-            self._status("Enter both a username and a password, or disable the password.")
+            self._status(
+                "Enter both a username and a password, or disable the password."
+            )
             return
         # Qodo #14: Basic auth splits on the first ':', so a colon username
         # can never authenticate; refuse it here with actionable copy.
@@ -205,7 +236,9 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
             return
         port = self._port_value()
         if port < 0:
-            self._status("Port must be a number between 1 and 65535, or blank for automatic.")
+            self._status(
+                "Port must be a number between 1 and 65535, or blank for automatic."
+            )
             return
         if self._bind_choice() == "0.0.0.0" and not self._auth_enabled():
             if self.query_one("#share-confirm", Input).value.strip() != _CONFIRM_PHRASE:

@@ -132,10 +132,17 @@ async def test_qwencloud_api_mode_selector_visibility_options_and_default():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "query",
-    ("API mode", "api_settings.<provider>.api_mode", "mode"),
+    ("query", "focus_id"),
+    (
+        ("API mode", "settings-provider-api-mode"),
+        ("api_settings.<provider>.api_mode", "settings-provider-api-mode"),
+        # A category title match (Models) takes priority over a field match.
+        ("mode", "settings-category-providers-models"),
+    ),
 )
-async def test_qwencloud_api_mode_field_search_enter_focuses_selector(query):
+async def test_qwencloud_api_mode_search_respects_category_and_field_priority(
+    query, focus_id
+):
     app = _qwencloud_app()
     host = DestinationHarness(app, "settings")
 
@@ -150,7 +157,7 @@ async def test_qwencloud_api_mode_field_search_enter_focuses_selector(query):
         screen = _active_destination_screen(host)
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
         assert host.focused is not None
-        assert host.focused.id == "settings-provider-api-mode"
+        assert host.focused.id == focus_id
         assert screen.query_one("#settings-provider-api-mode", Select).disabled is False
 
 
@@ -875,12 +882,12 @@ async def test_malformed_qwencloud_table_selection_test_and_save_stay_blocked(
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["provider_api_mode:qwencloud"] == "responses"
 
-        await pilot.click("#settings-test-provider")
+        await pilot.press("escape", "t")
         assert "Invalid provider settings" in str(
             screen.query_one("#settings-provider-test-result", Static).content
         )
 
-        await pilot.click("#settings-save-category")
+        await pilot.press("escape", "s")
         await pilot.pause()
 
         assert atomic_writes == []

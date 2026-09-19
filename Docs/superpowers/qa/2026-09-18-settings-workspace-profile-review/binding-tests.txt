@@ -1,0 +1,15 @@
+................................                                         [100%]
+============================= slowest 25 durations =============================
+1.58s call     Tests/Tool_Packs/test_binding_guard.py::test_stale_commit_attempt_consumes_the_one_use_token
+1.51s call     Tests/Tool_Packs/test_binding_guard.py::test_binding_holds_lifecycle_serialization_through_sqlite_commit
+1.31s call     Tests/Tool_Packs/test_binding_guard.py::test_confirmation_is_bound_to_every_review_axis[policy]
+1.25s call     Tests/Tool_Packs/test_binding_guard.py::test_replace_of_existing_local_defaults_accepts_exact_imported_review
+1.19s call     Tests/Tool_Packs/test_binding_guard.py::test_direct_set_requires_confirmation_and_confirmed_token_binds_once
+1.12s call     Tests/Tool_Packs/test_binding_guard.py::test_known_binding_survives_marker_clear_failure_and_prompts_again
+1.10s call     Tests/Tool_Packs/test_binding_guard.py::test_confirmation_is_bound_to_every_review_axis[action]
+1.10s call     Tests/Tool_Packs/test_binding_guard.py::test_memory_and_tool_profile_acknowledgements_are_independent[True-True-True]
+1.07s call     Tests/Tool_Packs/test_binding_guard.py::test_workspace_race_consumes_the_one_use_token
+1.00s call     Tests/Tool_Packs/test_binding_guard.py::test_inline_create_requires_a_token_before_any_workspace_row_is_written
+
+(15 durations < 1s hidden.)
+32 passed, 28 deselected in 36.76s

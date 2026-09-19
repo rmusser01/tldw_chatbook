@@ -22,7 +22,7 @@ folders ([Notes](notes.md)) and Prompt collections
 > now settled (task-32057 AC#1, 2026-09-11): the feature is called
 > **Collections** in the rail and on the canvas, and **Quick Capture** is
 > the name of one action on it — the button that saves a URL — not of the
-> screen. The local Collections service stays **read-only**: there is no
+> screen. The legacy local Collections service stays **read-only**: there is no
 > schema migration, no membership model and no "Add to collection"
 > affordance anywhere in the app.
 
@@ -47,7 +47,10 @@ number. At narrow rail widths the row abbreviates to **Captures (N)**.
 
 Selecting the row mounts six scope sub-rows underneath it — **All
 Captures**, **Saved**, **Reading**, **Read**, **Archived**,
-**Favorites** — plus one row per saved search. Those sub-rows are part of
+**Favorites** — plus up to 20 saved searches at a time. **More searches…**
+and **Previous** move between saved-search pages without changing the active
+capture scope. A failed load retains the last good rows and offers **Retry
+searches**. Those sub-rows are part of
 the Collections destination; selecting the row does not change any other
 rail section's open/collapsed state, and nothing about visiting it is
 written to `[library.rail_state]`.
@@ -66,11 +69,13 @@ right.
   when the active authority cannot capture.
 - **Filters** — a disclosure holding **Domain**, **Tags, comma separated**,
   **From date (YYYY-MM-DD)**, **To date (YYYY-MM-DD)**, then **Apply
-  filters** and **Clear**.
+  filters** and **Clear** on separate rows. At compact sizes the expanded
+  form scrolls vertically to keep both actions reachable.
 - **Sort: saved desc** — one button that cycles the sort: saved desc,
   saved asc, updated desc, updated asc, title asc, title desc, relevance.
 - **Filter captures** — free-text search over the current scope. Press
-  Enter to apply.
+  Enter to apply. Empty the field and press Enter to remove text search;
+  relevance sorting returns to saved desc, while other sort choices remain.
 - **Capture rows**, two lines each: `▸ <title>` on the first, then
   `<domain> · <date> · <Status>` on the second, with `Favorite` and
   `Extraction failed` / `Extraction interrupted` appended when they apply.
@@ -80,8 +85,7 @@ right.
 - **Empty state**, one of three sentences — never more than one, and never
   the wrong one. Each names the control that narrowed the list and the way
   back out of it.
-  - A filter is set (search text, domain, tags or a date bound — the things
-    **Clear** undoes): "No captures match these filters · clear them to see
+  - A filter is set (search text, domain, tags or a date bound): "No captures match these filters · clear them to see
     everything saved."
   - A rail scope is selected (Saved, Reading, Read, Archived, Favorites, or a
     saved search carrying its own status / favourite predicate): "Nothing in
@@ -108,8 +112,14 @@ right.
   while a page is stale — the controls stay, disabled, reading "No current
   next page is available.".
 
-**Reader (right):** empty until you select a capture ("Select a capture to
-read it here."), then:
+**Reader (right):**
+
+Action and mode bars stack when their complete labels cannot fit across Work.
+They return to horizontal rows as the pane expands. Tab and Shift+Tab follow
+the same control order in either layout; Enter activates the focused control.
+The reader scrolls vertically to keep focused controls reachable.
+
+It is empty until you select a capture ("Select a capture to read it here."), then:
 
 - **`<Local|Server> Collections · <domain>`**, the capture title, and a
   byline: author or publication date, estimated `N min read`, the status,
@@ -130,17 +140,35 @@ read it here."), then:
 - **More** reveals the lower-frequency actions: **Summarize**, **Listen**,
   **Save Offline Copy**, **Retry Extraction**, **Delete Permanently…**.
 
+### Keeping annotations while you read
+
+Unsaved **Capture note**, highlight quote and highlight note fields stay with
+that capture while you open **More**, change modes, refresh the reader or visit
+another capture and return. These drafts last only for the current session and
+are cleared when the capture authority changes. Use **Save capture note** or
+**Add highlight** to persist them. Highlights shown in Work belong to the loaded
+capture, including after you switch captures while a refresh is pending.
+
+After **Add highlight** succeeds, the submitted fields clear. If you typed a
+newer draft while the save was pending, it stays. A later refresh failure says
+that the highlight was saved but the list could not refresh; reopen
+**Highlights** to retry the list without adding the same quote again.
+
+Saving a capture note keeps its Save action focused and visible, scrolling Work
+when needed. At narrow sizes, use the pane grips and vertical scrolling to reach
+controls outside the current viewport.
+
 ## Features & controls
 
 | Control | What it does |
 |---|---|
 | Quick Capture | Opens the save form: a URL box, optional Title, optional comma-separated Tags, and a note box, then **Save capture** / **Cancel**. |
-| Filters / Apply filters / Clear | Narrow the scope by domain, tags, and a saved-date range. Applying always returns to page 1. |
+| Filters / Apply filters / Clear | Apply domain, tags and a saved-date range. Clear removes those fields and text search while keeping the selected scope. Both return to page 1; Clear resets relevance sorting to saved desc. |
 | Sort: … | Cycles the sort order in place; the label always names the order in force. |
 | Filter captures | Free-text search inside the current scope. |
-| Scope sub-rows | All Captures, Saved, Reading, Read, Archived, Favorites, then your saved searches. The selected scope carries the count. |
+| Scope sub-rows | All Captures, Saved, Reading, Read, Archived, Favorites, then your saved searches in 20-row pages. The selected scope carries the capture count. |
 | Previous / Next | Move by exact 20-capture pages. Drawn only when a second page exists. |
-| Mark Read / Favorite / Move to Archive | Status actions on the loaded capture. Archiving leaves a `Moved to Archive · was <status>.` receipt with **Undo**. |
+| Mark Read / Favorite / Move to Archive | Status actions on the loaded capture. Archiving leaves a `Moved to Archive · was <status>.` receipt with **Undo**. An already archived capture shows disabled **Archived**, preserving the original Undo status. |
 | Open Original | Opens the capture's original URL in your browser. |
 | Read / Highlights / Notes / Info | Reader modes over the one loaded capture. |
 | Summarize / Listen | Produce a summary or an audio rendering, when the active authority supports them. |
@@ -218,6 +246,17 @@ and **Escape** returns focus to the rail, as on every Library canvas;
 - **A failed load names its reason.** "Captures could not be loaded:
   \<reason\>." with **Retry**; the reader's own equivalent is "Capture
   could not be loaded: \<reason\>." with its own **Retry**.
+- **A status change can advance the reader.** If Archive or Mark Read removes
+  a capture from the active scope, Work loads the next selected capture.
+  **Undo** remains beside the Archive receipt. If Undo reports that the archived
+  capture changed, choose **Archived** in the Library rail to review it; refreshing
+  the current reader does not make an old Undo receipt valid again.
+- **A failed action stays visible.** The reader names the failure and offers
+  **Refresh reader** to review the selected capture's current state. A revision
+  conflict means the action was not applied.
+- **Clear removes text search and form filters together.** The selected status
+  or Favorites scope remains; choose **All Captures** to remove that narrowing.
+  If the sort was relevance, Clear returns it to saved desc.
 - **Switching captures keeps the old one readable.** While a newly selected
   capture's detail is arriving, the reader says `Loading "<new>"… showing
   "<old>" until ready.` rather than blanking.
@@ -280,3 +319,21 @@ which the first cut mis-read as a never-used profile. Bot review round: it no
 longer speaks at all before a page has come back, it describes the page on
 screen rather than the scope being fetched, and a saved search's
 `favorite=False` predicate counts as a scope.)*
+
+*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32658):
+annotation continuity, capture-specific highlights, Archive successor, visible
+Undo and compact Save focus. Automated journeys cover 170×48 and 80×24 in both
+themes; native confirmation covers wide dark and compact light. Unsaved drafts
+are session-only. TASK-32659 tracks the remaining browse-control findings.*
+
+*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32659): Clear
+resets all search/form predicates, saved searches page with retry and focus
+continuity, and repeated Archive preserves the original Undo. Automated
+journeys cover both themes at 170×48 and 80×24; native checks use wide dark and
+compact light. The wider compact reader toolbar review remains pending.*
+
+*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32662):
+compact action/mode bars retain readable keyboard focus with Items open;
+resizing preserves mounted note drafts. Empty or whitespace-only text search
+recovers from relevance sorting. Native checks cover 170×48 dark and 80×24
+light with forward/reverse Tab and Enter; no provider request was made.*

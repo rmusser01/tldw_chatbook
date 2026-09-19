@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │  Archived workspace. Restore to    │  │
+│     Privacy & Security       │  │  │ │  list it again; your active        │  │
+│     Network                  │  │  │ │  workspace stays unchanged. Edit   │  │
+│     My Profile               │  │  │ │  the name below if it is already   │  │
+│  Troubleshooting           ▇ │  │  │ │  in use.                           │  │
+│     Diagnostics (view)       │  │  │ │  Restore as                        │  │
+│     About (view)             │  │  │ │ │ [red]Review 2[/red]              │  │
+│     Agents                   │  │  │ │  Restore workspace                 │  │
+│  Expert                      │  │  │ │  A workspace named [red]Review     │  │
+│     Internal Prompts         │  │  │ │  2[/red] already exists.           │  │
+│     Advanced Config          │  │  │ └────────────────────────────────────┘  │
+│   Domain Defaults ▸ (11)     │  │  │                                         │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

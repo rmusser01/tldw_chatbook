@@ -1,0 +1,7 @@
+{
+  "reviewer": "/root/ingest_resize_review",
+  "mode": "read-only independent review",
+  "actionable_findings": [],
+  "conclusion": "The route guard preserves geometry updates while preventing Notes focus replay. Deferred reveal uses current focus and respects movement outside Import. Twelve new cases exercise retained identity, draft, selection, painted controls and no data work.",
+  "limits": "Reviewer inspected code and tests and ran git diff --check; root performed tests and native qualification."
+}

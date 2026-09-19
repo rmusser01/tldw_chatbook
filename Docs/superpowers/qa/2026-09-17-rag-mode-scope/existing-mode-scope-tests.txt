@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+1.76s call     Tests/UI/test_library_shell.py::test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_index_alignment
+1.44s call     Tests/UI/test_library_shell.py::test_library_shell_search_mode_toggle_mid_flight_discards_wrong_mode_outcome
+1.33s call     Tests/UI/test_library_shell.py::test_library_shell_history_manual_expand_survives_scope_toggle_recompose
+1.20s call     Tests/UI/test_library_shell.py::test_library_shell_search_mode_toggle_cycles_mode
+1.04s call     Tests/UI/test_library_shell.py::test_library_shell_scope_toggle_deselect_sends_only_selected_types
+
+(10 durations < 1s hidden.)
+5 passed in 8.72s

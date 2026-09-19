@@ -35,7 +35,7 @@ from tldw_chatbook.UI.Widgets.trajectory_timeline import (
     TimelineModel,
     TrajectoryTimeline,
 )
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 # ---------------------------------------------------------------------------
 # Pure-model fixtures
@@ -390,6 +390,9 @@ def untimed_snapshot():
 
 
 class TimelineApp(ConsolidatedCSSApp):
+    # State sizing now uses shared app-tier token classes (ADR-161 Task 12).
+    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+
     def __init__(self) -> None:
         super().__init__()
         self.captured: list[object] = []

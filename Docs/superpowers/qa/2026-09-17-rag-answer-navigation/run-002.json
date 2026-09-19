@@ -1,0 +1,166 @@
+{
+  "pid": 47829,
+  "runner_sha256": "9e543bccc57e8f1d57d9cb293b3be1939ae5d208e2c8ddc9b8c1ab3ecfcfac78",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "uncited",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 96
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 57
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 18
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 96
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "unverified",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 96
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 57
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 18
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 96
+        }
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "citation_status": "validated",
+      "answer_lines": 80,
+      "complete_answer_and_feedback_painted_both_directions": true,
+      "query_scope_answer_preserved": true,
+      "no_extra_retrieval_or_provider_calls": true,
+      "evidence_action_reachable": "library-rag-open-result-0",
+      "tab_stops": [
+        "library-rag-run-query",
+        "library-rag-scope-toggle-media",
+        "library-rag-result-card-0"
+      ],
+      "scroll_trace": [
+        {
+          "key": "pageup",
+          "scroll_y": 94
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 55
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 16
+        },
+        {
+          "key": "pageup",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 0
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 39
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 78
+        },
+        {
+          "key": "pagedown",
+          "scroll_y": 94
+        }
+      ]
+    }
+  ],
+  "waiting_for": "query ready",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-answer-navigation/native_check.py\", line 224, in journey\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-answer-navigation/native_check.py\", line 88, in wait_for\n    raise AssertionError(label)\nAssertionError: query ready\n",
+  "app_run_returned": true
+}

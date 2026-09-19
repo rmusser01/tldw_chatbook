@@ -1,0 +1,25 @@
+{
+  "baseline": "69060a097c",
+  "test": "test_gguf_picker_result_preserves_import_context[success-row-size0-textual-dark]",
+  "pre_fix_failure": "The successful picker result replaced the mounted LibraryIngestCanvas.",
+  "post_fix_result": "All 16 new journeys pass.",
+  "fixture_corrections": [
+    "Tab through live controls instead of retaining a queue button across a pending rebuild.",
+    "Establish the Input selection after tabbing; ordinary focus legitimately selects the text.",
+    "Assert the visible substring of long horizontally scrolled paths, not the full path."
+  ],
+  "native_attempts": [
+    {
+      "run": "run-001",
+      "result": "Five steps passed; restaging audio retained a detached path field after clearing it removed its option group. Runner now requeries the mounted field."
+    },
+    {
+      "run": "run-002",
+      "result": "Nine steps passed; final screenshot assertion expected the entire long title to fit in a compact Input. Full value/selection retention had passed; visible title suffix now qualifies the screenshot."
+    },
+    {
+      "run": "run-003",
+      "result": "Nine steps passed; temporary Toasts overlapped the compact path field during its paint assertion. Runner now waits for Toasts to clear."
+    }
+  ]
+}

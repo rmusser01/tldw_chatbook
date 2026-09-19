@@ -113,7 +113,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: at open time, precisely so this ratchet does not grow for a modal used
 #: a handful of times per session. Snapshot refreshed via
 #: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
-MAX_TLDW_MODULES_AT_UI_READY = 973
+#: 973 -> 975 (2026-09-12, PR #2651, ADR-097 exception ledger): agent
+#: provider routing adds exactly two UI-ready residents --
+#: ``Agents.agent_routing`` and ``Chat.sampling_params`` -- pure,
+#: dependency-free modules (375 / ~150 lines) riding the already-resident
+#: AgentService import path. Deferring them would mean lazy-import surgery
+#: across four resident core modules (agent_service, agent_models,
+#: AgentRuns_DB, console_session_settings) for a microsecond-scale import
+#: cost; the count grows for intentional feature surface, not drift.
+#: Owner sign-off recorded in PR #2651. Snapshot refreshed via
+#: ``scripts/update_boot_budget_snapshots.py --only ui-ready``.
+#: 975 -> 1022 (2026-09-14, PR #2642, TASK-32562): owner-approved ADR-097
+#: exception for backup startup admission/activation and registered storage
+#: participants. Same-probe dev/current measurements: 975/1022 modules.
+#: Preserve existing headroom; timing and absent-family guards are unchanged.
+MAX_TLDW_MODULES_AT_UI_READY = 1022
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
@@ -129,6 +143,11 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Serving metadata discovery is first-use work; pure capacity defaults are not.
+    "tldw_chatbook.Chat.console_context_window",
+    # Parsing imported notes and assigning settings controls are first-use work.
+    "tldw_chatbook.Notes.note_import_parsers",
+    "tldw_chatbook.Widgets.select_values",
     # TASK-32507: run-hook commands and summaries are lifecycle-event work.
     "tldw_chatbook.Agents.run_hooks",
     # Speculative voice resources are first-voice work, never first paint.

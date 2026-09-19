@@ -1,15 +1,13 @@
-"""Side-effect-free provider readiness helpers for Chat."""
+"""Provider readiness resolution and nonblocking subscription snapshots for UI."""
 
 from __future__ import annotations
 
 import os
-
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Literal
 from unicodedata import category as unicode_category
-
-from .Chat_Deps import ChatConfigurationError
 
 # "Valid provider API key" has exactly ONE definition in this codebase --
 # PR-T2 Task 7 -- shared with `config.py`'s `_normalize_legacy_provider_
@@ -38,6 +36,7 @@ from ..config import (
 from ..config import (
     resolve_provider_api_key as _valid_api_key,
 )
+from .Chat_Deps import ChatConfigurationError
 from .provider_test_evidence import (
     ConfigurationFacet,
     ConfigurationIssueCode,
@@ -136,6 +135,7 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Ready (Claude subscription)": ("configured", None),
     "Claude subscription credential is expired": ("incomplete", "credential_missing"),
     "No Claude subscription credential found": ("incomplete", "credential_missing"),
+    "Checking Claude subscription credential": ("incomplete", "credential_missing"),
     "Select a provider": ("incomplete", "provider_missing"),
     "Missing API key": ("incomplete", "credential_missing"),
     "Invalid provider settings": ("incomplete", "invalid_settings"),
@@ -271,10 +271,7 @@ class ProviderReadiness:
                 max_chars=_MAX_SOURCE_CHARS,
             )
             if source.startswith("env:"):
-                if (
-                    self.env_var is None
-                    or source != f"env:{self.env_var}"
-                ):
+                if self.env_var is None or source != f"env:{self.env_var}":
                     raise ValueError("Environment credential source is inconsistent.")
             elif source != f"config:api_settings.{self.provider_key}.api_key":
                 raise ValueError("Provider credential source is invalid.")
@@ -288,6 +285,18 @@ class ProviderReadiness:
     def configuration_issue(self) -> ConfigurationIssueCode | None:
         """Return a bounded explanation for an incomplete legacy state."""
         return self._configuration_issue
+
+    @property
+    def subscription_status(
+        self,
+    ) -> Literal["pending", "ready", "expired", "missing"] | None:
+        """Expose bounded subscription state for UI copy without credential data."""
+        return {
+            "Checking Claude subscription credential": "pending",
+            "Claude subscription credential is expired": "expired",
+            "No Claude subscription credential found": "missing",
+            "Ready (Claude subscription)": "ready",
+        }.get(self.reason)
 
     def snapshot(
         self,
@@ -488,11 +497,13 @@ def resolve_provider_credential(
         return None, None, env_var
     return env_key, f"env:{env_var}", env_var
 
+
 def get_provider_readiness(
     provider: str | None,
     app_config: Mapping[str, object],
     *,
     environ: Mapping[str, str] | None = None,
+    background_credentials: bool = False,
 ) -> ProviderReadiness:
     """Resolve whether the selected provider has enough credentials to send.
 
@@ -500,6 +511,8 @@ def get_provider_readiness(
         provider: Display provider name from the Chat selector.
         app_config: Loaded app configuration.
         environ: Environment mapping, injectable for deterministic tests.
+        background_credentials: Use a nonblocking subscription snapshot for UI
+            checks. Send-time callers keep synchronous credential resolution.
 
     Returns:
         Readiness state. If a key is found, it is returned for call wiring but
@@ -533,18 +546,21 @@ def get_provider_readiness(
     if provider_key == "anthropic":
         from tldw_chatbook.LLM_Calls.anthropic_subscription import (
             anthropic_auth_source,
-            read_claude_code_credential,
+            subscription_credential_status,
         )
 
     # TASK-26022 (AC#5): explicit subscription mode for Anthropic. Reported as
     # its own source so subscription vs API key is visible at a glance; the
     # token never rides the record. Missing/expired blocks with the
     # refresh-in-Claude-Code copy -- never a silent API-key fallback.
-    if provider_key == "anthropic" and anthropic_auth_source(
-        provider_settings
-    ) == "claude_subscription":
-        _sub = read_claude_code_credential()
-        if _sub is not None and not _sub.expired:
+    if (
+        provider_key == "anthropic"
+        and anthropic_auth_source(provider_settings) == "claude_subscription"
+    ):
+        subscription_status = subscription_credential_status(
+            background=background_credentials
+        )
+        if subscription_status == "ready":
             return ProviderReadiness(
                 provider=provider_name,
                 provider_key=provider_key,
@@ -564,14 +580,18 @@ def get_provider_readiness(
             api_key=None,
             api_key_source=None,
             env_var=None,
-            reason=(
-                "Claude subscription credential is expired"
-                if _sub is not None
-                else "No Claude subscription credential found"
-            ),
+            reason={
+                "pending": "Checking Claude subscription credential",
+                "expired": "Claude subscription credential is expired",
+                "missing": "No Claude subscription credential found",
+            }[subscription_status],
             recovery=(
-                "Refresh it in the tool that owns it (log in with Claude Code), "
-                "or set [api_settings.anthropic] auth_source back to \"api_key\"."
+                "Credential check is running in the background."
+                if subscription_status == "pending"
+                else (
+                    "Refresh it in the tool that owns it (log in with Claude Code), "
+                    'or set [api_settings.anthropic] auth_source back to "api_key".'
+                )
             ),
         )
 

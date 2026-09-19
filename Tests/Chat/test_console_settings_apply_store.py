@@ -11,8 +11,8 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
     ConsoleSettingsComponent,
-    ConsoleSettingsPolicyFailureLabel,
     ConsoleSettingsPersistenceFailure,
+    ConsoleSettingsPolicyFailureLabel,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
@@ -35,8 +35,8 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
     ConsoleSettingsDraftState,
-    ConsoleSettingsSurface,
     ConsoleSettingsSubmission,
+    ConsoleSettingsSurface,
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -958,18 +958,30 @@ async def test_generation_failure_captures_only_exact_safe_snapshot() -> None:
     assert secret_endpoint not in repr(failure)
 
 
-def test_unsaved_apply_first_persist_preserves_existing_owner_paths() -> None:
+@pytest.mark.parametrize("assistant_kind", ["character", "persona"])
+def test_unsaved_apply_first_persist_preserves_existing_owner_paths(
+    assistant_kind: str,
+) -> None:
     persistence = _AtomicSettingsPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.create_session(
         settings=replace(
             _settings("old", system_prompt="Owned system"),
             pinned_prefill="Owned prefill",
-        )
+        ),
+        assistant_kind=assistant_kind,
+        assistant_id="owned-assistant",
+        character_name="Owned character" if assistant_kind == "character" else None,
+        assistant_name="Owned persona" if assistant_kind == "persona" else None,
+        persona_system_template=(
+            "Persona greeting for {user_name}" if assistant_kind == "persona" else None
+        ),
     )
     session.speech_preferences = ConsoleSpeechPreferences(auto_speak=True)
     session.user_display_name_override = "Ari"
-    session.character_system_template = "Hello {user_name}"
+    session.character_system_template = (
+        "Hello {user_name}" if assistant_kind == "character" else None
+    )
     commit = store.commit_console_settings_live(
         _submission(
             store,
@@ -988,6 +1000,9 @@ def test_unsaved_apply_first_persist_preserves_existing_owner_paths() -> None:
     assert conversation_id == persistence.first_persist_kwargs["conversation_id"]
     assert parse_console_generation_settings(metadata).snapshot.model == "model-b"
     assert session.generation_durable_snapshot.model == "model-b"
+    assert session.settings.system_prompt == "Owned system"
+    assert session.assistant_kind == assistant_kind
+    assert session.assistant_id == "owned-assistant"
     assert persistence.context_policy.compaction_mode is ContextCompactionMode.AUTOMATIC
     assert persistence.first_persist_kwargs["conversation_kwargs"][
         "speech_preferences"
@@ -999,8 +1014,17 @@ def test_unsaved_apply_first_persist_preserves_existing_owner_paths() -> None:
         {
             "conversation_id": conversation_id,
             "user_name_override": "Ari",
-            "character_system_template": "Hello {user_name}",
-            "character_name_snapshot": None,
+            "character_system_template": (
+                "Hello {user_name}" if assistant_kind == "character" else None
+            ),
+            "character_name_snapshot": (
+                "Owned character" if assistant_kind == "character" else None
+            ),
+            "persona_system_template": (
+                "Persona greeting for {user_name}"
+                if assistant_kind == "persona"
+                else None
+            ),
         }
     ]
     assert persistence.pinned_prefill_calls == [

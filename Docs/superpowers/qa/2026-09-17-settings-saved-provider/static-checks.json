@@ -1,0 +1,144 @@
+{
+  "lint_baseline": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "baseline_count": 118,
+      "current_count": 118,
+      "new_diagnostics": []
+    },
+    "Tests/UI/test_console_session_settings.py": {
+      "baseline_count": 6,
+      "current_count": 6,
+      "new_diagnostics": []
+    },
+    "Tests/UI/test_settings_qwencloud_api_mode.py": {
+      "baseline_count": 0,
+      "current_count": 0,
+      "new_diagnostics": []
+    }
+  },
+  "changed_range_format": [
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "3934-3934",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "3943-3971",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "10947-10956",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "10994-10996",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "11095-11103",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "11133-11137",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "11888-11888",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "11892-11893",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "range": "11900-11900",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "Tests/UI/test_console_session_settings.py",
+      "range": "52-52",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "Tests/UI/test_console_session_settings.py",
+      "range": "231-232",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "Tests/UI/test_settings_qwencloud_api_mode.py",
+      "range": "135-141",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "Tests/UI/test_settings_qwencloud_api_mode.py",
+      "range": "143-145",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "Tests/UI/test_settings_qwencloud_api_mode.py",
+      "range": "160-160",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "Tests/UI/test_settings_qwencloud_api_mode.py",
+      "range": "885-885",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "file": "Tests/UI/test_settings_qwencloud_api_mode.py",
+      "range": "890-890",
+      "exit_code": 0,
+      "output": "1 file already formatted\n"
+    }
+  ],
+  "new_files_check": {
+    "exit_code": 0,
+    "output": "All checks passed!\n"
+  },
+  "new_files_format": {
+    "exit_code": 0,
+    "output": "2 files already formatted\n"
+  },
+  "syntax_compile": {
+    "files": [
+      "tldw_chatbook/UI/Screens/settings_screen.py",
+      "Tests/UI/test_console_session_settings.py",
+      "Tests/UI/test_settings_qwencloud_api_mode.py",
+      "Tests/UI/test_settings_saved_provider_return.py",
+      "Docs/superpowers/qa/2026-09-17-settings-saved-provider/native_check.py"
+    ],
+    "passed": true
+  },
+  "diff_check": {
+    "exit_code": 0,
+    "output": ""
+  },
+  "qa_artifact_integrity": "JSON parsed; SVG XML, stored capture hashes and all QA README relative links verified.",
+  "final_diff_check": {
+    "exit_code": 0,
+    "output": ""
+  }
+}

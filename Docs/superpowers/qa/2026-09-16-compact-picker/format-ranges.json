@@ -1,0 +1,17 @@
+[
+  {
+    "path": "Tests/UI/test_library_ingest_directory_journeys.py",
+    "formatted_changed_ranges": 3,
+    "lines": 226
+  },
+  {
+    "path": "tldw_chatbook/Third_Party/textual_fspicker/base_dialog.py",
+    "formatted_changed_ranges": 1,
+    "lines": 1089
+  },
+  {
+    "path": "tldw_chatbook/Third_Party/textual_fspicker/select_directory.py",
+    "formatted_changed_ranges": 3,
+    "lines": 155
+  }
+]

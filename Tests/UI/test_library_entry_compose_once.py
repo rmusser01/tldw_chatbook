@@ -75,6 +75,7 @@ from Tests.UI.background_signals import (
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
+    LibraryProductionCSSHarness,
     _FakeSkillsScopeService,
     _active_library_screen,
     _build_test_app as _build_library_test_app,
@@ -557,19 +558,19 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner(
 
 @pytest.mark.asyncio
 async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_route_replace():
-    """task-32063: the graduation notice is a toast, and only a toast.
+    """task-32063 made the graduation notice a toast and only a toast; task-32555
+    AC#2 then dropped the toast as well (the rail growing is the evidence).
 
     It used to also paint a durable `#library-lifecycle-status` line, and this
     test pinned that the line survived a reconcile and a same-route replace.
-    The line is gone (two surfaces for one event); what has to hold now is
-    that neither recompose repeats the toast or resurrects a canvas line, and
-    that focus still survives both.
+    What has to hold now is that neither recompose raises a toast or resurrects
+    a canvas line, and that focus still survives both.
     """
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
     announcements: list = []
     app.notify = lambda message, **kwargs: announcements.append(message)
-    host = LibraryHarness(app)
+    host = LibraryProductionCSSHarness(app)
 
     def graduation_toasts() -> list:
         return [
@@ -592,7 +593,6 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         # rather than assigning the end state.
         screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         focus = await _wait_for_selector(screen, pilot, ".library-notes-row")
@@ -601,20 +601,18 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
 
         generation = screen._library_snapshot_state_generation
         route_key = screen._library_entry_route_key()
         screen._library_entry_reconcile_dirty = True
         screen._library_entry_reconcile_pending = (generation, route_key)
-        reconciled = await screen._reconcile_library_entry_state(
-            generation, route_key
-        )
+        reconciled = await screen._reconcile_library_entry_state(generation, route_key)
         await pilot.pause()
 
         assert reconciled is LibraryEntryReconcileResult.APPLIED
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -629,7 +627,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         await pilot.pause()
 
         assert child_replaced is LibraryEntryReconcileResult.APPLIED
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
@@ -642,14 +640,14 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         await pilot.pause()
 
         assert replaced is True
-        assert len(graduation_toasts()) == 1
+        assert len(graduation_toasts()) == 0
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ("reconcile", "replace"))
+@pytest.mark.parametrize("operation", ("reconcile", "replace", "route_swap"))
 async def test_library_notes_recompose_does_not_steal_newer_focus(
     monkeypatch, operation
 ):
@@ -668,7 +666,6 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
         # rather than assigning the end state.
         screen._set_library_lifecycle(LibraryLifecycle.STARTER)
         screen._set_library_lifecycle(LibraryLifecycle.GRADUATED)
-        screen._apply_graduation_notice(LibraryLifecycle.STARTER)
         screen._sync_library_rail_lifecycle_presentation()
         await pilot.pause()
         row = await _wait_for_selector(screen, pilot, ".library-notes-row")
@@ -694,7 +691,7 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
                 operation_task = asyncio.create_task(
                     screen._reconcile_library_entry_state(generation, route_key)
                 )
-            else:
+            elif operation == "replace":
                 replacement = screen._build_library_entry_active_child()
                 assert isinstance(replacement, LibraryNotesCanvas)
                 operation_task = asyncio.create_task(
@@ -703,6 +700,14 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
                         generation=generation,
                         route_key=route_key,
                     )
+                )
+            else:
+                shell = library_screen_module.build_library_shell_state(
+                    screen._build_library_shell_input(),
+                    selected_row_id=screen._library_selected_row_id,
+                )
+                operation_task = asyncio.create_task(
+                    screen._replace_library_browse_canvas(shell)
                 )
             await _wait_for_condition(
                 pilot,
@@ -713,7 +718,11 @@ async def test_library_notes_recompose_does_not_steal_newer_focus(
             newer_target.focus()
             release_recompose.set()
 
-            assert await operation_task is LibraryEntryReconcileResult.APPLIED
+            result = await operation_task
+            if operation == "route_swap":
+                assert result is True
+            else:
+                assert result is LibraryEntryReconcileResult.APPLIED
             await pilot.pause()
             await pilot.pause()
 
@@ -2130,7 +2139,7 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
     _seed_conversations(app, conversations)
     service = app.chat_conversation_scope_service
     original_locate = service.locate_conversation_page
-    host = LibraryHarness(app)
+    host = LibraryProductionCSSHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
@@ -2161,8 +2170,9 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         release = asyncio.Event()
 
         async def gated_locator(conversation_id: str, **kwargs):
-            started.set()
-            await release.wait()
+            if conversation_id == "chat-pending":
+                started.set()
+                await release.wait()
             return await original_locate(conversation_id, **kwargs)
 
         monkeypatch.setattr(
@@ -2179,19 +2189,24 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
             what="pending conversation point fetch",
         )
 
-        screen._selected_conversation_id = "chat-1"
+        # A new admitted navigation request supersedes the delayed locator.
+        # Old list rows are deliberately disabled during that lookup.
+        await screen._open_library_item_by_id("conversations", "chat-1")
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._selected_conversation_id == "chat-1"
         owner = screen._library_entry_canvas_owner()
         assert isinstance(owner, LibraryConversationsCanvas)
-        owner.sync_state(screen._build_library_conversations_state())
-        await pilot.pause()
         focus = next(
             row
             for row in screen.query(".library-conversation-row")
             if getattr(row, "conversation_id", "") == "chat-1"
         )
+        assert not focus.disabled
         focus.focus()
         await pilot.pause()
 
+        assert screen.focused is focus
         release.set()
         result = await await_background_task(
             task,

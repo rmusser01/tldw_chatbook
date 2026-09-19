@@ -1,0 +1,55 @@
+                                                                                                                                           ╭─────────────╮
+ ‹ 1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                           │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │ │ │  them, and Required continuation remains intact. Automatic follows reviewed templates; unknown     │ │  │  │  │                                   │
+│  category search             │  │  │ │ │  templates keep the server default. All available sends every compatible field, but the server     │ │  │  │  │ Selected category: Console        │
+│                              │  │  │ │ │  template can still omit older reasoning.                                                          │ │  │  │  │ Behavior                          │
+│  Core                        │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │▇ │  │  │ No unsaved changes                │
+│     Overview (view)          │  │  │ │ │ ▊  ▶ Override current Console model                                                              ▎ │ │  │  │  │  Guided edits: change a field     │
+│     Providers & Models       │  │  │ │ │ ▊                                                                                                ▎ │ │  │  │  │  first.                           │
+│     Web Search               │  │  │ │ │ ▊                                                                                                ▎ │ │  │  │  │  Save (s) — no changes            │
+│     Speech & TTS             │  │  │ │ │ ▊                                                                                                ▎ │ │  │  │  │  Revert (r) — no changes          │
+│  Interface                   │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │ Local-only: saves write your      │
+│     Appearance               │  │  │ │ │                                                                                                    │ │  │  │  │ config file.                      │
+│     Theme                    │  │  │ │ │  Conversation Auto: template checked on next send                                                  │ │  │  │  │  chunks over the threshold        │
+│     Splash Screen            │  │  │ │ │  Conversation context and memory ↓                                                                 │ │▃ │  │  │  become compact placeholders;     │
+│   > Console Behavior         │  │  │ │ │  Also in this category: rail presentation, paste handling, images, agent limits, selection side    │ │  │  │  │  typed text stays literal         │
+│  Data & Privacy              │  │  │ │ │  chat, and generation defaults.                                                                    │ │  │  │  │                                   │
+│     Storage                  │  │  │ │ │                                                                                                    │ │  │  │  │  Threshold: Minimum pasted        │
+│     Workspaces               │  │  │ │ │  Exchange capture                                                                                  │ │  │  │  │  chunk size before collapse       │
+│     Tool Profiles            │  │  │ │ │ ▐X▌ Capture future exchanges                                                                       │ │  │  │  │                                   │
+│     Privacy & Security       │  │  │ │ │ ▐X▌ Mask PII in future traces                                                                      │ │  │  │  │ Focused field guide               │
+│     Network                  │  │  │ │ │                         ┌────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  Purpose: Focus a Console         │
+│     My Profile               │  │  │ │ │ Trace viewer            │ Full                                                                 ▼ │ │ │  │  │  │  Behavior field for               │
+│  Troubleshooting             │  │  │ │ │                         └────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  setting-specific guidance.       │
+│     Diagnostics (view)       │  │  │ │ │ Capture, PII masking, and viewing are separate. PII masking is irreversible for provider-only      │ │  │  │  │                                   │
+│     About (view)             │  │  │ │ │ trace data but never rewrites the saved conversation. New traces reference saved messages instead  │ │  │  │  │  Consequences: No                 │
+│     Agents                   │  │  │ │ │ of copying the transcript. Safe and Full view the same trace; credentials stay blocked in both,    │ │  │  │  │  field-specific guidance is     ▃ │
+│  Expert                      │  │  │ │ │ and older trace formats remain readable.                                                           │ │  │  │  │  active right now.                │
+│     Internal Prompts         │  │  │ │ │  Apply exchange capture                                                                            │ │  │  │  │                                   │
+│     Advanced Config          │  │  │ │ │  Failed — Full capture was not activated                                                           │ │  │  │  │  Saved as: varies by field        │
+│   Domain Defaults ▸ (11)     │  │  │ │ │                                                                                                    │ │  │  │  │                                   │
+│                              │  │  │ │ │  Rail presentation                                                                                 │ │  │  │  │  Applies: varies by field         │
+│                              │  │  │ │ │ Rail layout scope                                                                                  │ │  │  │  │                                   │
+│                              │  │  │ │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │  │  │  │ Override rules                    │
+│                              │  │  │ │ │ ▊  Global                                                                                     ▼  ▎ │ │  │  │  │  Priority: active Console         │
+│                              │  │  │ │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │  │  │  │  session, then provider+model     │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │  profile, then these global       │
+│                              │  │  │ │ │ Global keeps one arrangement everywhere. Per workspace restores and keeps each workspace's saved   │ │  │  │  │  fallbacks                        │
+│                              │  │  │ │ │ arrangement.                                                                                       │ │  │  │  │                                   │
+│                              │  │  │ │ │ ▐X▌ Stack collapsed rail labels                                                                    │ │  │  │  │  Scope:  response fallbacks and   │
+│                              │  │  │ │ │ Saved style: Horizontal                                                                            │ │  │  │  │  paste display settings           │
+│                              │  │  │ │ │ Uses narrower 3-column handles by stacking upright letters. Direction glyphs are omitted.          │ │  │  │  │                                   │
+│                              │  │  │ │ │                                                                                                    │ │  │  │  │  Save: staged - press s to        │
+│                              │  │  │ │ │  Status row placement                                                                              │ │  │  │  │  save, r to revert                │
+│                              │  │  │ │ │ Where the Console status chips sit relative to the composer.                                       │ │  │  │  │                                   │
+│                              │  │  │ │ │  Above composer                                                                                    │ │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

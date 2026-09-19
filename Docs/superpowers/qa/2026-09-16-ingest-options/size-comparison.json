@@ -1,0 +1,36 @@
+{
+  "base": "6144043362",
+  "files": [
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "base_lines": 35210,
+      "current_lines": 35216,
+      "unchanged": false
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "base_lines": 2167,
+      "current_lines": 2167,
+      "unchanged": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py",
+      "base_lines": 3078,
+      "current_lines": 3078,
+      "unchanged": true
+    },
+    {
+      "path": "Tests/Architecture/test_screen_size_ratchet.py",
+      "base_lines": 1011,
+      "current_lines": 1011,
+      "unchanged": true
+    },
+    {
+      "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+      "base_lines": 689,
+      "current_lines": 689,
+      "unchanged": true
+    }
+  ],
+  "note": "Screen callback changed; controller, widget CSS and size budgets unchanged. Inherited LibraryScreen ceiling documented by TASK-32662; no ceiling increase."
+}

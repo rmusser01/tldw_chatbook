@@ -1,0 +1,15 @@
+{
+  "baseline": "69060a097c",
+  "path": "tldw_chatbook/UI/Screens/library_screen.py",
+  "base": {
+    "lines": 35215,
+    "functions": 1372
+  },
+  "current": {
+    "lines": 35215,
+    "functions": 1372
+  },
+  "budgets_raised": false,
+  "architecture_rerun": false,
+  "inherited_limit": "LibraryScreen was already over the 33204-line ceiling; line and function counts are unchanged."
+}

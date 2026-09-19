@@ -1,0 +1,25 @@
+....................                                                     [100%]
+============================= slowest 25 durations =============================
+1.86s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-dark-size0]
+1.84s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-light-size0]
+1.76s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-light-size1]
+1.74s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-dark-size0]
+1.73s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-dark-size1]
+1.72s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-dark-size1]
+1.61s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-light-size0]
+1.60s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-light-size1]
+1.30s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_reveals_evidence_without_focused_panel_control[True-size0]
+1.28s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_reveals_evidence_without_focused_panel_control[True-size1]
+1.27s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-False-textual-dark-size1]
+1.24s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_reveals_evidence_without_focused_panel_control[False-size0]
+1.23s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-False-textual-dark-size0]
+1.22s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-False-textual-dark-size0]
+1.18s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_reveals_evidence_without_focused_panel_control[False-size1]
+1.17s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-False-textual-light-size0]
+1.15s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-False-textual-light-size1]
+1.13s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-False-textual-dark-size1]
+1.12s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-False-textual-light-size1]
+1.07s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-False-textual-light-size0]
+
+(5 durations < 1s hidden.)
+20 passed in 32.77s

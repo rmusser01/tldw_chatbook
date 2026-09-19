@@ -1,0 +1,23 @@
+..................                                                       [100%]
+============================= slowest 25 durations =============================
+6.94s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_repack_on_shrink_without_churning_on_growth[textual-light]
+6.48s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_repack_on_shrink_without_churning_on_growth[textual-dark]
+6.17s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-light-size0]
+5.97s call     Tests/UI/test_library_notes_w4_layout.py::test_a_pane_that_widens_again_records_the_width_it_was_given
+5.82s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-light-size1]
+5.58s call     Tests/UI/test_library_notes_w4_layout.py::test_notes_toolbar_labels_paint_whole_or_elided_at_sixty_columns
+5.53s call     Tests/UI/test_library_shell.py::test_library_note_compact_labels_round_trip_without_recompose
+5.30s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-dark-size1]
+5.20s call     Tests/UI/test_library_notes_empty_toolbar.py::test_empty_notes_actions_fit_the_actual_pane[textual-dark-size0]
+3.32s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-dark-folder]
+3.24s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-dark-protected]
+3.21s call     Tests/UI/test_library_notes_empty_toolbar.py::test_legacy_list_resize_does_not_repack_a_previous_tree
+3.19s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-light-protected]
+3.17s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-light-note]
+3.09s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-light-folder]
+2.91s call     Tests/UI/test_library_notes_empty_toolbar.py::test_selected_note_and_folder_actions_keep_complete_labels[textual-dark-note]
+2.83s call     Tests/UI/test_library_notes_w4_layout.py::test_notes_toolbar_paints_whole_labels_with_a_note_open_at_235x52
+2.77s call     Tests/UI/test_library_notes_w4_layout.py::test_notes_folder_actions_wrap_rather_than_run_off_the_pane
+
+(7 durations < 1s hidden.)
+18 passed in 83.58s (0:01:23)

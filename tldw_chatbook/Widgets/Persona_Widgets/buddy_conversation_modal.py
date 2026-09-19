@@ -30,7 +30,7 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "request_safe_cancel", "Close")
     ]
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     BuddyConversationModal { align: center middle; }
     #buddy-conversation { width: 90; max-width: 96%; height: 90%; max-height: 52;
         border: round $accent; background: $panel; padding: 0 1; }
@@ -38,13 +38,13 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
     #buddy-activity, #buddy-reply-notice { height: auto; }
     #buddy-conversation-body { height: 1fr; min-height: 2; }
     #buddy-transcript-navigation { height: 1; }
-    #buddy-transcript-navigation Button { height: 1; min-width: 8; width: auto; }
+    #buddy-transcript-navigation Button.buddy-conversation-modal-button { height: 1; min-width: 8; width: auto; }
     #buddy-transcript { height: auto; padding: 1 0; }
     #buddy-reply { height: 5; min-height: 3; }
     BuddyConversationModal.compact #buddy-reply { height: 3; }
     BuddyConversationModal.compact #buddy-conversation-title { height: 1; }
     #buddy-actions { height: 3; align-horizontal: right; }
-    #buddy-actions Button { min-width: 8; width: auto; margin-left: 1; }
+    #buddy-actions Button.buddy-conversation-modal-button { min-width: 8; width: auto; margin-left: 1; }
     #buddy-reply-notice { color: $text-muted; }
     """
 
@@ -74,8 +74,18 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield SkillScriptConfirmCard(id="buddy-script")
                 yield ChatQuestionCard(id="buddy-question")
             with Horizontal(id="buddy-transcript-navigation"):
-                yield Button("Latest", id="buddy-latest", compact=True)
-                yield Button("Pending decision", id="buddy-pending", compact=True)
+                yield Button(
+                    "Latest",
+                    id="buddy-latest",
+                    compact=True,
+                    classes="buddy-conversation-modal-button",
+                )
+                yield Button(
+                    "Pending decision",
+                    id="buddy-pending",
+                    compact=True,
+                    classes="buddy-conversation-modal-button",
+                )
             yield Static("", id="buddy-reply-notice", markup=False)
             yield TextArea(
                 self.coordinator.drafts.get(self.binding, ""), id="buddy-reply"
@@ -88,10 +98,25 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
             yield BuddySpeechControls(ensure_buddy_speech(self.coordinator.app))
             with Horizontal(id="buddy-actions"):
                 if self.allow_voice:
-                    yield Button("Dictate", id="buddy-mic")
-                yield Button("Send", id="buddy-send", variant="primary")
-                yield Button("Open Console", id="buddy-open-console")
-                yield Button("Close", id="buddy-close")
+                    yield Button(
+                        "Dictate",
+                        id="buddy-mic",
+                        classes="buddy-conversation-modal-button",
+                    )
+                yield Button(
+                    "Send",
+                    id="buddy-send",
+                    variant="primary",
+                    classes="buddy-conversation-modal-button",
+                )
+                yield Button(
+                    "Open Console",
+                    id="buddy-open-console",
+                    classes="buddy-conversation-modal-button",
+                )
+                yield Button(
+                    "Close", id="buddy-close", classes="buddy-conversation-modal-button"
+                )
 
     def on_resize(self) -> None:
         self.set_class(self.size.height <= 24, "compact")

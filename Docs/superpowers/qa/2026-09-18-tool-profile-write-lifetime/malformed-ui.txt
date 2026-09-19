@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+6.40s call     Tests/UI/test_tool_profile_write_overlap.py::test_repeat_action_keeps_admitted_write_and_truthful_outcome[remove-malformed-recreate]
+6.38s call     Tests/UI/test_tool_profile_write_overlap.py::test_repeat_action_keeps_admitted_write_and_truthful_outcome[import-malformed-recreate]
+6.07s call     Tests/UI/test_tool_profile_write_overlap.py::test_repeat_action_keeps_admitted_write_and_truthful_outcome[export-malformed-recreate]
+5.61s call     Tests/UI/test_tool_profile_write_overlap.py::test_repeat_action_keeps_admitted_write_and_truthful_outcome[import-malformed-repeat]
+5.25s call     Tests/UI/test_tool_profile_write_overlap.py::test_repeat_action_keeps_admitted_write_and_truthful_outcome[export-malformed-repeat]
+5.11s call     Tests/UI/test_tool_profile_write_overlap.py::test_repeat_action_keeps_admitted_write_and_truthful_outcome[remove-malformed-repeat]
+
+(12 durations < 1s hidden.)
+6 passed, 28 deselected in 36.82s

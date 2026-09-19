@@ -31,9 +31,9 @@ _ROUTE = (
 def _fake(focused) -> SimpleNamespace:
     fake = SimpleNamespace(
         _library_route_shortcuts_for_current_state=lambda: _ROUTE,
-        _library_emergency_return_eligibility=lambda: SimpleNamespace(
-            enabled=False
-        ),
+        _library_emergency_return_eligibility=lambda: SimpleNamespace(enabled=False),
+        _library_narrow_stage_return_active=lambda: False,
+        is_mounted=False,
         _library_lifecycle=LibraryLifecycle.GRADUATED,
         # task-32053: the Search/RAG "enter" chip now follows the focused
         # control, so the filter reads the selected row and the real

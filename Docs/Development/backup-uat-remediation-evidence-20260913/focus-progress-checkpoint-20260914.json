@@ -1,0 +1,49 @@
+{
+  "base": "6b20175799c47f44cf287065207630ab1ad86e93",
+  "product_unchanged": true,
+  "reviewed_files": {
+    "Tests/Backup_Recovery/startup_timing_diagnostic.py": "973e6d8bc973b29ac52f62a8da40328bbf45b33cbd1462ff632fc92a16207c48",
+    "Tests/Backup_Recovery/test_startup_config_timing.py": "1b1308dd8c64806cf2e3152cf0c7ea9296075d593af17c0a35a0f901a4568eaf",
+    "Tests/Backup_Recovery/test_startup_timing_diagnostic.py": "fd4e688a01244145df9285ec6276930b06b04a6c447ddb56d2eb626c25f67cf7"
+  },
+  "native_fixture_sha256": "feaa50b555ddf7f005a40f55f88b250a4ea10f551a01d01db182154c2c802db7",
+  "red": {
+    "failed": 2,
+    "passed": 28
+  },
+  "local": {
+    "passed": 74,
+    "windows_only_skipped": 19,
+    "seconds": 0.96,
+    "note": "Before final test-local alpha rename; final hashes independently verified by exact reverse-rename byte identity."
+  },
+  "independent_observer": {
+    "passed": 34,
+    "private_probes": 5
+  },
+  "static": {
+    "ruff": "pass",
+    "compile": "pass",
+    "bandit_B101": 125,
+    "bandit_other": 0
+  },
+  "actual_mac_keyboard": {
+    "passed": 1,
+    "call_seconds": 17.7,
+    "session_seconds": 19.39,
+    "matched_profiles": 2,
+    "observer_errors": 0,
+    "completed_focus_steps": 39,
+    "helper_seconds": 5.765295
+  },
+  "windows": "Corrected NULL-handle fixture and new focus observations pending; current product43PASS/startup2PASS2timeout remain recorded.",
+  "evidence_sha256": {
+    "focus-progress-review-20260914.md": "8c4b6ccb887614138b52e548ae0aec6f02edac0b2053c4f88e189bbae8b50e7a",
+    "focus-progress-reviewed-hashes-20260914.json": "b4ac687f195806166e331e09f659a34499fae83fdc7cb28acb2b4fe0047b8272",
+    "windows-6b201-startup-review-20260914.md": "358617c837717f6141608378f8ce5fd797eb51366535dae2ba3ec3a20fa411cd",
+    "windows-6b201-startup-summary-20260914.json": "58be463502aec50d9c21833a39b115ea7bb759a9088314c3b1abbba77b6efe93",
+    "windows-6b201-native-review-20260914.md": "7f7b4a831fe57ea86bc319080f25237cc0c85765ec2eab258ad44e0c86de7413",
+    "windows-6b201-native-summary-20260914.json": "6dbcd66f82078beaa9f096b49f701389a8e2d87eb268e4b6a52c4b73e7816a4c",
+    "windows-inherited-checkout-review-20260914.md": "c88fc18966d1630dd449dea3cb66f23ab42ff479722b37722af2f178aeb9c784"
+  }
+}

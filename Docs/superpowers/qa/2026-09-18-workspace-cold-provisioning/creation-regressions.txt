@@ -1,0 +1,28 @@
+....................................                                     [100%]
+============================= slowest 25 durations =============================
+27.51s call     Tests/UI/test_workspace_persona_creation.py::test_console_bootstrap_workspace_activation_and_details_use_target_default
+10.43s call     Tests/Workspaces/test_workspace_create_modal.py::test_removed_and_rescanned_folder_clears_stale_discovery
+9.56s call     Tests/UI/test_workspace_persona_creation.py::test_create_choice_survives_folder_recompose_and_saves[WorkspacePersonaChoice.NONE]
+8.39s call     Tests/UI/test_workspace_persona_creation.py::test_create_choice_survives_folder_recompose_and_saves[author]
+8.37s call     Tests/Workspaces/test_workspace_create_modal.py::test_folder_with_skills_annotated_and_carried_on_result
+7.89s call     Tests/Workspaces/test_workspace_create_modal.py::test_folder_binding_failure_keeps_modal_open_and_retries
+7.73s call     Tests/Workspaces/test_workspace_create_modal.py::test_create_with_folder_returns_result_and_binds
+6.44s call     Tests/Workspaces/test_workspace_create_modal.py::test_escape_after_partial_create_returns_partial_result
+6.13s call     Tests/Workspaces/test_workspace_create_modal.py::test_remove_folder_clears_stale_error
+5.59s call     Tests/Workspaces/test_workspace_create_modal.py::test_real_toctou_folder_deleted_before_create_shows_inline_failure
+5.05s call     Tests/Workspaces/test_workspace_create_modal.py::test_make_active_checkbox_survives_folder_add_recompose
+4.81s call     Tests/UI/test_workspace_persona_creation.py::test_read_write_create_requires_visible_confirmation
+4.62s call     Tests/UI/test_workspace_persona_creation.py::test_default_modal_cancel_preserves_and_apply_clears
+4.25s call     Tests/Workspaces/test_workspace_create_modal.py::test_kill_switch_suppresses_folder_discovery_scan
+4.11s call     Tests/Workspaces/test_workspace_create_modal.py::test_browse_pushes_picker_and_fills_path
+4.08s call     Tests/Workspaces/test_workspace_create_modal.py::test_identity_failure_at_create_resets_committed_for_retry
+3.88s call     Tests/Workspaces/test_workspace_create_modal.py::test_overlong_name_shows_inline_error_and_creates_nothing
+3.87s call     Tests/Workspaces/test_workspace_create_modal.py::test_registry_read_failure_still_mounts_usable_modal
+3.81s call     Tests/Workspaces/test_workspace_create_modal.py::test_surface_description_is_carried_onto_created_record
+3.73s call     Tests/Workspaces/test_workspace_create_modal.py::test_escape_dismisses_with_none
+3.67s call     Tests/Workspaces/test_workspace_create_modal.py::test_make_active_checkbox_carried_on_result
+3.46s call     Tests/Workspaces/test_workspace_create_modal.py::test_explainer_describes_private_scratch_and_optional_folders
+3.34s call     Tests/Workspaces/test_workspace_create_modal.py::test_default_description_used_when_surface_passes_none
+3.33s call     Tests/Workspaces/test_workspace_create_modal.py::test_enter_key_on_name_input_submits_via_real_keypress
+3.20s call     Tests/Workspaces/test_workspace_create_modal.py::test_double_submit_creates_exactly_one_workspace_no_crash
+36 passed in 177.21s (0:02:57)

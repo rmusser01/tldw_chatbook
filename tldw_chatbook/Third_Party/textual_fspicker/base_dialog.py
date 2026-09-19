@@ -24,12 +24,26 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Input, ListView, ListItem, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Label,
+    Input,
+    ListView,
+    ListItem,
+    Static,
+    Select,
+)
 
 ##############################################################################
 # Local imports.
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
+from ...Utils.input_validation import (
+    validate_file_picker_sort_direction,
+    validate_file_picker_sort_key,
+)
 from .parts import DirectoryNavigation, DriveNavigation
+from .parts.progressive_directory_navigation import SORT_OPTIONS
 from .path_maker import MakePath
 
 
@@ -105,6 +119,10 @@ def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
         if not target.is_absolute():
             target = current / target
         target = target.resolve()
+        if target.is_dir():
+            return target
+        if target.exists():
+            return f"Not a directory: {target.name}"
     except PermissionError:
         # A friendly, errno-free message (matches
         # FileSystemPickerScreen.ERROR_PERMISSION_ERROR) -- the generic
@@ -113,13 +131,6 @@ def resolve_typed_directory(value: str, current: Path) -> Union[Path, str]:
         return FileSystemPickerScreen.ERROR_PERMISSION_ERROR
     except (RuntimeError, OSError, ValueError) as error:
         return str(error)
-    if target.is_dir():
-        return target
-    if target.exists():
-        # A real path that is not a directory is a different mistake than
-        # a nonexistent one; the vendored SelectDirectory distinguishes
-        # them too.
-        return f"Not a directory: {target.name}"
     return f"Path not found: {value}"
 
 
@@ -243,6 +254,26 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     SAFE_MODAL_CONTENT = "#file-system-picker-dialog"
 
     DEFAULT_CSS = """
+        FileSystemPickerScreen #listing-controls {
+            height: auto;
+            width: 1fr;
+        }
+        FileSystemPickerScreen #listing-sort-label {
+            width: auto;
+            content-align: center middle;
+        }
+        FileSystemPickerScreen #listing-controls Select {
+            width: 1fr;
+        }
+        FileSystemPickerScreen #listing-controls SelectCurrent Static#label {
+            text-wrap: nowrap;
+            text-overflow: ellipsis;
+        }
+        FileSystemPickerScreen #listing-progress {
+            height: auto;
+            color: $text-muted;
+        }
+
     FileSystemPickerScreen {
         align: center middle;
 
@@ -356,6 +387,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         }
 
         InputBar {
+            dock: bottom;
             height: auto;
             align: right middle;
             padding-top: 1;
@@ -393,15 +425,58 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     ERROR_PERMISSION_ERROR = "Permission error"
     """Error to tell there user there was a problem with permissions."""
 
+    RETURNS_A_FOLDER: bool = False
+    """Can confirming this dialog hand back a DIRECTORY? (task-32606)
+
+    The one fact that decides initial focus (``_focus_initial_widget``): a
+    dialog whose answer is a folder opens on its path field, because typing
+    or pasting a path is what a keyboard user does first there. Declared
+    per class for the dialogs that always return one (``SelectDirectory``,
+    ``EnhancedSelectDirectory``) and shadowed per instance by ``FileOpen``,
+    which only learns the answer from its ``offer_select_folder`` argument
+    at construction -- hence a plain ``bool`` annotation rather than
+    ``ClassVar``, which would forbid exactly that. A file-only dialog
+    leaves it False and keeps browsing-first focus.
+    """
+
+    SELECT_BUTTON_DEFAULT = "Select"
+    """Default label for the confirm button, when the caller names none.
+
+    A class attribute rather than a literal in ``compose`` so a folder-only
+    dialog can say "Select folder" -- the same verb+noun the files-and-folder
+    door already uses for the button that returns a directory (task-32611
+    AC#3). Critique #4 met "Select folder" on Import once and a bare "Select"
+    on the other two doors of the same decision.
+    """
+
+    FOLDER_CONFIRM_LABEL = "Select folder"
+    """What the hint line calls the action that commits a folder.
+
+    One literal, read by ``_hint_text`` for every folder-returning dialog and
+    by the "Select folder" button ``compose`` adds on a dialog that offers
+    files as well; see ``SELECT_BUTTON_DEFAULT`` above for the folder-only
+    half.
+    """
+
     BINDINGS = [
+        # Order is the footer's order (task-32606): `Footer` lays its chips
+        # out left to right in binding order and scrolls the overflow off
+        # the right edge, so at 100 columns only the first few are read.
+        # The way out leads, then the path actions, then the conveniences.
+        Binding("escape", "request_safe_cancel", "Cancel"),
+        Binding("ctrl+l", "focus_path_input", "Edit path directly"),
+        Binding("ctrl+f", "focus_search", "Search in directory"),
         Binding("full_stop", "hidden", "Toggle hidden"),
         Binding("ctrl+h", "hidden", "Toggle hidden files"),
-        Binding("ctrl+l", "focus_path_input", "Edit path directly"),
         Binding("f5", "refresh", "Refresh directory"),
         Binding("ctrl+d", "bookmark_current", "Bookmark directory"),
         Binding("ctrl+r", "show_recent", "Show recent locations"),
-        Binding("ctrl+f", "focus_search", "Search in directory"),
-        Binding("escape", "request_safe_cancel", "Cancel"),
+        # LAST on purpose (review round 1): `check_action` vetoes this on
+        # every dialog that does not offer a folder, and Textual's `Footer`
+        # renders a vetoed binding DIM rather than dropping it -- so on
+        # those dialogs this is a dead chip. Ordered here it is the first
+        # thing a narrow terminal scrolls off the right edge instead of
+        # eating 23 of 60 columns ahead of every live action.
         Binding("ctrl+s", "select_current_folder", "Select this folder"),
     ]
     """The bindings for the dialog."""
@@ -418,6 +493,8 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         title: str = "",
         select_button: ButtonLabel = "",
         cancel_button: ButtonLabel = "",
+        *,
+        notes_context: str = "",
     ) -> None:
         """Initialise the dialog.
 
@@ -426,8 +503,18 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             title: Optional title.
             select_button: Label or format function for the select button.
             cancel_button: Label or format function for the cancel button.
+            notes_context: Non-empty on the Library's three Notes folder
+                doors, naming which of them this is (task-32643). It buys two
+                things and nothing else: the ctrl+r panel offers the roots
+                THIS door recently returned, and folder rows carry a bounded
+                note count and a vault marker. Every other picker in the app
+                leaves it blank and is unchanged -- "12 notes" is a useful
+                badge when choosing where notes live and noise in a model-file
+                or character-card picker.
         """
         super().__init__()
+        self._notes_context = notes_context
+        """Which Notes folder door this is, or "" for every other picker."""
         self._location = location
         """The starting location."""
         self._title = title
@@ -446,18 +533,25 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     def _hint_text(self) -> str:
         """One-line Enter-vs-Select hint shown above the input bar.
 
-        Empty by default: most ``FileSystemPickerScreen`` dialogs (a plain
-        file-only ``FileOpen``, ``FileSave``) have no folder-selection
-        ambiguity to clarify, and this line simply isn't yielded in
-        ``compose()`` when it returns "" -- so callers unrelated to
-        task-32122 (character import, skill-folder import, TTS model
-        directories, ...) render exactly as before. ``SelectDirectory`` and
-        ``FileOpen(offer_select_folder=True)`` override this: both let
-        Enter descend into a directory while a separate action confirms
-        "use this one", and neither dialog had any on-screen hint for that
-        at all.
+        Empty unless this dialog can return a folder: a plain file-only
+        ``FileOpen`` or a ``FileSave`` has no folder-selection ambiguity to
+        clarify, and ``compose()`` simply does not yield the line when this
+        returns "" -- so callers unrelated to task-32122 (character import,
+        skill-folder import, TTS model directories, ...) render exactly as
+        before.
+
+        ONE wording for every folder-returning door (task-32611 AC#3).
+        ``SelectDirectory`` and ``FileOpen(offer_select_folder=True)`` each
+        used to override this with its own sentence, and critique #4 read the
+        difference off two doors of the same decision: "Select folder to use
+        this folder" on Import once against "Select to use this folder" on
+        Folder files. Keyed on ``RETURNS_A_FOLDER`` -- the same single
+        declarative fact that decides initial focus (task-32606) -- rather
+        than on a second per-dialog flag.
         """
-        return ""
+        if not self.RETURNS_A_FOLDER:
+            return ""
+        return f"Enter Open  ·  {self.FOLDER_CONFIRM_LABEL} to use this folder"
 
     @staticmethod
     def _label(label: ButtonLabel, default: str) -> str:
@@ -473,6 +567,80 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         # If the label is callable, then call it with the default as a
         # parameter; otherwise use it as-is as it'll be a string.
         return label(default) if callable(label) else label or default
+
+    def _default_listing_sort(self) -> str:
+        """The sort key this dialog opens on (task-32611 AC#4, task-32643 AC#1).
+
+        A dialog whose answer is a FOLDER opens folders-first, name-ascending:
+        critique #4 opened all three Notes folder doors on "Discovery order"
+        and got a vault rendered as ``Reading, scratch.txt, Inbox, Archive,
+        Projects, Daily, ... attachments`` -- files and folders interleaved,
+        unsorted, in a dialog whose whole job is choosing between the folders.
+        A picker that can only return a FILE keeps "Discovery order", where
+        rows appearing in the order the disk yields them is the point (the
+        listing is usable before enumeration finishes), and "Discovery order"
+        stays on the menu for both.
+
+        Deliberately app-wide, and worth saying out loud because the review
+        asked: this is keyed on the declarative fact, so EVERY folder-choosing
+        dialog changed, not only the three Notes doors -- skill-folder import,
+        workspace bind, TTS model and voice directories, external model
+        directories, podcast export, and `EnhancedSelectDirectory`'s Personas
+        and vLLM callers. Scoping it to three doors would have meant a second
+        list to keep in step with `RETURNS_A_FOLDER`, and folders-first is the
+        right default wherever the folders ARE the choice.
+
+        Keyed on ``RETURNS_A_FOLDER`` -- the one declarative fact task-32606
+        introduced for exactly this question -- so ``FileOpen``'s per-instance
+        answer is honoured and no second flag has to be kept in step.
+        """
+        return "folders" if self.RETURNS_A_FOLDER else "discovery"
+
+    def _listing_controls(self) -> ComposeResult:
+        default_sort = self._default_listing_sort()
+        with Horizontal(id="listing-controls"):
+            yield Label("Sort", id="listing-sort-label")
+            yield Select(
+                SORT_OPTIONS,
+                value=default_sort,
+                allow_blank=False,
+                compact=True,
+                id="listing-sort",
+            )
+            yield Select(
+                [("Ascending", "ascending"), ("Descending", "descending")],
+                value="ascending",
+                allow_blank=False,
+                compact=True,
+                id="listing-direction",
+                disabled=default_sort == "discovery",
+            )
+        yield Static("Scanning…", id="listing-progress", markup=False)
+
+    @on(Select.Changed, "#listing-sort")
+    @on(Select.Changed, "#listing-direction")
+    def _change_listing_sort(self, event: Select.Changed) -> None:
+        event.stop()
+        navigation = self.query_one(DirectoryNavigation)
+        try:
+            if event.select.id == "listing-sort":
+                value = validate_file_picker_sort_key(event.value)
+                navigation.sort_key = value
+                self.query_one("#listing-direction", Select).disabled = (
+                    value == "discovery"
+                )
+            elif event.select.id == "listing-direction":
+                value = validate_file_picker_sort_direction(event.value)
+                navigation.sort_descending = value == "descending"
+        except ValueError:
+            return
+
+    @on(DirectoryNavigation.ListingChanged)
+    def _listing_changed(self, event) -> None:
+        event.stop()
+        self.query_one("#listing-progress", Static).update(
+            event.navigation.listing_status
+        )
 
     def compose(self) -> ComposeResult:
         """Compose the child widgets.
@@ -510,6 +678,8 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                 _listing_column_headers(), id="file-dialog-column-headers"
             )
 
+            yield from self._listing_controls()
+
             # Main directory navigation
             with Horizontal():
                 if sys.platform == "win32":
@@ -522,14 +692,17 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             # Input bar with buttons
             with InputBar():
                 yield from self._input_bar()
-                yield Button(self._label(self._select_button, "Select"), id="select")
+                yield Button(
+                    self._label(self._select_button, self.SELECT_BUTTON_DEFAULT),
+                    id="select",
+                )
                 # (task-2222) Opt-in folder affordance: a file picker whose
                 # caller also accepts a directory can offer "this folder"
                 # without a second dialog. Off by default, so every other
                 # caller's bar is unchanged.
                 if getattr(self, "_offer_select_folder", False):
                     yield Button(
-                        "Select folder", id="select-current-folder"
+                        self.FOLDER_CONFIRM_LABEL, id="select-current-folder"
                     )
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
 
@@ -541,9 +714,28 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             error_line.display = False
             yield error_line
 
+        # task-32606 AC#2: a ModalScreen is translucent, so the host
+        # screen's own footer shows straight through it -- critique #4
+        # pressed Tab three times inside this dialog and kept reading
+        # Library's "/ focus search | F6 next pane | esc notes", with
+        # nothing on screen naming a single control inside the dialog.
+        #
+        # Docked at SCREEN level, not inside `Dialog`: an opaque footer on
+        # the bottom row REPLACES the host screen's chips for as long as
+        # the modal is up. Inside the dialog it would merely add a second
+        # key row eight lines above a contradicting one -- the "two
+        # instructions at once" defect the same critique flags elsewhere.
+        yield Footer()
+
     def on_mount(self) -> None:
         """Focus the initial widget on mount and set the initial path."""
         dir_nav = self.query_one(DirectoryNavigation)
+        # Both families reach this: Textual dispatches `on_mount` to every
+        # class in the MRO, so `EnhancedFileDialog`, which builds its own
+        # navigation in its own `compose`, is configured here too rather than
+        # needing the same two lines copied into it.
+        dir_nav.sort_key = self._default_listing_sort()
+        dir_nav.show_folder_notes = bool(self._notes_context)
         current_path_label = self.query_one("#current_path_display", Label)
         current_path_label.update(str(dir_nav.location))
 
@@ -558,12 +750,19 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     def _focus_initial_widget(self) -> None:
         """Focus whichever widget should hold focus right after mounting.
 
-        Defaults to the directory listing. Subclasses override this to
-        steer initial focus elsewhere -- e.g. ``FileSave`` (file_save.py)
-        focuses its filename input instead, so a keyboard user can press
-        Enter immediately to confirm the seeded default filename rather
-        than have Enter activate the highlighted directory row (usually
-        ``..``) (task-1479).
+        A dialog that ``RETURNS_A_FOLDER`` opens on its path field, with
+        any pre-filled value selected so the first keystroke replaces it:
+        typing or pasting a path is the first thing a keyboard user does
+        there, and with the listing focused every character went into the
+        listing's type-ahead instead (task-32540 for Import once,
+        task-32606 for the whole family -- critique #4 reproduced Folder
+        files' "Choose File Notes Folder" swallowing a typed path and made
+        that door mouse-only). Anything else defaults to the directory
+        listing, where Enter on a row is the natural first keystroke.
+
+        ``FileSave`` (file_save.py) still overrides this for its own,
+        unrelated reason: its seeded filename must be confirmable with one
+        Enter (task-1479).
 
         This is a plain method call, not a message handler: overriding it
         resolves via normal Python MRO, unlike Textual's ``on_mount``/`@on`
@@ -575,6 +774,18 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         in the walk fires and then gets clobbered by this method's own
         ``dir_nav.focus()`` call afterwards).
         """
+        if self.RETURNS_A_FOLDER:
+            # Read generically via InputBar's one Input child, the way
+            # `_resolve_select_folder_target` already reads it: the field's
+            # id differs per dialog (#path_input, #dir-path-input, the
+            # anonymous FileNameInput).
+            fields = self.query("InputBar Input")
+            if fields:
+                path_field = fields.first(Input)
+                path_field.focus()
+                if path_field.value:
+                    path_field.selection = (0, len(path_field.value))
+                return
         self.query_one(DirectoryNavigation).focus()
 
     def _set_error(self, message: str = "") -> None:
@@ -620,9 +831,10 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self._set_error()
 
     @on(DirectoryNavigation.PermissionError)
-    def _show_permission_error(self) -> None:
+    def _show_permission_error(self, event: DirectoryNavigation.PermissionError) -> None:
         """Show any permission error bubbled up from the directory navigator."""
-        self._set_error(self.ERROR_PERMISSION_ERROR)
+        if event.path == event.control.location:
+            self._set_error(self.ERROR_PERMISSION_ERROR)
 
     def check_action(
         self, action: str, parameters: tuple[object, ...]
@@ -799,7 +1011,15 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self.notify(f"Bookmarked: {current_path.name}", timeout=2)
 
     def action_show_recent(self) -> None:
-        """Toggle the recent locations panel."""
+        """Toggle the recent locations panel.
+
+        Deliberately still opens when there is nothing to show. Refusing to
+        would read better, but ``test_fspicker_keyboard_save`` pins the
+        Escape-peel ORDER (path bar, then search, then recents) by opening all
+        three transients on an empty picker, and that contract is worth more
+        than the empty-box nicety. The empty panel predates task-32643 and is
+        unchanged by it.
+        """
         self.show_recent = not self.show_recent
 
     def action_focus_search(self) -> None:
@@ -812,23 +1032,55 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             except Exception:
                 pass
 
+    _MAX_VISIBLE_BREADCRUMBS = 5
+    """Segment count above which the middle collapses (task-32554 AC#3).
+
+    Note the off-by-two in the name, inherited deliberately: a collapsed
+    trail renders the root plus the last ``_MAX_VISIBLE_BREADCRUMBS - 2``
+    segments -- four crumbs, not five. The value and the arithmetic are
+    copied verbatim from ``EnhancedFileDialog._update_breadcrumbs`` so the
+    two pickers agree on how deep a path is "deep"; renaming it here alone
+    would make them look different when they are not.
+    """
+
     def _update_breadcrumbs(self, path: Path) -> None:
-        """Update breadcrumb navigation."""
+        """Update breadcrumb navigation, collapsing a deep path in the middle.
+
+        task-32554 AC#3 (critique #3, assessor A 27): every segment was
+        rendered, so a 100+ character location ran straight off the dialog's
+        right edge and the crumbs that name where you ARE -- the last few --
+        were the ones clipped away. Root + "…" + the tail keeps the current
+        directory and its parents on one line; each crumb still carries its
+        own absolute path as its tooltip, and ``#current_path_display`` above
+        still shows the location in full.
+        """
         try:
             breadcrumb_container = self.query_one("#path-breadcrumbs", Horizontal)
             breadcrumb_container.remove_children()
 
             parts = path.parts
-            for i, part in enumerate(parts):
+            max_visible = self._MAX_VISIBLE_BREADCRUMBS
+            if len(parts) > max_visible:
+                visible_indices = [0, *range(len(parts) - max_visible + 2, len(parts))]
+            else:
+                visible_indices = list(range(len(parts)))
+
+            for position, i in enumerate(visible_indices):
                 partial_path = Path(*parts[: i + 1])
 
+                # A gap since the previous shown crumb gets one ellipsis.
+                if i > 0 and i != visible_indices[position - 1] + 1:
+                    breadcrumb_container.mount(
+                        Label("…", classes="breadcrumb-separator breadcrumb-ellipsis")
+                    )
+
                 # Create button for each path component
-                btn = Button(part, variant="default", classes="breadcrumb-btn")
+                btn = Button(parts[i], variant="default", classes="breadcrumb-btn")
                 btn.tooltip = str(partial_path)  # Store full path in tooltip
                 breadcrumb_container.mount(btn)
 
                 # Add separator if not last
-                if i < len(parts) - 1:
+                if position < len(visible_indices) - 1:
                     breadcrumb_container.mount(
                         Label("/", classes="breadcrumb-separator")
                     )
@@ -838,13 +1090,10 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     def _load_recent_locations(self) -> None:
         """Load recent locations from storage."""
-        # This is a placeholder - in real implementation,
-        # this would load from a config file or database
         try:
             recent_list = self.query_one("#recent-list", ListView)
             recent_list.clear()
 
-            # Add some example recent locations
             for path in self._get_recent_paths():
                 item = ListItem(Label(str(path)))
                 item.data = path  # Store path in data attribute
@@ -853,14 +1102,55 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             pass
 
     def _get_recent_paths(self) -> List[Path]:
-        """Get list of recent paths."""
-        # Placeholder - would load from persistent storage
-        return []
+        """The roots this door recently returned, newest first (task-32643 AC#3).
+
+        Empty -- as it has always been -- for every picker that passes no
+        ``notes_context``. For the three that do, the source is the store the
+        enhanced picker family already keeps (``[filepicker] recent_<context>``
+        in config.toml), written by
+        ``Library.library_browse_location.remember_browse_directory``, which
+        all three doors already call on a worker after a selection. Reusing it
+        rather than inventing a second recents format is also why the read is
+        cheap enough for mount: it is one ``get_cli_setting`` off the cached
+        config.
+
+        Imported lazily: ``Widgets.enhanced_file_picker`` imports this module,
+        so a module-level import here is a cycle.
+
+        Returns:
+            Existing directories only. The stored value is persisted user
+            state, i.e. a trust boundary, so every entry goes through the same
+            validator the start directory does; anything relative, traversing
+            or since deleted is dropped rather than offered.
+        """
+        if not self._notes_context:
+            return []
+        try:
+            from ...Library.library_browse_location import validated_browse_directory
+            from ...Widgets.enhanced_file_picker import RecentLocations
+
+            paths = []
+            for entry in RecentLocations(context=self._notes_context).get_recent():
+                validated = validated_browse_directory(entry.get("path"))
+                if validated is not None and validated not in paths:
+                    paths.append(validated)
+            return paths
+        except Exception:
+            # Deliberately path-free and non-fatal: a picker must still open
+            # when the recents store is unreadable.
+            return []
 
     def _add_to_recent(self, path: Path, file_type: str) -> None:
-        """Add a path to recent locations."""
-        # Placeholder - would save to persistent storage
-        pass
+        """Note a BROWSED directory. A no-op here; overridden by the enhanced family.
+
+        Deliberately not the write behind ``_get_recent_paths``: this fires on
+        every ``DirectoryNavigation.Changed``, i.e. on merely passing through a
+        folder on the way somewhere else, and task-32643 AC#3 is about the
+        roots a door actually RETURNED. Those are written by
+        ``Library.library_browse_location.remember_browse_directory``, off the
+        event loop, from the same selection that already persists the
+        start directory.
+        """
 
     @on(Button.Pressed, ".breadcrumb-btn")
     def _on_breadcrumb_click(self, event: Button.Pressed) -> None:
@@ -875,17 +1165,32 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     @on(ListView.Selected, "#recent-list")
     def _on_recent_selected(self, event: ListView.Selected) -> None:
-        """Handle selection from recent locations."""
+        """Handle selection from recent locations.
+
+        On a Notes folder door, Enter on an offered root IS the answer and
+        dismisses with it (task-32643 AC#3): navigating there and making the
+        user press Select as well would leave the root two keystrokes away,
+        not one. Everywhere else it still just moves the listing -- on a file
+        picker a recent DIRECTORY is a place to look, not a result.
+
+        Keyed on ``notes_context`` and not on ``RETURNS_A_FOLDER`` alone,
+        deliberately: these entries are roots this door RETURNED, so choosing
+        one is choosing an answer. `EnhancedSelectDirectory`'s own recents are
+        places the user has been, and turning selection there into a dismiss
+        would change a picker (Personas, vLLM model directories) outside this
+        task.
+        """
         if hasattr(event.item, "data") and event.item.data:
             try:
                 path = Path(event.item.data)
-                if path.exists():
-                    dir_nav = self.query_one(DirectoryNavigation)
-                    if path.is_dir():
-                        dir_nav.location = path
-                    else:
-                        dir_nav.location = path.parent
-                    self.show_recent = False
+                if not path.exists():
+                    return
+                if self._notes_context and self.RETURNS_A_FOLDER and path.is_dir():
+                    self.dismiss(path)
+                    return
+                dir_nav = self.query_one(DirectoryNavigation)
+                dir_nav.location = path if path.is_dir() else path.parent
+                self.show_recent = False
             except Exception:
                 pass
 
@@ -909,10 +1214,29 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
             pass
 
     def watch_show_recent(self, show: bool) -> None:
-        """React to show_recent changes."""
+        """React to show_recent changes.
+
+        Opening the panel also FOCUSES the list (task-32643 AC#3): with focus
+        left on the path field, reaching an offered root still cost a Tab walk
+        through the listing, which is the navigation the recents exist to
+        avoid. Focused, the first root is highlighted and Enter takes it.
+
+        Scoped to a dialog with a ``notes_context``, i.e. to the panel this
+        task actually filled. `EnhancedFileDialog` keeps its own recents list
+        and appends a "No recent files yet" placeholder row when it is empty,
+        so focusing unconditionally would strand a keyboard user on a dead
+        row in a picker nothing here asked me to change.
+        """
         try:
             recent_panel = self.query_one("#recent-locations")
             recent_panel.set_class(show, "visible")
+            if not (show and self._notes_context):
+                return
+            recent_list = self.query_one("#recent-list", ListView)
+            if recent_list.children:
+                if recent_list.index is None:
+                    recent_list.index = 0
+                recent_list.focus()
         except Exception:
             pass
 

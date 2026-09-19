@@ -1,0 +1,97 @@
+{
+  "base": "b1303615d6",
+  "files": [
+    {
+      "path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "base_bytes": 1639297,
+      "current_bytes": 1638857,
+      "base_lines": 35216,
+      "current_lines": 35212,
+      "unchanged": false,
+      "base_methods": 1320,
+      "current_methods": 1321
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+      "base_bytes": 97510,
+      "current_bytes": 103190,
+      "base_lines": 2167,
+      "current_lines": 2294,
+      "unchanged": false
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py",
+      "base_bytes": 150861,
+      "current_bytes": 150861,
+      "base_lines": 3078,
+      "current_lines": 3078,
+      "unchanged": true
+    },
+    {
+      "path": "tldw_chatbook/css/components/_agentic_terminal.tcss",
+      "base_bytes": 68739,
+      "current_bytes": 69178,
+      "base_lines": 1983,
+      "current_lines": 1994,
+      "unchanged": false
+    },
+    {
+      "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+      "base_bytes": 391035,
+      "current_bytes": 391330,
+      "base_lines": 19372,
+      "current_lines": 19382,
+      "unchanged": false
+    },
+    {
+      "path": "tldw_chatbook/css/core/_variables.tcss",
+      "base_bytes": 20512,
+      "current_bytes": 20512,
+      "base_lines": 471,
+      "current_lines": 471,
+      "unchanged": true
+    },
+    {
+      "path": "Tests/Performance/test_boot_css_byte_budget.py",
+      "base_bytes": 11922,
+      "current_bytes": 11922,
+      "base_lines": 241,
+      "current_lines": 241,
+      "unchanged": true
+    },
+    {
+      "path": "Tests/Architecture/test_screen_size_ratchet.py",
+      "base_bytes": 64641,
+      "current_bytes": 64641,
+      "base_lines": 1011,
+      "current_lines": 1011,
+      "unchanged": true
+    },
+    {
+      "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+      "base_bytes": 42490,
+      "current_bytes": 42490,
+      "base_lines": 689,
+      "current_lines": 689,
+      "unchanged": true
+    }
+  ],
+  "boot_css": {
+    "bytes": 615643,
+    "limit": 634050,
+    "headroom": 18407,
+    "budget_raised": false
+  },
+  "ratchets": {
+    "result": "2 inherited ceiling failures, 2 passing slack checks",
+    "screen_base_lines": 35216,
+    "screen_current_lines": 35212,
+    "screen_line_limit": 33204,
+    "screen_base_methods": 1320,
+    "screen_current_methods": 1321,
+    "screen_method_limit": 1276,
+    "ingest_controller_current_lines": 3078,
+    "ingest_controller_limit": 2721,
+    "note": "LibraryScreen ceiling fails at base and current; screen source shrinks by four lines but gains one helper method. Ingest controller is byte-identical to base. No budget changed."
+  }
+}

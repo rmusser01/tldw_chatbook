@@ -1,0 +1,28 @@
+.......................                                                  [100%]
+============================= slowest 25 durations =============================
+47.34s call     Tests/UI/test_settings_overview_search_journeys.py::test_overview_and_search_keyboard_recovery[size1-textual-dark]
+46.52s call     Tests/UI/test_settings_overview_search_journeys.py::test_overview_and_search_keyboard_recovery[size1-textual-light]
+45.03s call     Tests/UI/test_settings_overview_search_journeys.py::test_overview_and_search_keyboard_recovery[size0-textual-light]
+44.36s call     Tests/UI/test_settings_overview_search_journeys.py::test_overview_and_search_keyboard_recovery[size0-textual-dark]
+7.88s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_paste_summary_updates_after_toggle
+6.95s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_open_category_buttons_switch_category
+5.82s call     Tests/UI/test_settings_configuration_hub.py::test_settings_read_only_overview_hides_actions_and_clean_privacy_disables_them
+5.18s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_reselect_refreshes_cached_source_rows
+4.89s call     Tests/UI/test_settings_configuration_hub.py::test_reassurance_short_line_off_overview
+4.87s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_reports_ready_with_credential
+4.86s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_reports_not_ready_without_model
+4.77s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_disclosures_stay_expanded_across_sync_row_recompose
+4.71s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_renders_ownership_contract_boundaries
+4.68s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_status_reports_not_ready_without_credential
+4.41s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_renders_server_sync_workspace_contracts_in_diagnostics
+4.29s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_front_door_is_four_status_rows_with_open_affordances
+4.26s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_leads_with_readiness_before_manual_sync
+4.23s call     Tests/UI/test_settings_configuration_hub.py::test_settings_defaults_to_overview_category
+4.19s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_renders_primary_user_tasks_before_diagnostics
+3.90s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_detail_uses_cached_server_sync_rows
+3.59s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_ownership_rows_are_sourced_from_record
+3.56s call     Tests/UI/test_settings_configuration_hub.py::test_mode_line_disclaimer_only_on_overview
+2.57s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_config_path_label_hides_local_directory
+
+(2 durations < 1s hidden.)
+23 passed, 400 deselected in 276.82s (0:04:36)

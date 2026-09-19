@@ -81,23 +81,6 @@ def _fake(select_mode):
     return fake
 
 
-def test_convo_row_select_mode_toggles():
-    fake = _fake(True)
-    fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
-    ev = SimpleNamespace(
-        button=SimpleNamespace(conversation_id="c5"), stop=lambda: None
-    )
-    LibraryScreen.handle_library_conversation_row(fake, ev)
-    assert fake._conversations_state.row_selection.is_selected("c5")
-    assert fake._selected_conversation_id == ""  # did NOT open/select the detail
-    assert fake._refreshed == 1
-    assert fake._conversations_state.reader_state.bulk_selected_count == 1
-    assert fake._conversations_state.reader_state.loaded_id == "c1"
-    assert fake._conversations_state.reader_state.messages[0].text == "hello"
-    assert fake._conversations_state.reader_state.bulk_loaded_preview_selected is False
-    assert fake._conversations_state.reader_state.loaded_actions_eligible is False
-
-
 def test_convo_row_normal_mode_selects():
     fake = _fake(False)
     fake.refresh = lambda **k: None
@@ -422,12 +405,29 @@ async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> N
         assert not state.loaded_actions_eligible and open_console.disabled
         assert state.messages == transcript
 
-        screen.query_one("#library-conversation-row-0", Button).press()
+        selected_before = screen._selected_conversation_id
+        row = next(
+            row
+            for row in screen.query(".library-conversation-row")
+            if row.conversation_id == "chat-2"
+        )
+        row.press()
         await _wait_for_condition(
             pilot,
             lambda: screen._conversations_state.row_selection.count == 1,
             message="Conversation checkbox did not settle.",
         )
+        assert screen._conversations_state.row_selection.is_selected("chat-2")
+        assert screen._selected_conversation_id == selected_before
+        state = screen._conversations_state.reader_state
+        assert state.bulk_selected_count == 1
+        assert state.loaded_id == "chat-1" and state.messages == transcript
+        assert not state.bulk_loaded_preview_selected
+        assert not state.loaded_actions_eligible and open_console.disabled
+        for action in ("export-selected", "archive-selected", "restore-selected"):
+            assert not screen.query_one(
+                f"#library-conversations-{action}", Button
+            ).disabled
         screen.query_one("#library-conversations-select-clear", Button).press()
         await pilot.pause()
         state = screen._conversations_state.reader_state

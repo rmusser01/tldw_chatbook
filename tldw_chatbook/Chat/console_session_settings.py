@@ -52,6 +52,25 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderTestEvidence,
 )
+from tldw_chatbook.Chat.sampling_params import (
+    _is_blank_value,
+    _parse_optional_int,
+    _string_value,
+    bool_setting_from_sources as _bool_setting_from_sources,
+    float_setting_from_sources as _float_setting_from_sources,
+    optional_float_setting_from_sources as _optional_float_setting_from_sources,
+    optional_int_setting_from_sources as _optional_int_setting_from_sources,
+    optional_string_setting_from_sources as _optional_string_setting_from_sources,
+)
+# The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
+# so presets, registry entries, and Console settings validate against ONE
+# contract; the underscore aliases keep this module's call sites unchanged.
+from tldw_chatbook.Chat.sampling_params import (
+    REASONING_EFFORT_VALUES as _REASONING_EFFORT_VALUES,
+    REASONING_SUMMARY_VALUES as _REASONING_SUMMARY_VALUES,
+    THINKING_EFFORT_VALUES as _THINKING_EFFORT_VALUES,
+    VERBOSITY_VALUES as _VERBOSITY_VALUES,
+)
 from tldw_chatbook.config import (
     ProviderSettingsError,
     provider_settings_for_key,
@@ -66,6 +85,7 @@ if TYPE_CHECKING:
     # Imported lazily at call sites: custom_endpoint_registry imports this
     # module for URL normalization, so a module-level import would cycle.
     from tldw_chatbook.Chat.custom_endpoint_registry import CustomEndpointEntry
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 
 NATIVE_CONSOLE_PROVIDER_KEYS = DIRECT_CONSOLE_PROVIDER_KEYS
@@ -257,39 +277,6 @@ _GENERATION_FAILURE_CATEGORY_VALUES = frozenset(
         "provider_error",
     }
 )
-CONSOLE_MODEL_TOKEN_LIMITS = {
-    "gpt-4": 8192,
-    "gpt-4-32k": 32768,
-    "gpt-4-turbo": 128000,
-    "gpt-4-turbo-preview": 128000,
-    "gpt-3.5-turbo": 4096,
-    "gpt-3.5-turbo-16k": 16384,
-    "claude-3-opus-20240229": 200000,
-    "claude-3-sonnet-20240229": 200000,
-    "claude-3-haiku-20240307": 200000,
-    "claude-2.1": 200000,
-    "claude-2": 100000,
-    "claude-instant-1.2": 100000,
-    "gemini-pro": 30720,
-    "gemini-pro-vision": 12288,
-    "mistral-large": 32000,
-    "mistral-medium": 32000,
-    "mistral-small": 32000,
-    "mixtral-8x7b": 32000,
-    "default": 8001,
-}
-CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS = {
-    "anthropic": 100000,
-    "google": 30720,
-    "openai": 8001,
-    "mistral": 32000,
-}
-_REASONING_EFFORT_VALUES = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh"}
-)
-_REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
-_VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
-_THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
 _LEGACY_CHAT_PROVIDER_ALIASES = {
     "openai_compatible": "openai",
 }
@@ -506,6 +493,7 @@ class ConsoleSettingsReadiness:
     model: ModelFacet = "missing"
     generation: GenerationFacet = "not_tested"
     generation_category: GenerationFailureCategory | None = None
+    subscription_status: Literal["pending", "ready", "expired", "missing"] | None = None
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -551,6 +539,13 @@ class ConsoleSettingsReadiness:
 
     def _validate_structured_state(self) -> None:
         _validate_console_readiness_literals(self)
+        if self.subscription_status is not None and (
+            (self.subscription_status == "ready")
+            != (self.credential in {"present_unverified", "authenticated"})
+        ):
+            raise ValueError(
+                "Console subscription state conflicts with its credential."
+            )
         expected_operability = (
             "ready_to_send" if self.native_send_supported else "not_ready"
         )
@@ -614,6 +609,11 @@ def _validate_console_readiness_literals(readiness: ConsoleSettingsReadiness) ->
             "configuration issue",
         ),
         (readiness.credential, _CREDENTIAL_VALUES, "credential"),
+        (
+            readiness.subscription_status,
+            {"pending", "ready", "expired", "missing"},
+            "subscription status",
+        ),
         (
             readiness.credential_source,
             _CREDENTIAL_SOURCE_VALUES,
@@ -1028,8 +1028,19 @@ def build_default_console_session_settings(
     model: str | None = None,
     *,
     excluded_model_profile_fields: frozenset[str] = frozenset(),
+    extra_sources: Sequence[Mapping[str, object]] = (),
 ) -> ConsoleSessionSettings:
-    """Build default Console settings from chat defaults and provider config."""
+    """Build default Console settings from chat defaults and provider config.
+
+    Args:
+        app_config: The live app configuration snapshot.
+        provider: An explicit provider override, or ``None``.
+        model: An explicit model override, or ``None``.
+        extra_sources: Optional param-name → value mappings slotted between
+            the saved console provider defaults and ``chat_defaults`` in the
+            precedence walk (ADR-147: registry entry params ride this seam).
+            The default ``()`` keeps the source order unchanged.
+    """
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
     )
@@ -1059,7 +1070,9 @@ def build_default_console_session_settings(
         _mapping_value(_mapping_value(app_config, "console"), "provider_defaults"),
         configured_provider,
     )
-    default_sources = (model_profile, saved_defaults, chat_defaults, provider_settings)
+    default_sources = (
+        model_profile, saved_defaults, *extra_sources, chat_defaults, provider_settings
+    )
 
     return ConsoleSessionSettings(
         provider=configured_provider,
@@ -1473,6 +1486,7 @@ def build_console_settings_readiness(
     evidence: ProviderTestEvidence | None = None,
     current_identity: ProviderDraftIdentity | None = None,
     active_run: bool = False,
+    background_credentials: bool = True,
 ) -> ConsoleSettingsReadiness:
     """Project one deterministic Console blocker and independent evidence."""
     if type(active_run) is not bool:
@@ -1510,7 +1524,12 @@ def build_console_settings_readiness(
             settings.provider if entry is not None else provider_key,
         )
     )
-    readiness = get_provider_readiness(provider_key, app_config, environ=environ)
+    readiness = get_provider_readiness(
+        provider_key,
+        app_config,
+        environ=environ,
+        background_credentials=background_credentials,
+    )
     if entry is not None and readiness.ready:
         readiness = (
             _custom_endpoint_missing_key_readiness(entry, provider_key, environ)
@@ -1689,6 +1708,7 @@ def build_console_settings_readiness(
         model=snapshot.model,
         generation=generation,
         generation_category=generation_category,
+        subscription_status=readiness.subscription_status,
     )
 
 
@@ -1847,6 +1867,7 @@ def build_console_context_estimate(
     staged_text: str = "",
     token_counter: TokenCounter | None = None,
     token_limit_resolver: TokenLimitResolver | None = None,
+    context_window: ContextWindowResolution | None = None,
 ) -> ConsoleSettingsContextEstimate:
     """Estimate current context tokens for display in Console settings.
 
@@ -1881,7 +1902,11 @@ def build_console_context_estimate(
         counter = token_counter or _estimate_tokens_locally
         limit_resolver = token_limit_resolver or _resolve_token_limit_locally
         used_tokens = counter(list(estimate_messages), model_name, provider_key)
-        if token_limit_resolver is None:
+        if context_window is not None:
+            token_limit = context_window.tokens
+            token_limit_verified = context_window.verified
+            token_limit_source = context_window.source
+        elif token_limit_resolver is None:
             token_limit, token_limit_verified, token_limit_source = (
                 _resolve_token_limit_locally_with_provenance(
                     model_name,
@@ -2349,10 +2374,6 @@ def _optional_int_at_least(value: object, minimum: int) -> bool:
     return parsed is not None and parsed >= minimum
 
 
-def _is_blank_value(value: object) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
-
-
 def _float_setting(
     primary: Mapping[str, object],
     fallback: Mapping[str, object],
@@ -2376,105 +2397,6 @@ def _setting_value_from_sources(
             value = source.get(key)
             if not _is_blank_value(value):
                 return value
-    return default
-
-
-def _float_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: float,
-) -> float:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if _is_blank_value(value):
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return default
-
-
-def _optional_float_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-) -> float | None:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if _is_blank_value(value):
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _optional_int_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-) -> int | None:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if _is_blank_value(value):
-            continue
-        parsed = _parse_optional_int(value)
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _optional_string_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-) -> str | None:
-    for source in sources:
-        value = source.get(key)
-        text = _string_value(value)
-        if text:
-            return text
-    return None
-
-
-@overload
-def _bool_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: bool,
-) -> bool: ...
-
-
-@overload
-def _bool_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: None,
-) -> bool | None: ...
-
-
-def _bool_setting_from_sources(
-    sources: Sequence[Mapping[str, object]],
-    key: str,
-    default: bool | None,
-) -> bool | None:
-    for source in sources:
-        if key not in source:
-            continue
-        value = source.get(key)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "1"}:
-                return True
-            if normalized in {"false", "0"}:
-                return False
     return default
 
 
@@ -2505,24 +2427,6 @@ def _optional_int_setting(
     else:
         value = fallback.get(key)
     return _parse_optional_int(value)
-
-
-def _parse_optional_int(value: object) -> int | None:
-    if _is_blank_value(value):
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value) if value.is_integer() else None
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.isdecimal():
-            return int(stripped)
-        if stripped.startswith("-") and stripped[1:].isdecimal():
-            return int(stripped)
-    return None
 
 
 def _estimate_tokens_locally(
@@ -2563,28 +2467,11 @@ def _resolve_token_limit_locally_with_provenance(
     model: str,
     provider: str,
 ) -> tuple[int, bool, str]:
-    """Resolve the model window and report whether it is model-specific."""
-    if model in CONSOLE_MODEL_TOKEN_LIMITS:
-        return CONSOLE_MODEL_TOKEN_LIMITS[model], True, "model catalog"
+    """Resolve the shared model/API/system default without network I/O."""
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
 
-    model_limits = (
-        (prefix, limit)
-        for prefix, limit in CONSOLE_MODEL_TOKEN_LIMITS.items()
-        if prefix != "default"
-    )
-    for model_prefix, limit in sorted(
-        model_limits, key=lambda item: len(item[0]), reverse=True
-    ):
-        if model.startswith(model_prefix):
-            return limit, True, "model family"
-
-    if provider in CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS:
-        return (
-            CONSOLE_PROVIDER_TOKEN_LIMIT_DEFAULTS[provider],
-            False,
-            "provider fallback",
-        )
-    return CONSOLE_MODEL_TOKEN_LIMITS["default"], False, "application fallback"
+    result = resolve_context_window(provider, model)
+    return result.tokens, result.verified, result.source
 
 
 def _bool_setting(
@@ -2607,13 +2494,6 @@ def _first_string(*values: object) -> str | None:
 
 def _string_setting(source: Mapping[str, object], key: str) -> str:
     return _string_value(source.get(key)) or ""
-
-
-def _string_value(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
 
 
 def normalize_console_model_value(value: object) -> str | None:
@@ -2657,6 +2537,14 @@ def _format_endpoint_summary_row(
 
 
 def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
+    if readiness.subscription_status is not None:
+        state = {
+            "pending": "checking",
+            "ready": "not verified",
+            "expired": "expired",
+            "missing": "missing",
+        }[readiness.subscription_status]
+        return f"Credential: Claude subscription ({state})"
     if readiness.credential == "missing":
         return "Credential: missing"
     if readiness.credential == "not_required":

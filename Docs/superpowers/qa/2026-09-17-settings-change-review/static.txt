@@ -1,0 +1,6 @@
+Ruff check and format --check: new panel, both changed UI test modules, consent tests and native runner pass.
+Settings module Ruff baseline 116/current 114; introduced code/message diagnostics 0.
+git diff --check passes.
+Backlog guard: 4123 task files, unique IDs and Windows-compatible paths.
+Diagnostic inventory: 607 owners, 1407 TASK-492 calls, 55 TASK-31551 calls, 7761 TASK-494 calls, 14 sinks.
+CSS/token/component governance: included in the 55-case related run. No stylesheets changed.

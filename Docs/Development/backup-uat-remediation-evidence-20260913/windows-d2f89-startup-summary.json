@@ -1,0 +1,1040 @@
+{
+  "revision": "d2f89fbc01d49b326c14c7ef2f345d230032d0d4",
+  "run": 34924813706,
+  "job": 104240510243,
+  "log_sha256": "97b5ab774c280baa942d6c41175ba7a9674be544aea11ec2091b071fd71c1138",
+  "extracted_profiles_sha256": "2141d426c61bc72a8a7b737d322a4a17665541021057de68dc0dac398a75eef5",
+  "extracted_profiles_equal_log": true,
+  "non_ui": {
+    "passed": 31,
+    "seconds": 7.52
+  },
+  "primary": [
+    {
+      "node": "test_claim_authority_survives_screen_recompose_and_not_window_selection",
+      "outcome": "passed",
+      "call_seconds": 51.2,
+      "session_seconds": 56.08
+    },
+    {
+      "node": "test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable",
+      "outcome": "passed",
+      "call_seconds": 46.38,
+      "session_seconds": 49.86
+    },
+    {
+      "node": "test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]",
+      "outcome": "timeout",
+      "deadline_seconds": 60,
+      "final_main": "asyncio Windows selector",
+      "constructor_reported_seconds": 4.729,
+      "all_eight_executor_threads_at_timeout": "Textual _win_sleep.wait_inner/WaitForMultipleObjects",
+      "suspended_test_step": "not recorded"
+    },
+    {
+      "node": "test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]",
+      "outcome": "timeout",
+      "deadline_seconds": 60,
+      "final_main": "asyncio Windows selector",
+      "constructor_reported_seconds": 17.088,
+      "all_eight_executor_threads_at_timeout": "Textual _win_sleep.wait_inner/WaitForMultipleObjects",
+      "suspended_test_step": "not recorded"
+    }
+  ],
+  "diagnostic": {
+    "dev": {
+      "passed": 1,
+      "warnings": 2,
+      "call_seconds": 34.33,
+      "teardown_seconds": 2.55,
+      "session_seconds": 43.9
+    },
+    "candidate": {
+      "outcome": "timeout",
+      "deadline_seconds": 60
+    }
+  },
+  "samples": [
+    {
+      "line": 1266,
+      "label": "dev",
+      "elapsed_seconds": 12.375,
+      "sha256": "e3298756c035f0abc7e55eaee33df67e8c353bcfb25323a7919de79db831fa93",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "settings_rebuild": 1,
+        "user_directory": 4
+      },
+      "active": []
+    },
+    {
+      "line": 1299,
+      "label": "dev",
+      "elapsed_seconds": 26.438,
+      "sha256": "7d3ae6cdcd3c0e7390b5bc1b85211d992385a42bdc9d59c9c4c6dd39564410ea",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "settings_rebuild": 2,
+        "user_directory": 25,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1
+      },
+      "active": []
+    },
+    {
+      "line": 1300,
+      "label": "dev",
+      "elapsed_seconds": 40.36,
+      "sha256": "f284f5e4cbaaf92ae89cc11d2efd7be1f3564b893fc0bb8944c3b60e78d7f41b",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1
+      },
+      "active": []
+    },
+    {
+      "line": 1304,
+      "label": "dev",
+      "elapsed_seconds": 46.094,
+      "sha256": "c55ad82e5c785976f31b5c166498f7f37417f14dd328d1aafa764bd52c461003",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "settings_rebuild": 2,
+        "user_directory": 26,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1
+      },
+      "active": []
+    },
+    {
+      "line": 1352,
+      "label": "candidate",
+      "elapsed_seconds": 12.421,
+      "sha256": "491a26dddcc4cb8b47a2d6108614808393745f5dbdeab29cb360f44b5b6e5c1c",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "config_operation": 49,
+        "user_directory": 6
+      },
+      "active": []
+    },
+    {
+      "line": 1377,
+      "label": "candidate",
+      "elapsed_seconds": 25.765,
+      "sha256": "b0c430344a788deabf7f273b6d2231d5a5c3f22780f0fc0259315cb48b2c58c2",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "config_operation": 138,
+        "user_directory": 15
+      },
+      "active": [
+        {
+          "function": "config_operation",
+          "thread": 3424,
+          "phase": "body_and_release",
+          "elapsed_seconds": 3.453604,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "stat",
+              "line": 716
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "_registry_read_lock",
+              "line": 273
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "_registry",
+              "line": 298
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_scope",
+              "line": 779
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config.py",
+              "function": "_default_data_root_lock",
+              "line": 8980
+            },
+            {
+              "file": "config.py",
+              "function": "get_user_data_dir",
+              "line": 9138
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 420
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_ensure_console_agent_bridge",
+              "line": 10042
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_selected_console_conversation_inspector_rows",
+              "line": 14642
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_inspector_state",
+              "line": 14300
+            }
+          ]
+        },
+        {
+          "function": "user_directory",
+          "thread": 3424,
+          "phase": "running",
+          "elapsed_seconds": 3.371059,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "stat",
+              "line": 716
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "_registry_read_lock",
+              "line": 273
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "_registry",
+              "line": 298
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_scope",
+              "line": 779
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config.py",
+              "function": "_default_data_root_lock",
+              "line": 8980
+            },
+            {
+              "file": "config.py",
+              "function": "get_user_data_dir",
+              "line": 9138
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 420
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_ensure_console_agent_bridge",
+              "line": 10042
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_selected_console_conversation_inspector_rows",
+              "line": 14642
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_inspector_state",
+              "line": 14300
+            }
+          ]
+        },
+        {
+          "function": "config_operation",
+          "thread": 3424,
+          "phase": "running",
+          "elapsed_seconds": 3.366095,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "stat",
+              "line": 716
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "_registry_read_lock",
+              "line": 273
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "_registry",
+              "line": 298
+            },
+            {
+              "file": "storage_admission.py",
+              "function": "_scope",
+              "line": 779
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config.py",
+              "function": "_default_data_root_lock",
+              "line": 8980
+            },
+            {
+              "file": "config.py",
+              "function": "get_user_data_dir",
+              "line": 9138
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 420
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_ensure_console_agent_bridge",
+              "line": 10042
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_selected_console_conversation_inspector_rows",
+              "line": 14642
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_inspector_state",
+              "line": 14300
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "line": 1378,
+      "label": "candidate",
+      "elapsed_seconds": 39.859,
+      "sha256": "5cd7994bb30b57d1197a02ad1cee4e52fe56c2c26e0518fc8230b049eea5da47",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "config_operation": 260,
+        "user_directory": 20,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "active": [
+        {
+          "function": "config_operation",
+          "thread": 1408,
+          "phase": "body_and_release",
+          "elapsed_seconds": 4.467542,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "info",
+              "line": 423
+            },
+            {
+              "file": "windows_files.py",
+              "function": "_stat_handle",
+              "line": 720
+            },
+            {
+              "file": "windows_files.py",
+              "function": "fstat",
+              "line": 700
+            },
+            {
+              "file": "private_paths.py",
+              "function": "_open_verified_parent",
+              "line": 417
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "pinned_directory",
+              "line": 35
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config.py",
+              "function": "_default_data_root_lock",
+              "line": 8980
+            },
+            {
+              "file": "config.py",
+              "function": "get_user_data_dir",
+              "line": 9138
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 420
+            },
+            {
+              "file": "prompt_history.py",
+              "function": "default_prompt_history_path",
+              "line": 40
+            }
+          ]
+        },
+        {
+          "function": "config_operation",
+          "thread": 3264,
+          "phase": "running",
+          "elapsed_seconds": 4.442894,
+          "frame_count": 12,
+          "inner_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 343
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "config.py",
+              "function": "load_cli_config_and_ensure_existence",
+              "line": 6261
+            },
+            {
+              "file": "config.py",
+              "function": "get_canvas_execution_enabled",
+              "line": 401
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 343
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "config.py",
+              "function": "load_cli_config_and_ensure_existence",
+              "line": 6261
+            },
+            {
+              "file": "config.py",
+              "function": "get_canvas_execution_enabled",
+              "line": 401
+            },
+            {
+              "file": "console_runtime.py",
+              "function": "_read_canvas_enabled",
+              "line": 2832
+            },
+            {
+              "file": "console_runtime.py",
+              "function": "_canvas_enabled",
+              "line": 2846
+            }
+          ]
+        },
+        {
+          "function": "user_directory",
+          "thread": 1408,
+          "phase": "running",
+          "elapsed_seconds": 4.227777,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "info",
+              "line": 423
+            },
+            {
+              "file": "windows_files.py",
+              "function": "_stat_handle",
+              "line": 720
+            },
+            {
+              "file": "windows_files.py",
+              "function": "fstat",
+              "line": 700
+            },
+            {
+              "file": "private_paths.py",
+              "function": "_open_verified_parent",
+              "line": 417
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "pinned_directory",
+              "line": 35
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config.py",
+              "function": "_default_data_root_lock",
+              "line": 8980
+            },
+            {
+              "file": "config.py",
+              "function": "get_user_data_dir",
+              "line": 9138
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 420
+            },
+            {
+              "file": "prompt_history.py",
+              "function": "default_prompt_history_path",
+              "line": 40
+            }
+          ]
+        },
+        {
+          "function": "config_operation",
+          "thread": 3424,
+          "phase": "running",
+          "elapsed_seconds": 3.337811,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 343
+            },
+            {
+              "file": "contextlib.py",
+              "function": "__enter__",
+              "line": 137
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "wiring.py",
+              "function": "<lambda>",
+              "line": 1479
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 343
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_provider_model_display_uncached",
+              "line": 9834
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_provider_model_display",
+              "line": 9825
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_inspector_state",
+              "line": 14204
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_current_console_rail_state",
+              "line": 13800
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_adapt_console_workspace_to_width",
+              "line": 22219
+            }
+          ]
+        },
+        {
+          "function": "config_operation",
+          "thread": 1408,
+          "phase": "running",
+          "elapsed_seconds": 0.934369,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "info",
+              "line": 423
+            },
+            {
+              "file": "windows_files.py",
+              "function": "_stat_handle",
+              "line": 720
+            },
+            {
+              "file": "windows_files.py",
+              "function": "fstat",
+              "line": 700
+            },
+            {
+              "file": "private_paths.py",
+              "function": "_open_verified_parent",
+              "line": 417
+            },
+            {
+              "file": "bootstrap.py",
+              "function": "pinned_directory",
+              "line": 35
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config.py",
+              "function": "_default_data_root_lock",
+              "line": 8980
+            },
+            {
+              "file": "config.py",
+              "function": "get_user_data_dir",
+              "line": 9138
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 420
+            },
+            {
+              "file": "prompt_history.py",
+              "function": "default_prompt_history_path",
+              "line": 40
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "line": 1379,
+      "label": "candidate",
+      "elapsed_seconds": 53.625,
+      "sha256": "479ae6c394917c108bd2184cbcd02f7c715a14578be7a95969c13313e166ebfa",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "config_operation": 449,
+        "user_directory": 23,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "active": [
+        {
+          "function": "config_operation",
+          "thread": 3424,
+          "phase": "running",
+          "elapsed_seconds": 3.745729,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "sid_string",
+              "line": 384
+            },
+            {
+              "file": "windows_files.py",
+              "function": "security",
+              "line": 472
+            },
+            {
+              "file": "windows_files.py",
+              "function": "_stat_handle",
+              "line": 721
+            },
+            {
+              "file": "windows_files.py",
+              "function": "fstat",
+              "line": 700
+            },
+            {
+              "file": "private_paths.py",
+              "function": "_open_verified_parent",
+              "line": 363
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_persisted_chat_defaults",
+              "line": 7834
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_effective_console_provider_model",
+              "line": 7826
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_provider_model_display_uncached",
+              "line": 9836
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_provider_model_display",
+              "line": 9825
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_inspector_state",
+              "line": 14204
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_current_console_rail_state",
+              "line": 13800
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "line": 1523,
+      "label": "candidate",
+      "elapsed_seconds": 67.437,
+      "sha256": "a61803b22d89122bf092227975fcde86991a3cd5dc5ecd9237b65887a25f076a",
+      "source_matches": true,
+      "observer_errors": [],
+      "config_errors": [],
+      "dropped_active": 0,
+      "counts": {
+        "config_operation": 545,
+        "user_directory": 23,
+        "transaction": 1,
+        "config_lock": 1,
+        "publication": 1,
+        "settings_rebuild": 1
+      },
+      "active": [
+        {
+          "function": "config_operation",
+          "thread": 3424,
+          "phase": "running",
+          "elapsed_seconds": 3.958146,
+          "frame_count": 25,
+          "inner_frames": [
+            {
+              "file": "windows_files.py",
+              "function": "sid_string",
+              "line": 384
+            },
+            {
+              "file": "windows_files.py",
+              "function": "security",
+              "line": 472
+            },
+            {
+              "file": "windows_files.py",
+              "function": "_stat_handle",
+              "line": 721
+            },
+            {
+              "file": "windows_files.py",
+              "function": "fstat",
+              "line": 700
+            },
+            {
+              "file": "private_paths.py",
+              "function": "_open_verified_parent",
+              "line": 417
+            }
+          ],
+          "selected_caller_frames": [
+            {
+              "file": "config_participants.py",
+              "function": "operation",
+              "line": 352
+            },
+            {
+              "file": "config_participants.py",
+              "function": "wrapped",
+              "line": 419
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_provider_readiness_app_config",
+              "line": 7615
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness_uncached",
+              "line": 9878
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_active_console_settings_readiness",
+              "line": 9859
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_build_console_setup_card_state",
+              "line": 15066
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_sync_console_transcript_guidance",
+              "line": 15148
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "on_screen_resume",
+              "line": 23472
+            },
+            {
+              "file": "chat_screen.py",
+              "function": "_reconcile_console_after_attach",
+              "line": 16595
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "candidate_slowest": {
+    "config_operation": {
+      "function": "config_operation",
+      "outcome": "returned",
+      "thread": 3264,
+      "elapsed_seconds": 4.88815,
+      "thread_cpu_seconds": 0.078125,
+      "acquisition_seconds": 4.887998,
+      "body_and_release_seconds": 0.000151
+    },
+    "user_directory": {
+      "function": "user_directory",
+      "outcome": "returned",
+      "thread": 1408,
+      "elapsed_seconds": 4.589106,
+      "thread_cpu_seconds": 0.25
+    },
+    "settings_rebuild": {
+      "function": "settings_rebuild",
+      "outcome": "returned",
+      "thread": 4864,
+      "elapsed_seconds": 0.292432,
+      "thread_cpu_seconds": 0.265625
+    },
+    "publication": {
+      "function": "publication",
+      "outcome": "returned",
+      "thread": 4864,
+      "elapsed_seconds": 0.304722,
+      "thread_cpu_seconds": 0.28125
+    },
+    "config_lock": {
+      "function": "config_lock",
+      "outcome": "returned",
+      "thread": 4864,
+      "elapsed_seconds": 1.558888,
+      "thread_cpu_seconds": 0.671875,
+      "acquisition_seconds": 0.923035,
+      "body_and_release_seconds": 0.635854
+    },
+    "transaction": {
+      "function": "transaction",
+      "outcome": "returned",
+      "thread": 4864,
+      "elapsed_seconds": 1.558997,
+      "thread_cpu_seconds": 0.671875
+    }
+  },
+  "candidate_selected_profile_costs": [
+    {
+      "file": "Backup_Recovery/config_participants.py",
+      "function": "wrapped",
+      "line": 400,
+      "calls": 475,
+      "total_seconds": 44.876901,
+      "self_seconds": 0.004296
+    },
+    {
+      "file": "Backup_Recovery/config_participants.py",
+      "function": "operation",
+      "line": 294,
+      "calls": 1118,
+      "total_seconds": 37.62898,
+      "self_seconds": 0.023132
+    },
+    {
+      "file": "Backup_Recovery/storage_admission.py",
+      "function": "acquire_storage",
+      "line": 830,
+      "calls": 680,
+      "total_seconds": 37.415797,
+      "self_seconds": 0.006309
+    },
+    {
+      "file": "Backup_Recovery/storage_admission.py",
+      "function": "_acquire_storage",
+      "line": 849,
+      "calls": 680,
+      "total_seconds": 33.995388,
+      "self_seconds": 0.020603
+    },
+    {
+      "file": "Backup_Recovery/raw_participants.py",
+      "function": "_scope",
+      "line": 451,
+      "calls": 1153,
+      "total_seconds": 33.843872,
+      "self_seconds": 0.025527
+    },
+    {
+      "file": "Utils/windows_files.py",
+      "function": "open_handle",
+      "line": 480,
+      "calls": 363436,
+      "total_seconds": 17.477027,
+      "self_seconds": 5.080041
+    },
+    {
+      "file": "Utils/windows_files.py",
+      "function": "security",
+      "line": 450,
+      "calls": 200353,
+      "total_seconds": 9.955252,
+      "self_seconds": 4.507617
+    },
+    {
+      "file": "Utils/windows_files.py",
+      "function": "sid_string",
+      "line": 378,
+      "calls": 912391,
+      "total_seconds": 3.348284,
+      "self_seconds": 2.380268
+    }
+  ],
+  "limitations": [
+    "Non-atomic live frame samples; operation age is not time spent on a sampled line.",
+    "Profiled candidate repeats a primary case that passed without the diagnostic.",
+    "No product-source changes between8db andd2f; different results alone do not prove a product speedup.",
+    "Unprofiled keyboard timeout mains are in selector; caller cause remains unresolved."
+  ],
+  "primary_next_evidence": "Bounded coroutine await-chain or fixed phase records around original mount/pilot/modal/cleanup path; preserve all waits and executor behavior."
+}

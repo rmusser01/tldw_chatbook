@@ -1,0 +1,277 @@
+{
+  "revision": "d2f89fbc01d49b326c14c7ef2f345d230032d0d4",
+  "artifact": "/private/tmp/uat-windows-d2f89-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-d2f89fbc01d49b326c14c7ef2f345d230032d0d4",
+  "product_selection": "native-close-diagnostic",
+  "verified_artifact_files": 27,
+  "summary_effective_returncode": 0,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.736,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 43,
+      "counts": {
+        "passed": 43
+      },
+      "seconds": 785.716,
+      "failures": [],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "c46cbb7e5e7a76d04bd91d249dae5e09d24752ac08ee8ac3674cacc6f12740e3",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "selected_product_nodes": [
+    "Tests/TTS/test_profile_native_close_contract.py::test_native_repository_close_preserves_proven_state_and_exclusion",
+    "Tests/Backup_Recovery/test_db_status_maintenance.py",
+    "Tests/Backup_Recovery/test_canvas_policy_maintenance.py",
+    "Tests/Backup_Recovery/test_canvas_policy_worker.py",
+    "Tests/Backup_Recovery/test_canvas_view_binding_lifetime.py",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+    "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[library]"
+  ],
+  "run_id": 34924835239,
+  "git_blob_verification": {
+    "revision": "d2f89fbc01d49b326c14c7ef2f345d230032d0d4",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "case_groups": {
+    "Tests.Utils.test_windows_files": 42,
+    "Tests.TTS.test_profile_native_close_contract": 4,
+    "Tests.Backup_Recovery.test_db_status_maintenance": 8,
+    "Tests.Backup_Recovery.test_canvas_policy_maintenance": 12,
+    "Tests.Backup_Recovery.test_canvas_policy_worker": 6,
+    "Tests.Backup_Recovery.test_canvas_view_binding_lifetime": 11,
+    "Tests.Backup_Recovery.test_mounted_console_backup": 2
+  },
+  "source_test_hashes": {
+    "Tests/Backup_Recovery/test_mounted_console_backup.py": "1be300313cd0a211ca58e7829ee9f1f0c16b7bbefc063e00e914eced624fc8c7",
+    "Tests/Backup_Recovery/test_home_citation_retirement.py": "e78005a249bd9f891d5f29f8178a6aad515a28b3950be88ff9705c88e101dd41",
+    "Tests/Backup_Recovery/native_package.py": "de0063a04616b3c97806efd4daaebb81254fd954e03f899d245123b6f09da0af",
+    "Tests/Backup_Recovery/test_canvas_policy_worker.py": "4a293747b1ebc5896891445503dfd5639753cd7486db5f55ad09b7a6d9b88b7d",
+    "Tests/Backup_Recovery/run_platform_product.py": "5a7c8c32f8f03b84f165d298c937a5a0cd3b0531bdc2a9d2ac585a00c9fe5055",
+    "Tests/Backup_Recovery/thread_diagnostics.py": "9ece5af67a2f4a45c1a85fed9bcdac707336f4b4e811996eeecba39c247ee2ca"
+  },
+  "mounted": [
+    {
+      "route": "settings",
+      "fixture": "test-logs/product-pytest/test_mounted_console_complete_0/home",
+      "junit": {
+        "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+        "status": "passed",
+        "seconds": 240.558
+      },
+      "entry_phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.063
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 40.782
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 40.782
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 77.813
+        },
+        {
+          "phase": "service_close_begin",
+          "elapsed": 191.547
+        },
+        {
+          "phase": "service_close_complete",
+          "elapsed": 191.547
+        }
+      ],
+      "inventory_observations": 5,
+      "scope_changes": 0,
+      "unavailable_dependencies": 0,
+      "runtime_events": [
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_before",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_after",
+          "live_leases": 1,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "runtime_resume",
+          "live_leases": 0,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        }
+      ]
+    },
+    {
+      "route": "library",
+      "fixture": "test-logs/product-pytest/test_mounted_console_complete_1/home",
+      "junit": {
+        "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+        "status": "passed",
+        "seconds": 215.317
+      },
+      "entry_phases": [
+        {
+          "phase": "construct_begin",
+          "elapsed": 0.016
+        },
+        {
+          "phase": "construct_complete",
+          "elapsed": 40.547
+        },
+        {
+          "phase": "mount_begin",
+          "elapsed": 40.547
+        },
+        {
+          "phase": "mount_yield",
+          "elapsed": 77.047
+        },
+        {
+          "phase": "service_close_begin",
+          "elapsed": 209.922
+        },
+        {
+          "phase": "service_close_complete",
+          "elapsed": 209.922
+        }
+      ],
+      "inventory_observations": 5,
+      "scope_changes": 0,
+      "unavailable_dependencies": 0,
+      "runtime_events": [
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "settle_stage_begin",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_before",
+          "live_leases": 8,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "retire_caches_after",
+          "live_leases": 1,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        },
+        {
+          "event": "runtime_resume",
+          "live_leases": 0,
+          "pending": 0,
+          "operations": 0,
+          "raw_operations": 0
+        }
+      ]
+    }
+  ],
+  "product_identical_to_8db": true,
+  "receipt_hashes": {
+    "artifact-sha256.json": "83b7aefd41d35408669c8b07dbb679fe57f956c0ca67602b178d6f68a23a6d26",
+    "source-receipt.json": "b115a2aff624bfc4a334f9a55b9742dd28d7a30e7683e484ea0421bd187b1ab3",
+    "installed-package-receipt.json": "07cc82485ae24ee84dcaa7523207bf10ad40453e59976a5aec02abd155e75abc",
+    "native-pytest.xml": "fe50e66bc0341c94e76776199a1ab2dfc831594f70ad06f3f2597747726cf7cd",
+    "pytest.xml": "1d044500235b1eae8ee34e72484168fafda513fa9730a9ebbcbb1b0d06ff1d8e"
+  },
+  "limits": "Exact native-close selection only; no full-support, whole-PR or GGUF startup acceptance. No prior-failure causal claim."
+}

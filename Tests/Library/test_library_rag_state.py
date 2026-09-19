@@ -230,7 +230,7 @@ def test_query_state_provider_gate_is_rag_only() -> None:
     assert blocked_rag.status == "blocked"
     assert blocked_rag.run_action.enabled is False
     assert blocked_rag.run_action.disabled_reason == (
-        "Select a provider/model before asking for a RAG answer."
+        "No analysis provider is configured · Set one in Settings ▸ Providers & Models."
     )
     assert "Owner: LLM provider." in blocked_rag.recovery_copy
     assert (
@@ -344,7 +344,7 @@ def test_blank_provider_name_never_yields_a_ready_rag_mode_invariant(blank) -> N
     assert state.status == "blocked"
     assert state.ready_answer_provider == ""
     assert state.run_action.disabled_reason == (
-        "Select a provider/model before asking for a RAG answer."
+        "No analysis provider is configured · Set one in Settings ▸ Providers & Models."
     )
 
 
@@ -369,10 +369,7 @@ def test_provider_ready_parameter_no_longer_exists() -> None:
 
 
 def test_library_rag_paid_mode_notice_names_the_provider() -> None:
-    assert library_rag_paid_mode_notice("openai") == (
-        "RAG Answer sends your question and the evidence to openai. "
-        "Search stays local."
-    )
+    assert library_rag_paid_mode_notice("openai") == "To openai: question + evidence"
 
 
 def test_panel_state_threads_provider_name_into_query_state() -> None:
@@ -2148,14 +2145,8 @@ _ANTHROPIC_CREDENTIAL_REMEDY = (
 )
 
 
-def test_unselected_provider_keeps_the_select_a_provider_copy() -> None:
-    """Half one of I1: the genuinely-unselected case is UNCHANGED.
-
-    No provider named and no credential remedy to offer -- "select a
-    provider/model", owner "LLM provider", recovery pointer "Console
-    controls" is the right copy here and must survive the fix that gave
-    the other half its own.
-    """
+def test_unselected_provider_offers_the_settings_recovery_action() -> None:
+    """An unselected provider exposes the same settings action as a missing key."""
     state = LibraryRagQueryState.from_values(
         query="summarize the policy",
         mode="rag",
@@ -2165,10 +2156,11 @@ def test_unselected_provider_keeps_the_select_a_provider_copy() -> None:
 
     assert state.run_action.enabled is False
     assert state.run_action.disabled_reason == (
-        "Select a provider/model before asking for a RAG answer."
+        "No analysis provider is configured · Set one in Settings ▸ Providers & Models."
     )
     assert "Owner: LLM provider." in state.recovery_copy
-    assert "Recovery: Console controls." in state.recovery_copy
+    assert state.blocked_is_no_provider
+    assert "Recovery: Settings ▸ Providers & Models." in state.recovery_copy
 
 
 def test_named_but_uncredentialed_provider_shows_the_real_remedy() -> None:

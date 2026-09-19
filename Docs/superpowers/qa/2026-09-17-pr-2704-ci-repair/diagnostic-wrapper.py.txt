@@ -1,0 +1,37 @@
+import json
+from pathlib import Path
+from Tests.private_profile import private_profile_test
+from Tests.UI import test_llm_gguf_source_modes as target
+from Tests.UI.test_llm_gguf_source_modes import _deterministic_models_mount
+
+@private_profile_test
+async def test_probe(monkeypatch, tmp_path, request):
+    original = target._settle_pilot_until
+    async def settle(pilot, predicate, *, message):
+        try:
+            return await original(pilot, predicate, message=message)
+        finally:
+            if "managed source controls" in message:
+                nodes=[]
+                for obj in pilot.app.screen.query("*"):
+                    nodes.append({"id":obj.id,"type":type(obj).__name__,"classes":sorted(obj.classes),"region":list(obj.region),"display":obj.display,"visible":obj in pilot.app.screen._compositor.visible_widgets,"styles":{k:str(v) for k,v in obj.styles.get_rules().items()}})
+                label = "dev" if "dev-baseline" in str(Path.cwd()) else "fixed"
+                Path(f"/private/tmp/pr2704-gguf-{label}-nodes.json").write_text(json.dumps(nodes,indent=2))
+                pilot.app.save_screenshot(f"pr2704-gguf-{label}.svg",path="/private/tmp")
+    monkeypatch.setattr(target, "_settle_pilot_until", settle)
+    await target.test_supported_width_keyboard_reaches_each_provider_source_and_actions.__wrapped__(monkeypatch,tmp_path,"llamafile","llamafile",request)
+
+
+import pytest
+
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@private_profile_test
+async def test_reference_gallery_snapshot(theme, request):
+    from Tests.UI.test_pattern_gallery_snapshots import test_gallery_snapshot
+    await test_gallery_snapshot(theme)
+
+@pytest.mark.parametrize("size", [(120, 35), (100, 30), (80, 24)])
+@private_profile_test
+async def test_reference_catalog_layout(size, request):
+    from Tests.UI.test_settings_model_catalog_layout import test_model_catalog_group_renders_all_controls
+    await test_model_catalog_group_renders_all_controls(size)

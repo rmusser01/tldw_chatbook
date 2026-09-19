@@ -1,0 +1,50 @@
+
+  Backup & Restore
+
+                                  Create backup                                                                Inspect / restore
+
+
+                                 Recovery copies                                                               Restored profiles
+
+
+  Needs setup
+  Profile: eb5cd86e55774840a50b2d2d9b68beae
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ • notifications / client                                                                                                                                     │
+│ • persona / assets                                                                                                                                           │
+│ • persona / visual identity                                                                                                                                  │
+│ • persona / visual identity builtin                                                                                                                          │
+│ • personas                                                                                                                                                   │
+│ • quiz / local                                                                                                                                               │
+│ • rag / definitions                                                                                                                                          │
+│ • rag / projections                                                                                                                                          │
+│ • recovered / media                                                                                                                                          │
+│ • research / local                                                                                                                                           │
+│ • research / paste staging                                                                                                                                   │
+│ • runtime / chatbook scratch                                                                                                                                 │
+│ • runtime / config lock                                                                                                                                      │
+│ • runtime / crash forensics                                                                                                                                  │
+│ • runtime / event state                                                                                                                                      │
+│ • runtime / instance lock                                                                                                                                    │
+│ • runtime / scheduler heartbeat                                                                                                                              │
+│ • runtime / source state                                                                                                                                     │
+│ • runtime / sync state                                                                                                                                       │
+│ • skills                                                                                                                                                     │
+│ • study / local                                                                                                                                              │
+│ • subscriptions / assets                                                                                                                                   ▇ │
+│ • tamagotchi / config                                                                                                                                        │
+│ • tokenizers / custom                                                                                                                                        │
+│ • tts / profile store                                                                                                                                        │
+│ • tts / references                                                                                                                                           │
+│ • tts / voices                                                                                                                                               │
+│ • ui / emoji recents                                                                                                                                         │
+│ • ui / state                                                                                                                                                 │
+│ • ui / themes                                                                                                                                                │
+│ • workspaces / change tracking                                                                                                                               │
+│ • writing / local                                                                                                                                            │
+│  Open in new process                                                                                                                                         │
+│                                                                                                                                                            ▃ │
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+
+                                Cancel operation                                                                     Back
+ esc Back  ^q Quit App  ^p Palette Menu  f1 Help  f6 Next Pane  f2 Go to Lab  f3 Go to Logs  f4 Go to Settings  f5 Go to Research  f7 Go to Mee▏^p Palette Menu

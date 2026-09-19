@@ -1,0 +1,29 @@
+{
+  "run": "run-003",
+  "batches_inspected": 2,
+  "final_captures_inspected": 6,
+  "sizes": [
+    [
+      170,
+      48
+    ],
+    [
+      80,
+      24
+    ]
+  ],
+  "themes": [
+    "textual-dark",
+    "textual-light"
+  ],
+  "observations": [
+    "Grouped Show/Hide, Retry all and Dismiss all labels fit the visible action row.",
+    "Recent imports remains expanded with a readable focus highlight after a writing transition.",
+    "Full Clear confirmation is visible above the dock and history retains basename/state/dismissed markers plus wrapped paths.",
+    "Final captures contain no transient notification overlays."
+  ],
+  "limits": [
+    "Group member rows below the fold are asserted mounted, not all simultaneously pictured.",
+    "No full-profile or real importer qualification."
+  ]
+}

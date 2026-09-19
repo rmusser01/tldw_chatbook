@@ -1910,6 +1910,8 @@ class LibraryIngestController:
         retry_button.label = library_ingest_retry_label(
             self._library_ingest_retry_confirm_armed
         )
+        # Button.label repaints but does not invalidate its measured width.
+        retry_button.refresh(layout=True)
 
     def _restage_library_ingest_last_submission(self) -> None:
         """Restore the last submission's source/options/metadata (task-3313).

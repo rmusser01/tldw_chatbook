@@ -1,0 +1,24 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 A  More ▾
+────────────────────────────────────────────────────────────────────────────────
+       ┌────────────────────────────────────────────────────────────────┐      •
+       │                                                                │      •
+       │  Get started                                                   │
+     * │                                                                │
+       │  A provider is the AI service that answers your messages —     │
+       │  for example OpenAI, Anthropic, or a server running on this    │      ·
+       │  computer.                                                     │
+       │                                                                │      *
+       │  1. ● Connect a provider (API key or local server)             │
+       │  2. ○ Pick a model                                             │      *
+ ·     │  3. ○ Send your first message  Composer unlocks after setup    │      *
+       │                                                                │
+       │  ┃───────────────────┃                                         │      *
+       │  ┃  Set up provider  ┃                                         │
+       │  ┃───────────────────┃                                         │      •
+       │                                                                │
+       │  ╭───────────────────────────╮                                 │      ·
+       │  │  Write a note in Library  │                                 │      *
+       │  ╰───────────────────────────╯                                 │
+    *  │                                                                │      ·
+  Ctrl+Shift+F focus | F6 next pane | F1 · Ctrl+P · Ctrl+Q

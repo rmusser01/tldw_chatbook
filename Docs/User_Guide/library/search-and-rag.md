@@ -83,6 +83,11 @@ Search mode) states the same fact before you press Run: "RAG Answer sends
 your question and the evidence to \<provider>. Search stays local." — a
 statement, not a confirmation gate; nothing blocks Run because of it.
 
+Use Tab or Shift+Tab to reach the mode toggle, then Enter to switch. Focus
+stays on the toggle so Enter can switch back. Changing mode clears the current
+evidence and answer, including any late result from the previous mode, while
+keeping your query and Recent searches. It does not start a new search.
+
 - **Search** — keyword matching over your sources; works with nothing extra
   installed.
 - **RAG Answer** — retrieval driven by your active RAG profile (see
@@ -185,7 +190,8 @@ are actually on screen right now.
 ### Sources scope
 
 The four toggles decide where the query looks: ☑ is in scope, ☐ is
-excluded; click to flip. A source whose count is (0) is disabled. If your
+excluded; click to flip, or reach a toggle with Tab and press Enter. Focus
+stays on that toggle. A source whose count is (0) is disabled. If your
 Library is empty, the scope block takes over entirely: "No Library sources
 yet — import media or create notes, then search." with an **"Open Import
 media"** button ([Import & export](import-and-export.md)).
@@ -201,13 +207,18 @@ fails) filtering is suspended, so rows are never wrongly hidden before
 real counts arrive — the toggle strip and the run gate read the same
 either way.
 
+Scope changes do not restart an in-flight search or regenerate its answer;
+the answer remains based on the evidence retrieved for that run. Press Run
+to retrieve and answer with the new scope. With every source off, Run stays
+disabled until you select a source again.
+
 ### Older-engine chunks: the report line and Re-chunk
 
 Under the source toggles, the panel reports how much of your Library was
 chunked by the pre-parity engine: **"Chunked by an older engine: N items."**
-The line (and everything in this section) appears only when such items
-actually exist — a fully migrated Library shows nothing at all, rather
-than a zero. Beside the line sits **"Re-chunk older-engine items"**,
+The report and action appear when such items exist; a fully migrated Library
+omits the report rather than showing zero. A completed run's summary remains
+available for the app session. Beside the line sits **"Re-chunk older-engine items"**,
 which re-chunks exactly those items through the current template-aware
 path: each item is re-chunked honoring **its own stored template choice**
 (the one picked at import, or the `[chunking] default_template` config
@@ -221,6 +232,16 @@ re-index skipped (semantic index unavailable)" when no embeddings index is
 configured) — never a bare "done". The reported count drops by exactly
 the number re-chunked; skipped and failed items keep their older-engine
 chunks.
+
+Use Tab to focus **Re-chunk older-engine items**, then Enter to start. The
+button stays disabled and **Re-chunking…** remains visible while the run is
+active, including after mode/source changes or returning from another Library
+view or app destination. Re-chunk continues while you are away. Returning shows
+its progress or completed counts and notes, even if it finished elsewhere.
+Starting another run replaces the summary; closing the app clears it. This is
+session feedback, not a saved job history. A failed run shows an error notice
+and releases the action for retry. In a compact terminal, scroll the panel to
+read the wrapped summary.
 
 Details worth knowing before you press:
 
@@ -302,17 +323,22 @@ from "your notes were never searched."
 **Needs its own provider.** Separately from the embeddings support
 retrieval itself needs, RAG Answer mode needs an LLM provider *with a
 working credential* configured — an endpoint name alone is no longer
-enough to unblock Run. The block names whichever of the two is actually
-missing:
+enough to unblock Run. If no provider is selected, or the selected provider
+has no usable credential, the panel says **"No analysis provider is configured ·
+Set one in Settings ▸ Providers & Models."** and offers **"Open Settings ▸
+Providers"**. Tab to the button and press Enter to open that Settings category.
+The credential-specific environment/config remedy remains in the log.
 
-- **No provider chosen at all** — **"Select a provider/model before
-  asking for a RAG answer."**
-- **A provider chosen, but no credential for it** — **"No analysis
-  provider is configured · Set one in Settings ▸ Providers & Models."**,
-  with an **"Open Settings ▸ Providers"** button beside it that takes you
-  straight there. This is the same sentence the Media reader's analysis
-  gate uses, so one missing key never produces two different remedies; the
-  env-var / `[api_settings.<provider>]` detail is written to the log.
+Return to Library with **Ctrl+3** and reopen **Search / RAG** if the Library
+landing page is shown. Your query, mode and source choices are retained; both
+query fields show the same draft. Run and the recovery action refresh to reflect
+current provider readiness, without repeating a search or generating an answer.
+
+An empty Library instead offers **"Open Import media"**. It opens the existing
+Import form without starting a job. At compact width, use the **Nav** handle to
+reopen Library navigation, then choose **Search / RAG** to return to your draft.
+Deselecting every existing source does not offer Import as the remedy; select a
+source again.
 
 A key set either the modern way (`[api_settings.<provider>] api_key = …`)
 or the legacy way (`[API] <provider>_api_key = …`) satisfies it — the same
@@ -435,10 +461,17 @@ actually scored also keep their original score band rather than claiming
 
 ### Recent searches
 
-The "Recent searches" fold keeps your last 10 queries and persists them
-across restarts. "Select an entry to run it again." — each entry re-runs
-that exact query; **"Clear history"** empties the list. The fold closes
-itself when results land and opens itself when a search comes back empty.
+The "Recent searches" fold keeps your last 10 submitted queries across
+restarts, storing up to 200 characters per entry. Selecting an entry runs
+its stored text immediately using the current mode and Sources selections;
+previous mode/source settings are not saved with it. Re-running a query
+moves it to the top of the list.
+
+Tab to the heading and press Enter to expand it, then Tab to an entry and
+press Enter to run it. **Clear history** empties the saved list while
+keeping the current query, evidence and answer; keyboard focus returns to
+the heading. The fold closes when results land and opens when a search
+comes back empty.
 
 ### Sending evidence to Console
 
@@ -483,8 +516,12 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 4. **Send evidence to Console** — press **Select evidence** on the best
    row, then the inline **Use in Console** (or press `u`). Console opens
    with "Review evidence in Console" staged.
-5. **Re-run a recent search** — expand "Recent searches" and click the
-   entry ("Select an entry to run it again.").
+5. **Re-run a recent search** — Tab to **Recent searches** and press Enter
+   to expand it, then Tab to an entry and press Enter (or click it).
+   This runs immediately using the **current mode and Sources selections**;
+   history remembers query text, not earlier settings. Both query boxes
+   show the selected text. **Clear history** removes the saved entries and
+   leaves the current query, evidence and answer in place.
 6. **Ask a question and get an answer** — click **"mode: Search ▸"** so it
    reads "mode: RAG Answer ▸", then run; the panel shows a generated,
    cited answer above the evidence rows — or an honest "Nothing in your
@@ -497,16 +534,30 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 |---|---|
 | Enter (in the query box) | Run the search |
 | Tab | Move focus through the panel, including each evidence card in turn |
+| Shift+Tab | Move back through the panel controls to the query box |
+| `/` (outside a text field) | Focus the Library rail search; Enter there runs keyword Search |
+| Page Up / Page Down (with an evidence card focused) | Scroll the panel to read the generated answer, citation feedback and evidence |
 | Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
 | `o` (on a focused evidence card) | Open that item in its own Library surface |
 | `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at |
 | Esc (in the query box) | Leave the query box for the panel, so the panel's own keys work on the next keystroke. Nothing you typed is cleared |
 
-Five Tabs from the query box reach the first evidence card: Run, then each
-enabled source toggle, then the cards. The card you are on draws a solid
-block down its left edge — a shape, not just a colour — so it stays
-visible in a monochrome terminal and next to a card that is merely
-selected.
+From the query box, Tab visits Run, each enabled source toggle, then the
+evidence cards. The number of stops depends on which sources are available.
+The card you are on draws a solid block down its left edge — a shape, not
+just a colour — so it stays visible in a monochrome terminal and next to a
+card that is merely selected.
+
+The text-only Answer region is above the evidence cards. After tabbing to a
+card, use **Page Up** to read the answer and its citation warning or note;
+use **Page Down** to return through the answer to the evidence. Focus stays
+on the card while the panel scrolls. Scrolling preserves your question and
+source choices and does not run another search or provider call.
+
+To edit the next RAG question, use **Shift+Tab** from the evidence card or
+its actions, back through the enabled source controls and Run to the query
+box. This keeps RAG Answer mode selected. The rail search shares the query
+text, but submitting there chooses keyword Search mode.
 
 The footer's **enter** hint names what Enter does on the control you are
 actually on: "run search" in the query box and on **Run**, "toggle
@@ -856,3 +907,27 @@ critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
 32354, 32355). The "mode: ✓ Search ⇄ RAG Answer" toggle this page documents
 was re-checked live at 235x52 and is the first control on the canvas — the
 critique row claiming it does not exist was wrong, and nothing here changed.*
+
+
+*Keyboard answer-reading route verified on `feat/component-pattern-library`
+from `b4a085de18` — 2026-09-17 UTC (TASK-32714): 24 mounted cases cover
+short/long replies and all three citation states in both themes at 170×48
+and 80×24; 12 native long-answer cases use real local keyword retrieval and
+controlled replies. This verifies reading/navigation, not real-provider output
+or factual grounding. [Evidence](../../superpowers/qa/2026-09-17-rag-answer-navigation/README.md).*
+
+*Query return and resize focus verified on `feat/component-pattern-library`
+from `71f7b33658` — 2026-09-17 UTC (TASK-32715): query/evidence focus now
+survives compact/wide resizing. Twelve new mounted regressions pass within
+a 98-test targeted run; four private native journeys pass sixteen resize
+transitions in both themes using local keyword retrieval and controlled
+replies. Shift+Tab returns through the panel to an editable RAG query without
+resubmitting. [Evidence](../../superpowers/qa/2026-09-17-rag-query-return/README.md).*
+
+*Recent-search replay and clearing verified on `feat/component-pattern-library`
+from `cfa89372b5` — 2026-09-17 UTC (TASK-32716): replay synchronizes both query
+fields and answer arrival keeps current focus visible. Eighteen new mounted
+cases pass within 148 targeted checks. Eight private native journeys cover
+both themes, sizes and modes using real keyword retrieval and controlled
+answers; clearing retains query/results/answer and persists an empty history.
+[Evidence](../../superpowers/qa/2026-09-17-rag-history-replay/README.md).*

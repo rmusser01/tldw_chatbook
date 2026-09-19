@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from textual import on
 from textual.app import ComposeResult
@@ -60,6 +60,14 @@ class WorkspaceCreateResult:
     offer_profile_interview: bool = False
 
 
+class _WorkspaceCreateError(Static):
+    """Reveal feedback after the error text's actual reflow."""
+
+    def on_resize(self) -> None:
+        if isinstance(self.screen, WorkspaceCreateModal):
+            self.screen._reveal_error()
+
+
 class WorkspaceCreateModal(
     SafeModalDismissMixin, ModalScreen["WorkspaceCreateResult | None"]
 ):
@@ -74,8 +82,9 @@ class WorkspaceCreateModal(
         width: 72;
         height: auto;
         max-height: 32;
-        border: tall gray;
-        background: black;
+        border: tall $surface-lighten-2;
+        background: $surface;
+        color: $text;
         padding: 1 2;
     }
 
@@ -118,7 +127,7 @@ class WorkspaceCreateModal(
     """
 
     SAFE_MODAL_CONTENT = "#workspace-create-modal"
-    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Cancel")]
     AUTO_FOCUS = "#workspace-create-name"
 
     def __init__(
@@ -155,6 +164,7 @@ class WorkspaceCreateModal(
         #: ``bound_folders`` without a second discovery pass.
         self._folder_discoveries: dict[str, ProjectSkillsDiscovery] = {}
         self._error = ""
+        self._error_origin = None
         # Finding 1: one-shot guard against a double-submit (rapid
         # Enter-Enter, or a double-click race on Create) running
         # create_workspace()/add_folder_binding() twice before the modal
@@ -215,6 +225,7 @@ class WorkspaceCreateModal(
                 id="workspace-create-name",
                 placeholder="Workspace name",
                 compact=True,
+                disabled=workspace_created,
             )
             yield WorkspacePersonaPicker(
                 self._personas,
@@ -256,12 +267,15 @@ class WorkspaceCreateModal(
                             id=f"workspace-create-folder-remove-{index}",
                             compact=True,
                         )
-            yield Static(self._error, id="workspace-create-error", markup=False)
+            yield _WorkspaceCreateError(
+                self._error, id="workspace-create-error", markup=False
+            )
             yield Checkbox(
                 "Switch to this workspace",
                 self._make_active_value,
                 id="workspace-create-make-active",
                 compact=True,
+                disabled=workspace_created,
             )
             yield Checkbox(
                 "Define project context after creating",
@@ -271,8 +285,16 @@ class WorkspaceCreateModal(
                 compact=True,
             )
             with Horizontal(id="workspace-create-actions"):
-                yield Button("Cancel", id="workspace-create-cancel", compact=True)
-                yield Button("Create", id="workspace-create-confirm", compact=True)
+                yield Button(
+                    "Keep workspace" if workspace_created else "Cancel",
+                    id="workspace-create-cancel",
+                    compact=True,
+                )
+                yield Button(
+                    "Retry folders" if workspace_created else "Create",
+                    id="workspace-create-confirm",
+                    compact=True,
+                )
 
     @on(Button.Pressed, "#workspace-create-cancel")
     async def _cancel(self, event: Button.Pressed) -> None:
@@ -357,7 +379,35 @@ class WorkspaceCreateModal(
 
     def _set_error(self, message: str) -> None:
         self._error = message
+        self._error_origin = self.app.focused
         self.query_one("#workspace-create-error", Static).update(message)
+        self.call_after_refresh(self._reveal_error)
+
+    def _reveal_error(self) -> None:
+        """Keep the current error beside its action without moving newer focus."""
+        origin = self._error_origin
+        if (
+            not self._error
+            or not self.is_attached
+            or self.app.screen is not self
+            or origin is None
+            or not origin.is_attached
+            or self.app.focused is not origin
+        ):
+            return
+        content = self.query_one("#workspace-create-modal")
+        anchor = origin
+        while anchor.parent is not content:
+            anchor = anchor.parent
+            if anchor is None or anchor is self:
+                return
+        error = self.query_one("#workspace-create-error")
+        children = list(content.children)
+        if children.index(error) != children.index(anchor) + 1:
+            content.move_child(error, after=anchor)
+            self.call_after_refresh(self._reveal_error)
+            return
+        error.scroll_visible(animate=False, immediate=True)
 
     @on(Button.Pressed, "#workspace-create-folder-add")
     def _add_folder(self, event: Button.Pressed) -> None:
@@ -489,12 +539,13 @@ class WorkspaceCreateModal(
             self._bound_folders = all_bound
             self._folders = [folder for folder, _message in failed]
             self._failed_folder_messages = dict(failed)
-            self._error = "\n".join(
-                f"{folder}: {message}" for folder, message in failed
+            self._error = (
+                f"Created {self._created_workspace_name}. Retry the failed folders "
+                "or keep the workspace with its successful bindings.\n"
+                + "\n".join(f"{folder}: {message}" for folder, message in failed)
             )
-            self._committed = False
             self._stash_form_state()
-            self.refresh(recompose=True)
+            self.run_worker(self._show_binding_retry(), exclusive=True)
             return
         self._bound_folders = all_bound
         self._failed_folder_messages = {}
@@ -510,7 +561,36 @@ class WorkspaceCreateModal(
             )
         )
 
-    def _create(self) -> None:
+    async def _show_binding_retry(self) -> None:
+        """Focus the replacement retry action after its form has mounted."""
+        await self.recompose()
+        self._committed = False
+        if not self.is_attached or self.app.screen is not self:
+            return
+        retry = self.query_one("#workspace-create-confirm", Button)
+        retry.focus()
+        self._error_origin = retry
+        self.call_after_refresh(self._reveal_error)
+
+    async def _prepare_automatic_creation(self) -> None:
+        """Wait without blocking Cancel or owning the shared app initialization."""
+        generation = self._safe_mount_generation
+        try:
+            await self.app.ensure_workspace_agent_provisioning()
+        finally:
+            if generation == self._safe_mount_generation:
+                self._committed = False
+        if (
+            not self.is_attached
+            or self.app.screen is not self
+            or self._safe_dismiss_committed
+            or generation != self._safe_mount_generation
+        ):
+            return
+        # Re-read the form and validate again after the asynchronous boundary.
+        self._create(authority_prepared=True)
+
+    def _create(self, *, authority_prepared: bool = False) -> None:
         # Finding 1: guard against a double-submit (rapid Enter-Enter on the
         # name Input, or a double-click on Create) re-running the side
         # effects below before the modal has actually popped off the screen
@@ -551,6 +631,20 @@ class WorkspaceCreateModal(
         # locking the Create button for the rest of the session.
         try:
             assistant_kwargs = self.query_one(WorkspacePersonaPicker).creation_kwargs()
+            if (
+                not assistant_kwargs
+                and not authority_prepared
+                and callable(
+                    getattr(self.app, "ensure_workspace_agent_provisioning", None)
+                )
+            ):
+                self.run_worker(
+                    self._prepare_automatic_creation(),
+                    group="workspace-create-readiness",
+                    exclusive=False,
+                    exit_on_error=False,
+                )
+                return
             workspace_id, generated_name = next_local_workspace_identity(self._registry)
             self._registry.create_workspace(
                 workspace_id=workspace_id,

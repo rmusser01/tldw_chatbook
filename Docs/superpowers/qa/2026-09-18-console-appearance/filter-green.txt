@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+17.65s call     Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]
+16.85s call     Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]
+14.28s call     Tests/UI/test_console_appearance_picker.py::test_filter_narrows_the_grid
+13.76s call     Tests/UI/test_console_appearance_picker.py::test_apply_commits_icon_and_color_and_saves_recents
+13.33s call     Tests/UI/test_console_appearance_picker.py::test_escape_cancels_with_none_without_crashing
+
+(10 durations < 1s hidden.)
+5 passed in 82.20s (0:01:22)

@@ -1,0 +1,20 @@
+{
+  "run_pid": 87681,
+  "first_new_log_at": "2026-09-15 00:19:23",
+  "notices": [
+    "2026-09-15 00:19:24 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'",
+    "2026-09-15 00:19:26 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.",
+    "2026-09-15 00:19:26 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-15 00:19:26 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-15 00:19:26 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)",
+    "2026-09-15 00:19:30 [WARNING ] textual_image._terminal:115 - Failed to probe terminal capabilities",
+    "2026-09-15 00:19:38 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-15 00:19:38 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)",
+    "2026-09-15 00:19:38 [WARNING ] tldw_chatbook.app:463 - No handler found for worker '_confirm_and_quit' (Group: application-quit)"
+  ],
+  "ui_cases": 16,
+  "app_run_returned": true,
+  "fresh_exit_code": 0,
+  "post_exit_pane": "87329 zsh 80x24",
+  "owned_session_closed": true
+}

@@ -17,6 +17,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
@@ -34,6 +35,7 @@ from tldw_chatbook.config import (
 from tldw_chatbook.Library.library_browse_location import (
     browse_start_directory,
     claim_browse_directory,
+    picker_recent_context,
     remember_browse_directory,
 )
 from tldw_chatbook.Library.library_structural_wait import (
@@ -43,6 +45,7 @@ from tldw_chatbook.Library.library_structural_wait import (
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
+    back_cue_label,
     library_disabled_action_label,
 )
 from tldw_chatbook.Notes.file_notes_git_service import (
@@ -105,6 +108,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     PaneName,
     resolve_adaptive_reader_layout,
 )
+from tldw_chatbook.Utils.Utils import elide_path_middle
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.path_validation import (
     validate_existing_absolute_directory,
@@ -145,6 +149,7 @@ FileNotesWorkMode = Literal["edit", "manage"]
 def resolve_file_note_status_channels(
     *,
     root: str | Path | None,
+    file_open: bool = True,
     conflict: bool = False,
     unavailable: bool = False,
     read_only: bool = False,
@@ -159,11 +164,18 @@ def resolve_file_note_status_channels(
     authority_failure: str = "",
     authority_uncertain: str = "",
     authority_running: str = "",
+    repository_confirmed: bool = False,
 ) -> NotesStatusChannels:
     """Resolve Folder content and Git status without cross-channel masking.
 
     Args:
         root: Active Folder Files root, or ``None`` when no root is linked.
+        file_open: Whether a file is actually open in the editor. task-32621
+            AC#1 (A cap 29): with nothing selected every save-state input is
+            False, so the final ``else`` asserted "Saved" over an empty
+            editor -- a save state claimed for a file that does not exist,
+            on the one surface whose whole promise is that it edits the real
+            file.
         conflict: Whether disk and editor content conflict.
         unavailable: Whether the linked root cannot currently be reached.
         read_only: Whether the opened document cannot be edited.
@@ -178,6 +190,11 @@ def resolve_file_note_status_channels(
         authority_failure: Bounded detail for a failed authority operation.
         authority_uncertain: Bounded detail for an uncertain authority operation.
         authority_running: Bounded detail for the active authority operation.
+        repository_confirmed: Whether a repository check (``git rev-parse``)
+            has succeeded for this root. task-32543: without it the change
+            count is this session's edit count, never "Git" -- a plain
+            folder read "Git · 1 change" after one edit (critique #3, A 57;
+            B 40, 50), which the solo operator took as "version-controlled".
 
     Returns:
         The independent content, authority, and safe-action status channels.
@@ -200,6 +217,11 @@ def resolve_file_note_status_channels(
         content, safe = "Saving…", None
     elif dirty:
         content, safe = "Unsaved changes", None
+    elif not file_open:
+        # No "Next:" clause: this pane's safe actions name CONTROLS ("Save
+        # Copy", "Choose folder"), the tree is already the only thing to act
+        # on, and at 60x20 a sentence here is three rows of a two-row box.
+        content, safe = "No file open.", None
     else:
         content, safe = "Saved", None
 
@@ -229,7 +251,11 @@ def resolve_file_note_status_channels(
         )
     if not status_copy and git_changes:
         change_word = "change" if git_changes == 1 else "changes"
-        status_copy = f"Git · {git_changes} {change_word}"
+        status_copy = (
+            f"Git · {git_changes} {change_word}"
+            if repository_confirmed
+            else f"{git_changes} session {change_word}"
+        )
     if cell_len(status_copy) > 34:
         status_copy = _middle_elide_cells(status_copy, 34)
 
@@ -293,8 +319,56 @@ FOLDER_FILES_EMPTY_COPY = (
 FILE_TREE_BATCH_SIZE = 100
 
 
+#: How many deferred re-fits one geometry change may queue before the path
+#: lines keep whatever they last fitted (task-32614, review F6). Settling took
+#: two passes in every size x mode combination measured; four is slack, and a
+#: pair of widths that alternated would otherwise re-arm each other forever.
+_PATH_FIT_ATTEMPT_LIMIT = 4
+
+
 class _ServiceLockBusy(Exception):
     """An earlier File Notes operation still owns the service lock."""
+
+
+#: task-32552 AC#1: the Folder files editor's own keys -- see
+#: ``FileNotesEditorTextArea`` for why Textual supplies neither.
+_FILE_NOTES_EDITOR_BINDINGS = [
+    Binding("ctrl+end", "cursor_document_end", "End of file", show=False),
+    Binding("ctrl+home", "cursor_document_start", "Start of file", show=False),
+]
+#: task-32552 AC#3: Escape in the editor steps back to the files tree; only
+#: the next Escape (the screen's ``library_notes_files_back``) leaves the
+#: mode. ``LibraryFileNotesWorkspace.check_action`` gates it to the focused
+#: editor, so everywhere else the key falls through to the screen exactly
+#: as before (critique #3, A 58: one press dropped the whole mode).
+_FILE_NOTES_WORKSPACE_BINDINGS = [
+    Binding("escape", "focus_tree", "Files", show=False),
+]
+
+
+class FileNotesEditorTextArea(TextArea):
+    """The Folder files editor, with document-end and document-start keys.
+
+    task-32552 AC#1: the same defect task-32247 fixed in the Library editor
+    (``NoteEditorTextArea``): Textual 8's ``TextArea`` binds ``end``/``home``
+    to the LINE ends and defines no ``ctrl+end`` binding or
+    ``cursor_document_end`` action at all, so Ctrl+End here was not
+    swallowed -- it did not exist, and the text typed after it landed at
+    the click (critique #3, B D9: ``NoteTAILEDITs`` on disk). The four lines
+    are copied rather than the class imported: that editor's priority Tab
+    pair is namespaced to the Library screen and is not this widget's
+    concern.
+    """
+
+    BINDINGS = _FILE_NOTES_EDITOR_BINDINGS
+
+    def action_cursor_document_end(self) -> None:
+        """Move the caret to the end of the file body."""
+        self.move_cursor(self.document.end)
+
+    def action_cursor_document_start(self) -> None:
+        """Move the caret to the start of the file body."""
+        self.move_cursor((0, 0))
 
 
 def _folder_label(path: Path) -> str:
@@ -741,6 +815,8 @@ class LibraryFileNotesWorkspace(Vertical):
 
     ReloadConfirmationChanged = FileNotesReloadConfirmationChanged
 
+    BINDINGS = _FILE_NOTES_WORKSPACE_BINDINGS
+
     DEFAULT_CSS = """
     LibraryFileNotesWorkspace {
         height: 1fr;
@@ -860,11 +936,30 @@ class LibraryFileNotesWorkspace(Vertical):
         overflow-y: auto;
     }
 
+    /* task-32614: ``Horizontal`` defaults to ``height: 1fr``, so the
+       navigator's own title row split the pane's spare rows with the tree
+       -- measured 19 rows of it at 235x52 and 9 at 100x30, all but one of
+       them blank, which is the "rows 6 through 26 are entirely blank, the
+       Search box sits at row 27" capture (B cap 35). It holds a title and
+       one button; it claims what that costs. */
+    #file-notes-tree-header {
+        height: auto;
+        min-height: 1;
+    }
+
     #file-notes-search-row,
     #file-notes-search,
     #file-notes-path {
         height: 3;
         min-height: 3;
+    }
+
+    #file-notes-tree-scope {
+        width: 100%;
+        height: auto;
+        max-height: 3;
+        color: $text-muted;
+        text-wrap: wrap;
     }
 
     #file-notes-path-row {
@@ -919,10 +1014,30 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 1;
     }
 
+    /* task-32614: a path is one long token, and Textual folds a token that
+       does not fit at the column it runs out of. At the 34 cells a 100x30
+       terminal gave this pane, the breadcrumb broke at "2026"/"-09-14" and
+       the absolute path painted over SIX rows, broken at
+       "…m80n2j152t"/"9gw3w8qwk…" -- no separator, no ellipsis, nothing
+       saying it was cut. One row each, and ``_fit_path_surfaces``
+       middle-elides to it so the basename survives. */
     #file-notes-breadcrumb {
         width: 1fr;
         min-width: 0;
         text-style: bold;
+    }
+
+    #file-notes-breadcrumb,
+    #file-notes-exact-path {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        text-wrap: nowrap;
+        overflow: hidden hidden;
+    }
+
+    #file-notes-exact-path {
+        width: 100%;
     }
 
     #file-notes-work-header {
@@ -1177,6 +1292,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_task: asyncio.Task[bool] | None = None
         self._git_status_worker: Worker[Any] | None = None
         self._git_action_worker: Worker[Any] | None = None
+        # task-32543: the "repository confirmed" fact behind the header's
+        # "Git · N change(s)" suffix -- one ``git rev-parse`` discovery per
+        # session binding, or process trust already granted for it.
+        self._repository_probe_binding: SessionBinding | None = None
+        self._repository_confirmed = False
+        self._repository_probe_worker: Worker[Any] | None = None
         self._git_status_task: asyncio.Task[SessionGitStatus] | None = None
         self._git_status_task_binding: SessionBinding | None = None
         self._git_status_failure = ""
@@ -1187,6 +1308,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._runtime_lock = Lock()
         self._service_lock = RLock()
         self._root_generation = 0
+        self._pairing_review_generation = 0
+        self._pairing_review_task: asyncio.Task | None = None
         self._root_transitioning = False
         self._path_transitioning = False
         self._shutdown = False
@@ -1233,6 +1356,15 @@ class LibraryFileNotesWorkspace(Vertical):
         self._navigator_mode_before_git: Literal["files", "search"] = "files"
         self._editor_action_layout_sync_scheduled = False
         self._editor_action_focus_target: str | None = None
+        # task-32614: one deferred re-fit is armed at a time, and it stops
+        # as soon as two consecutive fits agree on the widths they used.
+        # The attempt count is the cycle guard the flag alone is not (review
+        # F6): the flag stops RE-ENTRY, but two widths that alternate would
+        # re-arm each other forever. Converged in every size x mode measured;
+        # this bounds the pathological case instead of trusting that.
+        self._path_fit_scheduled = False
+        self._path_fit_widths: tuple[int, ...] = ()
+        self._path_fit_attempts = 0
         self._maintenance_expanded = False
         self._work_mode: FileNotesWorkMode = "edit"
         self._path_task: FileNotesPathTask = "none"
@@ -1291,7 +1423,7 @@ class LibraryFileNotesWorkspace(Vertical):
         # Textual calls ``compose`` again when this same workspace object is
         # remounted, so constructing it inside ``compose`` would silently
         # replace the user's draft with a new TextArea instance.
-        self._editor_widget = TextArea(
+        self._editor_widget = FileNotesEditorTextArea(
             "",
             id="file-notes-editor",
             read_only=True,
@@ -1337,6 +1469,17 @@ class LibraryFileNotesWorkspace(Vertical):
                 Button("New", id="file-notes-new", compact=True),
                 id="file-notes-tree-header",
             ),
+            # task-32621 AC#2 (A cap 29, B cap 35): the tree silently omitted
+            # notes.csv, meta.yaml, a Canvas folder and an attachments folder.
+            # The behaviour is right -- this workspace only ever edits note
+            # files (``file_notes_service.SUPPORTED_EXTENSIONS``) -- and it
+            # was the only thing on the pane not saying so, which reads as a
+            # folder whose contents went missing.
+            Static(
+                "Lists .md, .markdown, .txt and .text. Other files stay on disk.",
+                id="file-notes-tree-scope",
+                markup=False,
+            ),
             Horizontal(
                 Static(
                     "Search",
@@ -1355,7 +1498,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _build_reader_work_pane(self) -> Widget:
         """Build the retained incumbent Folder work role once."""
         back = Button(
-            "Back to navigator",
+            back_cue_label("Files"),
             id="file-notes-back",
             compact=True,
         )
@@ -1431,6 +1574,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-save-status",
                 markup=False,
             ),
+            # task-32615 AC#3: this is where an action RECEIPT belongs -- it
+            # was the pane's last child, so "Committed 1 session note as
+            # c1db79e…; unrelated changes untouched." and "Commit review
+            # ready." both painted directly under the Manage region's
+            # "Danger" heading (B caps 44/47/48). Under the breadcrumb and
+            # the save state, above both regions, it reads as what it is at
+            # every one of the three sizes.
+            Static("", id="file-notes-action-status", markup=False),
             preview_status,
             Vertical(
                 self._editor_widget,
@@ -1529,7 +1680,6 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-manage-region",
             ),
             path_task,
-            Static("", id="file-notes-action-status", markup=False),
             id="file-notes-editor-pane",
         )
         return Vertical(editor_pane, id="file-notes-work")
@@ -1733,13 +1883,8 @@ class LibraryFileNotesWorkspace(Vertical):
             # compact mode chips are deliberately one row tall, so keep the
             # semantic class while preventing a selected chip from growing
             # to two rows and clipping its label.
-            button.styles.border = ("none", "transparent")
-        exact_path = self.query_one("#file-notes-exact-path", Static)
-        relative_path = self._current_path or self._selected_deleted_path
-        if relative_path and self._root is not None:
-            self._update_static_content(exact_path, str(self._root / relative_path))
-        else:
-            self._update_static_content(exact_path, relative_path or "No file selected")
+            button.add_class("border-none")
+        self._fit_path_surfaces()
         self._sync_editor_action_visibility()
         self._sync_navigator_mode()
 
@@ -1995,6 +2140,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-choose-root",
                 compact=True,
             )
+            yield Button(
+                "Review recovered pairing…", id="file-notes-recovery-review", compact=True,
+            )
             # task-32055: the way out of a structural wait, next to the
             # control that starts one. Display-toggled (never conditionally
             # yielded) so the in-place wait updates always find it.
@@ -2044,8 +2192,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self, session_git_count: int | None = None
     ) -> NotesStatusChannels:
         """Project current async inputs through the pure status resolver."""
+        binding = self._session_binding
         if session_git_count is None:
-            binding = self._session_binding
             changes = (
                 () if binding is None else self._session_owner.snapshot(binding).changes
             )
@@ -2101,6 +2249,8 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running = "Checking folder…"
         return resolve_file_note_status_channels(
             root=self._root,
+            file_open=opened is not None,
+            repository_confirmed=self._repository_confirmed_for(binding),
             conflict=self._save_state == "conflict",
             unavailable=self._root is None or self._root_offline is True,
             read_only=opened is not None and not opened.editable,
@@ -2117,27 +2267,87 @@ class LibraryFileNotesWorkspace(Vertical):
             authority_running=authority_running,
         )
 
+    def _repository_confirmed_for(self, binding: SessionBinding | None) -> bool:
+        """Return whether a repository check has succeeded for ``binding``."""
+        if binding is None:
+            return False
+        if self._session_owner.snapshot(binding).trusted_repository is not None:
+            return True
+        return self._repository_probe_binding == binding and self._repository_confirmed
+
+    def _ensure_repository_probe(self) -> None:
+        """Run the one ``git rev-parse`` discovery this binding has not had."""
+        binding = self._session_binding
+        service = self._session_git_service()
+        if (
+            binding is None
+            or service is None
+            or self._repository_probe_binding == binding
+        ):
+            return
+        self._repository_probe_binding = binding
+        self._repository_confirmed = False
+        self._repository_probe_worker = self.run_worker(
+            self._probe_repository(binding, service),
+            name="file-notes-repository-probe",
+            group="file-notes-repository-probe",
+            exclusive=True,
+        )
+
+    async def _probe_repository(
+        self,
+        binding: SessionBinding,
+        service: _SessionGitService,
+    ) -> None:
+        try:
+            discovery = await service.discover(binding)
+        except RuntimeError as error:
+            if type(error) is not RuntimeError or error.args != ("file_notes_maintenance_paused",):
+                raise
+            # A queued probe has not acquired a maintenance lifetime yet.
+            # Let a later ordinary status refresh try this same binding again.
+            if self._repository_probe_binding == binding:
+                self._repository_probe_binding = None
+                self._repository_confirmed = False
+            return
+        if self._repository_probe_binding != binding:
+            return
+        confirmed = discovery.state == "ready"
+        if confirmed != self._repository_confirmed:
+            self._repository_confirmed = confirmed
+            self._render_status_channels()
+
     def _render_status_channels(self, session_git_count: int | None = None) -> None:
         """Render both header channels from one deterministic projection."""
         if not self._active or not self.is_mounted:
             return
+        self._ensure_repository_probe()
         channels = self._status_channels(session_git_count)
         content = channels.content_recovery
         if channels.safe_next_action:
             content = f"{content} Next: {channels.safe_next_action}."
         detail = self._save_detail.strip()
-        status = self.query_one("#file-notes-save-status", Static)
+        # task-32552: acquire the whole header or render none of it, as
+        # ``_render_session_git_label`` already does. ``is_mounted`` above is
+        # true before ``compose``'s children have all landed, so a call from
+        # the initialize worker -- or from ``_probe_repository``, which this
+        # task added as a second entry point -- could raise ``NoMatches`` out
+        # of a worker and take the app down at teardown. Returning also keeps
+        # the three Statics consistent: the old order updated save status and
+        # then exploded on authority.
+        try:
+            status = self.query_one("#file-notes-save-status", Static)
+            save_detail = self.query_one("#file-notes-save-detail", Static)
+            authority = self.query_one("#file-notes-authority", Static)
+        except NoMatches:
+            return
         self._update_static_content(status, content)
         status.tooltip = detail or None
-        save_detail = self.query_one("#file-notes-save-detail", Static)
         self._update_static_content(
             save_detail, f"Content detail: {detail}" if detail else ""
         )
         save_detail.display = bool(detail)
-        self._update_static_content(
-            self.query_one("#file-notes-authority", Static),
-            channels.authority_git,
-        )
+        self._update_static_content(authority, channels.authority_git)
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
@@ -2145,14 +2355,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         self._active = True
         self._apply_responsive_layout(self.size.width)
-        if self._opened is not None:
-            self.query_one("#file-notes-breadcrumb", Static).update(
-                self._opened.relative_path
-            )
-        elif self._selected_deleted_path:
-            self.query_one("#file-notes-breadcrumb", Static).update(
-                f"Recently deleted: {self._selected_deleted_path}"
-            )
+        self._fit_path_surfaces()
         self._set_save_state(self._save_state, self._save_detail)
         self._sync_large_file_preview()
         self._set_action_status(self._action_detail)
@@ -2185,6 +2388,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def on_unmount(self) -> None:
         """Pause timers; Textual cancels node workers during removal."""
+        self._pairing_review_generation += 1
         self._active = False
         # Source and breakpoint transitions keep this workspace mounted, but
         # an explicit host removal still lets Textual prune the composed shell.
@@ -2274,6 +2478,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def on_resize(self, event: Resize) -> None:
         """Choose wide or narrow panes from the mounted workspace width."""
+        self._reset_path_fit_budget()
         self._apply_responsive_layout(event.size.width)
         self.call_after_refresh(self._fit_root_status)
 
@@ -2849,6 +3054,91 @@ class LibraryFileNotesWorkspace(Vertical):
         self._apply_responsive_layout(self.size.width)
         self.call_after_refresh(self._fit_root_status)
 
+    def _exact_path_copy(self) -> str:
+        """Return the opened file's full identity, unfitted."""
+        relative_path = self._current_path or self._selected_deleted_path
+        if relative_path and self._root is not None:
+            return str(self._root / relative_path)
+        return relative_path or "No file selected"
+
+    def _breadcrumb_copy(self) -> str:
+        """Return the work header's identity line, unfitted."""
+        if self._opened is not None:
+            return self._opened.relative_path
+        if self._selected_deleted_path:
+            return f"Recently deleted: {self._selected_deleted_path}"
+        return "No file selected"
+
+    def _fit_path_surfaces(self, width: int = 0) -> None:
+        """Keep both identity lines on one row instead of folding them.
+
+        task-32614: a path is one long token, and Textual folds a token that
+        does not fit at whatever column it runs out of -- at the 34 cells a
+        100x30 terminal gave this pane, the breadcrumb broke at
+        "2026"/"-09-14" and the absolute path took six rows broken at
+        "…m80n2j152t"/"9gw3w8qwk…". ``elide_path_middle`` rather than a
+        plain truncate for the reason it was written: the basename is the
+        fragment the reader recognizes the file by, and a tail-cut spends
+        the row on ``/private/var/folders/...`` and hides it.
+
+        Args:
+            width: Settled work-pane width to fall back on when a widget has
+                not been laid out yet (``0`` to use its own region).
+
+        Returns:
+            None.
+        """
+        if not self._active or not self.is_mounted:
+            return
+        budgets: list[int] = []
+        for selector, copy in (
+            ("#file-notes-breadcrumb", self._breadcrumb_copy()),
+            ("#file-notes-exact-path", self._exact_path_copy()),
+        ):
+            try:
+                target = self.query_one(selector, Static)
+            except NoMatches:
+                continue
+            # Each line's OWN width, not the pane's: the breadcrumb shares
+            # its row with the Edit/Manage chips (31 of 49 cells at 60x24)
+            # until ``-stack-editor-actions`` gives it the row to itself
+            # (50), and a value fitted to the wrong one of those loses the
+            # basename it exists to show. The pane width is only the
+            # fallback for the paint that reveals a display-toggled region,
+            # where the widget still measures zero.
+            own_width = target.content_region.width
+            budget = (
+                own_width or width or max(self._reader_layout.reader_width - 1, 0)
+            )
+            budgets.append(budget)
+            self._update_static_content(
+                target,
+                elide_path_middle(copy, budget=budget) if budget > 0 else copy,
+            )
+        settled = tuple(budgets)
+        if (
+            settled != self._path_fit_widths
+            and not self._path_fit_scheduled
+            and self._path_fit_attempts < _PATH_FIT_ATTEMPT_LIMIT
+        ):
+            # The width this fit used is not the width the last one used, so
+            # the geometry is still moving (the stack class alone changes the
+            # breadcrumb's row twice). Come back once it has settled; when
+            # the same widths come round again this stops on its own.
+            self._path_fit_scheduled = True
+            self._path_fit_attempts += 1
+            self.call_after_refresh(self._refit_path_surfaces)
+        self._path_fit_widths = settled
+
+    def _refit_path_surfaces(self) -> None:
+        """Re-fit both identity lines against settled geometry."""
+        self._path_fit_scheduled = False
+        self._fit_path_surfaces()
+
+    def _reset_path_fit_budget(self) -> None:
+        """Give the settling loop its attempts back for a new geometry."""
+        self._path_fit_attempts = 0
+
     def _fit_root_status(self) -> None:
         """Fit the friendly root summary while retaining exact detail."""
         if not self._active or not self.is_mounted or not self.children:
@@ -2894,7 +3184,11 @@ class LibraryFileNotesWorkspace(Vertical):
             layout = resolve_adaptive_reader_layout(
                 max(width, 0),
                 preferences,
-                AdaptiveReaderLayoutProfile(work_min_width=30),
+                # Same profile the screen resolves with
+                # (``LIBRARY_FILE_NOTES_READER_PROFILE``); task-32614 dropped
+                # this destination's 30-cell work-pane floor for the shared
+                # default, so the two must not drift apart again.
+                AdaptiveReaderLayoutProfile(),
                 previous=self._reader_layout,
                 priority=priority,
             )
@@ -3073,11 +3367,15 @@ class LibraryFileNotesWorkspace(Vertical):
             toolbar.styles.grid_columns = "1fr" if single_column else None
             for button in toolbar.query(Button):
                 button.styles.column_span = 1 if single_column else None
-                button.styles.width = "1fr" if single_column else None
+                button.set_class(single_column, "w-fill")
         delete = self.query_one("#file-notes-delete", Button)
         self.query_one("#file-notes-delete-spacer", Static).display = (
             delete.display and not needs_stack
         )
+        # The settled work-pane width is what the path has to fit (task-32614);
+        # this is the one hook that runs for a resize, a pane re-split and a
+        # control change alike.
+        self._fit_path_surfaces(available_width)
 
     def _rebuild_tree(self) -> None:
         if not self._active or not self.is_mounted:
@@ -5270,7 +5568,28 @@ class LibraryFileNotesWorkspace(Vertical):
             transitioning or mutation_active
         )
         self._sync_editor_read_only()
+        self._sync_editor_visibility()
         self._git_panel_widget.set_mutating(mutation_active)
+
+    def _sync_editor_visibility(self) -> None:
+        """Show the editable body only when there is a file to edit.
+
+        task-32621 AC#1 (A cap 29): with nothing selected the right pane drew
+        a full, apparently editable box beside the words "No file selected".
+        Typing into it went nowhere, on the one surface whose promise is that
+        it edits the real file. Hidden rather than unmounted: every caller
+        queries ``#file-notes-editor`` unconditionally, and the editor is a
+        retained widget this workspace constructs once.
+        """
+        editor = self._editor_widget
+        visible = self._opened is not None
+        if editor.display == visible:
+            return
+        if not visible and editor.has_focus:
+            # A hidden widget keeps focus in Textual, which strands the
+            # keyboard on a box that is not on screen.
+            self.screen.set_focus(None)
+        editor.display = visible
 
     def _sync_editor_action_disabled_presentation(self) -> None:
         """Keep every disabled editor action readable and visibly inert."""
@@ -5764,11 +6083,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_editor_read_only()
         self._sync_large_file_preview()
         self.query_one("#file-notes-path", Input).value = opened.relative_path
-        self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
-        self._update_static_content(
-            self.query_one("#file-notes-exact-path", Static),
-            opened.relative_path,
-        )
+        self._fit_path_surfaces()
         if opened.editable:
             self._set_save_state("saved")
         else:
@@ -5821,8 +6136,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_large_file_preview()
         if not keep_restore_path:
             self.query_one("#file-notes-path", Input).value = ""
-            self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
-            self.query_one("#file-notes-exact-path", Static).update("No file selected")
+            self._fit_path_surfaces()
         self._set_delete_confirmation()
         self._set_save_state("idle")
         self._update_controls()
@@ -5838,10 +6152,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._selected_deleted_path = relative_path
         self._clear_open_document(keep_restore_path=True)
         self.query_one("#file-notes-path", Input).value = relative_path
-        self.query_one("#file-notes-breadcrumb", Static).update(
-            f"Recently deleted: {relative_path}"
-        )
-        self.query_one("#file-notes-exact-path", Static).update(relative_path)
+        self._fit_path_surfaces()
         self._set_action_status("Ready to restore.")
         if self._narrow:
             self._narrow_view = "editor"
@@ -6255,6 +6566,49 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         self._rebuild_search_results(tuple(paths))
 
+    @property
+    def editor_focused(self) -> bool:
+        """Whether the file editor holds focus (the footer's Ctrl+End gate)."""
+        return self._editor_widget.has_focus
+
+    @property
+    def editor_returns_to_tree(self) -> bool:
+        """Whether Escape in the editor steps back to the files tree (task-32552)."""
+        return (
+            self.editor_focused
+            and self._path_task == "none"
+            and not self.reload_confirmation_active
+            and self._visible_files_tree() is not None
+        )
+
+    def _visible_files_tree(self) -> Tree[object] | None:
+        """Return the mounted, displayed files or search-results tree, if any."""
+        for tree in (self._tree_widget, self._search_results_widget):
+            if tree.is_mounted and tree.display and tree.region.width > 0:
+                return tree
+        return None
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Gate Escape to the focused editor so it falls through elsewhere.
+
+        Args:
+            action: The action name Textual is about to run.
+            parameters: The action's arguments (unused here).
+
+        Returns:
+            ``False`` to let the key reach the screen's own Escape binding,
+            otherwise ``True``.
+        """
+        if action == "focus_tree":
+            return self.editor_returns_to_tree
+        return True
+
+    def action_focus_tree(self) -> None:
+        """Escape from the editor: return to the files tree, keep the mode."""
+        tree = self._visible_files_tree()
+        if tree is not None:
+            tree.focus()
+
     @on(Tree.NodeExpanded, "#file-notes-tree")
     def _tree_node_expanded(self, event: Tree.NodeExpanded[object]) -> None:
         """Materialize one folder level only when the user expands it."""
@@ -6296,6 +6650,74 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             self.select_deleted(relative_path)
 
+    @on(Button.Pressed, "#file-notes-recovery-review")
+    def _request_pairing_review(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._pairing_review_task is not None or self._path_transitioning:
+            return
+        self.run_worker(self._review_pairing(), group="file-notes-pairing-review")
+
+    async def _review_pairing(self) -> None:
+        from sqlite3 import Error as SQLiteError
+
+        from .notes_recovery_dialog import NotesRecoveryDialog
+
+        service = self._service
+        generation = self._root_generation
+        binding = self._session_binding
+        self._pairing_review_generation += 1
+        review_generation = self._pairing_review_generation
+        if service is None or binding is None:
+            self._set_action_status("Choose a local folder before reviewing pairing.")
+            return
+
+        def current() -> bool:
+            return (
+                not self._path_result_is_stale(service, generation)
+                and self._session_binding == binding
+                and self._pairing_review_generation == review_generation
+            )
+
+        async def call(method, *args):
+            if not current():
+                raise ValueError("File Notes selection changed")
+            transition = self._hold_path_transition()
+            if transition.__enter__() is None:
+                transition.__exit__(None, None, None)
+                raise ValueError("File Notes folder is busy")
+
+            async def native():
+                try:
+                    return await asyncio.to_thread(method, *args)
+                finally:
+                    transition.__exit__(None, None, None)
+
+            task = asyncio.create_task(native())
+            self._pairing_review_task = task
+
+            def retired(done):
+                if not done.cancelled():
+                    done.exception()
+                self._pairing_review_task = None
+
+            task.add_done_callback(retired)
+            return await asyncio.shield(task)
+
+        try:
+            # Approval does not trigger the periodic replica reconciliation.
+            if self._poll_timer is not None:
+                self._poll_timer.pause()
+            review = await call(service.preview_recovery)
+            if current():
+                async def approve(expected):
+                    return await call(service.approve_recovery, expected)
+                await self.app.push_screen(NotesRecoveryDialog(
+                    review, current=current, approve=approve
+                ))
+        except (OSError, ValueError, RuntimeError, SQLiteError) as error:
+            if current():
+                self._set_action_status(f"Pairing review unavailable: {error}")
+
     @on(Button.Pressed, "#file-notes-choose-root")
     async def _choose_root(self, event: Button.Pressed) -> None:
         event.stop()
@@ -6310,7 +6732,11 @@ class LibraryFileNotesWorkspace(Vertical):
             else self._file_notes_browse_location()
         )
         await self.app.push_screen(
-            SelectDirectory(location, title="Choose File Notes Folder"),
+            SelectDirectory(
+                location,
+                title="Choose File Notes Folder",
+                notes_context=picker_recent_context("file_notes"),
+            ),
             callback=self._root_selected,
         )
 
@@ -6384,7 +6810,11 @@ class LibraryFileNotesWorkspace(Vertical):
         generation = claim_browse_directory("file_notes", "browse")
         self.run_worker(
             lambda: remember_browse_directory(
-                "file_notes", "browse", path, generation
+                "file_notes",
+                "browse",
+                path,
+                generation,
+                recent_context=picker_recent_context("file_notes"),
             ),
             thread=True,
         )
@@ -8008,9 +8438,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._sync_work_mode()
             self._clear_open_document(keep_restore_path=True)
             self.query_one("#file-notes-path", Input).value = deleted_path
-            self.query_one("#file-notes-breadcrumb", Static).update(
-                f"Recently deleted: {deleted_path}"
-            )
+            self._fit_path_surfaces()
             if not await self._rescan_after_action():
                 return
             self._set_action_status("Deleted. Restore remains available.")
@@ -8414,3 +8842,5 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _refresh_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         await self.refresh_files()
+        if self._poll_timer is not None:
+            self._poll_timer.resume()

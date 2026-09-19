@@ -35,6 +35,7 @@ from Tests.UI.test_destination_shells import (
 )
 from Tests.UI.test_library_shell import (
     LibraryHarness,
+    StaticLibraryMediaScopeService as ReaderMediaScopeService,
     _active_library_screen,
     _wait_for_library_shell,
 )
@@ -218,18 +219,24 @@ async def _wait_for_evidence_selected(
 # --- Task 8: mode-aware Evidence heading + semantic coverage note ----------
 
 
-def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> None:
+@pytest.mark.parametrize("top_k", [5, 15, 23])
+def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional(
+    top_k: int,
+    monkeypatch,
+) -> None:
     """(Task 8) RAG mode's Evidence heading drops the false "per source"
     claim -- the semantic leg is one merged store query trimmed to top_k,
     not a fan-out per selected source the way the keyword leg is -- and the
     coverage-note Static mounts directly under the heading, only when there
     is a specific, honest thing to say."""
+    from tldw_chatbook.Library import library_rag_state
     from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
     from tldw_chatbook.Widgets.Library import (
         library_rag_results_body_children,
         results_heading_text,
     )
 
+    monkeypatch.setattr(library_rag_state, "library_rag_profile_top_k", lambda: top_k)
     result = LibraryRagResultRow.from_result(
         {
             "title": "Media doc",
@@ -256,11 +263,10 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() -> 
 
     # A3's "top_k" claim is only accurate for keyword mode's per-source
     # fan-out; rag mode drops the "per source" suffix outright.
-    # TASK-15020/B3: the depth itself is the active RAG profile's
-    # `search.default_top_k` (15 on the shipped default profile), not the
-    # old hardcoded 5.
-    assert results_heading_text(rag_state) == "Evidence · top 15"
-    assert results_heading_text(search_state) == "Evidence · top 15 per source"
+    # Pin rendering at an explicit depth. Profile/default resolution has its
+    # own state/config tests and must not make this unit test depend on storage.
+    assert results_heading_text(rag_state) == f"Evidence · top {top_k}"
+    assert results_heading_text(search_state) == f"Evidence · top {top_k} per source"
 
     rag_children = library_rag_results_body_children(rag_state)
     coverage_statics = [
@@ -466,10 +472,7 @@ def test_query_quiet_line_names_the_paid_provider_when_rag_mode_is_ready() -> No
         for child in library_rag_query_status_children(state)
         if child.id == "library-rag-query-quiet-line"
     )
-    assert str(quiet_line.renderable) == (
-        "RAG Answer sends your question and the evidence to openai. "
-        "Search stays local."
-    )
+    assert str(quiet_line.renderable) == "To openai: question + evidence"
 
 
 def test_query_quiet_line_stays_empty_in_search_mode() -> None:
@@ -494,13 +497,8 @@ def test_query_quiet_line_stays_empty_in_search_mode() -> None:
         if child.id == "library-rag-query-quiet-line"
     )
     assert str(quiet_line.renderable) == ""
-    # Cheap Minor (review round): pin the no-layout-shift property
-    # directly -- the reserved row's fixed height is load-bearing (2026-07
-    # UAT finding, the Run button used to jump ~2 rows) and was previously
-    # preserved only by inspection. Mirrors the ingest-canvas quiet line's
-    # own height pin (`Tests/UI/test_library_shell.py`).
-    assert quiet_line.styles.height is not None
-    assert quiet_line.styles.height.value == 1
+    # Reserved height and Run stability require mounted production CSS;
+    # test_library_rag_query_gate_race covers both modes and themes/sizes.
 
 
 def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:
@@ -526,7 +524,7 @@ def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:
     )
     assert str(quiet_line.renderable) == ""
     assert blocked_no_provider.query_state.run_action.disabled_reason == (
-        "Select a provider/model before asking for a RAG answer."
+        "No analysis provider is configured · Set one in Settings ▸ Providers & Models."
     )
 
 
@@ -2590,6 +2588,9 @@ async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
     Open-button-lands-in-viewer pilots)."""
     app = _build_test_app()
     _seed_library_sources(app)
+    app.media_reading_scope_service = ReaderMediaScopeService(
+        [{"title": "Transcript A", "id": 1, "content": "Exact transcript"}]
+    )
     app.library_rag_search_service = StaticLibraryRagSearchService(
         {
             "results": [
@@ -2624,7 +2625,7 @@ async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
 
         for _ in range(120):
             if (
-                screen._media_state.selected_media_id == "media-1"
+                screen._media_state.reader_session.loaded_id == "local:media:1"
                 and screen._media_state.view == "viewer"
             ):
                 break
@@ -2635,6 +2636,7 @@ async def test_library_search_rag_o_on_focused_card_opens_like_button() -> None:
             )
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen._media_state.detail["title"] == "Transcript A"
 
 
 @pytest.mark.asyncio

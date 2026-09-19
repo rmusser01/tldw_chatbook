@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Unsaved changes | Save (s) or   │
+│  Core                        │  │  │  Revert (r) — switching categories      │
+│     Overview (view)          │  │  │  keeps this draft.                      │
+│     Providers & Models       │  │  │ │ │Rail layout scope               │ │  │
+│     Web Search               │  │  │ │ │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │  │
+│     Speech & TTS             │  │  │ │ │▊  Global                   ▼  ▎│ │▆ │
+│  Interface                   │  │  │ │ │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │▆ │
+│     Appearance               │  │  │ │ │                                │ │  │
+│     Theme                  ▁ │  │  │ │ │Global keeps one arrangement    │ │  │
+│     Splash Screen            │  │  │ │ │everywhere. Per workspace       │ │  │
+│   > Console Behavior *       │  │  │ │ │restores and keeps each         │ │  │
+│  Data & Privacy              │  │  │ │ │workspace's saved arrangement.  │ │  │
+│     Storage                  │  │  │ │ │▐X▌ Stack collapsed rail labels │ │  │
+│     Workspaces               │  │  │ │ │Selected style: Stacked —       │ │  │
+│     Tool Profiles            │  │  │ │ │unsaved                         │ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Use narrower stacked Context and Inspector rail labels.
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
+
 from ..runtime_policy.types import PolicyDeniedError
 from ..Utils.input_validation import (
     SkillsListInput,
@@ -28,6 +30,7 @@ from ..Utils.input_validation import (
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .atomic_write import write_bytes_atomic, write_text_atomic
 from .skill_trust_models import SkillTrustBlockedError
+from .skill_trust_service import _activation_blocked, _execution_scope, _skill_use
 
 if TYPE_CHECKING:
     # Deferred at runtime (see run_skill_script) to avoid a module-scope
@@ -70,9 +73,9 @@ def default_local_skills_store_dir(user_data_dir: str | Path) -> Path:
     Returns:
         ``Path(user_data_dir) / "skills"``.
     """
-    return Path(user_data_dir) / _LOCAL_SKILLS_STORE_DIRNAME
+    from .recovery import default_local_skills_store_dir as pure_selector
 
-
+    return pure_selector(user_data_dir)
 _FRONT_MATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _METADATA_FIELDS = {
     "name",
@@ -217,6 +220,23 @@ _INTERPRETER_MAP = {
 #: must stay constant across "resolves to a real file outside the bundle"
 #: vs. "genuinely missing", not the whole message.
 _SCRIPT_NOT_FOUND_ERROR = "local_skill_script_not_found"
+
+
+def _content_sources(values):
+    owner = values["self"]
+    paths = [owner.store_dir]
+    trust = owner.trust_service
+    if trust is not None:
+        store = getattr(trust, "trust_store", None)
+        paths.extend(
+            (getattr(trust, "skills_dir", None), getattr(store, "store_dir", None))
+        )
+        marker = getattr(store, "marker_store", None)
+        paths.extend(
+            (getattr(marker, "marker_path", None), getattr(marker, "store_dir", None))
+        )
+    paths.append(values.get("source_dir"))
+    return paths
 
 
 @dataclass(frozen=True)
@@ -963,6 +983,7 @@ class LocalSkillsService:
             ) from exc
         return bytes(buffer)
 
+    @content_call(_content_sources)
     async def list_skills(
         self,
         *,
@@ -1049,6 +1070,7 @@ class LocalSkillsService:
             )
         )
 
+    @content_call(_content_sources)
     async def get_context(self) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SkillContextPayload
@@ -1093,6 +1115,7 @@ class LocalSkillsService:
                 available.append(summary)
         return {"available_skills": available}
 
+    @content_call(_content_sources)
     async def count_skills(self) -> int:
         """Return the total managed skills count, trusted plus needs-review.
 
@@ -1111,6 +1134,7 @@ class LocalSkillsService:
             ctx.get("blocked_skills") or []
         )
 
+    @content_call(_content_sources)
     async def get_skill(self, skill_name: str) -> dict[str, Any]:
         self._enforce("skills.detail.local")
         records = self._load_index()
@@ -1198,6 +1222,7 @@ class LocalSkillsService:
         except (OSError, ValueError, UnicodeDecodeError):
             return ""
 
+    @content_call(_content_sources)
     async def list_library_skills(
         self, *, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
@@ -1228,6 +1253,7 @@ class LocalSkillsService:
             "limit": limit,
         }
 
+    @content_call(_content_sources)
     async def search_library_skills(
         self, *, query: str, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
@@ -1283,6 +1309,7 @@ class LocalSkillsService:
             "limit": limit,
         }
 
+    @content_call(_content_sources)
     async def get_library_skill(self, skill_name: str) -> dict[str, Any]:
         """Return a bounded detail view of one managed skill.
 
@@ -1332,6 +1359,7 @@ class LocalSkillsService:
         )
         return summary
 
+    @content_call(_content_sources)
     async def get_library_skill_file(
         self, skill_name: str, file_token: str, *, start: int = 0, max_chars: int = 8000
     ) -> dict[str, Any]:
@@ -1398,6 +1426,7 @@ class LocalSkillsService:
             "text": segment,
         }
 
+    @content_call(_content_sources)
     async def create_skill(
         self,
         *,
@@ -1433,6 +1462,7 @@ class LocalSkillsService:
             )
             return self._response_for_record(records[skill_name])
 
+    @content_call(_content_sources)
     async def update_skill(
         self,
         skill_name: str,
@@ -1475,6 +1505,7 @@ class LocalSkillsService:
             )
             return self._response_for_record(next_record)
 
+    @content_call(_content_sources)
     async def delete_skill(
         self, skill_name: str, *, expected_version: int | None = None
     ) -> bool:
@@ -1493,6 +1524,7 @@ class LocalSkillsService:
             self._revoke_script_grant_best_effort(normalized_name)
             return True
 
+    @content_call(_content_sources)
     async def import_skill(
         self,
         *,
@@ -1547,6 +1579,7 @@ class LocalSkillsService:
             )
             return self._response_for_record(record)
 
+    @content_call(_content_sources)
     async def import_skill_directory(
         self,
         source_dir: Path,
@@ -1649,6 +1682,7 @@ class LocalSkillsService:
             )
             return self._response_for_record(record)
 
+    @content_call(_content_sources)
     async def import_skill_file(
         self,
         file_content: bytes,
@@ -1768,6 +1802,7 @@ class LocalSkillsService:
         self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
         return self._response_for_record(self._load_index()[skill_name])
 
+    @content_call(_content_sources)
     async def export_skill(self, skill_name: str) -> Any:
         from ..tldw_api.skills_schemas import _normalize_skill_name
 
@@ -1803,6 +1838,8 @@ class LocalSkillsService:
             "content_type": "application/zip",
         }
 
+    @_skill_use
+    @content_call(_content_sources)
     async def execute_skill(
         self, skill_name: str, *, args: str | None = None
     ) -> dict[str, Any]:
@@ -1848,6 +1885,8 @@ class LocalSkillsService:
             payload.pop("reference_files", None)
         return payload
 
+    @_skill_use
+    @content_call(_content_sources)
     async def read_skill_file(
         self, skill_name: str, relative_path: str
     ) -> dict[str, Any]:
@@ -2257,30 +2296,22 @@ class LocalSkillsService:
         )
 
     def _script_scratch_root(self) -> str | None:
-        """Resolve the optional ``[skills] script_scratch_root`` config root.
+        """Select the safe configured output root without creating it.
 
-        Uses the THREE-argument ``get_cli_setting`` form on purpose: the
-        section-dict form (``get_cli_setting("skills", {})``) silently returns
-        ``{}`` for any section without a dot in its name (config.py:3965), so
-        it would make this knob permanently unreachable.
-
-        A configured root that resolves inside the skills store or the trust
-        store -- or that instead ENCLOSES either store -- is REJECTED (see
-        ``_is_unsafe_scratch_root``) and treated the same as unconfigured --
-        checked BEFORE the directory is created, so a rejected root is never
-        actually made on disk. The safety check is best-effort containment,
-        consistent with the rest of this module.
-
-        Returns:
-            The configured scratch root, or None to use the OS temp dir
-            (also the fallback when the configured root is rejected as
-            unsafe or cannot be created).
+        The three-argument setting lookup reaches the actual ``[skills]``
+        table. Roots inside or enclosing a skill/trust store remain rejected.
+        Directory creation and its ordinary OSError fallback belong to the
+        admitted output operation below.
         """
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
         try:
             from ..config import get_cli_setting
 
             configured = get_cli_setting("skills", "script_scratch_root", "")
-        except Exception:  # noqa: BLE001 — config problems fall back to temp
+        except RecoveryRequired:
+            raise
+        except Exception:  # noqa: BLE001 — ordinary config errors use the default
             return None
         if not configured or not isinstance(configured, str):
             return None
@@ -2289,43 +2320,39 @@ class LocalSkillsService:
             logger.warning(
                 "Ignoring [skills] script_scratch_root={!r}: it resolves "
                 "inside, or encloses, a skills or trust store; falling "
-                "back to the OS temp dir",
+                "back to the default output root",
                 configured,
             )
-            return None
-        try:
-            root.mkdir(parents=True, exist_ok=True)
-        except OSError:
             return None
         return str(root)
 
     def _script_output_root(self) -> Path:
-        """Return the directory holding retained per-run output.
+        """Admit and create the selected retained script-output directory.
 
-        Defaults to ``<file-tool sandbox root>/skill_script_output`` so the
-        existing file tools can reach it; a configured
-        ``[skills] script_scratch_root`` overrides it (the same key already
-        governs where run directories live, and carries the same rejection of
-        roots resolving inside the skills or trust store, so a run can never be
-        handed a working directory inside its own bundle).
-
-        Returns:
-            An existing directory path to create run directories under.
+        Defaults to ``<file-tool sandbox root>/skill_script_output``. A safe
+        configured ``[skills] script_scratch_root`` is used directly. Ordinary
+        creation errors preserve the default fallback; maintenance/source
+        refusal must never become a write to an alternate root.
         """
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import operation
+
         configured = self._script_scratch_root()
         if configured:
             root = Path(configured)
-        else:
-            # Default INSIDE the file-tool sandbox root (task-584): that is the
-            # one directory the existing ReadFileTool/ListDirectoryTool are
-            # confined to, so retained output is reachable by the tooling the
-            # app already has rather than needing a new read surface. Those
-            # tools stay config-gated, so this only makes the output
-            # *reachable* -- it does not by itself expose anything.
-            from ..Tools.file_operation_tools import _tool_sandbox_root
+            with operation((root,)):
+                try:
+                    root.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    root = None  # Preserve the existing ordinary creation fallback.
+                if root is not None:
+                    return root
 
-            root = _tool_sandbox_root() / _SCRIPT_OUTPUT_DIRNAME
-        root.mkdir(parents=True, exist_ok=True)
+        from ..Tools.file_operation_tools import _resolve_sandbox_config
+
+        sandbox = Path(_resolve_sandbox_config()).expanduser().resolve()
+        root = sandbox / _SCRIPT_OUTPUT_DIRNAME
+        with operation((sandbox, root)):
+            root.mkdir(parents=True, exist_ok=True)
         return root
 
     @staticmethod
@@ -2382,6 +2409,7 @@ class LocalSkillsService:
                 continue
             _shutil.rmtree(stale, ignore_errors=True)
 
+    @content_call(_content_sources)
     async def describe_skill_script(
         self, skill_name: str, script_path: str
     ) -> ScriptPlan:
@@ -2411,6 +2439,7 @@ class LocalSkillsService:
             self._canonical_skill_name(skill_name), script_path, path
         )
 
+    @content_call(_content_sources, detached=True)
     async def run_skill_script(
         self,
         skill_name: str,
@@ -2542,7 +2571,25 @@ class LocalSkillsService:
         # method's own signature advertises `async def` -- calling it
         # directly would occupy whatever event loop this coroutine runs on
         # for the full duration.
-        return await asyncio.to_thread(_run_in_scratch_dir)
+        def _run_with_admission() -> ScriptRunResult:
+            # The worker owns admission, including after its waiter is cancelled.
+            with _execution_scope(self) as allowed:
+                if not allowed:
+                    raise _activation_blocked(skill_name)
+                self._require_trusted_skill(skill_name)
+                self._resolve_script(skill_name, script_path)
+                from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+                    operation,
+                )
+
+                with operation((self._script_output_root(),)):
+                    return _run_in_scratch_dir()
+
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import native_worker
+        from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+        completion = asyncio.create_task(asyncio.to_thread(native_worker(_run_with_admission)))
+        await join_retained_task(completion)
+        return completion.result()
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.local")

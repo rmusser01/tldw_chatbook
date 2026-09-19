@@ -1,10 +1,10 @@
 /* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * library-owned rules split out of components/_agentic_terminal.tcss
+ * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss
  * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
  * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit components/_agentic_terminal.tcss and re-run build_css.py.
+ * first paint. Edit features/_library.tcss + features/_library_panels.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -62,6 +62,12 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -70,6 +76,8 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -87,6 +95,115 @@ $ds-space-inset: $ds-space-1;
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
+$ds-width-full: 100%;
+$ds-width-fill: 1fr;
+$ds-width-auto: auto;
+$ds-height-auto: auto;
+
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-22: 22;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-25: 25;
+$ds-size-26: 26;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-35: 35;
+$ds-size-36: 36;
+$ds-size-38: 38;
+$ds-size-40: 40;
+$ds-size-42: 42;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-46: 46;
+$ds-size-48: 48;
+$ds-size-50: 50;
+$ds-size-52: 52;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-80: 80;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-splash-progress-cap: 100;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+$ds-percent-25: 25%;
+$ds-percent-30: 30%;
+$ds-percent-40: 40%;
+$ds-percent-42: 42%;
+$ds-percent-45: 45%;
+$ds-percent-50: 50%;
+$ds-percent-70: 70%;
+$ds-percent-75: 75%;
+$ds-percent-80: 80%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-92: 92%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-3: 3fr;
+$ds-fr-13: 13fr;
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-research-chat-pane-floor: 58;
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+$ds-new-ingest-scrollbar-gutter: 6px;
+$ds-conversations-ai-generate-share: 12%;
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
+$ds-widgets-skeleton-title-share: 60%;
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
+$ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -106,8 +223,64 @@ $ds-sidebar-width: 25%;
 $ds-sidebar-min-width: 35;
 $ds-sidebar-max-width: 80;
 
+$ds-theme-preset-blues-0: #0099FF;
+$ds-theme-preset-blues-1: #006FB3;
+$ds-theme-preset-blues-2: #004D80;
+$ds-theme-preset-blues-3: #003366;
+$ds-theme-preset-blues-4: #002244;
+$ds-theme-preset-greens-0: #00CC66;
+$ds-theme-preset-greens-1: #009944;
+$ds-theme-preset-greens-2: #006633;
+$ds-theme-preset-greens-3: #004422;
+$ds-theme-preset-greens-4: #002211;
+$ds-theme-preset-reds-0: #FF3333;
+$ds-theme-preset-reds-1: #CC0000;
+$ds-theme-preset-reds-2: #990000;
+$ds-theme-preset-reds-3: #660000;
+$ds-theme-preset-reds-4: #330000;
+$ds-theme-preset-purples-0: #9966FF;
+$ds-theme-preset-purples-1: #7744DD;
+$ds-theme-preset-purples-2: #5522BB;
+$ds-theme-preset-purples-3: #330099;
+$ds-theme-preset-purples-4: #220066;
+$ds-theme-preset-grays-0: #FFFFFF;
+$ds-theme-preset-grays-1: #CCCCCC;
+$ds-theme-preset-grays-2: #999999;
+$ds-theme-preset-grays-3: #666666;
+$ds-theme-preset-grays-4: #333333;
+$ds-theme-preset-material-0: #2196F3;
+$ds-theme-preset-material-1: #4CAF50;
+$ds-theme-preset-material-2: #FF9800;
+$ds-theme-preset-material-3: #F44336;
+$ds-theme-preset-material-4: #9C27B0;
+$ds-theme-preset-pastels-0: #FFB3BA;
+$ds-theme-preset-pastels-1: #BAFFC9;
+$ds-theme-preset-pastels-2: #BAE1FF;
+$ds-theme-preset-pastels-3: #FFFFBA;
+$ds-theme-preset-pastels-4: #FFDFBA;
+$ds-theme-preset-dark-0: #1A1A1A;
+$ds-theme-preset-dark-1: #2D2D2D;
+$ds-theme-preset-dark-2: #404040;
+$ds-theme-preset-dark-3: #525252;
+$ds-theme-preset-dark-4: #656565;
+$ds-theme-preview-dark-ink: #000000;
+$ds-theme-preview-light-ink: #FFFFFF;
+$ds-theme-preview-invalid: #808080;
+
+$ds-console-settings-wide-max-width: 196;
+
+$ds-inspector-modal-width: 120;
+$ds-inspector-modal-height: 42;
+$ds-inspector-section-width: 28;
+$ds-inspector-recovery-max-height: 6;
+$ds-conversation-action-width: 4;
+$ds-conversation-action-ascii-width: 9;
+$ds-inspector-usage-list-width: 60;
+$ds-conversation-menu-width: 30;
+
 
 .tldw-agentic-split-preamble-end { }
+
 
 
 /* task-2853 review round 2: the "N selected" counter that opens a
@@ -125,7 +298,7 @@ $ds-sidebar-max-width: 80;
     /* task-32227 (critique #9 row 26): the count sat flush against the next
        action's focus border ("2 selected┃ Select all"). One cell, in the one
        declaration every canvas's counter already shares. */
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Canvas actions gain .console-action-primary (mirrors the project's live
@@ -137,8 +310,8 @@ $ds-sidebar-max-width: 80;
    selected, Open details otherwise), not one permanently-accented button. */
 
 #library-shell-grid {
-    padding: 0 1;
-    margin: 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
@@ -146,8 +319,8 @@ $ds-sidebar-max-width: 80;
 #library-header-line {
     height: $ds-home-compact-row-height;
     min-height: $ds-home-compact-row-height;
-    padding: 0 1;
-    margin: 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     border: none;
 }
 
@@ -176,36 +349,36 @@ $ds-sidebar-max-width: 80;
 /* Adaptive readers keep the ordinary narrow shell's edge-to-edge canvas
    without inheriting the legacy library-notes-compact descendant rules. */
 #library-shell-grid.library-adaptive-compact {
-    padding: 0;
-    margin: 0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
     border: none;
 }
 
 #library-shell-grid.library-adaptive-compact #library-canvas {
-    padding: 0;
-    margin: 0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
     border: none;
     overflow-x: hidden;
     overflow-y: hidden;
 }
 
 #library-emergency-return {
-    width: 100%;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
 }
 
 .library-adaptive-reader-shell {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
 }
 
 .library-adaptive-reader-shell > .library-adaptive-reader-work {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
 }
 
 /* No width here (task-31952 AC#1). Every mounted grip sets its width as an
@@ -214,10 +387,10 @@ $ds-sidebar-max-width: 80;
    `width/min-width/max-width: 5` fallback that used to sit here was dead for
    every destination and a second, stale answer for the four on one cell. */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {
-    height: 100%;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
     border: none !important;
     content-align: center middle;
     background: $ds-surface-raised;
@@ -258,478 +431,69 @@ $ds-sidebar-max-width: 80;
     outline: none;
 }
 
-#library-collections-reader-shell #library-canvas {
-    padding: 0;
-    margin: 0;
-    border: none;
-    overflow-x: hidden;
-}
-
-#library-collections-scopes {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-}
-
-.library-collections-scope-row {
-    width: 100%;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-    content-align: left middle;
-}
-
-.library-collections-scope-row:focus,
-#library-collections-more-saved-searches:focus {
-    background: $ds-input-focus-bg;
-    color: $ds-action-focus;
-    text-style: bold;
-    outline: none;
-}
-
-#library-collections-more-saved-searches {
-    width: 100%;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-    color: $ds-text-muted;
-    content-align: left middle;
-}
-
-#library-collections-items,
-#library-collections-work {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-    background: $ds-surface-panel;
-}
-
-#library-collections-items {
-    padding: 0;
-}
-
-#library-collections-work {
-    padding: 0 1;
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-text-muted;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
-#library-collections-items-toolbar,
-#library-collections-page-toolbar,
-#library-collections-primary-toolbar,
-#library-collections-mode-toolbar,
-#library-collections-archive-receipt {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 1;
-    margin: 0;
-}
-
-#library-collections-items-toolbar > Button,
-#library-collections-sort-toolbar > Button,
-#library-collections-page-toolbar > Button,
-#library-collections-primary-toolbar > Button,
-#library-collections-secondary-toolbar > Button,
-#library-collections-mode-toolbar > Button,
-#library-collections-archive-receipt > Button {
-    width: auto;
-    min-width: 0;
-    margin: 0;
-    padding: 0 1;
-}
-
-#library-collections-filter {
-    width: 100%;
-    min-width: 0;
-    height: 3;
-    min-height: 3;
-    margin: 0;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-}
-
-#library-collections-filter:focus {
-    border: tall $ds-input-focus-accent;
-    background: $ds-input-focus-bg;
-}
-
-#library-collections-quick-capture-form,
-#library-collections-filters-form {
-    width: 100%;
-    height: auto;
-    margin: 0 0 1 0;
-    padding: 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-}
-
-#library-collections-capture-url,
-#library-collections-capture-title,
-#library-collections-capture-tags,
-#library-collections-filter-domain,
-#library-collections-filter-tags,
-#library-collections-filter-date-from,
-#library-collections-filter-date-to,
-#library-collections-highlight-quote,
-#library-collections-highlight-note,
-#library-collections-linked-note-id {
-    width: 100%;
-    min-width: 0;
-    margin: 0 0 1 0;
-    border: tall $ds-grid-line;
-    background: $ds-surface-panel;
-}
-
-#library-collections-highlight-quote {
-    height: 5;
-    min-height: 3;
-}
-
-#library-collections-capture-note {
-    width: 100%;
-    min-width: 0;
-    height: 5;
-    min-height: 3;
-    margin: 0 0 1 0;
-    border: tall $ds-grid-line;
-    background: $ds-surface-panel;
-}
-
-#library-collections-capture-url:focus,
-#library-collections-capture-title:focus,
-#library-collections-capture-tags:focus,
-#library-collections-capture-note:focus,
-#library-collections-filter-domain:focus,
-#library-collections-filter-tags:focus,
-#library-collections-filter-date-from:focus,
-#library-collections-filter-date-to:focus,
-#library-collections-highlight-quote:focus,
-#library-collections-highlight-note:focus,
-#library-collections-linked-note-id:focus {
-    border: tall $ds-input-focus-accent;
-    background: $ds-input-focus-bg;
-}
-
-#library-collections-items-scroll {
-    width: 100%;
-    min-width: 0;
-    height: 1fr;
-    min-height: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-text-muted;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
-.library-collections-item-row {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-    content-align: left top;
-}
-
-.library-collections-item-row:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
-}
-
-#library-collections-page-stale,
-#library-collections-page-error,
-#library-collections-page-loading,
-#library-collections-items-empty,
-#library-collections-reader-loading,
-#library-collections-reader-error,
-#library-collections-reader-empty {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 1;
-    padding: 0 1;
-    color: $ds-text-muted;
-}
-
-#library-collections-page-error,
-#library-collections-reader-error,
-#library-collections-hard-delete-copy {
-    color: $ds-status-error;
-}
-
-#library-collections-page-range,
-#library-collections-reader-identity,
-#library-collections-reader-byline {
-    width: 100%;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    color: $ds-text-muted;
-}
-
-#library-collections-reader-title {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 1;
-    text-style: bold;
-    color: $ds-text-primary;
-    margin: 1 0 0 0;
-}
-
-#library-collections-read-body,
-#library-collections-info-body {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 1;
-    margin-top: 1;
-    padding-bottom: 1;
-    color: $ds-text-primary;
-}
-
-#library-collections-freeform-note {
-    width: 100%;
-    min-width: 0;
-    height: 6;
-    min-height: 4;
-    margin: 0 0 1 0;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-}
-
-#library-collections-freeform-note:focus {
-    border: tall $ds-input-focus-accent;
-    background: $ds-input-focus-bg;
-}
-
-#library-collections-primary-toolbar {
-    margin-top: 1;
-    padding-bottom: 1;
-    border-bottom: solid $ds-grid-line;
-}
-
-#library-collections-mode-toolbar {
-    margin: 1 0 0 0;
-}
-
-#library-collections-primary-toolbar > Button:focus,
-#library-collections-secondary-toolbar > Button:focus,
-#library-collections-mode-toolbar > Button:focus,
-#library-collections-page-toolbar > Button:focus,
-#library-collections-items-toolbar > Button:focus,
-#library-collections-sort-toolbar > Button:focus,
-#library-collections-archive-receipt > Button:focus {
-    background: $ds-input-focus-bg;
-    color: $ds-action-focus;
-    text-style: bold;
-    outline: none;
-}
-
-#library-collections-summarize,
-#library-collections-listen,
-#library-collections-save-offline,
-#library-collections-retry-extraction,
-#library-collections-hard-delete,
-#library-collections-legacy-recovery,
-#library-collections-capture-save,
-#library-collections-capture-cancel,
-#library-collections-capture-refresh,
-#library-collections-capture-retry-confirm,
-#library-collections-capture-retry-back,
-#library-collections-filters-apply,
-#library-collections-filters-clear,
-#library-collections-highlight-save,
-#library-collections-freeform-note-save,
-#library-collections-linked-note-save,
-#library-collections-legacy-recovery-export,
-#library-collections-legacy-recovery-close,
-.library-collections-highlight-delete,
-.library-collections-linked-note-unlink {
-    width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    margin: 0 1 0 0;
-    padding: 0 1;
-    border: none;
-}
-
-#library-collections-capture-save:focus,
-#library-collections-capture-cancel:focus,
-#library-collections-capture-refresh:focus,
-#library-collections-capture-retry-confirm:focus,
-#library-collections-capture-retry-back:focus,
-#library-collections-filters-apply:focus,
-#library-collections-filters-clear:focus,
-#library-collections-highlight-save:focus,
-#library-collections-freeform-note-save:focus,
-#library-collections-linked-note-save:focus,
-#library-collections-legacy-recovery-export:focus,
-#library-collections-legacy-recovery-close:focus,
-.library-collections-highlight-delete:focus,
-.library-collections-linked-note-unlink:focus {
-    background: $ds-input-focus-bg;
-    color: $ds-action-focus;
-    text-style: bold;
-    outline: none;
-}
-
-#library-collections-action-status,
-#library-collections-action-content,
-#library-collections-capture-unknown,
-#library-collections-capture-retry-warning,
-#library-collections-legacy-recovery-heading,
-#library-collections-legacy-recovery-content,
-.library-collections-highlight-entry,
-.library-collections-linked-note-entry {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 1;
-}
-
-#library-collections-action-status,
-#library-collections-legacy-recovery-heading {
-    margin-top: 1;
-    text-style: bold;
-}
-
-#library-collections-capture-unknown,
-#library-collections-capture-retry-warning {
-    margin: 0 0 1 0;
-    color: $ds-status-warning;
-    text-style: bold;
-}
-
-#library-collections-action-content,
-#library-collections-legacy-recovery-content {
-    margin: 0 0 1 0;
-    color: $ds-text-muted;
-}
-
-#library-collections-legacy-recovery-inspector {
-    width: 100%;
-    height: auto;
-    margin-top: 1;
-    padding: 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-}
-
-#library-collections-hard-delete-copy {
-    width: 100%;
-    height: auto;
-    margin: 1 0 0 0;
-    padding: 1;
-    border: tall $ds-status-error;
-    background: $ds-surface-raised;
-}
-
-#library-collections-freeform-note-heading,
-#library-collections-linked-notes-heading {
-    width: 100%;
-    height: auto;
-    margin-top: 1;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-#library-collections-highlights-empty,
-#library-collections-linked-notes-empty,
-#library-collections-media-provenance {
-    width: 100%;
-    height: auto;
-    color: $ds-text-muted;
-}
-
-#library-collections-archive-receipt {
-    margin-top: 1;
-    padding: 0 1;
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-}
-
 #library-conversations-reader-shell #library-canvas {
-    padding: 0;
-    margin: 0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
     border: none;
     overflow-x: hidden;
 }
 
 #library-conversation-reader {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-    padding: 0 1;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-panel;
+    overflow-y: auto;
 }
 
 .library-conversation-reader-modes,
 .library-conversation-reader-actions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
-    margin: 0 0 1 0;
+    min-height: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* task-32056: the actions row now sits directly under Read/Info, so the
    two read as one header block rather than two unrelated groups. */
 .library-conversation-reader-modes {
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 /* task-32056 fix round 1: the blocked reason wraps instead of riding in a
    Button label, which Textual truncates to one line -- at 100 columns the
    reader pane is ~43 cells and clipped it mid-word. */
 .library-conversation-reader-block-reason {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     text-wrap: wrap;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .library-conversation-reader-modes > Button,
 .library-conversation-reader-actions > Button {
     width: auto;
-    min-width: 0;
-    margin: 0;
-    padding: 0 1;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #library-conversation-reader-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 #library-conversation-reader-find {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -745,14 +509,15 @@ $ds-sidebar-max-width: 80;
 
 #library-conversation-reader-messages,
 #library-conversation-reader-info-body {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     overflow-x: hidden;
     overflow-y: auto;
 }
 
 #library-conversation-reader-messages {
+    min-height: $ds-size-5;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
     scrollbar-color: $ds-text-muted;
@@ -761,11 +526,11 @@ $ds-sidebar-max-width: 80;
 }
 
 .library-conversation-reader-message {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 2;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     border-left: solid $ds-grid-line;
     color: $ds-text-primary;
 }
@@ -781,51 +546,36 @@ $ds-sidebar-max-width: 80;
     color: $ds-text-primary;
 }
 
-/* Reader toolbars can be as narrow as 50 columns while Items remains open.
-   Textual Button's default 16-column minimum pushed More and Info beyond the
-   painted Reader at that width even though both widgets stayed mounted. Keep
-   these compact, label-sized rows fully reachable without changing their
-   text or focus geometry. task-31633 AC#3 added the More disclosure's own
-   row: its four labels only fit the narrow Reader as label-sized buttons. */
-#library-media-reader-primary-toolbar > Button,
-#library-media-reader-mode-toolbar > Button,
-#library-media-reader-more-actions > Button {
-    width: auto;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-}
-
 #library-hub-attention {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 #library-hub-attention-copy {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 #library-hub-attention-action {
     width: auto;
-    min-width: 8;
+    min-width: $ds-size-8;
 }
 
 #library-conversations-canvas {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    height: 100%;
-    min-height: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
 }
 
 #library-conversations-list {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
@@ -836,17 +586,17 @@ $ds-sidebar-max-width: 80;
 }
 
 .library-source-pager {
-    width: 1fr;
-    min-width: 0;
-    max-width: 100%;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 .library-source-pager-status {
-    width: 100%;
-    min-width: 0;
-    height: 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
     content-align: center middle;
     text-wrap: nowrap;
     text-overflow: ellipsis;
@@ -854,50 +604,50 @@ $ds-sidebar-max-width: 80;
 }
 
 .library-source-pager-controls {
-    width: 1fr;
-    min-width: 0;
-    max-width: 100%;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
     height: auto;
     align: center middle;
 }
 
 .library-source-pager-controls > .library-canvas-action {
     width: auto;
-    min-width: 0;
+    min-width: $ds-size-0;
 }
 
 .library-rail-empty-copy {
     color: $ds-text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .library-details-group {
     text-style: bold;
     color: $ds-text-primary;
-    margin: 1 0 0 0;
-    padding: 0 1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .library-details-group-first {
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 .library-details-row {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .library-rail-row {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     /* F-011: one-line rows (was height/min-height 2 + margin-bottom 1 --
     3 terminal lines per row), so the Create section and the Details
     disclosure stay reachable at 100x30. Handoff rows (Study) keep a
     second discriminator line via their inline style in
     Widgets/Library/library_rail.py. */
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     text-align: left;
     content-align: left middle;
     text-wrap: nowrap;
@@ -925,7 +675,22 @@ $ds-sidebar-max-width: 80;
    `*:focus{outline:solid}` fallback (core/_reset.tcss). */
 .library-rail-row:focus {
     border-left: thick $ds-action-focus;
-    padding: 0 1 0 0;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    outline: none;
+}
+
+/* task-32546 (critique #3, B D16): the Library landing's "From your
+   Library" rows are the first thing Tab and F6 reach on the way into
+   Notes, and they marked focus with a background colour alone
+   (rgb(30,30,30) -> rgb(28,70,102), read off an ANSI capture) -- the same
+   colour-only cue task-32359 removed from the rail rows one pane away.
+   Same shape and the same reasons: the house bar replaces the row's own
+   left padding so the label neither shifts nor is clipped, and
+   `outline: none` suppresses the generic `*:focus{outline:solid}`
+   fallback (core/_reset.tcss). */
+.library-hub-recent:focus {
+    border-left: thick $ds-action-focus;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
 
@@ -947,12 +712,12 @@ $ds-sidebar-max-width: 80;
 }
 
 .library-conversation-row {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     text-align: left;
     content-align: left middle;
     text-wrap: nowrap;
@@ -979,291 +744,15 @@ $ds-sidebar-max-width: 80;
     color: $ds-focus-fg;
     text-style: bold underline;
     border-left: thick $ds-action-focus;
-    padding: 0 1 0 0;
-    outline: none;
-}
-
-/* task-4025: the Trash view's rows share the media list's row contract
-   verbatim (one comma-joined rule, not a forked copy) -- the trash rows
-   keep their OWN class only so `_focus_library_list_entry`'s
-   `.library-media-row` query can never grab a trash row. */
-.library-media-row, .library-media-trash-row {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    /* task-31633 (critique #5 P1): NO bottom margin. It bought a blank third
-       row per item, so a 52-row terminal listed eleven of fifteen seeded
-       items. The title/meta rhythm and the `▸` marker separate the items;
-       the compact override below has always been margin-free. */
-    margin: 0;
-    padding: 0 1;
-    text-align: left;
-    content-align: left middle;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    border: none;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
-
-.library-media-row-selected {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
-
-/* task-2856 AC1/AC4: entering the Media list now parks real DOM focus on
-   the first row and Up/Down move it between rows -- previously this class
-   had no dedicated ``:focus`` rule at all and fell back to the generic
-   ``*:focus{outline:solid}`` (core/_reset.tcss). `outline: none` suppresses
-   the generic fallback (never `outline: heavy`, which eats a compact row's
-   label -- round-3 lesson).
-   task-31983 (critique #6 P1): `-selected` above uses this SAME background,
-   so focus and selection were indistinguishable -- the row the keyboard was
-   ON looked exactly like the open row and arrow-nav read as a dead key. The
-   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
-   cue `-selected` does NOT carry, so the two stay distinct even when a row
-   is both focused AND selected (arrow onto the open row). The left edge
-   replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
-   label neither shifts nor is clipped and the row never jumps focus<->blur --
-   the house focus convention ($ds-control-edge comment, _variables.tcss). */
-.library-media-row:focus, .library-media-trash-row:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    border-left: thick $ds-action-focus;
-    padding: 0 1 0 0;
-    outline: none;
-}
-
-.library-notes-row {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 0 0 1 0;
-    padding: 0 1;
-    text-align: left;
-    content-align: left middle;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    border: none;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
-
-/* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
-   above -- entering the Notes list now parks DOM focus on the first row and
-   Up/Down move it between rows. task-31983: same focus-only border-left cue
-   (padding compensates so the label holds), distinct from any selection. */
-.library-notes-row:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    border-left: thick $ds-action-focus;
-    padding: 0 1 0 0;
-    outline: none;
-}
-
-/* The adaptive Items pane has its own border and horizontal padding. Size
-   the Notes canvas and its scroll owner from the remaining content box;
-   `100%`/auto otherwise adds that inset back and clips the final two cells. */
-#library-notes-canvas,
-#library-notes-list {
-    width: 1fr;
-    min-width: 0;
-    max-width: 100%;
-}
-
-/* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
-   Select" 48 cells wide -- wider than the list pane itself, so Select, the
-   Title sort option and the delete receipt's Undo were painted past the
-   pane edge. The compact stage already sized these to their content; the
-   ordinary stage does the same now, since the pane is never wide enough to
-   justify a 16-cell "New". */
-#library-notes-canvas .library-canvas-action {
-    width: auto;
-    min-width: 0;
-}
-
-/* ...except the branch pagers, which are full-width rows carrying wrapped
-   range/status copy, not toolbar buttons. The rule above outranks
-   `.library-notes-tree-pager` on specificity, so it has to say so here
-   (review round 1). */
-#library-notes-canvas .library-notes-tree-pager {
-    width: 100%;
-    max-width: 100%;
-}
-
-/* task-32144: a Trash row's title takes the width its Restore button leaves,
-   so a long title ellipsizes rather than pushing that button off the pane --
-   the same shape the delete receipt's copy uses below. */
-.library-notes-trash-row-copy {
-    width: 1fr;
-    min-width: 0;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    padding: 0 1 0 0;
-}
-
-/* task-32123: the receipt's copy owns its own row above the two recovery
-   actions, so a title too long for the pane ends in an ellipsis instead of
-   pushing Undo off the edge. */
-#library-notes-delete-receipt-copy {
-    width: 1fr;
-    min-width: 0;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-/* task-32127: the browse and transfer toolbars share one row. Each keeps
-   its own id (and its compact-stage rules); the trailing group takes the
-   leftover width so the raised toolbar background spans the row. */
-#library-notes-action-rows {
-    layout: horizontal;
-    height: auto;
-    width: 1fr;
-    min-width: 0;
-}
-
-.library-notes-folder-row {
-    width: 100%;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-align: left;
-    content-align: left middle;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    border: none;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
-
-/* task-31983: same focus-only border-left cue; this row is height 1, so the
-   padding swap (0 1 -> 0 1 0 0) keeps the single label cell intact. */
-.library-notes-folder-row:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    border-left: thick $ds-action-focus;
-    padding: 0 1 0 0;
-    outline: none;
-}
-
-.library-notes-tree-note-row {
-    height: 1;
-    min-height: 1;
-    margin: 0;
-}
-
-.library-notes-tree-pager {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    height: auto;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-align: left;
-    content-align: left middle;
-    text-wrap: wrap;
-    border: none;
-    background: $ds-surface-panel;
-    color: $ds-text-muted;
-}
-
-.library-notes-tree-pager:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    outline: none;
-}
-
-.library-notes-tree-connected {
-    color: $ds-focus-accent;
-}
-
-.library-notes-tree-needs-attention {
-    color: $ds-status-warning;
-}
-
-
-/* Same look as .library-notes-row, on a separate class: the notes Create
-   view's Blank note / template rows must not also match the list view's
-   ".library-notes-row" press handler (opening the editor for the pressed
-   row's note_id), which would double-dispatch alongside the Create view's
-   own handlers on every press. */
-.library-notes-create-row {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 0 0 1 0;
-    padding: 0 1;
-    text-align: left;
-    content-align: left middle;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    border: none;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
-
-/* task-32052 AC#2: entering the New-note canvas now parks focus on Blank
-   note and Up/Down walk the templates, so these rows need the same
-   focus-only left-edge cue the other Library list rows carry
-   (.library-notes-row:focus, task-31983). The border replaces the row's
-   1-column left padding so the label never shifts or is clipped, and
-   `outline: none` suppresses the generic `*:focus{outline:solid}`
-   fallback (the task-2041 label-eating trap on a compact row). */
-.library-notes-create-row:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    border-left: thick $ds-action-focus;
-    padding: 0 1 0 0;
-    outline: none;
-}
-
-/* Same look as .library-notes-row: prompts list rows (library_prompts_canvas.py). */
-.library-prompt-row {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 0 0 1 0;
-    padding: 0 1;
-    text-align: left;
-    content-align: left middle;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    border: none;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
-
-/* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
-   above -- entering the Prompts list now parks DOM focus on the first row
-   and Up/Down move it between rows. task-31983: same focus-only border-left
-   cue (padding compensates so the label holds), distinct from selection. */
-.library-prompt-row:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    border-left: thick $ds-action-focus;
-    padding: 0 1 0 0;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
 
 .library-canvas-action {
     height: $ds-home-control-button-height;
     min-height: $ds-home-control-button-height;
-    margin: 0 1 0 0;
-    padding: 0 1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     border: none;
@@ -1319,16 +808,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
    takes the remaining width rather than the whole row (which squeezed the
    button to zero cells and painted nothing where the affordance should be). */
 #library-rail-search-row {
-    height: 3;
-    width: 100%;
+    height: $ds-size-3;
+    width: $ds-width-full;
 }
 
 #library-search-clear {
-    width: 3;
-    min-width: 3;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     /* task-32212 (critique #9 row 9): this 3 is only honoured because
        `LibraryRail.compose` zeroes the button's `line_pad` inline --
        Textual's `Button` defaults to `line-pad: 1`, whose two flanking
@@ -1341,11 +830,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-search-input {
-    width: 1fr;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-fill;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1370,52 +859,1392 @@ with stray left-edge border fragments), and padding 0 1 so the full
    of scroll. The background keeps the row opaque against the panel. */
 #library-rail-fold-cue {
     dock: bottom;
-    height: 1;
-    width: 100%;
+    height: $ds-size-1;
+    width: $ds-width-full;
     background: $ds-surface-panel;
     color: $ds-text-muted;
     text-overflow: ellipsis;
 }
 
 #library-conversations-filter {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
+/* Export canvas (F4 Task 2): in-canvas chatbook export form. Own classes
+   rather than reusing `.library-ingest-*` -- the two canvases' CSS stays
+   independently discoverable even though the rules mirror the ingest
+   canvas's field/quiet-line styling exactly. */
+.library-export-quiet-line {
+    width: $ds-width-full;
+    height: auto;
+    color: $ds-text-muted;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.library-export-field {
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.library-export-field:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Accent treatment mirrors #library-ingest-start / .console-action-primary
+   (the project's live "primary action button" convention) so Export
+   chatbook reads as the one button that matters on this canvas. */
+#library-export-submit {
+    margin-top: $ds-space-1;
+    background: $ds-action-focus 35%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* task-4023 AC#1 (RC-07): this ID rule outranks the shared
+   `.library-canvas-action:disabled` escape above, so it must be
+   self-sufficient. Its previous `$ds-text-disabled` label (the alpha-38%
+   token) measured 1.44:1 live -- the very compound this rule tried to
+   avoid -- and it never neutralised _buttons.tcss's `opacity: 50%`. */
+#library-export-submit:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    background: $surface-darken-1;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+/* Below the breakpoint Media becomes a dense list: the mounted preview is
+   removed from paint/focus participation by the canvas, while the list owns
+   the remaining height and keeps its pager pinned below the row scroller. */
+#library-shell-grid.library-notes-compact #library-media-workbench {
+    layout: vertical;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+#library-shell-grid.library-notes-compact #library-media-list {
+    width: $ds-width-full;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    overflow-y: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-media-row-scroll {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+#library-shell-grid.library-notes-compact .library-media-row {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-media-preview {
+    display: none;
+}
+
+#library-shell-grid.library-notes-compact #library-media-detail-empty {
+    display: none;
+}
+
+/* TASK-716: pressable-but-blocked Library source actions render dim; the
+   press handler explains the block instead of a dead disabled button. */
+.library-source-action-blocked {
+    color: $ds-text-muted;
+}
+
+#library-source-browser {
+    width: $ds-library-source-browser-width;
+    min-width: $ds-library-source-browser-width;
+    max-width: $ds-library-source-browser-width;
+    height: $ds-height-full;
+    min-height: $ds-size-20;
+    padding: $ds-space-1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
+.library-hub-spacer {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+}
+
+#library-source-inspector {
+    width: $ds-fr-2;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-20;
+    padding: $ds-space-1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
+#library-source-detail {
+    width: $ds-fr-5;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-20;
+    padding: $ds-space-1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
+.library-source-action {
+    width: $ds-library-source-action-width;
+    min-width: $ds-library-source-action-min-width;
+    height: $ds-library-source-action-height;
+    min-height: $ds-library-source-action-height;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    background: transparent;
+    color: $ds-text-primary;
+    content-align: left middle;
+    text-style: none;
+}
+
+.library-source-action-spacer {
+    height: $ds-size-0;
+    min-height: $ds-size-0;
+}
+
+.library-source-active-marker {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.library-source-group-rule {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    color: $ds-text-muted;
+}
+
+.library-source-action:focus {
+    border: none;
+    background: transparent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
+/* Regression fix: #library-canvas (this panel's parent) and this panel's
+ * own body never scrolled, so once the Query/Scope/Results/History regions'
+ * combined natural height exceeded the fixed canvas box, whatever fell
+ * past the bottom edge was silently clipped and permanently unreachable --
+ * not just visually cut off, but gone, with no way to scroll to it. That
+ * is what made multi-result searches render only the first row: rows past
+ * whatever vertical room the Query and Scope regions left behind vanished.
+ * Making the panel scrollable keeps every mounted row reachable regardless
+ * of how many results (or how much recovery/callout copy) the current
+ * state renders. */
+#library-search-rag-panel {
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+/* Database Notes compact geometry: at the measured compact breakpoint,
+   the shell becomes a single 15-row workbench and every Notes state
+   assigns surplus height to exactly one scroll owner. */
+#library-shell-grid.library-notes-compact {
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    border: none;
+}
+
+#library-shell-grid.library-notes-compact #library-canvas {
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    border: none;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-canvas,
+#library-shell-grid.library-notes-compact #library-note-work-pane {
+    width: $ds-width-fill;
+    max-width: $ds-width-full;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-authority,
+#library-shell-grid.library-notes-compact #library-note-work-authority {
+    height: $ds-height-auto;
+    min-height: $ds-size-2;
+    max-height: $ds-height-full;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: wrap;
+    overflow: hidden hidden;
+}
+
+/* The list's next-step sentence needs three rows in an 80-column terminal.
+   Its full-height maximum above overrides the screen default's two-row cap;
+   the separate editor authority keeps its existing budget. */
+#library-shell-grid.library-notes-compact #library-note-work-authority {
+    height: $ds-size-2;
+    max-height: $ds-size-2;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-header {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-filter-row {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-filter-label {
+    width: $ds-size-8;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-filter {
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-browse-actions,
+#library-shell-grid.library-notes-compact #library-notes-sort-choices,
+#library-shell-grid.library-notes-compact #library-notes-transfer-actions,
+#library-shell-grid.library-notes-compact #library-notes-selection-actions,
+#library-shell-grid.library-notes-compact #library-note-primary-actions,
+#library-shell-grid.library-notes-compact #library-note-conflict-actions,
+#library-shell-grid.library-notes-compact #library-note-delete-actions {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact .library-canvas-action {
+    width: auto;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+}
+
+/* TASK-32623: reserve the widest action row so toggling Discard cannot move
+   its sibling mode controls. Compact rows already have fixed geometry. */
+#library-note-task-actions {
+    min-width: $ds-library-note-task-actions-min-width;
+}
+
+#library-shell-grid.library-notes-compact #library-note-task-actions {
+    min-width: $ds-size-0;
+}
+
+/* Branch continuations are list rows, not toolbar actions. Keep their full
+   status and recovery copy visible when the compact toolbar geometry above
+   collapses ordinary actions to one line. */
+#library-shell-grid.library-notes-compact #library-notes-list Button.library-notes-tree-pager {
+    width: $ds-width-full;
+    max-width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    max-height: $ds-height-full;
+    margin: $ds-space-0;
+    text-wrap: wrap;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-status-row {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-status {
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-filter-clear {
+    width: auto;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-selection-status {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-list {
+    width: $ds-width-fill;
+    max-width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-empty {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-heading {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-editor-title,
+#library-shell-grid.library-notes-compact #library-note-preview-title,
+#library-shell-grid.library-notes-compact #library-note-context-title,
+#library-shell-grid.library-notes-compact #library-note-loading-title,
+#library-shell-grid.library-notes-compact #library-notes-create-header {
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#library-shell-grid.library-notes-compact #library-note-editor-region {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-title-row,
+#library-shell-grid.library-notes-compact #library-note-keywords-row {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-note-title-label,
+#library-shell-grid.library-notes-compact #library-note-keywords-label,
+#library-shell-grid.library-notes-compact #library-note-context-keywords-label {
+    width: $ds-size-10;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-shell-grid.library-notes-compact #library-note-title,
+#library-shell-grid.library-notes-compact #library-note-keywords,
+#library-shell-grid.library-notes-compact #library-note-context-keywords {
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+}
+
+#library-shell-grid.library-notes-compact #library-note-body-label {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-shell-grid.library-notes-compact #library-note-body {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    max-height: $ds-height-full;
+    margin: $ds-space-0;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-preview-region {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    max-height: $ds-height-full;
+    margin: $ds-space-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-preview-body {
+    height: auto;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-context-region {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* TASK-32642: each Info property gets a complete row at compact widths. */
+#library-shell-grid.library-notes-compact #library-note-context-meta {
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-note-context-keywords-row {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-note-status {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    max-height: $ds-size-2;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+#library-shell-grid.library-notes-compact #library-note-transfer-status,
+#library-shell-grid.library-notes-compact #library-note-context-transfer-status {
+    display: none;
+    height: $ds-size-0;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-note-conflict-region {
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    max-height: $ds-size-3;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-note-conflict-copy {
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    max-height: $ds-size-2;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-shell-grid.library-notes-compact #library-note-delete-confirmation {
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    max-height: $ds-size-2;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-create-heading {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-create-viewport {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-load-state {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    overflow: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-note-load-heading {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-shell-grid.library-notes-compact #library-note-loading {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#library-shell-grid.library-notes-compact #library-note-loading-viewport {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact .library-notes-lasting-sync-canvas {
+    padding: $ds-space-0;
+}
+
+/* task-32217 (critique #9 row 14): the screen-wide density rule.
+   A pane with nothing open gives its columns to its sibling. The horizontal
+   half is not CSS -- it is the resolver's own empty-work-pane branch
+   (Utils/adaptive_reader_state.py, the ``reader_has_item`` block Media and
+   Notes already used); Prompts, Skills, Collections and Conversations now
+   pass that flag, so no per-canvas width rule can drift from it. The
+   vertical half (a primary content box takes the pane's remaining height,
+   its actions directly beneath) is already shipped for the surfaces this
+   branch owns: #library-prompt-editor-content and
+   #library-media-viewer-content both carry `height: 1fr` above. The note
+   editor's Body box (#library-note-body) is the one clause still bounded,
+   and it belongs to the Notes branch of this wave.
+
+   The landing is the third case: at 235 columns it painted a ten-line hub
+   across ~190 cells, so its lines ran far past a readable measure. Capped
+   here rather than given invented content -- what the hub should GROW is a
+   product decision this wave does not own. */
+#library-landing-canvas {
+    max-width: $ds-size-96;
+}
+
+
+#library-collections-reader-shell #library-canvas {
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    border: none;
+    overflow-x: hidden;
+}
+
+#library-collections-scopes {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+}
+
+.library-collections-scope-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    content-align: left middle;
+}
+
+.library-collections-scope-row:focus,
+#library-collections-more-saved-searches:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-more-saved-searches {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    color: $ds-text-muted;
+    content-align: left middle;
+}
+
+#library-collections-items,
+#library-collections-work {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    background: $ds-surface-panel;
+}
+
+#library-collections-items {
+    padding: $ds-space-0;
+    /* Expanded filters must remain reachable when taller than the compact pane. */
+    overflow-y: auto;
+}
+
+#library-collections-work {
+    padding: $ds-space-0 $ds-space-1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#library-collections-items-toolbar,
+#library-collections-page-toolbar,
+#library-collections-primary-toolbar,
+#library-collections-mode-toolbar,
+#library-collections-archive-receipt {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+#library-collections-items-toolbar > Button,
+#library-collections-sort-toolbar > Button,
+#library-collections-page-toolbar > Button,
+#library-collections-primary-toolbar > Button,
+#library-collections-secondary-toolbar > Button,
+#library-collections-mode-toolbar > Button,
+#library-collections-archive-receipt > Button {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-collections-filter {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-filter:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-quick-capture-form,
+#library-collections-filters-form {
+    width: $ds-width-full;
+    height: auto;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-capture-url,
+#library-collections-capture-title,
+#library-collections-capture-tags,
+#library-collections-filter-domain,
+#library-collections-filter-tags,
+#library-collections-filter-date-from,
+#library-collections-filter-date-to,
+#library-collections-highlight-quote,
+#library-collections-highlight-note,
+#library-collections-linked-note-id {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-highlight-quote {
+    height: $ds-size-5;
+    min-height: $ds-size-3;
+}
+
+#library-collections-capture-note {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-5;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-capture-url:focus,
+#library-collections-capture-title:focus,
+#library-collections-capture-tags:focus,
+#library-collections-capture-note:focus,
+#library-collections-filter-domain:focus,
+#library-collections-filter-tags:focus,
+#library-collections-filter-date-from:focus,
+#library-collections-filter-date-to:focus,
+#library-collections-highlight-quote:focus,
+#library-collections-highlight-note:focus,
+#library-collections-linked-note-id:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-items-scroll {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+.library-collections-item-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    content-align: left top;
+}
+
+.library-collections-item-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+#library-collections-page-stale,
+#library-collections-page-error,
+#library-collections-page-loading,
+#library-collections-items-empty,
+#library-collections-reader-loading,
+#library-collections-mutation-error,
+#library-collections-reader-error,
+#library-collections-reader-empty {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#library-collections-archive-receipt > Static {
+    width: $ds-width-fill;
+}
+
+#library-collections-page-error,
+#library-collections-mutation-error,
+#library-collections-reader-error,
+#library-collections-hard-delete-copy {
+    color: $ds-status-error-readable;
+}
+
+#library-collections-page-range,
+#library-collections-reader-identity,
+#library-collections-reader-byline {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    color: $ds-text-muted;
+}
+
+#library-collections-reader-title {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    text-style: bold;
+    color: $ds-text-primary;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+}
+
+#library-collections-read-body,
+#library-collections-info-body {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    margin-top: $ds-space-1;
+    padding-bottom: $ds-space-1;
+    color: $ds-text-primary;
+}
+
+#library-collections-freeform-note {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-6;
+    min-height: $ds-size-4;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-primary-toolbar {
+    margin-top: $ds-space-1;
+    padding-bottom: $ds-space-1;
+    border-bottom: solid $ds-grid-line;
+}
+
+#library-collections-mode-toolbar {
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+}
+
+#library-collections-primary-toolbar > Button:focus,
+#library-collections-secondary-toolbar > Button:focus,
+#library-collections-mode-toolbar > Button:focus,
+#library-collections-page-toolbar > Button:focus,
+#library-collections-items-toolbar > Button:focus,
+#library-collections-sort-toolbar > Button:focus,
+#library-collections-archive-receipt > Button:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-summarize,
+#library-collections-listen,
+#library-collections-save-offline,
+#library-collections-retry-extraction,
+#library-collections-hard-delete,
+#library-collections-legacy-recovery,
+#library-collections-capture-save,
+#library-collections-capture-cancel,
+#library-collections-capture-refresh,
+#library-collections-capture-retry-confirm,
+#library-collections-capture-retry-back,
+#library-collections-filters-apply,
+#library-collections-filters-clear,
+#library-collections-highlight-save,
+#library-collections-freeform-note-save,
+#library-collections-linked-note-save,
+#library-collections-legacy-recovery-export,
+#library-collections-legacy-recovery-close,
+.library-collections-highlight-delete,
+.library-collections-linked-note-unlink {
+    width: auto;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+}
+
+#library-collections-capture-save:focus,
+#library-collections-capture-cancel:focus,
+#library-collections-capture-refresh:focus,
+#library-collections-capture-retry-confirm:focus,
+#library-collections-capture-retry-back:focus,
+#library-collections-filters-apply:focus,
+#library-collections-filters-clear:focus,
+#library-collections-highlight-save:focus,
+#library-collections-freeform-note-save:focus,
+#library-collections-linked-note-save:focus,
+#library-collections-legacy-recovery-export:focus,
+#library-collections-legacy-recovery-close:focus,
+.library-collections-highlight-delete:focus,
+.library-collections-linked-note-unlink:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-action-status,
+#library-collections-action-content,
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning,
+#library-collections-legacy-recovery-heading,
+#library-collections-legacy-recovery-content,
+.library-collections-highlight-entry,
+.library-collections-linked-note-entry {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+}
+
+#library-collections-action-status,
+#library-collections-legacy-recovery-heading {
+    margin-top: $ds-space-1;
+    text-style: bold;
+}
+
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning {
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+#library-collections-action-content,
+#library-collections-legacy-recovery-content {
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    color: $ds-text-muted;
+}
+
+#library-collections-legacy-recovery-inspector {
+    width: $ds-width-full;
+    height: auto;
+    margin-top: $ds-space-1;
+    padding: $ds-space-1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-hard-delete-copy {
+    width: $ds-width-full;
+    height: auto;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    padding: $ds-space-1;
+    border: tall $ds-status-error;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note-heading,
+#library-collections-linked-notes-heading {
+    width: $ds-width-full;
+    height: auto;
+    margin-top: $ds-space-1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-collections-highlights-empty,
+#library-collections-linked-notes-empty,
+#library-collections-media-provenance {
+    width: $ds-width-full;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+#library-collections-archive-receipt {
+    margin-top: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+/* Reader toolbars can be as narrow as 50 columns while Items remains open.
+   Textual Button's default 16-column minimum pushed More and Info beyond the
+   painted Reader at that width even though both widgets stayed mounted. Keep
+   these compact, label-sized rows fully reachable without changing their
+   text or focus geometry. task-31633 AC#3 added the More disclosure's own
+   row: its four labels only fit the narrow Reader as label-sized buttons. */
+#library-media-reader-primary-toolbar > Button,
+#library-media-reader-mode-toolbar > Button,
+#library-media-reader-more-actions > Button {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+
+/* task-4025: the Trash view's rows share the media list's row contract
+   verbatim (one comma-joined rule, not a forked copy) -- the trash rows
+   keep their OWN class only so `_focus_library_list_entry`'s
+   `.library-media-row` query can never grab a trash row. */
+.library-media-row, .library-media-trash-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    /* task-31633 (critique #5 P1): NO bottom margin. It bought a blank third
+       row per item, so a 52-row terminal listed eleven of fifteen seeded
+       items. The title/meta rhythm and the `▸` marker separate the items;
+       the compact override below has always been margin-free. */
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.library-media-row-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+/* task-2856 AC1/AC4: entering the Media list now parks real DOM focus on
+   the first row and Up/Down move it between rows -- previously this class
+   had no dedicated ``:focus`` rule at all and fell back to the generic
+   ``*:focus{outline:solid}`` (core/_reset.tcss). `outline: none` suppresses
+   the generic fallback (never `outline: heavy`, which eats a compact row's
+   label -- round-3 lesson).
+   task-31983 (critique #6 P1): `-selected` above uses this SAME background,
+   so focus and selection were indistinguishable -- the row the keyboard was
+   ON looked exactly like the open row and arrow-nav read as a dead key. The
+   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
+   cue `-selected` does NOT carry, so the two stay distinct even when a row
+   is both focused AND selected (arrow onto the open row). The left edge
+   replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
+   label neither shifts nor is clipped and the row never jumps focus<->blur --
+   the house focus convention ($ds-control-edge comment, _variables.tcss). */
+.library-media-row:focus, .library-media-trash-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    outline: none;
+}
+
+.library-notes-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+/* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
+   above -- entering the Notes list now parks DOM focus on the first row and
+   Up/Down move it between rows. task-31983: same focus-only border-left cue
+   (padding compensates so the label holds), distinct from any selection. */
+.library-notes-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    outline: none;
+}
+
+/* The adaptive Items pane has its own border and horizontal padding. Size
+   the Notes canvas and its scroll owner from the remaining content box;
+   `100%`/auto otherwise adds that inset back and clips the final two cells. */
+#library-notes-canvas,
+#library-notes-list {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
+}
+
+/* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
+   Select" 48 cells wide -- wider than the list pane itself, so Select, the
+   Title sort option and the delete receipt's Undo were painted past the
+   pane edge. The compact stage already sized these to their content; the
+   ordinary stage does the same now, since the pane is never wide enough to
+   justify a 16-cell "New". */
+#library-notes-canvas .library-canvas-action {
+    width: auto;
+    min-width: $ds-size-0;
+}
+
+/* ...except the branch pagers, which are full-width rows carrying wrapped
+   range/status copy, not toolbar buttons. The rule above outranks
+   `.library-notes-tree-pager` on specificity, so it has to say so here
+   (review round 1). */
+#library-notes-canvas .library-notes-tree-pager {
+    width: $ds-width-full;
+    max-width: $ds-width-full;
+}
+
+/* task-32144: a Trash row's title takes the width its Restore button leaves,
+   so a long title ellipsizes rather than pushing that button off the pane --
+   the same shape the delete receipt's copy uses below. */
+.library-notes-trash-row-copy {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
+/* task-32123: the receipt's copy owns its own row above the two recovery
+   actions, so a title too long for the pane ends in an ellipsis instead of
+   pushing Undo off the edge. */
+#library-notes-delete-receipt-copy {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* task-32127: the browse and transfer toolbars share one row. Each keeps
+   its own id (and its compact-stage rules); the trailing group takes the
+   leftover width so the raised toolbar background spans the row. */
+#library-notes-action-rows {
+    layout: horizontal;
+    height: auto;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
+.library-notes-folder-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+/* task-31983: same focus-only border-left cue; this row is height 1, so the
+   padding swap (0 1 -> 0 1 0 0) keeps the single label cell intact. */
+.library-notes-folder-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    outline: none;
+}
+
+.library-notes-tree-note-row {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+.library-notes-tree-pager {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    max-width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: wrap;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
+.library-notes-tree-pager:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
+.library-notes-tree-connected {
+    color: $ds-focus-accent;
+}
+
+.library-notes-tree-needs-attention {
+    color: $ds-status-warning;
+}
+
+
+/* Same look as .library-notes-row, on a separate class: the notes Create
+   view's Blank note / template rows must not also match the list view's
+   ".library-notes-row" press handler (opening the editor for the pressed
+   row's note_id), which would double-dispatch alongside the Create view's
+   own handlers on every press. */
+.library-notes-create-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+/* task-32052 AC#2: entering the New-note canvas now parks focus on Blank
+   note and Up/Down walk the templates, so these rows need the same
+   focus-only left-edge cue the other Library list rows carry
+   (.library-notes-row:focus, task-31983). The border replaces the row's
+   1-column left padding so the label never shifts or is clipped, and
+   `outline: none` suppresses the generic `*:focus{outline:solid}`
+   fallback (the task-2041 label-eating trap on a compact row). */
+.library-notes-create-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    outline: none;
+}
+
+/* Same look as .library-notes-row: prompts list rows (library_prompts_canvas.py). */
+.library-prompt-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+/* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
+   above -- entering the Prompts list now parks DOM focus on the first row
+   and Up/Down move it between rows. task-31983: same focus-only border-left
+   cue (padding compensates so the label holds), distinct from selection. */
+.library-prompt-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+    outline: none;
+}
+
 #library-notes-header {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
     content-align: left middle;
 }
 
 /* Supporting Database-mode placement copy below the pinned authority row. */
 #library-notes-database-purpose {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-notes-authority {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
 #library-notes-filter {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1430,18 +2259,18 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-notes-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 #library-notes-empty {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
@@ -1449,18 +2278,18 @@ with stray left-edge border fragments), and padding 0 1 so the full
    list's header/filter/empty siblings above -- visual parity, not a
    separate design. */
 #library-prompts-header {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
     content-align: left middle;
 }
 
 #library-prompts-filter {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1475,10 +2304,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-prompts-empty {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
@@ -1486,11 +2315,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
    matches the filter box's field look; the outcome line is muted like the
    editor's save-status Static. */
 #library-prompts-import-path {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1505,22 +2334,29 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-prompts-import-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 /* Toolbar Import… row (library_skills_canvas.py, Task 5): the path Input
    matches the filter box's field look; the outcome line is muted like the
    editor's save-status Static. */
+/* TASK-32655: content-width pairs fit the 32-column Items pane.
+   Import browsing and submission occupy separate rows so no action clips. */
+.library-skills-actions > .library-canvas-action {
+    width: auto;
+    min-width: $ds-size-0;
+}
+
 #library-skills-import-path {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1535,10 +2371,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-skills-import-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
@@ -1550,10 +2386,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-skills-list {
-    width: 100%;
-    min-width: 0;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
@@ -1564,16 +2400,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .library-skill-row {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     /* task-424: 1 high + no margin -- the secondary Static below it is
        part of the same row block (prompts pack both lines into one 2-high
        Button label instead; the separation margin lives on the secondary
        line here). */
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     text-align: left;
     content-align: left middle;
     text-wrap: nowrap;
@@ -1607,26 +2443,26 @@ with stray left-edge border fragments), and padding 0 1 so the full
    each skill row's Button. Same muted tier as every other secondary/empty
    line in this canvas family. */
 .library-skill-row-secondary {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 #library-skills-header {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
     content-align: left middle;
 }
 
 #library-skills-filter {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1641,10 +2477,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-skills-empty {
-    width: 100%;
-    height: 1fr;
-    min-height: 1;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
@@ -1658,11 +2494,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-skill-argument-hint,
 #library-skill-allowed-tools,
 #library-skill-model {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1684,9 +2520,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
    Body TextArea stays compact instead of ballooning to fill the canvas. */
 #library-skill-body {
     height: auto;
-    min-height: 6;
-    max-height: 14;
-    margin: 0 0 1 0;
+    min-height: $ds-size-6;
+    max-height: $ds-size-14;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Advanced Skill tool restriction: one bounded native chooser regardless of
@@ -1695,35 +2531,35 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-skill-basic-fields,
 #library-skill-argument-fields,
 #library-skill-advanced-fields {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 #library-skill-tool-picker {
-    width: 100%;
-    height: 10;
-    min-height: 4;
-    max-height: 10;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    height: $ds-size-10;
+    min-height: $ds-size-4;
+    max-height: $ds-size-10;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-skill-supporting,
 #library-skill-save-status,
 #library-skill-conflict-copy {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Warnings line (shadow-name / save-marks-needs-review): a warning tier
    color, not muted -- unlike the read-only supporting-files/status lines
    above, these are actionable, attention-worthy copy. */
 #library-skill-warnings {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-status-warning;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Trust panel: state line dims while blocked/needs-review, same modifier-
@@ -1731,9 +2567,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
    line under it is muted like every other secondary line in this canvas
    family. */
 #library-skill-trust-state {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-skill-trust-state.library-skill-trust-state-blocked {
@@ -1741,11 +2577,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-skill-trust-review-files {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* First-run trust setup state (Fix wave, Skills Phase-1 gate FIX 2): the
@@ -1754,16 +2590,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
    look as #library-skill-trust-review-files above -- informational, not a
    warning tier (unlike #library-skill-warnings). */
 #library-skill-trust-setup-explanation {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-notes-create-header {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
     content-align: left middle;
 }
@@ -1772,24 +2608,32 @@ with stray left-edge border fragments), and padding 0 1 so the full
    (tall border, focus accent) rather than defaulting to Textual's bare
    Input styling. */
 #library-note-title,
-#library-note-keywords {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+#library-note-keywords,
+#library-note-context-keywords {
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
 #library-note-title:focus,
-#library-note-keywords:focus {
+#library-note-keywords:focus,
+#library-note-context-keywords:focus {
     border: tall $ds-input-focus-accent;
     outline: none;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* TASK-32607: the live Info keywords field shares Title's field treatment;
+   its destructive action uses the readable error tier, not muted chrome. */
+#library-note-context-delete {
+    color: $ds-status-error-readable;
 }
 
 /* task-32217 (critique #9 density rule): the Body is the primary content
@@ -1802,9 +2646,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
    empty rows under it, and the compact stage had already been given
    `1fr` for the same reason (see the `.library-notes-compact` rules). */
 #library-note-body {
-    height: 1fr;
-    min-height: 6;
-    margin: 0 0 1 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-6;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* The read-only Markdown preview takes the TextArea's place one-for-one,
@@ -1812,9 +2656,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
    owner; Markdown grows naturally inside it so keyboard paging can reach
    the complete document. */
 #library-note-preview-region {
-    height: 1fr;
-    min-height: 6;
-    margin: 0 0 1 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-6;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     border: solid $ds-grid-line;
     overflow-y: auto;
     overflow-x: hidden;
@@ -1826,15 +2670,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-note-preview-region:focus,
 #library-note-context-region:focus {
-    border: solid $ds-input-focus-accent;
+    border: heavy $ds-input-focus-accent;
+    outline: none;
     background: $ds-input-focus-bg;
 }
 
 #library-note-preview-body {
     height: auto;
-    min-height: 0;
-    margin: 0;
-    padding: 0 1;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     overflow-y: hidden;
     overflow-x: hidden;
@@ -1861,6 +2706,21 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
+/* TASK-32620: body headings remain body content beneath the note title. */
+#library-note-preview-body MarkdownH1 {
+    content-align: left middle;
+}
+
+/* TASK-32640: elided path provenance occupies exactly one row. */
+#library-note-location {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 /* task-32143: the editor chrome strip -- one row at the bottom of the body
    carrying "N words · L:C", right-aligned so the eye finds it in the same
    place whatever the note is called. Exactly one row: it is shown only
@@ -1868,9 +2728,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
    body's `1fr` pays for it there (measured at 100x30: body 16 -> 15).
    Muted to the same tier as the meta line above -- chrome, not content. */
 #library-note-chrome-facts {
-    width: 100%;
-    height: 1;
-    padding: 0 1 0 0;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     text-align: right;
     color: $ds-text-muted;
     text-wrap: nowrap;
@@ -1879,10 +2739,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-note-conflict-copy,
 #library-note-delete-confirm-copy {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-note-conflict-copy:focus {
@@ -1900,11 +2760,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-prompt-author,
 #library-prompt-details,
 #library-prompt-keywords {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -1925,7 +2785,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    has several ambiguous text fields (unlike the note editor's single body),
    so each needs its own caption; muted like the note editor's meta line. */
 .library-prompt-field-label {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
 }
@@ -1935,10 +2795,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
    as .library-prompt-field-label above; the trailing margin separates it
    from the TextArea beneath it. */
 .library-prompt-field-hint {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Bounded editors: same floor/ceiling as #library-note-body so System/User
@@ -1946,23 +2806,23 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-prompt-system,
 #library-prompt-user {
     height: auto;
-    min-height: 6;
-    max-height: 14;
-    margin: 0 0 1 0;
+    min-height: $ds-size-6;
+    max-height: $ds-size-14;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-prompt-meta {
-    width: 100%;
+    width: $ds-width-full;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-prompt-conflict-copy,
 #library-prompt-save-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* TASK-196: retained history is a compact disclosure inside the editor's
@@ -1970,27 +2830,27 @@ with stray left-edge border fragments), and padding 0 1 so the full
    VerticalScroll; the persistent action strip remains a sibling below. */
 #library-prompt-history-region,
 #library-prompt-history-collapsible {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 #library-prompt-history-region {
-    margin: 1 0 1 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-prompt-history-collapsible > CollapsibleTitle {
-    width: 100%;
+    width: $ds-width-full;
     color: $ds-text-primary;
     text-style: bold;
 }
 
 .library-prompt-history-row {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    min-height: 3;
-    margin: 0 0 1 0;
+    min-height: $ds-size-4;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     content-align: left middle;
 }
 
@@ -2002,9 +2862,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-prompt-history-outcome-keywords,
 .library-prompt-history-error,
 .library-prompt-history-success {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .library-prompt-history-metadata,
@@ -2025,16 +2885,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-prompt-history-system,
 #library-prompt-history-user {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 4;
-    max-height: 10;
-    margin: 0 0 1 0;
+    min-height: $ds-size-4;
+    max-height: $ds-size-10;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-prompt-history-region .library-canvas-action {
-    max-width: 100%;
-    margin: 0 0 1 0;
+    max-width: $ds-width-full;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* TASK-196 / TASK-1801: the reason line explains why restore is gated, but
@@ -2054,57 +2914,69 @@ with stray left-edge border fragments), and padding 0 1 so the full
    prevents a tall editor from pushing its completion controls past the canvas. */
 #library-prompts-canvas,
 #library-prompt-work-pane {
-    height: 1fr;
-    min-height: 0;
-    min-width: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    min-width: $ds-size-0;
 }
 
 /* Disabled labels carry a visible marker, so the two management actions
    must share the retained Items width instead of keeping intrinsic widths. */
 #library-prompts-selection-management-actions {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
 }
 
 #library-prompts-selection-management-actions > .library-canvas-action,
 #library-shell-grid.library-notes-compact #library-prompts-selection-management-actions > .library-canvas-action {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
 }
 
 #library-prompts-delete-receipt-actions {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
 }
 
 #library-prompts-delete-receipt-actions > .library-canvas-action {
-    width: 1fr;
-    min-width: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
 }
 
 #library-prompt-editor-shell {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 #library-prompt-editor-content {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     overflow-x: hidden;
 }
 
+/* These are sections of the editor's single scroll owner, not flex panes.
+   Default 1fr heights clip fields under the following metadata and leave the
+   embedded Advanced editor with no room for its block content. */
+#library-prompt-mode-controls,
+#library-prompt-basic-region,
+#library-prompt-advanced-region,
+#library-prompt-info-region,
 #library-prompt-advanced-extras {
+    width: $ds-width-full;
     height: auto;
-    margin-bottom: 1;
+    min-height: $ds-size-0;
+}
+
+#library-prompt-advanced-extras {
+    margin-bottom: $ds-space-1;
 }
 
 #library-prompt-editor-actions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
-    padding: 1 0 0 0;
+    min-height: $ds-size-0;
+    padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     background: $ds-surface-raised;
 }
 
@@ -2114,24 +2986,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #library-prompt-actions-primary,
 #library-prompt-actions-content,
 #library-prompt-actions-lifecycle {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 0;
-    margin: 0 0 1 0;
+    min-height: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-prompt-actions-lifecycle {
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 #library-prompt-editor-actions .library-canvas-action {
-    width: 100%;
-    min-width: 0;
-    margin: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
 }
 
 #library-prompt-actions-lifecycle .library-media-action-danger {
-    margin: 0 0 0 4;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-size-4;
 }
 
 /* Ingest canvas: local-file ingest form + job queue. Mirrors the notes
@@ -2139,17 +3011,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
    clipping lesson -- no Select, no Horizontal mixing 1fr + fixed-width
    children). */
 #library-ingest-header {
-    width: 100%;
+    width: $ds-width-full;
     text-style: bold;
     color: $ds-text-primary;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .library-ingest-quiet-line {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* task-14822: the tooling-warning wall folds to ONE line. This is the
@@ -2159,10 +3031,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
    and the blank row `.library-ingest-quiet-line` adds per line is exactly
    what turned 11 warnings into ~22 rows. */
 .library-ingest-tooling-summary {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 /* task-14822: the unsupported-file and empty-file lines are OUTCOMES of
@@ -2172,19 +3044,19 @@ with stray left-edge border fragments), and padding 0 1 so the full
    eleven amber environment notes. Bold + primary text is the same
    "this is about YOUR selection" weight `#library-ingest-header` uses. */
 .library-ingest-outcome-line {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-primary;
     text-style: bold;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .library-ingest-field {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -2209,45 +3081,51 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* TASK-15702: persistent metadata labels survive populated values while a
    compact three-column row shortens the path-to-commit distance. */
 #library-ingest-metadata-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     layout: horizontal;
 }
 
 .library-ingest-metadata-field {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
-    margin-right: 1;
+    margin-right: $ds-space-1;
 }
 
 .library-ingest-metadata-field:last-of-type {
-    margin-right: 0;
+    margin-right: $ds-space-0;
 }
 
 .library-ingest-metadata-field .library-ingest-field {
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 /* Keep forecast, consent/error copy, and the primary action together at the
    viewport edge. The queue owns the space after a successful submission. */
 #library-ingest-commit-bar {
     dock: bottom;
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
     border-top: solid $ds-grid-line;
     background: $ds-surface-raised;
 }
 
 #library-ingest-commit-bar .library-ingest-quiet-line {
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
+}
+
+/* Reserve the empty gate row, but show complete recovery and consent copy. */
+#library-ingest-start-quiet-line {
+    height: auto;
+    min-height: $ds-control-height-compact;
 }
 
 /* Accent treatment mirrors .console-action-primary
    (the project's live "primary action button" convention) so Start ingest
    reads as the one button that matters on this canvas. */
 #library-ingest-start {
-    margin-top: 0;
+    margin-top: $ds-space-0;
     background: $ds-action-focus 35%;
     color: $ds-text-primary;
     text-style: bold;
@@ -2260,43 +3138,43 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-ingest-queue-heading {
-    width: 100%;
+    width: $ds-width-full;
     text-style: bold;
     color: $ds-text-primary;
     border-top: solid $ds-grid-line;
-    padding: 1 0 0 0;
-    margin: 1 0 1 0;
+    padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-ingest-queue-counts {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-ingest-queue-empty {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
 }
 
 .library-ingest-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-primary;
 }
 
 .library-ingest-progress {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-2;
 }
 
 .library-ingest-row-with-progress {
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 /* (L3b AB wave, A3) A row followed by action button(s) (Open in Library /
@@ -2308,7 +3186,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    base `.library-ingest-row` bottom margin for normal row-to-row
    spacing. */
 .library-ingest-row-with-actions {
-    margin: 0 0 0 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* (L5, fix batch F1b) The wrapper around a row's action button(s) --
@@ -2324,7 +3202,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    otherwise fight every other row for the VerticalScroll's height. */
 .library-ingest-row-actions {
     height: auto;
-    margin: 0 0 1 2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-2;
 }
 
 /* Shared by every per-row action button (Open in Library / Retry /
@@ -2333,25 +3211,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
    reads as two distinct buttons rather than running together; the
    wrapper itself supplies the row's own indent/top/bottom spacing. */
 .library-ingest-row-action {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* (L3b AB wave, B2) "Clear finished" sits below every queue row -- a top
    margin separates it from the last row's own action button instead of
    reading as one more per-row action. */
 #library-ingest-clear-finished {
-    margin-top: 1;
-}
-
-/* Export canvas (F4 Task 2): in-canvas chatbook export form. Own classes
-   rather than reusing `.library-ingest-*` -- the two canvases' CSS stays
-   independently discoverable even though the rules mirror the ingest
-   canvas's field/quiet-line styling exactly. */
-.library-export-quiet-line {
-    width: 100%;
-    height: auto;
-    color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin-top: $ds-space-1;
 }
 
 /* task-31981: the always-visible reason line under a blocked Generate
@@ -2359,70 +3226,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
    gate's inline "No destination chosen" line so a keyboard-first user
    reads WHY the action is off, not just a hover tooltip. */
 .library-media-action-reason {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
-}
-
-.library-export-field {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-.library-export-field:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* Accent treatment mirrors #library-ingest-start / .console-action-primary
-   (the project's live "primary action button" convention) so Export
-   chatbook reads as the one button that matters on this canvas. */
-#library-export-submit {
-    margin-top: 1;
-    background: $ds-action-focus 35%;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* task-4023 AC#1 (RC-07): this ID rule outranks the shared
-   `.library-canvas-action:disabled` escape above, so it must be
-   self-sufficient. Its previous `$ds-text-disabled` label (the alpha-38%
-   token) measured 1.44:1 live -- the very compound this rule tried to
-   avoid -- and it never neutralised _buttons.tcss's `opacity: 50%`. */
-#library-export-submit:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    background: $surface-darken-1;
-    color: $ds-text-muted;
-    text-style: none;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-media-title {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
     content-align: left middle;
 }
 
 #library-media-canvas {
-    height: 100%;
-    min-height: 0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
 }
 
 #library-media-type-filter {
     width: auto;
-    min-width: 0;
-    margin: 0 0 1 0;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* task-31270 (critique #4 P1): the delete / dismiss receipts are two rows
@@ -2431,15 +3256,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
    2026-09-04) -- the one recovery control was unreadable exactly where it
    renders. Same multi-row grammar as the toolbars (task-30043). */
 #library-media-canvas .library-media-receipt {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 #library-media-canvas .library-media-receipt > .library-media-receipt-copy {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 #library-media-canvas .library-media-receipt > .library-media-receipt-actions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
@@ -2453,18 +3278,18 @@ with stray left-edge border fragments), and padding 0 1 so the full
    its own vertical scroll, which is the point: no more scrolling the whole
    canvas between list and preview while the right half sits blank. */
 #library-media-workbench {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 #library-media-list,
 #library-media-preview,
 #library-media-detail-empty {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
     overflow-y: auto;
     overflow-x: hidden;
 }
@@ -2474,16 +3299,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-media-row-scroll {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     overflow-y: auto;
     overflow-x: hidden;
 }
 
 #library-media-preview,
 #library-media-detail-empty {
-    margin: 0 0 0 1;
-    padding: 0 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* The detail half's placeholder (Collections' "No Collection selected."
@@ -2492,47 +3317,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
-/* Below the breakpoint Media becomes a dense list: the mounted preview is
-   removed from paint/focus participation by the canvas, while the list owns
-   the remaining height and keeps its pager pinned below the row scroller. */
-#library-shell-grid.library-notes-compact #library-media-workbench {
-    layout: vertical;
-    height: 1fr;
-    min-height: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-media-list {
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    overflow-y: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-media-row-scroll {
-    height: 1fr;
-    min-height: 0;
-}
-
-#library-shell-grid.library-notes-compact .library-media-row {
-    height: 1;
-    min-height: 1;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-media-preview {
-    display: none;
-}
-
-#library-shell-grid.library-notes-compact #library-media-detail-empty {
-    display: none;
-}
-
 /* Title: brightest + bold so it anchors the viewer; metadata recedes (muted)
    so the two read as distinct tiers instead of one wall of text. */
 #library-media-viewer-title {
-    width: 100%;
+    width: $ds-width-full;
     text-style: bold;
     color: $ds-text-primary;
     /* task-31277 (critique #4 P2): no bottom margin. It bought separation
@@ -2540,21 +3328,21 @@ with stray left-edge border fragments), and padding 0 1 so the full
        author or URL, so on every other item it paid one blank row of the
        reading surface for nothing -- and a byline reads better hugging
        the title it belongs to anyway. */
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 #library-media-viewer-meta {
-    width: 100%;
+    width: $ds-width-full;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-media-content-search {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -2569,16 +3357,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-media-content-search-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 /* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #library-media-viewer {
-    height: 100%;
+    height: $ds-height-full;
     overflow-y: auto;
     /* Never scroll horizontally: without this the vertical scroll container
        sizes its content to the widest child's natural width, so a long
@@ -2595,33 +3383,33 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* Text bodies default to width:auto (shrink-to-content); fill the width so
    long lines wrap within the (now horizontally-constrained) viewer. */
 #library-media-viewer Static {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* Task 21665: an eligible local original is an additive reading aid. Keep it
    bounded inside the Reader's existing scroll surface; the complete stored
    text remains directly below it and owns its own established scroll region. */
 #library-media-image-preview {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    max-height: 18;
+    max-height: $ds-size-18;
     overflow: hidden;
     align: center middle;
     border: solid $ds-grid-line;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-media-image-preview-status {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     color: $ds-text-muted;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-media-image-preview-toggle,
 #library-media-image-preview-retry {
     width: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* task-31221. The third widget bitten by core/_reset.tcss's
@@ -2676,11 +3464,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
        viewer virtual == container at 200x52 with a 300-line document; the
        pre-31222 balloon came from the then-unstyled 1fr mode wrapper, not
        from 1fr here). */
-    height: 1fr;
-    min-height: 3;
-    margin: 0 0 1 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     border: solid $ds-grid-line;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #library-media-reader-mode-analysis {
@@ -2705,7 +3493,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
        button scrolls it into view the same way. Verified live at 235x52:
        wheeling reached paragraph 119, the box's bottom border, then
        "Edit analysis / ○ Regenerate". */
-    height: 1fr;
+    height: $ds-height-fill;
     overflow-y: auto;
 }
 
@@ -2750,7 +3538,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    keeps its full width so its border still spans the pane. */
 #library-media-viewer-content-text,
 #library-media-viewer-content-markdown {
-    max-width: 92;
+    max-width: $ds-size-92;
 }
 
 /* task-31635 (critique #5 item 14): Textual's ``MarkdownH1`` DEFAULT_CSS is
@@ -2796,7 +3584,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
        width must fill so the index is built at the real render width
        (task-31277 caps that width; the index is rebuilt from the widget's
        own scrollable content region, so the cap is what it indexes at). */
-    width: 100%;
+    width: $ds-width-full;
     /* The reader wraps, so horizontal scrolling has nothing to reach. A
        horizontal scrollbar here would also shrink the render width below
        the width the wrap index was built at, truncating every row. */
@@ -2805,22 +3593,22 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-media-edit-form {
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Persistent per-field label: muted, bold, hugging its input above the row. */
 .library-media-edit-label {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
     color: $ds-text-muted;
     text-style: bold;
-    margin: 0;
+    margin: $ds-space-0;
 }
 
 /* Destructive Delete: pushed off the primary actions (a gap) and de-emphasized
    so it is neither adjacent to Edit nor visually competing with it. */
 .library-media-action-danger {
-    margin: 0 0 0 4;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-size-4;
     color: $ds-text-muted;
 }
 
@@ -2830,7 +3618,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
    (1,1,0 beats that) so "Move to trash" reads apart from the neutral actions
    -- mirrors the RAG-profile delete-button separation (`margin-left: 2`). */
 #library-media-reader-more-actions > .library-media-action-danger {
-    margin: 0 0 0 2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
 }
 
 /* task-31980 (critique #6 P2): the permanent-delete confirmation's commit
@@ -2848,15 +3636,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* Each highlight is an indented card so its quote, meta, and delete read as
    one unit -- a per-row delete then clearly belongs to a single highlight. */
 .library-media-highlight-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     border-left: solid $ds-grid-line;
-    padding: 0 0 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .library-media-highlight-meta {
-    width: 100%;
+    width: $ds-width-full;
     color: $ds-text-muted;
 }
 
@@ -2865,11 +3653,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #library-media-edit-form Input {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -2890,16 +3678,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
    flatten its rows to one line each. ID/class-keyed only (no ancestor-scoped
    bare type), so ADR-097's fast-path ratchet is untouched. */
 #library-media-speaker-legend {
-    max-height: 12;
+    max-height: $ds-size-12;
     overflow-y: auto;
 }
 
 Input.library-media-speaker-input {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -2915,15 +3703,15 @@ Input.library-media-speaker-input:focus {
 
 #library-media-highlight-add-collapsible {
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #library-media-highlight-add-collapsible Input {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -2946,124 +3734,17 @@ Input.library-media-speaker-input:focus {
    natural width, so task-4023's zero-width-Button hazard is not in play. */
 .library-media-scope-line {
     color: $ds-text-muted;
-    width: 1fr;
-    height: 1;
-    padding: 0 1 0 0;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
 
-/* TASK-716: pressable-but-blocked Library source actions render dim; the
-   press handler explains the block instead of a dead disabled button. */
-.library-source-action-blocked {
-    color: $ds-text-muted;
-}
-
-#library-source-browser {
-    width: $ds-library-source-browser-width;
-    min-width: $ds-library-source-browser-width;
-    max-width: $ds-library-source-browser-width;
-    height: 100%;
-    min-height: 20;
-    padding: 1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    overflow-y: auto;
-}
-
-.library-hub-spacer {
-    height: 1;
-    min-height: 1;
-}
-
-#library-source-inspector {
-    width: 2fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 20;
-    padding: 1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    overflow-y: auto;
-}
-
-#library-source-detail {
-    width: 5fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 20;
-    padding: 1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    overflow-y: auto;
-}
-
-.library-source-action {
-    width: $ds-library-source-action-width;
-    min-width: $ds-library-source-action-min-width;
-    height: $ds-library-source-action-height;
-    min-height: $ds-library-source-action-height;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-    background: transparent;
-    color: $ds-text-primary;
-    content-align: left middle;
-    text-style: none;
-}
-
-.library-source-action-spacer {
-    height: 0;
-    min-height: 0;
-}
-
-.library-source-active-marker {
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
-}
-
-.library-source-group-rule {
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    color: $ds-text-muted;
-}
-
-.library-source-action:focus {
-    border: none;
-    background: transparent;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-    outline: none;
-}
-
-/* Regression fix: #library-canvas (this panel's parent) and this panel's
- * own body never scrolled, so once the Query/Scope/Results/History regions'
- * combined natural height exceeded the fixed canvas box, whatever fell
- * past the bottom edge was silently clipped and permanently unreachable --
- * not just visually cut off, but gone, with no way to scroll to it. That
- * is what made multi-result searches render only the first row: rows past
- * whatever vertical room the Query and Scope regions left behind vanished.
- * Making the panel scrollable keeps every mounted row reachable regardless
- * of how many results (or how much recovery/callout copy) the current
- * state renders. */
-#library-search-rag-panel {
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
 .library-rag-region {
-    width: 100%;
-    min-width: 0;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Auto-height: the query row used to be a Horizontal (Input + Button side
@@ -3075,7 +3756,7 @@ Input.library-media-speaker-input:focus {
  * to content avoids re-counting rows by hand every time this region changes. */
 #library-rag-query-controls {
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 /* Auto-height: B2 replaced the fixed pipe-drawn scope table (heading +
@@ -3085,12 +3766,12 @@ Input.library-media-speaker-input:focus {
  * already hit once (see the comment above it). */
 #library-rag-source-scope {
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 #library-rag-results {
     height: auto;
-    min-height: 8;
+    min-height: $ds-size-8;
 }
 
 /* PR-3 Task 3: the Answer region mounts as its own sibling BETWEEN
@@ -3101,7 +3782,7 @@ Input.library-media-speaker-input:focus {
  * one quiet line while generating, a full card once an answer lands. */
 #library-rag-answer {
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 /* The answer IS the headline of rag mode (PR-3 Task 3) -- a raised card,
@@ -3110,10 +3791,10 @@ Input.library-media-speaker-input:focus {
  * surface/text tokens `.library-rag-result-row` already uses for its own
  * content-card treatment. */
 #library-rag-answer-text {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 1 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-1 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     background: $ds-surface-panel;
     color: $ds-text-primary;
 }
@@ -3126,15 +3807,15 @@ Input.library-media-speaker-input:focus {
  * padding alone) is what marks it as a FOOTER for that content rather than
  * one more quiet line among them. */
 #library-rag-answer-provenance {
-    margin: 0 0 1 0;
-    padding: 1 1 0 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-1 $ds-space-1 $ds-space-0 $ds-space-1;
     border-top: solid $ds-grid-line;
 }
 
 #library-rag-query-input {
-    width: 100%;
-    min-width: 0;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     border: solid $ds-grid-line;
     border-bottom: solid $ds-grid-line;
     background: $ds-surface-raised;
@@ -3147,18 +3828,18 @@ Input.library-media-speaker-input:focus {
 }
 
 #library-rag-scope-summary {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
 .library-rag-scope-toggle {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     text-align: left;
     content-align: left middle;
     border: none;
@@ -3176,30 +3857,30 @@ Input.library-media-speaker-input:focus {
 }
 
 .library-rag-callout {
-    width: 100%;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
 .library-rag-quiet-line {
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 .library-rag-empty-guidance {
-    margin: 1 0 0 0;
-    padding: 0 1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
 
 #library-rag-run-query {
-    width: 18;
-    min-width: 16;
-    margin: 0 0 1 0;
+    width: $ds-size-18;
+    min-width: $ds-size-16;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     background: $ds-action-focus 35%;
     color: $ds-text-primary;
     text-style: bold;
@@ -3237,7 +3918,7 @@ Input.library-media-speaker-input:focus {
  * "keyboard is here" and "this is the selected evidence" visually
  * distinct even though both reuse the same focus token family. */
 .library-rag-result-card {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     border: solid $ds-grid-line;
     border-bottom: solid $ds-grid-line;
@@ -3279,13 +3960,13 @@ Input.library-media-speaker-input:focus {
  * selected row's title line, nested inside the card's thin border,
  * exactly as before. */
 .library-rag-result-row {
-    padding: 0 1;
-    margin: 1 0 0 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     background: $ds-surface-panel;
 }
 
 .library-rag-result-badges {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
     color: $ds-text-muted;
     text-style: bold;
@@ -3297,7 +3978,7 @@ Input.library-media-speaker-input:focus {
  * already carry `padding: 0 1`. Matches that same padding for visual
  * consistency down the card. */
 .library-rag-result-snippet {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* C1: content-first result rows -- Open (primary emphasis, reuses the live
@@ -3305,23 +3986,23 @@ Input.library-media-speaker-input:focus {
  * Console-screen-scoped) then Select evidence, as a Horizontal of
  * auto-width buttons. */
 .library-rag-result-actions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 .library-rag-result-open {
     width: auto;
-    min-width: 10;
-    margin: 0 1 0 0;
+    min-width: $ds-size-10;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 .library-rag-result-action {
     width: auto;
-    min-width: 16;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    min-width: $ds-size-16;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -3329,8 +4010,8 @@ Input.library-media-speaker-input:focus {
 }
 
 .library-rag-recovery-action {
-    width: 28;
-    min-width: 18;
+    width: $ds-size-28;
+    min-width: $ds-size-18;
     background: $ds-status-warning 30%;
     color: $ds-text-primary;
     text-style: bold;
@@ -3379,17 +4060,17 @@ Button.library-rag-recovery-action:disabled:hover {
 }
 
 .library-rag-console-action {
-    width: 18;
-    min-width: 16;
+    width: $ds-size-18;
+    min-width: $ds-size-16;
     background: $ds-action-focus 35%;
     color: $ds-text-primary;
     text-style: bold;
 }
 
 .library-rag-center-console-action {
-    width: 24;
-    min-width: 18;
-    margin: 1 0 0 0;
+    width: $ds-size-24;
+    min-width: $ds-size-18;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 .library-rag-console-action:disabled {
@@ -3400,11 +4081,11 @@ Button.library-rag-recovery-action:disabled:hover {
 
 #library-rag-mode-toggle {
     width: auto;
-    min-width: 20;
-    height: 2;
-    min-height: 2;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    min-width: $ds-size-20;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     text-align: left;
     content-align: left middle;
     border: none;
@@ -3417,23 +4098,23 @@ Button.library-rag-recovery-action:disabled:hover {
 }
 
 #library-rag-searching-line {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
     color: $ds-text-muted;
     text-style: italic;
 }
 
 #library-rag-history {
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 .library-rag-history-row {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     text-align: left;
     content-align: left middle;
     text-wrap: nowrap;
@@ -3449,22 +4130,22 @@ Button.library-rag-recovery-action:disabled:hover {
 
 .library-rag-history-empty {
     color: $ds-text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .library-rag-history-hint {
     color: $ds-text-muted;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .library-rag-history-clear {
-    width: 100%;
-    min-width: 0;
-    height: 2;
-    min-height: 2;
-    margin: 1 0 0 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-2;
+    min-height: $ds-size-2;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     text-align: left;
     content-align: left middle;
     border: none;
@@ -3481,8 +4162,8 @@ Button.library-rag-recovery-action:disabled:hover {
    dense-form convention as the option-panel field labels above, without
    their in-panel top margin (the field follows the header block). */
 LibraryIngestCanvas .library-ingest-field-label {
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
     color: $text-muted;
 }
 
@@ -3503,11 +4184,11 @@ LibraryIngestCanvas .library-ingest-row-skipped {
    content line. */
 #library-ingest-fold-hint {
     dock: bottom;
-    width: 100%;
-    height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
     color: $text-muted;
     background: $ds-surface-raised;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* task-2223: Recent ingests two-line entries -- the muted full-path line
@@ -3515,7 +4196,7 @@ LibraryIngestCanvas .library-ingest-row-skipped {
 LibraryIngestCanvas .library-ingest-recent-path {
     color: $text-muted;
     height: auto;
-    padding: 0 0 0 2;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
 }
 
 /* task-2221: per-submission batch group headers + the latest-batch tally
@@ -3523,7 +4204,7 @@ LibraryIngestCanvas .library-ingest-recent-path {
 LibraryIngestCanvas .library-ingest-batch-header {
     height: auto;
     text-style: bold;
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 LibraryIngestCanvas #library-ingest-latest-batch {
     height: auto;
@@ -3536,396 +4217,17 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 #library-notes-status-row,
 #library-note-heading,
 #library-note-title-row,
+#library-note-keywords-row,
 #library-note-context-keywords-row,
 #library-notes-create-heading {
     layout: vertical;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 #library-notes-create-viewport {
-    height: 1fr;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* Database Notes compact geometry: at the measured compact breakpoint,
-   the shell becomes a single 15-row workbench and every Notes state
-   assigns surplus height to exactly one scroll owner. */
-#library-shell-grid.library-notes-compact {
-    padding: 0;
-    margin: 0;
-    border: none;
-}
-
-#library-shell-grid.library-notes-compact #library-canvas {
-    padding: 0;
-    margin: 0;
-    border: none;
-    overflow-x: hidden;
-    overflow-y: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-canvas,
-#library-shell-grid.library-notes-compact #library-note-work-pane {
-    width: 1fr;
-    max-width: 100%;
-    height: 100%;
-    min-height: 0;
-    padding: 0;
-    margin: 0;
-    overflow-x: hidden;
-    overflow-y: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-authority,
-#library-shell-grid.library-notes-compact #library-note-work-authority {
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: wrap;
-    overflow: hidden hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-header {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-filter-row {
-    layout: horizontal;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-filter-label {
-    width: 8;
-    height: 1;
-    padding: 0 1;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-filter {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-browse-actions,
-#library-shell-grid.library-notes-compact #library-notes-sort-choices,
-#library-shell-grid.library-notes-compact #library-notes-transfer-actions,
-#library-shell-grid.library-notes-compact #library-notes-selection-actions,
-#library-shell-grid.library-notes-compact #library-note-primary-actions,
-#library-shell-grid.library-notes-compact #library-note-conflict-actions,
-#library-shell-grid.library-notes-compact #library-note-delete-actions {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact .library-canvas-action {
-    width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0 1 0 0;
-    padding: 0 1;
-    border: none;
-}
-
-/* Branch continuations are list rows, not toolbar actions. Keep their full
-   status and recovery copy visible when the compact toolbar geometry above
-   collapses ordinary actions to one line. */
-#library-shell-grid.library-notes-compact #library-notes-list Button.library-notes-tree-pager {
-    width: 100%;
-    max-width: 100%;
-    height: auto;
-    min-height: 1;
-    max-height: 100%;
-    margin: 0;
-    text-wrap: wrap;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-status-row {
-    layout: horizontal;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-status {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-filter-clear {
-    width: auto;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-selection-status {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-list {
-    width: 1fr;
-    max-width: 100%;
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-empty {
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
-    padding: 0 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-heading {
-    layout: horizontal;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-editor-title,
-#library-shell-grid.library-notes-compact #library-note-preview-title,
-#library-shell-grid.library-notes-compact #library-note-context-title,
-#library-shell-grid.library-notes-compact #library-note-loading-title,
-#library-shell-grid.library-notes-compact #library-notes-create-header {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#library-shell-grid.library-notes-compact #library-note-editor-region {
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
-    overflow-x: hidden;
-    overflow-y: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-title-row {
-    layout: horizontal;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-note-title-label,
-#library-shell-grid.library-notes-compact #library-note-context-keywords-label {
-    width: 10;
-    height: 1;
-    padding: 0 1;
-}
-
-#library-shell-grid.library-notes-compact #library-note-title,
-#library-shell-grid.library-notes-compact #library-note-context-keywords {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-}
-
-#library-shell-grid.library-notes-compact #library-note-body-label {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-}
-
-#library-shell-grid.library-notes-compact #library-note-body {
-    height: 1fr;
-    min-height: 0;
-    max-height: 100%;
-    margin: 0;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-preview-region {
-    height: 1fr;
-    min-height: 0;
-    max-height: 100%;
-    margin: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-preview-body {
-    height: auto;
-    min-height: 0;
-    margin: 0;
-    padding: 0 1;
-    border: none;
-    overflow-y: hidden;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-context-region {
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-context-keywords-row {
-    layout: horizontal;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-note-status {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    text-wrap: wrap;
-    text-overflow: clip;
-}
-
-#library-shell-grid.library-notes-compact #library-note-transfer-status,
-#library-shell-grid.library-notes-compact #library-note-context-transfer-status {
-    display: none;
-    height: 0;
-    min-height: 0;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-note-conflict-region {
-    height: 3;
-    min-height: 3;
-    max-height: 3;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-note-conflict-copy {
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    margin: 0;
-    padding: 0 1;
-}
-
-#library-shell-grid.library-notes-compact #library-note-delete-confirmation {
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-create-heading {
-    layout: horizontal;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-notes-create-viewport {
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-load-state {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-}
-
-#library-shell-grid.library-notes-compact #library-note-load-heading {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-}
-
-#library-shell-grid.library-notes-compact #library-note-loading {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#library-shell-grid.library-notes-compact #library-note-loading-viewport {
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     overflow-y: auto;
     overflow-x: hidden;
 }
@@ -3934,44 +4236,50 @@ LibraryIngestCanvas #library-ingest-latest-batch {
    Authority/status and the nearest valid action stay fixed; setup, review, and
    recovery effects share one bounded scroll owner at the 60x20 floor. */
 .library-notes-lasting-sync-canvas {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
     overflow: hidden;
 }
 
 .library-notes-sync-review-row,
 .library-notes-sync-root-row,
 .library-notes-sync-root-actions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .library-notes-sync-attention-actions {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
+}
+
+/* TASK-32625: safe review rows have no body requiring a trailing gap.
+   Both class tokens stay in the same Library-owned split as the base row. */
+.library-notes-sync-review-row.library-notes-sync-review-plain {
+    margin: $ds-space-0;
 }
 
 .library-notes-sync-conflict-choices,
 .library-notes-sync-comparison,
 .library-notes-sync-receipt,
 .library-notes-sync-history-row {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     overflow: hidden;
 }
 
 .library-notes-sync-comparison,
 .library-notes-sync-receipt,
 .library-notes-sync-history-row {
-    margin: 0 0 1 0;
-    padding: 0 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     background: $surface-darken-1;
 }
 
@@ -3980,34 +4288,9 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 }
 
 .library-notes-sync-root-actions > Button {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 .library-notes-sync-attention-actions > Button {
-    width: 100%;
-}
-
-#library-shell-grid.library-notes-compact .library-notes-lasting-sync-canvas {
-    padding: 0;
-}
-
-/* task-32217 (critique #9 row 14): the screen-wide density rule.
-   A pane with nothing open gives its columns to its sibling. The horizontal
-   half is not CSS -- it is the resolver's own empty-work-pane branch
-   (Utils/adaptive_reader_state.py, the ``reader_has_item`` block Media and
-   Notes already used); Prompts, Skills, Collections and Conversations now
-   pass that flag, so no per-canvas width rule can drift from it. The
-   vertical half (a primary content box takes the pane's remaining height,
-   its actions directly beneath) is already shipped for the surfaces this
-   branch owns: #library-prompt-editor-content and
-   #library-media-viewer-content both carry `height: 1fr` above. The note
-   editor's Body box (#library-note-body) is the one clause still bounded,
-   and it belongs to the Notes branch of this wave.
-
-   The landing is the third case: at 235 columns it painted a ten-line hub
-   across ~190 cells, so its lines ran far past a readable measure. Capped
-   here rather than given invented content -- what the hub should GROW is a
-   product decision this wave does not own. */
-#library-landing-canvas {
-    max-width: 96;
+    width: $ds-width-full;
 }

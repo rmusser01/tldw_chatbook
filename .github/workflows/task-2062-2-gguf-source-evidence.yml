@@ -13,6 +13,7 @@ on:
       - 'tldw_chatbook/UI/LLM_Management_Window.py'
       - 'tldw_chatbook/UI/Screens/llm_screen.py'
       - 'Tests/conftest.py'
+      - 'Tests/private_profile.py'
       - 'Tests/LLM_Management/**'
       - 'Tests/Model_Artifacts/**'
       - 'Tests/UI/app_factory.py'
@@ -37,6 +38,11 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
+      - name: Enable long checkout paths on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Check out the exact tested commit
         uses: actions/checkout@v4
         with:
@@ -50,7 +56,35 @@ jobs:
       - name: Install bounded test dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout
 
+      - name: Prepare Windows package files beneath a trusted private ancestor
+        if: runner.os == 'Windows'
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+          from Tests.Backup_Recovery.run_platform_product import (
+              _copy_tracked_source,
+              _create_private_root,
+          )
+
+          # Bundled Evals/config files are native-owned reads too. The hosted
+          # D:\a checkout ancestor is not a trusted user-owned package location.
+          private = _create_private_root(Path(os.environ["RUNNER_TEMP"]))
+          source, digest = _copy_tracked_source(Path.cwd(), private)
+          subprocess.run(
+              [sys.executable, "-m", "pip", "install", "--no-deps", "-e", str(source)],
+              cwd=source,
+              check=True,
+          )
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"GGUF_EVIDENCE_SOURCE={source.as_posix()}\n")
+          print(f"Private GGUF source: {source}; tracked archive SHA-256: {digest}")
+          PY
+
       - name: Run exact GGUF source evidence nodes
+        working-directory: ${{ env.GGUF_EVIDENCE_SOURCE || github.workspace }}
         run: |
           python -m pytest \
             Tests/Model_Artifacts/test_gguf_admission.py::test_open_local_gguf_rejects_symlink \
@@ -69,10 +103,41 @@ jobs:
             Tests/LLM_Management/test_gguf_server_sources.py::test_source_command_matrix_uses_only_active_authority \
             Tests/LLM_Management/test_gguf_server_sources.py::test_gguf_nonzero_exit_presents_sanitized_runtime_compatibility_copy \
             Tests/LLM_Management/test_gguf_server_sources.py::test_real_managed_contention_delivers_busy_recovery_without_spawning \
-            Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection \
-            Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable \
-            Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions \
             Tests/LLM_Management/test_vllm_setup.py::test_vllm_command_snapshot_is_unchanged \
             Tests/LLM_Management/test_gguf_server_sources.py::test_mlx_command_snapshot_is_unchanged \
             --timeout=60 \
             -q
+
+      - name: Run each full-app GGUF case with its profile selected before imports
+        working-directory: ${{ env.GGUF_EVIDENCE_SOURCE || github.workspace }}
+        env:
+          # Native Windows startup was still running real callbacks at 60s.
+          GGUF_APP_TIMEOUT: ${{ runner.os == 'Windows' && '180' || '60' }}
+        run: |
+          failed=0
+          for node in \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]"
+          do
+            TLDW_TEST_PRIVATE_PROFILE_NODE="$node" python -m pytest "$node" --timeout="$GGUF_APP_TIMEOUT" -v || failed=1
+          done
+          exit "$failed"
+
+      - name: Compare Windows keyboard waits with the dev source baseline
+        if: failure() && runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          git fetch --depth=1 origin 4631b60f8dd9623fc55bf16f4a37e29fcb1240c7
+          git worktree add --detach "$RUNNER_TEMP/backup-startup-dev" 4631b60f8dd9623fc55bf16f4a37e29fcb1240c7
+          diagnostic="$GITHUB_WORKSPACE/Tests/Backup_Recovery/startup_timing_diagnostic.py"
+          failed=0
+          for node in \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]" \
+            "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamafile-llamafile]"
+          do
+            python "$diagnostic" --source "$RUNNER_TEMP/backup-startup-dev" --node "$node" --label dev --no-profile || failed=1
+            python "$diagnostic" --source "$GGUF_EVIDENCE_SOURCE" --node "$node" --label candidate --no-profile || failed=1
+          done
+          exit "$failed"

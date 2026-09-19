@@ -1,0 +1,23 @@
+{
+  "round": 2,
+  "run": "run-004",
+  "captures": [
+    "folder-textual-dark-80.svg",
+    "folder-textual-light-80.svg",
+    "open-textual-dark-170.svg",
+    "open-textual-dark-80.svg",
+    "open-textual-light-170.svg",
+    "open-textual-light-80.svg",
+    "save-textual-dark-80.svg",
+    "save-textual-light-80.svg"
+  ],
+  "observations": [
+    "Filename label and full-width field visible at compact size in both themes",
+    "Filter and every action stay within modal bounds, including Select folder",
+    "Loaded listing and highlighted filename remain visible",
+    "Focused input selection and focused folder button remain visibly distinguishable",
+    "Wide single-row footer remains unchanged"
+  ],
+  "unresolved_findings": [],
+  "prior_round": "run-003 exposed same-edge dock overlap; margin corrected it and a painted-label regression assertion was added."
+}

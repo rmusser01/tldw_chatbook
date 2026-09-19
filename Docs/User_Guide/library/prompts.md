@@ -127,6 +127,15 @@ current organization workflow.
 
 ### Local Prompt collections
 
+On a saved Prompt, **More actions → Collections** opens the manager and reveals
+**Info** when entered from Basic. Advanced and Info keep their current view.
+**Done** and **Cancel** return to the visible **Manage collections** control.
+In the membership manager, Done stages the selected set; **Apply memberships**
+saves it separately from Prompt Save. Cancel keeps the previous staged set.
+You can use the Info controls while the Prompt has unsaved content changes;
+applying memberships preserves that draft. A failed Apply keeps the selection
+and returns keyboard focus to Apply for retry.
+
 The list selector and the editor's **Manage collections** action open the same
 **Manage Prompt collections** surface. It is explicitly **Local only**: there is
 no source or server selector. Collection rows are ordered by the local catalog's
@@ -142,6 +151,8 @@ shown literally, including Unicode and text such as `[bold]`. If two names diffe
 only in a way that would otherwise look identical, their rows retain literal
 ID-qualified labels such as `Planning · #17`. A deterministic name collision says
 **Name already exists — choose another.** and does not offer a misleading Retry.
+Entered names and unsubmitted search text survive selection and catalog updates,
+so a collision can be corrected in place.
 Other failures use bounded create/rename copy and may be retried without exposing
 service details. The Prompt collection manager deliberately has no **Delete**
 action.
@@ -250,13 +261,19 @@ it; the membership outcome never says that the Prompt itself was saved.
 
 Nothing autosaves here. While you have unsaved edits the meta line shows an "Unsaved
 changes" marker, and leaving the editor (Back, Escape, another row, another screen)
-is blocked until you save or resolve the edit. Back and Escape say so: the block
-raises "Unsaved Prompt changes — Save or Discard changes first.", and while the
+is blocked until you save or resolve the edit. Every one of those refusals says so —
+Back, Escape, pressing another prompt row, pressing **Select**, switching rail rows,
+and leaving for another screen (including a route that lands back on Library) all raise
+"Unsaved Prompt changes — Save or Discard changes first.", and while the
 editor is dirty the footer's Escape chip reads **esc save or discard first**
 instead of "esc back to list", so the key and the chip agree. The same holds while
 a save, delete or import is still running: Escape answers "Prompt changes are still
 in progress. Try again when they finish." and the chip reads **esc busy, try again**
-until the write settles. The save-status line reports the outcome:
+until the write settles. A link that opens a prompt from somewhere else (a
+Search / RAG result's **Open**, or a deep link the screen reconciles on entry)
+is refused by the same unsaved edit, and names the one it did not open: "Can't
+open Prompt 7 — Save or Discard the open Prompt first." Nothing is queued: save
+or discard, then follow the link again. The save-status line reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -278,6 +295,13 @@ disclosure lazily loads the newest bounded page. Use **Load older versions** to
 request another page. A failed count or page load offers **Retry** without
 changing the editor.
 
+From a clean saved Prompt, choose **More actions → History**. This closes the
+menu and reveals **Info** when you were in Basic; Advanced and Info keep their
+current view. Focus lands on the History title. Press **Tab** to reach version
+rows and **Enter** to select one. Selecting a row keeps keyboard focus there;
+loading older versions moves it to the first newly loaded row. The live editor
+fields stay mounted while you inspect snapshots.
+
 Retained history contains create and update snapshots, not a complete audit
 log. Each row shows its version, timestamp, artifact type, and changed-field
 summary. Selecting a row reveals literal, read-only metadata plus its stored
@@ -298,7 +322,10 @@ does not rewrite the retained row. The confirmation also calls out a
 Prompt↔Recipe type change. If the Prompt changed after history was loaded, use
 the editor's **Reload** conflict action before retrying. Restoring content that
 already matches the current version reports `no_change` and creates no extra
-version.
+version. **Cancel** returns focus to Restore. A completed restore returns to
+the History title with its updated retained count; a retryable failure keeps
+Restore available. Late loading results do not take focus from another control
+you have moved to.
 
 Newer snapshots restore their captured keywords. Older snapshots that predate
 keyword capture keep the current keywords and disclose that choice. Validation,
@@ -316,6 +343,14 @@ The fixed action area shows only actions valid for the current lifecycle:
 | Saved and changed | **Save changes**, **Discard changes** |
 | Version conflict | **Save as new**, **Reload** |
 | Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
+
+Opening **New prompt** also loads the Items pane. After the first save, Items
+and the rail count refresh while your text fields stay open. Basic, Advanced
+and Info reflect the saved record; **Back to list** clears the editor and
+returns to the current list.
+
+When you resize the terminal, the focused Basic or Advanced field stays visible
+with its text intact. If you move focus during resizing, that newer choice wins.
 
 **Use in Console** sits in the editor **header**, on its own row directly
 under **Basic | Advanced | Info** — the same shape the Media Reader uses for
@@ -335,11 +370,17 @@ close it and return focus to More actions.
 - **Use in Console** opens the shared variable/System authorization dialog
   when needed, appends the selected User text to the Console composer, and can
   replace the session System prompt with confirmation.
-- **Export…** saves a representable Prompt or Recipe as Markdown.
-- **Copy Markdown** copies the exact live working copy.
+- **Export…** saves a representable Prompt or Recipe as Markdown. The filename
+  field starts focused; press **Tab**, then **Enter** on Save to write it.
+  Cancel or completion returns focus to Export.
+- **Copy Markdown** copies the exact live working copy. Copy and Export results
+  appear in the editor's status area, which scrolls into view without moving
+  focus. A failed action leaves your fields intact for retry.
 - **Duplicate** opens a new unsaved copy named `<name> (copy)`.
 - **Delete** confirms before soft-deleting the saved item and leaves an
-  Undo/Dismiss receipt after success.
+  Undo/Dismiss receipt after success, including immediately after saving a
+  **New prompt**. If deletion fails, the error scrolls into view while your
+  fields remain intact and Delete stays available for retry.
 
 For a Prompt, **Use in Console** works differently from the notes and media
 actions: instead of staging a source for retrieval, it appends selected User
@@ -362,7 +403,9 @@ variable.
 
 Use `{{` for a literal `{` and `}}` for a literal `}`. Thus
 `{{customer}}` inserts `{customer}`, while `{{{customer}}}` inserts the value
-inside literal braces. Invalid and unmatched forms such as `{first-name}`,
+inside literal braces. Escapes also decode when a User-only Prompt has no
+variables and inserts directly without a dialog, both from Library and from
+Console’s `/prompt` command or picker. Invalid and unmatched forms such as `{first-name}`,
 `{ name }`, `{name`, and ordinary JSON object braces remain literal. Names are
 limited to 64 characters and one insertion to 64 unique variables. If a limit
 is exceeded, **Apply** is disabled and the dialog shows the specific bounded
@@ -427,7 +470,8 @@ prompt to the Library. See
    **Export bundle (.zip)**. Use the rail's **Export** row and `Everything` when
    you also want media, conversations, and notes.
 6. **Export one Prompt or Recipe as Markdown** — open a losslessly representable
-   artifact, press **Export…**, and pick a location; a notice confirms the export.
+   artifact, open **More actions → Export…**, and pick a location; the editor status
+   confirms the export.
    A compatibility artifact or legacy Recipe that fails this check requires
    **Convert and save as a new Prompt** before Copy, Export, or Duplicate.
 7. **Browse one collection** — press **collection: All prompts ▸**, choose a
@@ -541,3 +585,23 @@ seeded profile, with the editor showing "• Unsaved changes".)*
 (task-32393, PR #2655 review: the Escape chip follows the in-flight write as
 well as the unsaved edit — a clean deletion no longer leaves "esc back to list"
 on screen while the key can only report that the write is busy.)*
+
+*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32461:
+the sibling dirty vetoes that still refused in silence now speak. The
+prompt-row switch and **Select** borrow Back/Escape's own sentence; a deep link
+into a prompt names the one it did not open and drops it rather than queueing
+it. Both new refusals were driven live at 235x52 on a scratch profile with the
+editor showing "• Unsaved changes"; the deep link is pinned on the mounted
+screen, since no hand route reaches it while the editor is dirty. Leaving for
+another screen, and routing back into Library, already explained themselves
+before this change and still do — fix round 1 added the same sentence to the
+Library admission barrier behind them as defence in depth, after a caller sweep
+of all eight sites, with no user-visible change.)*
+
+
+*History journey review: 2026-09-15, TASK-32630. Production-CSS/SQLite tests
+cover wide/compact dark/light keyboard journeys and recovery. The private native
+app passed 170×48 dark and 80×24 light through paging, preview, Cancel and
+restore, with normal exit 0 and read-only persistence checks. See the
+[verification record](../../superpowers/qa/2026-09-15-prompt-history/README.md).
+No full repository sweep was run.*

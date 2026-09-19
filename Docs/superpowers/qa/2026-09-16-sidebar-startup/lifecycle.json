@@ -1,0 +1,38 @@
+{
+  "save": {
+    "shell_exit_code": 0,
+    "app_run_returned": true,
+    "pid": 44402,
+    "pid_absent": true,
+    "persisted_after_exit": {
+      "search_query": "saved search",
+      "last_active_section": "notes",
+      "collapsible_states": {
+        "notes": true,
+        "chat": false,
+        "restart-check": true
+      }
+    }
+  },
+  "restart": {
+    "shell_exit_code": 0,
+    "app_run_returned": true,
+    "pid": 44884,
+    "pid_absent": true,
+    "persisted_after_exit": {
+      "search_query": "saved search",
+      "last_active_section": "notes",
+      "collapsible_states": {
+        "notes": true,
+        "chat": false,
+        "restart-check": true
+      }
+    }
+  },
+  "terminal_cleanup": {
+    "owned_socket": "codex32702",
+    "owned_session": "sidebar",
+    "only_owned_terminal_closed": true,
+    "after_both_app_exits": true
+  }
+}

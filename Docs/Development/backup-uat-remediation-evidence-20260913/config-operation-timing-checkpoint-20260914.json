@@ -1,0 +1,89 @@
+{
+  "base": "8db7465e6110726307f2d5ef745646e00f939a9f",
+  "files": {
+    "Tests/Backup_Recovery/startup_timing_diagnostic.py": "34d66e4ebe38cc160d626fb056608fe3778eee309ec77131a9365e5107edb806",
+    "Tests/Backup_Recovery/test_startup_config_timing.py": "5a52e219690d4a12e983b7fcddab642d2c460f999dbf15ee3838a4e2cb23d695",
+    "Tests/Backup_Recovery/run_platform_product.py": "22af104aa81813f687b193b1e790f7a64b270bee9606ceba599031d3610e7936"
+  },
+  "independent_pytest": {
+    "passed": 20,
+    "seconds": 0.89,
+    "log": "/private/tmp/uat-config-operation-independent.log"
+  },
+  "private_probes": {
+    "passed": 4,
+    "source": "/private/tmp/uat_config_operation_review_probe.py",
+    "log": "/private/tmp/uat-config-operation-private-probes.log"
+  },
+  "final_naming_only_change": "Exactly three secret-to-marker identifier occurrences; inverse substitution matches previous reviewed bytes.",
+  "root_validation": {
+    "initial_red": "2failed8passed: operation phase and live coordinates absent",
+    "focused_passed": 20,
+    "focused_seconds": 0.85,
+    "actual_app_passed": 1,
+    "actual_app_call_seconds": 13.68,
+    "actual_app_session_seconds": 15.88,
+    "actual_app_profiles": [
+      {
+        "source_matches": true,
+        "errors": [],
+        "config_errors": [],
+        "counts": {
+          "config_operation": 842,
+          "user_directory": 27,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1,
+          "settings_rebuild": 1
+        },
+        "active_functions": [
+          "config_operation"
+        ],
+        "active_coordinates": 25
+      },
+      {
+        "source_matches": true,
+        "errors": [],
+        "config_errors": [],
+        "counts": {
+          "config_operation": 913,
+          "user_directory": 32,
+          "transaction": 1,
+          "config_lock": 1,
+          "publication": 1,
+          "settings_rebuild": 1
+        },
+        "active_functions": [],
+        "active_coordinates": 0
+      }
+    ],
+    "ruff": "clean",
+    "bandit_baseline": {
+      "B101": 38
+    },
+    "bandit_current": {
+      "B101": 51
+    },
+    "compile": "passed"
+  },
+  "linux_application": {
+    "revision": "8db7465e6110726307f2d5ef745646e00f939a9f",
+    "receipts": [
+      {
+        "application_python_matches": 2475,
+        "mismatch_count": 0,
+        "installed_file_count": 2867,
+        "wheel_sha256": "340b3dbd61d8a9f91a330453b9035f709e99744b60f804de0cbe489dc1d96b28",
+        "receipt_wheel_hash_matches": true
+      }
+    ],
+    "native_results": {
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0,
+      "unfinished": 0,
+      "source_tracked_unchanged": true
+    }
+  },
+  "limits": "Test-only timing of existing native config operations; live frame coordinates are non-atomic and exclude call values. Settings is added to the existing native-close selection beside Library. Application bytes, native guards, deadlines and module caps unchanged from8db."
+}

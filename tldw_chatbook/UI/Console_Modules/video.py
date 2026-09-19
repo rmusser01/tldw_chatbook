@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from contextlib import nullcontext
 import inspect
 import os
-from pathlib import Path
 import threading
+from collections.abc import Callable
+from contextlib import nullcontext
+from pathlib import Path
 from typing import Any, Literal
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from ...Backup_Recovery.runtime_producer_lifetime import ProducerLifetime, producer_call
 from ...Chat.console_command_grammar import CommandParse
 from ...Chat.console_generate_video import (
     GENERATE_VIDEO_USAGE_TEXT,
@@ -72,6 +73,7 @@ class ConsoleVideoController:
             clear_console_composer_draft: Clear the current composer draft.
         """
         self.app_instance = app_instance
+        self._producer_lifetime = ProducerLifetime()
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._ensure_console_chat_store_fn = ensure_console_chat_store
         self._wait_for_console_screen_result_fn = wait_for_console_screen_result
@@ -92,6 +94,15 @@ class ConsoleVideoController:
             str, tuple[PendingVideoArtifact, int]
         ] = {}
         self._pending_video_deferred_closes: dict[str, PendingVideoArtifact] = {}
+
+    def _maintenance_close_admission(self) -> None:
+        self._producer_lifetime.close()
+
+    async def _maintenance_drain(self, deadline: float) -> bool:
+        return await self._producer_lifetime.drain(deadline)
+
+    def _maintenance_resume(self) -> None:
+        self._producer_lifetime.resume()
 
     async def _sync_native_console_chat_ui(self) -> None:
         result = self._sync_native_console_chat_ui_fn()
@@ -184,7 +195,7 @@ class ConsoleVideoController:
             if meta is None:
                 continue
             extension = canonical_video_extension(meta.container)
-            path = store.resolve(
+            status, path = store.resolve_state(
                 self._video_storage_message_id(message),
                 meta.name,
                 extension=extension,
@@ -192,7 +203,7 @@ class ConsoleVideoController:
             specs[message.id] = ConsoleVideoCardSpec(
                 message_id=message.id,
                 meta=meta,
-                status="ready" if path is not None else "expired",
+                status=status,
                 file_path=str(path) if path is not None else None,
             )
         return specs
@@ -329,6 +340,7 @@ class ConsoleVideoController:
                 cancelled_result_callback(result)
             raise cancellation
 
+    @producer_call
     async def _run_pending_console_video_operation(
         self,
         artifact: PendingVideoArtifact,
@@ -362,6 +374,7 @@ class ConsoleVideoController:
         finally:
             self._end_pending_console_video_operation(artifact)
 
+    @producer_call
     async def _run_console_video_generation_operation(
         self,
         *,
@@ -1264,7 +1277,7 @@ class ConsoleVideoController:
         if meta is None:
             return
         extension = canonical_video_extension(meta.container)
-        path = self._ensure_console_video_store().resolve(
+        status, path = self._ensure_console_video_store().resolve_state(
             self._video_storage_message_id(message),
             meta.name,
             extension=extension,
@@ -1272,7 +1285,8 @@ class ConsoleVideoController:
         if path is None:
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(
-                "The ephemeral video file is gone — regenerate to recreate it.",
+                ("Deleted recovered media" if status == "recovered_deleted" else "Missing recovered media")
+                if status.startswith("recovered_") else "The ephemeral video file is gone — regenerate to recreate it.",
                 severity="warning",
             )
             return
@@ -1325,7 +1339,7 @@ class ConsoleVideoController:
         if meta is None:
             return
         extension = canonical_video_extension(meta.container)
-        path = self._ensure_console_video_store().resolve(
+        status, path = self._ensure_console_video_store().resolve_state(
             self._video_storage_message_id(message),
             meta.name,
             extension=extension,
@@ -1333,7 +1347,8 @@ class ConsoleVideoController:
         if path is None:
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(
-                "The ephemeral video file is gone — regenerate to recreate it.",
+                ("Deleted recovered media" if status == "recovered_deleted" else "Missing recovered media")
+                if status.startswith("recovered_") else "The ephemeral video file is gone — regenerate to recreate it.",
                 severity="warning",
             )
             return

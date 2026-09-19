@@ -1,0 +1,546 @@
+[
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[..]",
+    "status": "passed",
+    "seconds": 0.002
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[.]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[a/b]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[a\\\\b]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[x:y]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[x\\x00y]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[file.]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[file ]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[CON]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_relative_names_cannot_escape_or_alias[nul.txt]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_simple_component_is_preserved",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_other_user_read_grant_is_not_private",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_other_user_delete_child_grant_is_not_trusted_parent",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_inherit_only_public_grant_requires_private_leaf_hardening",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_unknown_ace_fails_closed",
+    "status": "passed",
+    "seconds": 0.0
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_private_relative_file_and_exclusive_rename",
+    "status": "passed",
+    "seconds": 0.052
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_independent_native_handles_contend_on_shared_and_exclusive_locks",
+    "status": "passed",
+    "seconds": 0.059
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_directory_junction_is_refused",
+    "status": "passed",
+    "seconds": 0.015
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_pinned_directory_retains_identity_after_native_publication",
+    "status": "passed",
+    "seconds": 0.029
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_timestamp_and_alternate_stream_detection",
+    "status": "passed",
+    "seconds": 0.014
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_actual_public_acl_is_detected_then_hardened",
+    "status": "passed",
+    "seconds": 0.04
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_local_facade_operation_identity_is_stable",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_stat_keeps_stdlib_type_and_nanoseconds",
+    "status": "passed",
+    "seconds": 0.021
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_inherit_only_public_acl_hardened_before_ordinary_children",
+    "status": "passed",
+    "seconds": 0.458
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_directory_namespace_barriers_after_empty_create_rename_and_remove",
+    "status": "passed",
+    "seconds": 0.022
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_resolves_only_to_measured_current_owner[True]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_resolves_only_to_measured_current_owner[False]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_trust_an_unknown_or_different_owner[None]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_trust_an_unknown_or_different_owner[another-user]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_owner_rights_does_not_mask_other_public_inheritance",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stdlib_private_mkdir_and_ordinary_children_are_private",
+    "status": "passed",
+    "seconds": 0.149
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_replace_updates_existing_target_without_changing_noreplace",
+    "status": "passed",
+    "seconds": 0.044
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_atomic_private_write_replaces_existing_config",
+    "status": "passed",
+    "seconds": 0.26
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[38]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[5]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[87]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_stream_enumeration_accepts_only_documented_no_stream_result[234]",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_directory_stream_enumeration_detects_named_data[empty]",
+    "status": "passed",
+    "seconds": 0.021
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_native_directory_stream_enumeration_detects_named_data[populated]",
+    "status": "passed",
+    "seconds": 0.017
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_readonly_open_does_not_require_regular_file",
+    "status": "passed",
+    "seconds": 0.001
+  },
+  {
+    "id": "Tests.Utils.test_windows_files::test_nested_directory_publication_and_installed_metadata",
+    "status": "passed",
+    "seconds": 0.22
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[current]",
+    "status": "passed",
+    "seconds": 12.431
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[unbound]",
+    "status": "passed",
+    "seconds": 9.577
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[error]",
+    "status": "passed",
+    "seconds": 8.94
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[config_error]",
+    "status": "passed",
+    "seconds": 9.334
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[preexisting_error]",
+    "status": "passed",
+    "seconds": 9.138
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[cleanup_error]",
+    "status": "passed",
+    "seconds": 8.853
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[pause_before]",
+    "status": "passed",
+    "seconds": 8.553
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[pause_inside]",
+    "status": "passed",
+    "seconds": 8.638
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[selector_inside]",
+    "status": "passed",
+    "seconds": 8.61
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_control_refresh_keeps_native_config_lifetime[database]",
+    "status": "passed",
+    "seconds": 11.701
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_refresh_retries_after_native_pause_without_stale_state[native-canceled]",
+    "status": "passed",
+    "seconds": 9.778
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_refresh_retries_after_native_pause_without_stale_state[native-duplicates]",
+    "status": "passed",
+    "seconds": 10.285
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_refresh_retries_after_native_pause_without_stale_state[native-local-pause]",
+    "status": "passed",
+    "seconds": 9.605
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_body_pause_error_is_not_mistaken_for_entry_deferral",
+    "status": "passed",
+    "seconds": 8.545
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_native_retry_uses_one_screen_owned_timer[timer-retry]",
+    "status": "passed",
+    "seconds": 9.809
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_native_retry_uses_one_screen_owned_timer[timer-teardown]",
+    "status": "passed",
+    "seconds": 9.876
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker]",
+    "status": "passed",
+    "seconds": 8.976
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-real-pause]",
+    "status": "passed",
+    "seconds": 8.956
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-inprogress]",
+    "status": "passed",
+    "seconds": 9.008
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-teardown]",
+    "status": "passed",
+    "seconds": 8.617
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_config_sync_lifetime::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-external]",
+    "status": "passed",
+    "seconds": 9.973
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_projection_config_lifetime::test_console_projection_retires_config_before_async_session_change[current]",
+    "status": "passed",
+    "seconds": 10.098
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_projection_config_lifetime::test_console_projection_retires_config_before_async_session_change[ui_error]",
+    "status": "passed",
+    "seconds": 8.5
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_projection_config_lifetime::test_console_projection_retires_config_before_async_session_change[config_error]",
+    "status": "passed",
+    "seconds": 8.903
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_projection_config_lifetime::test_console_projection_retires_config_before_async_session_change[selector_change]",
+    "status": "passed",
+    "seconds": 8.574
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_projection_config_lifetime::test_native_pause_defers_rail_summary_and_controls_until_fresh_replay",
+    "status": "passed",
+    "seconds": 9.282
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_native_control_refresh_and_canvas_authority_do_not_deadlock[ensure]",
+    "status": "passed",
+    "seconds": 12.697
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_native_control_refresh_and_canvas_authority_do_not_deadlock[materialize]",
+    "status": "passed",
+    "seconds": 9.31
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_completed_canvas_lifetime_change_wins_after_policy_read[latch-bind]",
+    "status": "passed",
+    "seconds": 8.719
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_completed_canvas_lifetime_change_wins_after_policy_read[latch-materialize]",
+    "status": "passed",
+    "seconds": 9.81
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_completed_canvas_lifetime_change_wins_after_policy_read[dispose-bind]",
+    "status": "passed",
+    "seconds": 8.766
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_completed_canvas_lifetime_change_wins_after_policy_read[dispose-materialize]",
+    "status": "passed",
+    "seconds": 8.789
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_stale_true_policy_allows_only_inert_authority_and_refuses_live_effects",
+    "status": "failed",
+    "seconds": 8.833,
+    "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/744c4557d557c473.txt",
+    "failure_evidence": [
+      "E       AssertionError: lls', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generatio",
+      "E         tldw_chatbook.Canvas.compiler.CanvasCompileError: Canvas document is incompatible with the canvas-v1 runtime",
+      "E       assert 1 == 0",
+      "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+    ]
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[false-bind]",
+    "status": "passed",
+    "seconds": 8.659
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[false-materialize]",
+    "status": "passed",
+    "seconds": 8.731
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[error-bind]",
+    "status": "passed",
+    "seconds": 8.71
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[error-materialize]",
+    "status": "passed",
+    "seconds": 8.614
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[base_error-bind]",
+    "status": "passed",
+    "seconds": 8.523
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[base_error-materialize]",
+    "status": "passed",
+    "seconds": 8.565
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[native_pause-bind]",
+    "status": "passed",
+    "seconds": 8.64
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_console_canvas_config_order::test_canvas_policy_refusal_keeps_existing_latch_and_error_semantics[native_pause-materialize]",
+    "status": "passed",
+    "seconds": 8.6
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_config_native_lock_order::test_native_config_snapshot_and_public_capture_policy_finish_together[runtime]",
+    "status": "passed",
+    "seconds": 4.238
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_config_native_lock_order::test_native_config_snapshot_and_public_capture_policy_finish_together[serialized]",
+    "status": "passed",
+    "seconds": 4.321
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_config_native_lock_order::test_native_pause_cancels_each_config_lock_wait_without_leaking_partial_locks[rebuild]",
+    "status": "passed",
+    "seconds": 4.331
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_config_native_lock_order::test_native_pause_cancels_each_config_lock_wait_without_leaking_partial_locks[file]",
+    "status": "passed",
+    "seconds": 4.215
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_config_native_lock_order::test_native_config_lock_cleanup_restores_the_enclosing_repository_operation[success]",
+    "status": "passed",
+    "seconds": 5.548
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_config_native_lock_order::test_native_config_lock_cleanup_restores_the_enclosing_repository_operation[failure]",
+    "status": "passed",
+    "seconds": 5.511
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_recovery_restart::test_actual_restart_keeps_launching_package_ahead_of_shadow_cwd",
+    "status": "passed",
+    "seconds": 0.558
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+    "status": "passed",
+    "seconds": 291.724
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+    "status": "passed",
+    "seconds": 260.066
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+    "status": "failed",
+    "seconds": 406.304,
+    "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/344f17c907ca7f60.txt",
+    "failure_evidence": [
+      "E       AssertionError:  | #x1B[36mtldw_chatbook.DB.base_db#x1B[0m:#x1B[36m__init__#x1B[0m:#x1B[36m806#x1B[0m - #x1B[1mScheduledTasksDB initialized with path: [PRIVATE_ROOT]\\product-pytest\\test_mounted_console_complete_2\\home\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_scheduled_tasks.db [Client: default]#x1B[0m",
+      "E         AssertionError: {'operation_id': '5d3efc6d4b2a45c1b7eb3ea976aeedae', 'kind': 'backup', 'state': 'failed', 'phase': 'capturing', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('admission_timeout',), 'review_issues': ()}",
+      "E       assert 1 == 0",
+      "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyring\\nfrom"
+    ]
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_quit]",
+    "status": "failed",
+    "seconds": 176.425,
+    "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/15d6d04f1f5bec94.txt",
+    "failure_evidence": [
+      "E       AssertionError: Traceback (most recent call last):",
+      "E         AssertionError: {'operation_id': '3b54569ab0ec45e08789c370697c025f', 'kind': 'open_profile', 'state': 'failed', 'phase': 'opening_profile', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('backup_operation_failed',), 'review_issues': ()}",
+      "E       assert 1 == 0",
+      "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', 'CHILD=\\'\\\\nimport threading,time\\\\nfrom pathlib import Path\\\\nfrom Tests.Backup_Recovery.thread_diagnostics import observe_threads,_error_metadata,_write\\\\n_diagnostic_root=Path.home()\\\\n_diagnostic_sta"
+    ]
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_profile_open::test_profile_open_requires_actual_mounted_local_reads[console_edit]",
+    "status": "failed",
+    "seconds": 149.843,
+    "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/3f776e196d81632b.txt",
+    "failure_evidence": [
+      "E       AssertionError: Traceback (most recent call last):",
+      "E         AssertionError: {'operation_id': '19ca3f9c5f3148c79923d3a9d4d9338c', 'kind': 'open_profile', 'state': 'failed', 'phase': 'opening_profile', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('backup_operation_failed',), 'review_issues': ()}",
+      "E       assert 1 == 0",
+      "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', 'CHILD=\\'\\\\nimport threading,time\\\\nfrom pathlib import Path\\\\nfrom Tests.Backup_Recovery.thread_diagnostics import observe_threads,_error_metadata,_write\\\\n_diagnostic_root=Path.home()\\\\n_diagnostic_sta"
+    ]
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_large_recovery_records::test_large_collection_completes_actual_isolated_publication",
+    "status": "passed",
+    "seconds": 381.931
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-emoji]",
+    "status": "failed",
+    "seconds": 4.044,
+    "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/c1a17cad8f834db2.txt",
+    "failure_evidence": [
+      "E       AssertionError: #x1B[32m2026-09-14 11:27:47.423#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+      "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+      "E       assert 1 == 0",
+      "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+    ]
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-runtime]",
+    "status": "failed",
+    "seconds": 3.965,
+    "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/764e5f6ec54f3c04.txt",
+    "failure_evidence": [
+      "E       AssertionError: #x1B[32m2026-09-14 11:27:51.446#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+      "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+      "E       assert 1 == 0",
+      "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+    ]
+  },
+  {
+    "id": "Tests.Backup_Recovery.test_bound_config_siblings::test_sibling_guard_rechecks_exact_config_anchor_and_foreign_owner[unsafe_parent-sidebar]",
+    "status": "failed",
+    "seconds": 4.037,
+    "full_traceback_path": "/private/tmp/uat-windows-e683-support/junit-failures/861a23179eb92baf.txt",
+    "failure_evidence": [
+      "E       AssertionError: #x1B[32m2026-09-14 11:27:55.418#x1B[0m | #x1B[34m#x1B[1mDEBUG   #x1B[0m | #x1B[36mtldw_chatbook.config#x1B[0m:#x1B[36m<module>#x1B[0m:#x1B[36m109#x1B[0m - #x1B[34m#x1B[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.#x1B[0m",
+      "E         AssertionError: original native security not restored: owner_equal=True original_control=36868 restored_control=37892 control_xor=1024 original_revision=1 restored_revision=1 original_acl_length=72 restored_acl_length=72 acl_equal=True",
+      "E       assert 1 == 0",
+      "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport os\\nfrom pathlib import Path\\nfrom tldw_chatbook.Backup_Recovery import bootstrap\\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\\nhome=Path.home();p"
+    ]
+  }
+]

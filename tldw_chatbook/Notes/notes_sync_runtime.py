@@ -8,19 +8,24 @@ import sqlite3
 import time
 import weakref
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
+
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ProducerLifetime,
+    producer_call,
+)
 
 from tldw_chatbook.Notes.note_import_discovery import (
     ImportSelectionError,
     discover_import_sources,
 )
-from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+from tldw_chatbook.Notes.note_import_plan_models import ImportBounds, ImportSource
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
@@ -66,6 +71,8 @@ from tldw_chatbook.Notes.notes_sync_models import (
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
     CONFLICT_RECOVERY_RETENTION_NS,
+    MAX_SYNC_KEYWORD_LENGTH,
+    MAX_SYNC_TITLE_LENGTH,
     NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutionResult,
@@ -96,6 +103,9 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 )
 from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
 
+if TYPE_CHECKING:  # ADR-097: annotation-only, never on the boot path.
+    from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
+
 
 CUTOVER_MARKER = "notes-sync-cutover-v1"
 _AUTOMATIC_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
@@ -103,6 +113,7 @@ _EXECUTABLE_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
 _SYNC_FILE_EXTENSIONS = frozenset({".md", ".markdown", ".txt"})
 _OBSERVATION_BUNDLE_LIMIT = 8
 _DISPLAY_LABEL_MAX_CHARS = 160
+_DESTINATION_LABEL_MAX_CHARS = 1024
 _DURABLE_BLOCKED_STATUS = MappingProxyType(
     {
         "activation_recovery_required": ("needs_attention", "review_settings"),
@@ -279,6 +290,167 @@ class RuntimeConflictLabel:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RuntimeBindingLabel:
+    """Bounded identity label for one reviewed binding: its path and folder.
+
+    task-32535: the review used to render one generic line per planned
+    effect ("Create a Library note") because a plan carries only opaque ids.
+    This is the path-bearing seam the review rows are named from.
+    """
+
+    binding_id: str
+    relative_path: str
+    note_title: str
+    destination_folder: str
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.binding_id, field_name="binding_id")
+        for name, limit in (
+            ("note_title", _DISPLAY_LABEL_MAX_CHARS),
+            ("destination_folder", _DESTINATION_LABEL_MAX_CHARS),
+        ):
+            value = getattr(self, name)
+            if (
+                type(value) is not str
+                or not value
+                or len(value) > limit
+                or "\n" in value
+                or "\r" in value
+            ):
+                raise ValueError(f"{name} must be bounded single-line text")
+        object.__setattr__(
+            self,
+            "relative_path",
+            normalize_notes_sync_relative_path(self.relative_path),
+        )
+
+    def __repr__(self) -> str:
+        return "RuntimeBindingLabel(<private>)"
+
+
+def _destination_folder(root_name: str) -> str:
+    """Return the Library folder this file's note will actually land in.
+
+    task-32535: the root folder, whatever the file's own folder chain says.
+    A synced note is placed directly in the root folder -- keeping the vault's
+    structure is refused by the folder layer (`sync_managed_folder`), see the
+    task's AC#4 -- and a review row that promised "PowerVault / Archive" while
+    the note arrived in "PowerVault" would be exactly the kind of row this
+    task exists to stop. The file's own folder is already on the row, in its
+    path.
+    """
+
+    return root_name
+
+
+_FRONTMATTER_BOUNDS = ImportBounds(
+    max_files=1,
+    max_file_bytes=1,
+    max_total_bytes=1,
+    max_depth=1,
+)
+"""Import once's own keyword cap for the frontmatter lift (task-32535).
+
+``max_keywords_per_note`` is left at its default because that IS Import once's
+cap -- the Library screen constructs `ImportBounds` without overriding it
+(`library_screen.py:3720`), so a file with 150 tags must behave the same on
+both paths. (It briefly read `MAX_IMPORT_KEYWORDS_PER_NOTE`, ten times the
+default, while claiming parity.) Only that field is read here; the walk limits
+belong to the discovery pass and are set to their minimum so they cannot be
+mistaken for one.
+"""
+
+
+def _lifted_note_metadata(
+    file: object | None,
+    relative_path: str,
+    *,
+    obsidian: bool,
+) -> tuple[str, tuple[str, ...]]:
+    """Return the title and keywords a discovered file becomes.
+
+    task-32535: the same lift Import once performs -- `title:` (or the file
+    name) and `tags:`/`aliases:`. The frontmatter block itself stays in the
+    note body: lasting sync is bidirectional and UPDATE_FILE writes the body
+    back, so stripping it would delete the user's Obsidian properties on the
+    next Chatbook edit (controller ruling, wave 4; Folder files keeps the
+    block the same way, task-32264).
+    """
+
+    stem = Path(relative_path).stem
+    text = getattr(file, "text", None)
+    if not obsidian or type(text) is not str:
+        return stem, ()
+    from tldw_chatbook.Notes.note_import_parsers import (
+        _frontmatter_keywords,
+        _frontmatter_title,
+        _split_frontmatter,
+    )
+
+    metadata, _body = _split_frontmatter(text)
+    # Import once bounds a keyword at 512; an execution request refuses one
+    # over MAX_SYNC_KEYWORD_LENGTH, and the request is built inside a loop over
+    # every safe action -- so one 300-character `aliases:` entry used to abort
+    # the whole root's activation rather than cost its own note a keyword. The
+    # rule: a keyword the executor cannot carry is dropped, never truncated,
+    # because half an alternate name is a name nothing has (task-32535).
+    #
+    # The title is the same defect with the opposite remedy: it is the note's
+    # ONLY name, so an over-long `title:` is cut to MAX_SYNC_TITLE_LENGTH
+    # rather than dropped -- the first 4096 characters still identify the
+    # note, while dropping it would silently rename the note to its file stem.
+    # Both bounds are read from the executor so the two cannot drift.
+    return (
+        (_frontmatter_title(metadata) or stem)[:MAX_SYNC_TITLE_LENGTH],
+        tuple(
+            keyword
+            for keyword in _frontmatter_keywords(metadata, _FRONTMATTER_BOUNDS)
+            if len(keyword) <= MAX_SYNC_KEYWORD_LENGTH
+        ),
+    )
+
+
+def _bounded_label(value: str) -> str:
+    return (" ".join(value.split()) or "Untitled")[:_DISPLAY_LABEL_MAX_CHARS]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeReceiptLabel:
+    """Path and title for one binding a completed write refers to.
+
+    task-32534 AC#3. Deliberately NOT :class:`RuntimeBindingLabel`, which is
+    task-32535's review-row type: that one carries the Library folder the
+    reviewed note will land in, and a receipt has no review to read it from.
+    Inventing a folder to satisfy that field would put a guess on the row.
+    """
+
+    binding_id: str
+    relative_path: str
+    note_title: str
+
+    def __repr__(self) -> str:
+        return "RuntimeReceiptLabel(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeWriteReceipt:
+    """One completed lasting-sync write, labelled for Manage sync folders.
+
+    task-32534 AC#3. ``completed_at`` is epoch nanoseconds; the path and
+    title are display labels, kept out of ``repr`` like every other label.
+    """
+
+    operation_id: str
+    kind: str
+    completed_at: int
+    relative_path: str
+    note_title: str
+
+    def __repr__(self) -> str:
+        return "RuntimeWriteReceipt(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RuntimeConflictHistoryRow:
     """Fresh, bounded display projection for one durable history row."""
 
@@ -330,8 +502,12 @@ class NotesSyncRootSetup:
     canonical_path: str
     note_scope_id: str
     direction: NotesSyncDirection
+    obsidian_mode: bool = True
+    """Whether the vault's own folders and empty files are skipped (task-32535)."""
 
     def __post_init__(self) -> None:
+        if type(self.obsidian_mode) is not bool:
+            raise TypeError("obsidian_mode must be a boolean")
         if (
             type(self.display_name) is not str
             or not self.display_name.strip()
@@ -380,6 +556,8 @@ class _FreshAuthority:
 class _RuntimeAdapter(Protocol):
     async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput: ...
 
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None: ...
+
     async def build_execution_request(
         self,
         root: NotesSyncRootRecord,
@@ -420,6 +598,23 @@ class _RuntimeAdapter(Protocol):
         plan: ReconciliationPlan,
         binding_ids: tuple[str, ...],
     ) -> tuple[RuntimeConflictLabel, ...]: ...
+
+    async def build_binding_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+        *,
+        root_name: str | None = None,
+    ) -> tuple[RuntimeBindingLabel, ...]: ...
+
+    async def build_receipt_labels(
+        self,
+        root: NotesSyncRootRecord,
+        binding_ids: tuple[str, ...],
+        *,
+        offload: Callable[..., Awaitable[Iterable[NotesSyncBindingRecord]]],
+    ) -> tuple[RuntimeReceiptLabel, ...]: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -492,15 +687,25 @@ class _ProductionRuntimeAdapter:
         *,
         local_user_id: str,
         recovery_capacity_bytes: int,
+        prior_imports: Callable[
+            [tuple[ImportSource, ...]], Mapping[str, PriorImportObservation]
+        ]
+        | None = None,
     ) -> None:
         self._store = store
         self._service = notes_scope_service
         self._user_id = local_user_id
         self._capacity = recovery_capacity_bytes
+        # task-32605: reads Import once's own receipt ledger, which lives in
+        # this very database file. None disables the recognition entirely,
+        # which is what a harness without a ledger gets.
+        self._prior_imports = prior_imports
         self._filesystems: dict[str, PosixNotesSyncFilesystem] = {}
         self._bundles: dict[str, Mapping[str, _ObservedBinding]] = {}
         self._root_signatures: dict[str, tuple[object, ...]] = {}
         self._observation_reuse: dict[str, _ObservationReuse] = {}
+        self._obsidian_modes: dict[str, bool] = {}
+        self._obsidian_active: dict[str, bool] = {}
         file_limit = min(recovery_capacity_bytes, 10 * 1024 * 1024)
         self._discovery_bounds = ImportBounds(
             max_files=1_000,
@@ -552,6 +757,88 @@ class _ProductionRuntimeAdapter:
             self._filesystems[root.root_id] = filesystem
         return filesystem
 
+    def obsidian_mode(self, root_id: str) -> bool:
+        """Return whether this root's last observation ran the Obsidian pass.
+
+        Resolved once per observation from the vault marker the discovery walk
+        already reports, so the planner, the frontmatter lift and the review
+        labels all read the same answer (task-32535).
+        """
+
+        return self._obsidian_active.get(root_id, False)
+
+    def remember_obsidian_mode(self, root_id: str, enabled: bool) -> None:
+        """Record the setup review's answer to the Obsidian toggle.
+
+        ponytail: in memory only. The device store's settings table CHECK-
+        constrains ``setting_key`` to two literal keys, so persisting a
+        per-root flag there means a schema version and a table rebuild. A
+        vault therefore runs the pass again after a restart even if the user
+        declined it at setup -- and the pass only ever leaves NEVER-BOUND
+        files alone, so nothing already synced changes. Persist it with the
+        next device-schema version if anyone reports the re-default.
+        """
+
+        self._obsidian_modes[root_id] = enabled
+
+    async def _prior_import_paths(
+        self,
+        notes: NotesScopeSyncAuthority,
+        sources: Mapping[str, ImportSource],
+    ) -> frozenset[str]:
+        """Return never-bound paths whose Import once note is still present.
+
+        task-32605: Import once and lasting sync mint different note
+        identities for the same file, so a vault imported once and then kept
+        synced planned a fresh create for every file -- 108 notes for a
+        54-note vault. The join is the importer's own receipt ledger, which
+        lives in this database file and is keyed on the same source locators
+        this pass already discovered.
+
+        A note the user has since deleted is absent from ``observe_versions``
+        and so is NOT reported: sync creates it again, which is right.
+
+        Args:
+            notes: Authority for the root's note scope.
+            sources: Never-bound relative paths mapped to their sources.
+
+        Returns:
+            The subset of ``sources`` whose imported note still exists.
+        """
+
+        if not sources or self._prior_imports is None:
+            return frozenset()
+        lookup = self._prior_imports
+        try:
+            observations = await asyncio.to_thread(lookup, tuple(sources.values()))
+        except Exception:  # noqa: BLE001
+            # The ledger is an optimisation, never an authority: a missing,
+            # older or unreadable one only means nothing is recognised, and a
+            # trace here would be the first diagnostic in this module.
+            return frozenset()
+        if not observations:
+            return frozenset()
+        imported: list[tuple[str, str]] = []
+        for relative_path, source in sources.items():
+            observation = observations.get(source.display_path)
+            if observation is not None:
+                imported.append((observation.note_id, relative_path))
+        if not imported:
+            return frozenset()
+
+        def observe_live() -> Mapping[str, int]:
+            return run_worker_coroutine(
+                notes.observe_versions(tuple(note_id for note_id, _ in imported))
+            )
+
+        try:
+            versions = await asyncio.to_thread(observe_live)
+        except Exception:  # noqa: BLE001 - an unreadable note is not a match
+            return frozenset()
+        return frozenset(
+            relative_path for note_id, relative_path in imported if note_id in versions
+        )
+
     async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput:
         notes = self._notes(root)
         filesystem = self._filesystem(root)
@@ -567,11 +854,21 @@ class _ProductionRuntimeAdapter:
                 "root_discovery_incomplete",
                 detail=f"{len(discovery.failures)} paths could not be listed",
             )
+        # task-32535: the walk already reports the vault marker, so the pass
+        # costs no extra filesystem read -- and a folder that stops being a
+        # vault stops being treated as one.
+        self._obsidian_active[root.root_id] = discovery.vault_detected and (
+            self._obsidian_modes.get(root.root_id, True)
+        )
         # TASK-23027: reuse is validated per item against state read fresh
         # this pass; see _ObservationReuse. A miss (edit, add, rename, touch,
         # or a cold cache) takes exactly the pre-existing read path.
         reuse = self._observation_reuse.get(root.root_id)
         discovered: dict[str, NotesSyncFileSnapshot] = {}
+        # task-32605: the importer's own source locators, kept so a file it
+        # already imported can be recognised without re-deriving its
+        # display-path convention here.
+        discovered_sources: dict[str, ImportSource] = {}
         reused_files = 0
         # TASK-32244: refusals are counted across the whole walk instead of
         # raising on the first one, so "discovery did not finish" can say how
@@ -585,6 +882,7 @@ class _ProductionRuntimeAdapter:
             if Path(relative_path).suffix.casefold() not in _SYNC_FILE_EXTENSIONS:
                 continue
             syncable_files += 1
+            discovered_sources[relative_path] = candidate.source
             cached_file = reuse.files.get(relative_path) if reuse else None
             if cached_file is not None and _file_snapshot_current(
                 cached_file, candidate.identity
@@ -726,6 +1024,14 @@ class _ProductionRuntimeAdapter:
             )
             bundle[binding.binding_id] = _ObservedBinding(binding, note, file)
 
+        prior_import_paths = await self._prior_import_paths(
+            notes,
+            {
+                relative_path: source
+                for relative_path, source in discovered_sources.items()
+                if relative_path in discovered and relative_path not in claimed_paths
+            },
+        )
         for relative_path, file in discovered.items():
             if relative_path in claimed_paths:
                 continue
@@ -765,6 +1071,8 @@ class _ProductionRuntimeAdapter:
                     bound=False,
                     baseline_serialization=file.observation.serialization,
                     serialization=file.observation.serialization,
+                    file_blank=not file.text.strip(),
+                    prior_import_note=relative_path in prior_import_paths,
                 )
             )
             bundle[binding_id] = _ObservedBinding(candidate, None, file)
@@ -778,12 +1086,20 @@ class _ProductionRuntimeAdapter:
             expected_generation=max(
                 (item.note_version for item in observed), default=0
             ),
+            obsidian_mode=self.obsidian_mode(root.root_id),
         )
         token = plan_reconciliation(request).observation_token
         if len(self._bundles) >= _OBSERVATION_BUNDLE_LIMIT:
             raise RuntimeError("observation_capacity_exceeded")
         self._bundles[token] = MappingProxyType(bundle)
-        self._root_signatures[root.root_id] = self._discovery_signature(discovery)
+        # task-32534 AC#4: SEED the watcher's change baseline, never advance
+        # it. This pass used to overwrite it, so a manual Check right after a
+        # disk edit consumed the change -- `changed_root_ids` then saw no
+        # delta, the automatic pass that applies edits never ran, and the
+        # note stayed stale behind a "✓ Up to date" row.
+        self._root_signatures.setdefault(
+            root.root_id, self._discovery_signature(discovery)
+        )
         # TASK-23027: rebuild the reuse cache from this pass's observations,
         # only on success -- a failed pass leaves the previous entries, which
         # stay safe because every entry is revalidated before reuse. The
@@ -870,6 +1186,17 @@ class _ProductionRuntimeAdapter:
         ).hexdigest()
         note = binding.note
         file = binding.file
+        # task-32535: only a create needs a title and keywords lifted off the
+        # file; an existing note already carries both.
+        desired_title, desired_keywords = (
+            (note.title, ())
+            if note is not None
+            else _lifted_note_metadata(
+                file,
+                binding.record.normalized_relative_path,
+                obsidian=self.obsidian_mode(root.root_id),
+            )
+        )
         return NotesSyncExecutionRequest(
             operation_id=operation_id,
             root_id=root.root_id,
@@ -880,11 +1207,8 @@ class _ProductionRuntimeAdapter:
             action_kind=action.kind,
             note=note,
             file=file,
-            desired_title=(
-                note.title
-                if note is not None
-                else Path(binding.record.normalized_relative_path).stem
-            ),
+            desired_title=desired_title,
+            desired_keywords=desired_keywords,
             recovery_id=f"recovery-{operation_id}",
             recovery_expires_at=time.time_ns() + 86_400_000_000_000,
             candidate_note_scope_id=(
@@ -1049,6 +1373,103 @@ class _ProductionRuntimeAdapter:
             )
         return tuple(labels)
 
+    async def build_binding_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+        *,
+        root_name: str | None = None,
+    ) -> tuple[RuntimeBindingLabel, ...]:
+        """Name reviewed bindings by path, resulting title and Library folder.
+
+        A setup review passes the display name (its root folder does not
+        exist yet); an active root's name is read from its logical folder.
+        """
+
+        bundle = self._bundles.get(plan.observation_token, {})
+        if root_name is None:
+            if root.logical_folder_id is None:
+                raise RuntimeError("folder_owner_missing")
+            folder = await self._service.get_note_folder_by_id_for_sync(
+                scope=ScopeType.LOCAL_NOTE,
+                folder_id=root.logical_folder_id,
+                include_deleted=True,
+                user_id=self._user_id,
+            )
+            if folder is None or folder.deleted:
+                raise RuntimeError("folder_owner_missing")
+            root_name = folder.name
+        labels: list[RuntimeBindingLabel] = []
+        for binding_id in binding_ids:
+            binding = bundle.get(binding_id)
+            if binding is None or binding.record.root_id != root.root_id:
+                raise RuntimeError("private_label_authority_missing")
+            relative_path = (
+                binding.file.observation.relative_path
+                if binding.file is not None
+                else binding.record.normalized_relative_path
+            )
+            title = (
+                binding.note.title
+                if binding.note is not None
+                else _lifted_note_metadata(
+                    binding.file,
+                    relative_path,
+                    obsidian=self.obsidian_mode(root.root_id),
+                )[0]
+            )
+            labels.append(
+                RuntimeBindingLabel(
+                    binding_id,
+                    relative_path,
+                    _bounded_label(title),
+                    _destination_folder(root_name),
+                )
+            )
+        return tuple(labels)
+
+    async def build_receipt_labels(
+        self, root: NotesSyncRootRecord, binding_ids: tuple[str, ...],
+        *, offload: Callable[..., Awaitable[Iterable[NotesSyncBindingRecord]]],
+    ) -> tuple[RuntimeReceiptLabel, ...]:
+        """Label bindings for completed writes, from the store and the notes.
+
+        task-32534 AC#3. A receipt names a write that already happened, so
+        there is no plan, no observation bundle and no reviewed root to read
+        -- which is exactly what :meth:`build_binding_labels` needs. This
+        reads the binding rows instead, and tolerates a note that has since
+        been deleted rather than refusing the whole root's receipts.
+        """
+
+        bindings = {
+            binding.binding_id: binding
+            for binding in await offload(
+                self._store.list_bindings, root.root_id
+            )
+        }
+        notes = self._notes(root)
+        labels: list[RuntimeReceiptLabel] = []
+        for binding_id in binding_ids:
+            binding = bindings.get(binding_id)
+            if binding is None:
+                raise RuntimeError("private_label_authority_missing")
+            try:
+                note = await notes.observe(binding.note_id)
+                title = _bounded_label(note.title)
+            except NotesSyncAuthorityError as error:
+                if error.reason_code != "note_missing":
+                    raise
+                title = "(note removed)"
+            labels.append(
+                RuntimeReceiptLabel(
+                    binding_id,
+                    binding.normalized_relative_path,
+                    title,
+                )
+            )
+        return tuple(labels)
+
     def executor_for(
         self,
         root: NotesSyncRootRecord,
@@ -1094,6 +1515,11 @@ class NotesSyncRuntimeOwner:
             raise TypeError("runtime factories must be callable.")
         if start_evidence is not None and not callable(start_evidence):
             raise TypeError("start_evidence must be callable when provided.")
+        self._producer_lifetime = ProducerLifetime()
+        self._maintenance_closed = False
+        self._maintenance_pending = set()
+        self._maintenance_quiesce_task = None
+        self._maintenance_admission_was_open = False
         self._store = store
         self._migrate_legacy = migrate_legacy
         self._coordinator_source = coordinator
@@ -1136,6 +1562,88 @@ class NotesSyncRuntimeOwner:
         self._next_action = "wait"
         self._admission_open = False
         self._closing = False
+
+    def _maintenance_close_admission(self):
+        """Fence new root commands and hints without stopping accepted commands."""
+        self._maintenance_closed = True
+        self._producer_lifetime.close()
+
+    async def _maintenance_offload(self, callback, *args, **kwargs):
+        """Keep a cancelled waiter's native worker visible to maintenance."""
+        task = asyncio.create_task(asyncio.to_thread(callback, *args, **kwargs))
+        self._maintenance_pending.add(task)
+
+        def finished(completed):
+            self._maintenance_pending.discard(completed)
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _maintenance_quiesce(self):
+        """Stop only the replaceable watcher and release the settled store cache."""
+        self._maintenance_admission_was_open |= self._admission_open
+        self._admission_open = False
+        if self._watcher is not None:
+            await self._watcher.stop()
+        if self._watcher_task is not None:
+            await asyncio.gather(self._watcher_task, return_exceptions=True)
+        close_store = getattr(self._store, "close", None)
+        if callable(close_store):
+            from tldw_chatbook.Backup_Recovery.participants import (
+                _close_settled_core_cache,
+            )
+
+            return await self._maintenance_offload(
+                _close_settled_core_cache, self._store
+            )
+        return True
+
+    async def _maintenance_drain(self, deadline):
+        """Wait for admitted commands and native workers, preserving root leases."""
+        if not await self._producer_lifetime.drain(deadline):
+            return False
+        while (
+            self._hint_tasks
+            or self._maintenance_pending
+            or (self._start_task is not None and not self._start_task.done())
+        ):
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        if self._maintenance_quiesce_task is None or (
+            self._maintenance_quiesce_task.done()
+            and not self._maintenance_quiesce_task.result()
+        ):
+            self._maintenance_quiesce_task = asyncio.create_task(
+                self._maintenance_quiesce()
+            )
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(self._maintenance_quiesce_task),
+                max(0, deadline - time.monotonic()),
+            )
+        except TimeoutError:
+            return False
+
+    def _maintenance_resume(self):
+        """Restore the same root admission and recreate its watcher after capture."""
+        if self._maintenance_pending or (
+            self._maintenance_quiesce_task is not None
+            and not self._maintenance_quiesce_task.done()
+        ):
+            raise RuntimeError("runtime_work_not_settled")
+        if self._maintenance_quiesce_task is not None:
+            self._maintenance_quiesce_task.result()
+            self._maintenance_quiesce_task = None
+            if not self._closing:
+                self._admission_open = self._maintenance_admission_was_open
+            self._maintenance_admission_was_open = False
+        self._producer_lifetime.resume()
+        self._maintenance_closed = False
+        if not self._closing:
+            self._start_watcher()
 
     def _mutation_lock(self, root_id: str) -> asyncio.Lock:
         """Return the one live in-process mutation lock for a root."""
@@ -1181,6 +1689,7 @@ class NotesSyncRuntimeOwner:
         while len(receipts) > 100:
             receipts.popitem(last=False)
 
+    @producer_call
     async def active_conflict_receipts(
         self, root_id: str
     ) -> tuple[RuntimeConflictReceipt, ...]:
@@ -1191,7 +1700,7 @@ class NotesSyncRuntimeOwner:
         if not retained:
             return ()
         try:
-            root = await asyncio.to_thread(self._store.get_root, root_id)
+            root = await self._maintenance_offload(self._store.get_root, root_id)
             executor = cast(
                 NotesSyncExecutor,
                 self._adapter.executor_for(root, after_stage=_ignore_operation_stage),
@@ -1231,6 +1740,7 @@ class NotesSyncRuntimeOwner:
         if receipts is not None:
             receipts.pop(operation_id, None)
 
+    @producer_call
     async def undo_resolution(
         self,
         root_id: str,
@@ -1245,7 +1755,7 @@ class NotesSyncRuntimeOwner:
         task = self._admit_task(root_id)
         try:
             async with self._mutation_lock(root_id):
-                root = await asyncio.to_thread(self._store.get_root, root_id)
+                root = await self._maintenance_offload(self._store.get_root, root_id)
                 if root.root_id != root_id:
                     raise RuntimeError("root_authority_mismatch")
                 if root.state is not NotesSyncRootState.ACTIVE:
@@ -1275,6 +1785,7 @@ class NotesSyncRuntimeOwner:
         finally:
             self._finish_task(root_id, task)
 
+    @producer_call
     async def resolution_history(
         self,
         root_id: str,
@@ -1286,7 +1797,7 @@ class NotesSyncRuntimeOwner:
         """Return one durable page decorated from fresh private authority."""
 
         current_time = time.time_ns() if now is None else now
-        records = await asyncio.to_thread(
+        records = await self._maintenance_offload(
             self._store.list_resolution_history,
             root_id,
             limit=limit,
@@ -1299,7 +1810,7 @@ class NotesSyncRuntimeOwner:
             "resolve_keep_both": NotesSyncConflictChoice.KEEP_BOTH,
         }
         try:
-            root = await asyncio.to_thread(self._store.get_root, root_id)
+            root = await self._maintenance_offload(self._store.get_root, root_id)
             executor = cast(
                 NotesSyncExecutor,
                 self._adapter.executor_for(root, after_stage=_ignore_operation_stage),
@@ -1426,6 +1937,7 @@ class NotesSyncRuntimeOwner:
     def _history_timestamp(value: int) -> str:
         return datetime.fromtimestamp(value / 1_000_000_000, UTC).isoformat()
 
+    @producer_call
     async def start(self, *, force: bool = False) -> None:
         """Initialize once and remain inert unless both cutover gates match.
 
@@ -1460,7 +1972,7 @@ class NotesSyncRuntimeOwner:
         self._start_deferred = False
         if not force and self._start_evidence is not None:
             try:
-                configured = bool(await asyncio.to_thread(self._start_evidence))
+                configured = bool(await self._maintenance_offload(self._start_evidence))
             except Exception:
                 # Fail open: a broken probe must never silently disable a
                 # configured user's sync. Starting is the safe direction.
@@ -1471,8 +1983,8 @@ class NotesSyncRuntimeOwner:
                 self._next_action = "none"
                 return
         try:
-            await asyncio.to_thread(self._store.initialize)
-            marker = await asyncio.to_thread(self._store.get_setting, "cutover_marker")
+            await self._maintenance_offload(self._store.initialize)
+            marker = await self._maintenance_offload(self._store.get_setting, "cutover_marker")
         except Exception:
             self._status = "failed"
             self._next_action = "review_settings"
@@ -1485,13 +1997,13 @@ class NotesSyncRuntimeOwner:
             return
         if marker is None:
             try:
-                await asyncio.to_thread(self._migrate_legacy)
+                await self._maintenance_offload(self._migrate_legacy)
                 if not self._cutover_admitted:
                     self._status = "awaiting_cutover"
                     self._next_action = "finish_upgrade"
                     return
                 marker = NotesSyncStoreSetting("cutover_marker", CUTOVER_MARKER)
-                await asyncio.to_thread(
+                await self._maintenance_offload(
                     self._store.set_setting,
                     marker,
                 )
@@ -1518,7 +2030,7 @@ class NotesSyncRuntimeOwner:
             self._root_paths = {
                 root_id: root.canonical_path for root_id, root in roots.items()
             }
-            incomplete_operations = await asyncio.to_thread(
+            incomplete_operations = await self._maintenance_offload(
                 self._store.list_incomplete_operations
             )
         except Exception:
@@ -1583,7 +2095,12 @@ class NotesSyncRuntimeOwner:
         self._start_watcher()
 
     def _start_watcher(self) -> None:
-        if self._closing or not self._admission_open or not self._leases:
+        if (
+            self._closing
+            or self._maintenance_closed
+            or not self._admission_open
+            or not self._leases
+        ):
             return
         if self._watcher_task is not None and not self._watcher_task.done():
             return
@@ -1602,12 +2119,12 @@ class NotesSyncRuntimeOwner:
             self._next_action = "sync_now"
 
     async def _load_roots(self) -> dict[str, NotesSyncRootRecord]:
-        summaries = await asyncio.to_thread(self._store.list_root_summaries)
+        summaries = await self._maintenance_offload(self._store.list_root_summaries)
         roots: dict[str, NotesSyncRootRecord] = {}
         for summary in summaries:
             if summary.state is NotesSyncRootState.DISCONNECTED:
                 continue
-            roots[summary.root_id] = await asyncio.to_thread(
+            roots[summary.root_id] = await self._maintenance_offload(
                 self._store.get_root, summary.root_id
             )
         return roots
@@ -1628,7 +2145,7 @@ class NotesSyncRuntimeOwner:
             self._admission_reasons.pop(root.root_id, None)
             return True
         assert self._coordinator is not None
-        admission = await asyncio.to_thread(
+        admission = await self._maintenance_offload(
             self._coordinator.try_acquire,
             root.canonical_path,
             lasting_roots=tuple(
@@ -1795,6 +2312,7 @@ class NotesSyncRuntimeOwner:
             if plan is not None and callable(release):
                 release(plan.observation_token)
 
+    @producer_call
     async def review_setup(self, setup: NotesSyncRootSetup) -> ReconciliationPlan:
         """Review a new local root without persisting root or note/file changes."""
 
@@ -1831,6 +2349,9 @@ class NotesSyncRuntimeOwner:
                 state=NotesSyncRootState.PENDING,
             )
             self._root_paths[root_id] = setup.canonical_path
+            # task-32535: the pass runs during this review, so the flag has
+            # to be known before the folder is observed.
+            self._adapter.remember_obsidian_mode(root_id, setup.obsidian_mode)
             # TASK-32243: one release for every failure. The lease refusal used
             # to skip this, leaking `_root_paths` and rejecting the same folder
             # as `lasting_root_overlap` for the rest of the session.
@@ -1854,6 +2375,7 @@ class NotesSyncRuntimeOwner:
         finally:
             self._finish_task(root_id, task)
 
+    @producer_call
     async def abandon_setup(self, root_id: str) -> None:
         """Release one unpersisted setup review and its provisional lease."""
 
@@ -1867,7 +2389,7 @@ class NotesSyncRuntimeOwner:
 
         lease = self._leases.get(root_id)
         if lease is not None and self._coordinator is not None:
-            await asyncio.to_thread(
+            await self._maintenance_offload(
                 self._coordinator.close_admission, lease, lambda: None
             )
         self._leases.pop(root_id, None)
@@ -1880,7 +2402,7 @@ class NotesSyncRuntimeOwner:
     async def _retire_failed_setup(self, root_id: str) -> None:
         """Retire a persisted setup after proving no folder authority remains."""
 
-        await asyncio.to_thread(
+        await self._maintenance_offload(
             self._store.transition_root,
             root_id,
             NotesSyncRootState.DISCONNECTED,
@@ -1889,12 +2411,13 @@ class NotesSyncRuntimeOwner:
         self._blocked_roots.discard(root_id)
         self._durably_blocked_roots.discard(root_id)
 
+    @producer_call
     async def check_root(self, root_id: str) -> ReconciliationPlan:
         """Perform one fresh, mutation-free complete reconciliation."""
 
         task = self._admit_task(root_id)
         try:
-            root = await asyncio.to_thread(self._store.get_root, root_id)
+            root = await self._maintenance_offload(self._store.get_root, root_id)
             migration_candidate = (
                 root.state is NotesSyncRootState.PAUSED
                 and root.last_status_code == "migration_review_required"
@@ -1904,7 +2427,7 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("sync_root_not_active")
             if not await self._ensure_lease(root):
                 raise self._refuse_lease(root_id)
-            incomplete = await asyncio.to_thread(self._store.list_incomplete_operations)
+            incomplete = await self._maintenance_offload(self._store.list_incomplete_operations)
             root_operations = tuple(
                 operation for operation in incomplete if operation.root_id == root_id
             )
@@ -1946,6 +2469,7 @@ class NotesSyncRuntimeOwner:
         finally:
             self._finish_task(root_id, task)
 
+    @producer_call
     async def request_sync_now(self, root_id: str) -> ReconciliationPlan:
         """Alias for a fresh mutation-free manual review check."""
 
@@ -1957,6 +2481,7 @@ class NotesSyncRuntimeOwner:
             self._start_watcher()
         return plan
 
+    @producer_call
     async def conflict_labels(
         self,
         root_id: str,
@@ -1987,7 +2512,7 @@ class NotesSyncRuntimeOwner:
                     state=NotesSyncRootState.PENDING,
                 )
             else:
-                root = await asyncio.to_thread(self._store.get_root, root_id)
+                root = await self._maintenance_offload(self._store.get_root, root_id)
                 if root.state is not NotesSyncRootState.ACTIVE:
                     raise RuntimeError("sync_root_not_active")
             if root.root_id != root_id:
@@ -2020,6 +2545,143 @@ class NotesSyncRuntimeOwner:
                     release(observed_token)
             self._finish_task(root_id, task)
 
+    @producer_call
+    async def binding_labels(
+        self,
+        root_id: str,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[RuntimeBindingLabel, ...]:
+        """Name reviewed bindings by path and folder under current review authority.
+
+        Like :meth:`conflict_labels`, the folder is re-observed and the plan
+        must still equal the reviewed one -- a label for a file that changed
+        since the check is refused as ``stale_review``, never guessed.
+        """
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(binding_ids) is not tuple:
+            raise TypeError("binding_ids must be a tuple")
+        for binding_id in binding_ids:
+            validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        task = self._admit_task(root_id)
+        observed_token: str | None = None
+        try:
+            setup_review = self._setup_reviews.get(root_id)
+            reviewed = (
+                setup_review.plan
+                if setup_review is not None
+                else self._reviews.get(root_id)
+            )
+            if reviewed is None:
+                raise ValueError("stale_review")
+            root_name: str | None = None
+            if setup_review is not None:
+                setup = setup_review.setup
+                root = NotesSyncRootRecord(
+                    root_id=root_id,
+                    note_scope_id=setup.note_scope_id,
+                    logical_folder_id=None,
+                    canonical_path=setup.canonical_path,
+                    direction=setup.direction,
+                    state=NotesSyncRootState.PENDING,
+                )
+                root_name = setup.display_name
+            else:
+                root = await self._maintenance_offload(self._store.get_root, root_id)
+                if root.state is not NotesSyncRootState.ACTIVE and not (
+                    root.state is NotesSyncRootState.PAUSED
+                    and root.last_status_code == "migration_review_required"
+                ):
+                    raise RuntimeError("sync_root_not_active")
+            if root.root_id != root_id:
+                raise RuntimeError("root_authority_mismatch")
+            self._require_authority(root_id, "plan")
+            observations = await self._adapter.observe_root(root)
+            observed_token = _observation_token(observations)
+            plan = plan_reconciliation(observations)
+            self._require_authority(root_id, "plan")
+            if observations.root_id != root_id or plan.root_id != root_id:
+                raise RuntimeError("root_observation_mismatch")
+            if observations.direction is not root.direction:
+                raise RuntimeError("root_direction_changed")
+            if plan != reviewed:
+                raise ValueError("stale_review")
+            labels = await self._adapter.build_binding_labels(
+                root, plan, binding_ids, root_name=root_name
+            )
+            if (
+                type(labels) is not tuple
+                or any(type(label) is not RuntimeBindingLabel for label in labels)
+                or tuple(label.binding_id for label in labels) != binding_ids
+            ):
+                raise RuntimeError("invalid_binding_label_projection")
+            return labels
+        finally:
+            if observed_token is not None:
+                release = getattr(self._adapter, "release_observation", None)
+                if callable(release):
+                    release(observed_token)
+            self._finish_task(root_id, task)
+
+    async def _read_receipt_labels(
+        self, root_id: str, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeReceiptLabel, ...]:
+        """Project labels within the public receipt request's admitted lifetime."""
+
+        root = await self._maintenance_offload(self._store.get_root, root_id)
+        if root.root_id != root_id:
+            raise RuntimeError("root_authority_mismatch")
+        return await self._adapter.build_receipt_labels(
+            root, binding_ids, offload=self._maintenance_offload
+        )
+
+    @producer_call
+    async def write_receipts(
+        self, root_id: str, *, limit: int = 20
+    ) -> tuple[RuntimeWriteReceipt, ...]:
+        """Return one root's newest completed writes, labelled (task-32534 AC#3)."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        # Paused roots retain their history; global maintenance still fences
+        # this whole read, including an empty completed-operation history.
+        self._require_cutover(root_id)
+        task = self._register_task(root_id)
+        try:
+            completed = await self._maintenance_offload(
+                self._store.list_completed_operations, root_id, limit=limit
+            )
+            binding_ids = tuple(
+                dict.fromkeys(
+                    operation.binding_id
+                    for operation in completed
+                    if operation.binding_id is not None
+                )
+            )
+            labels = {
+                label.binding_id: label
+                for label in (
+                    await self._read_receipt_labels(root_id, binding_ids)
+                    if binding_ids
+                    else ()
+                )
+            }
+            return tuple(
+                RuntimeWriteReceipt(
+                    operation.operation_id,
+                    operation.kind,
+                    operation.completed_at,
+                    labels[operation.binding_id].relative_path,
+                    labels[operation.binding_id].note_title,
+                )
+                for operation in completed
+                if operation.binding_id in labels
+            )
+        finally:
+            self._finish_task(root_id, task)
+
+    @producer_call
     async def compare_conflict(
         self,
         root_id: str,
@@ -2035,7 +2697,7 @@ class NotesSyncRuntimeOwner:
             reviewed = self._reviews.get(root_id)
             if reviewed is None or reviewed.observation_token != observation_token:
                 raise ValueError("stale_review")
-            root = await asyncio.to_thread(self._store.get_root, root_id)
+            root = await self._maintenance_offload(self._store.get_root, root_id)
             if root.root_id != root_id:
                 raise RuntimeError("root_authority_mismatch")
             if root.state is not NotesSyncRootState.ACTIVE:
@@ -2078,6 +2740,7 @@ class NotesSyncRuntimeOwner:
                     release(observed_token)
             self._finish_task(root_id, task)
 
+    @producer_call
     async def apply_reviewed(
         self,
         root_id: str,
@@ -2107,7 +2770,7 @@ class NotesSyncRuntimeOwner:
                 raise ValueError("conflict_selection_duplicate")
             lock = self._mutation_lock(root_id)
             async with lock:
-                root = await asyncio.to_thread(self._store.get_root, root_id)
+                root = await self._maintenance_offload(self._store.get_root, root_id)
                 if root.root_id != root_id:
                     raise RuntimeError("root_authority_mismatch")
                 if root.state is not NotesSyncRootState.ACTIVE:
@@ -2437,7 +3100,7 @@ class NotesSyncRuntimeOwner:
             lock = self._mutation_lock(root.root_id)
             async with lock:
                 try:
-                    current_root = await asyncio.to_thread(
+                    current_root = await self._maintenance_offload(
                         self._store.get_root,
                         operation.root_id,
                     )
@@ -2511,7 +3174,8 @@ class NotesSyncRuntimeOwner:
 
         validate_notes_sync_opaque_id(root_id, field_name="root_id")
         if (
-            not self._admission_open
+            self._maintenance_closed
+            or not self._admission_open
             or self._status != "active"
             or self._watcher_task is None
             or self._watcher_task.done()
@@ -2527,6 +3191,108 @@ class NotesSyncRuntimeOwner:
         self._hint_tasks[root_id] = task
         return task
 
+    async def note_changed(self, note_id: str) -> tuple[str, ...]:
+        """Hint every admitted root that binds this note (task-32604).
+
+        The note side had no change producer at all: ``changed_root_ids``
+        signs filesystem metadata only, so the polling watcher was the sole
+        source of hints and a note edited in Chatbook left its root looking
+        unchanged -- the planner's pending ``update_file`` was never run and
+        the file kept its old bytes until something touched the disk. This
+        is the note-side producer for the SAME mechanism the watcher drives
+        (:meth:`schedule_hint`), so both sides converge on one automatic
+        pass with one set of gates.
+
+        Args:
+            note_id: The note a caller just persisted.
+
+        Returns:
+            tuple[str, ...]: The root ids that were hinted, for callers that
+            report or test the signal.
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        if not self._admission_open or self._status != "active":
+            return ()
+        hinted: list[str] = []
+        for root_id in self._watchable_root_ids():
+            bound = await asyncio.to_thread(
+                self._store.active_binding_note_ids, root_id
+            )
+            if note_id in bound and self.schedule_hint(root_id) is not None:
+                hinted.append(root_id)
+        return tuple(hinted)
+
+    @producer_call
+    async def note_file_location(self, note_id: str) -> str:
+        """Return the file this note is kept in step with, or ``""``.
+
+        task-32640: the note editor says which of the three worlds the open
+        note lives in, and a synced note's line names its file. The answer
+        is read live, per ask -- the binding from the store and the root's
+        path from ``_root_paths``, which ``_start_once`` fills from the same
+        records the watcher leases. Nothing is cached for the editor, so a
+        note that is bound, retargeted or disconnected while it is open
+        cannot leave a stale sentence on screen.
+
+        Every LOADED root is considered, not only the watchable ones: a
+        paused or blocked root still holds the file the note lives in, and
+        the editor's question is where the note is, not whether anything is
+        watching it. Whether it is being watched is the root row's job.
+
+        Args:
+            note_id: The open note.
+
+        Returns:
+            The absolute path of the bound file, or ``""`` when no active
+            binding claims this note (the database-only world).
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        if self._closing:
+            return ""
+        binding = await self._maintenance_offload(
+            self._store.active_binding_path_for_note, note_id
+        )
+        if binding is None:
+            return ""
+        root_id, relative_path = binding
+        root_path = self._root_paths.get(root_id)
+        return "" if not root_path else str(Path(root_path) / relative_path)
+
+    def folder_is_sync_root(self, folder: str | Path) -> bool:
+        """Is this folder already covered by a lasting-sync root (task-32641)?
+
+        Import once asks before the review, so the duplicate-vault case
+        (task-32605, task-32637) is named where the user can still choose
+        differently. True for the root itself and for anything inside it --
+        importing a sub-folder of a synced vault duplicates it just as
+        thoroughly as importing the vault.
+
+        Args:
+            folder: The candidate folder.
+
+        Returns:
+            True when a loaded root is this folder or an ancestor of it.
+        """
+        try:
+            candidate = Path(folder).resolve()
+        except (OSError, RuntimeError, ValueError):
+            return False
+        for root_path in self._root_paths.values():
+            try:
+                if candidate.is_relative_to(Path(root_path).resolve()):
+                    return True
+            except (OSError, RuntimeError, ValueError):
+                continue
+        return False
+
     def _watchable_root_ids(self) -> tuple[str, ...]:
         return tuple(
             sorted(
@@ -2537,6 +3303,8 @@ class NotesSyncRuntimeOwner:
         )
 
     def _changed_root_ids(self) -> tuple[str, ...]:
+        if self._maintenance_closed:
+            return ()
         source = getattr(self._adapter, "changed_root_ids", None)
         if not callable(source):
             return ()
@@ -2553,11 +3321,11 @@ class NotesSyncRuntimeOwner:
         try:
             while self._admission_open and root_id not in self._blocked_roots:
                 self._dirty_hints.discard(root_id)
-                root = await asyncio.to_thread(self._store.get_root, root_id)
+                root = await self._maintenance_offload(self._store.get_root, root_id)
                 if root.state is not NotesSyncRootState.ACTIVE:
                     break
                 await self._reconcile(root, automatic=True)
-                if root_id not in self._dirty_hints:
+                if self._maintenance_closed or root_id not in self._dirty_hints:
                     break
         except RuntimeError as error:
             self._blocked_roots.add(root_id)
@@ -2583,6 +3351,7 @@ class NotesSyncRuntimeOwner:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    @producer_call
     async def pause_root(self, root_id: str) -> NotesSyncControlResult:
         self._require_cutover(root_id)
         task = self._register_task(root_id)
@@ -2590,13 +3359,13 @@ class NotesSyncRuntimeOwner:
             self._closed_roots.add(root_id)
             self._blocked_roots.add(root_id)
             await self._settle_root(root_id)
-            await asyncio.to_thread(
+            await self._maintenance_offload(
                 self._store.transition_root, root_id, NotesSyncRootState.PAUSED
             )
             lease = self._leases.pop(root_id, None)
             self._admissions.pop(root_id, None)
             if lease is not None and self._coordinator is not None:
-                await asyncio.to_thread(
+                await self._maintenance_offload(
                     self._coordinator.close_admission, lease, lambda: None
                 )
             await self._publish(root_id, "paused", "resume_sync")
@@ -2604,13 +3373,14 @@ class NotesSyncRuntimeOwner:
         finally:
             self._finish_task(root_id, task)
 
+    @producer_call
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object:
         """Resolve one explicit durable cleanup action under root authority."""
 
         task = self._admit_task(root_id)
         try:
-            root = await asyncio.to_thread(self._store.get_root, root_id)
-            operation = await asyncio.to_thread(self._store.get_operation, operation_id)
+            root = await self._maintenance_offload(self._store.get_root, root_id)
+            operation = await self._maintenance_offload(self._store.get_operation, operation_id)
             if operation.root_id != root_id:
                 raise ValueError("operation_root_mismatch")
             if root.state is not NotesSyncRootState.ACTIVE:
@@ -2639,6 +3409,7 @@ class NotesSyncRuntimeOwner:
         finally:
             self._finish_task(root_id, task)
 
+    @producer_call
     async def resume_root(self, root_id: str) -> NotesSyncControlResult:
         self._require_cutover(root_id)
         task = self._register_task(root_id)
@@ -2648,7 +3419,7 @@ class NotesSyncRuntimeOwner:
             self._finish_task(root_id, task)
 
     async def _resume_root(self, root_id: str) -> NotesSyncControlResult:
-        root = await asyncio.to_thread(self._store.get_root, root_id)
+        root = await self._maintenance_offload(self._store.get_root, root_id)
         if root.state is not NotesSyncRootState.PAUSED:
             return NotesSyncControlResult(False, "needs_attention", "review_settings")
         self._closed_roots.discard(root_id)
@@ -2667,7 +3438,7 @@ class NotesSyncRuntimeOwner:
         # then takes exactly the mutation-free manual check an active
         # root's Check changes takes, so clean, safe-change, attention and
         # failed outcomes all read the way they do for any other active root.
-        active = await asyncio.to_thread(
+        active = await self._maintenance_offload(
             self._store.transition_root, root_id, NotesSyncRootState.ACTIVE
         )
         self._blocked_roots.discard(root_id)
@@ -2682,6 +3453,7 @@ class NotesSyncRuntimeOwner:
         self._start_watcher()
         return NotesSyncControlResult(True, current.status, current.next_action)
 
+    @producer_call
     async def activate_root(
         self, root_id: str, authorization: object
     ) -> NotesSyncControlResult:
@@ -2717,7 +3489,7 @@ class NotesSyncRuntimeOwner:
         else:
             setup = None
             reviewed = self._reviews.get(root_id)
-            root = await asyncio.to_thread(self._store.get_root, root_id)
+            root = await self._maintenance_offload(self._store.get_root, root_id)
             if not (
                 root.state is NotesSyncRootState.PAUSED
                 and root.last_status_code == "migration_review_required"
@@ -2743,7 +3515,7 @@ class NotesSyncRuntimeOwner:
         logical_folder_id: str | None = root.logical_folder_id
         try:
             if setup is not None:
-                root = await asyncio.to_thread(self._store.create_root, root)
+                root = await self._maintenance_offload(self._store.create_root, root)
                 persisted = True
             logical_folder_id, folder_receipt = await self._adapter.create_root_folder(
                 display_name
@@ -2751,7 +3523,7 @@ class NotesSyncRuntimeOwner:
             validate_notes_sync_opaque_id(
                 logical_folder_id, field_name="logical_folder_id"
             )
-            await asyncio.to_thread(
+            await self._maintenance_offload(
                 self._store.assign_root_folder, root_id, logical_folder_id
             )
             attached = True
@@ -2765,7 +3537,7 @@ class NotesSyncRuntimeOwner:
                 if action.kind in _EXECUTABLE_ACTIONS
             )
             if setup is not None:
-                active_root = await asyncio.to_thread(
+                active_root = await self._maintenance_offload(
                     self._store.transition_root,
                     root_id,
                     NotesSyncRootState.ACTIVE,
@@ -2776,7 +3548,7 @@ class NotesSyncRuntimeOwner:
                 # `_review_candidate` and `_fresh_authority` already made one
                 # each, and those genuinely consume every column) and the
                 # only one that keeps a single field per record.
-                candidate_ids = await asyncio.to_thread(
+                candidate_ids = await self._maintenance_offload(
                     self._store.candidate_binding_ids, root_id
                 )
                 reviewed_binding_ids = {
@@ -2786,7 +3558,7 @@ class NotesSyncRuntimeOwner:
                 }
                 if not set(candidate_ids) <= reviewed_binding_ids:
                     raise ValueError("stale_review")
-                active_root = await asyncio.to_thread(
+                active_root = await self._maintenance_offload(
                     self._store.activate_migration_candidate,
                     root_id,
                     logical_folder_id,
@@ -2807,7 +3579,7 @@ class NotesSyncRuntimeOwner:
                     await self._adapter.rollback_root_folder(folder_receipt)
                 except Exception:
                     if persisted and logical_folder_id is not None:
-                        await asyncio.to_thread(
+                        await self._maintenance_offload(
                             self._store.record_root_activation_recovery,
                             root_id,
                             logical_folder_id,
@@ -2825,7 +3597,7 @@ class NotesSyncRuntimeOwner:
                     await self._retire_failed_setup(root_id)
                     return NotesSyncControlResult(False, "failed", "review_settings")
             if attached and persisted and logical_folder_id is not None:
-                await asyncio.to_thread(
+                await self._maintenance_offload(
                     self._store.record_root_activation_recovery,
                     root_id,
                     logical_folder_id,
@@ -2881,11 +3653,13 @@ class NotesSyncRuntimeOwner:
         self._start_watcher()
         return NotesSyncControlResult(True, "up_to_date", "sync_now", applied_count)
 
+    @producer_call
     async def retarget_root(
         self, root_id: str, *_args: object
     ) -> NotesSyncControlResult:
         return await self._blocked_control(root_id)
 
+    @producer_call
     async def disconnect_root(
         self, root_id: str, *_args: object
     ) -> NotesSyncControlResult:
@@ -2964,7 +3738,7 @@ class NotesSyncRuntimeOwner:
         persist: bool = True,
     ) -> None:
         if persist:
-            await asyncio.to_thread(self._store.update_root_status, root_id, status)
+            await self._maintenance_offload(self._store.update_root_status, root_id, status)
         self._root_status[root_id] = NotesSyncRootRuntimeSnapshot(
             root_id, status, next_action, action_id
         )
@@ -3008,6 +3782,10 @@ class NotesSyncRuntimeOwner:
         ):
             await asyncio.gather(self._start_task, return_exceptions=True)
         await self.settle()
+        # Cancelling an awaiting command does not end its shielded native read.
+        # Retire those workers before closing adapter resources or store caches.
+        while self._maintenance_pending:
+            await asyncio.gather(*tuple(self._maintenance_pending), return_exceptions=True)
         close_adapter = getattr(self._adapter, "close", None)
         if callable(close_adapter):
             try:
@@ -3018,7 +3796,7 @@ class NotesSyncRuntimeOwner:
         if self._coordinator is not None:
             for root_id, lease in tuple(self._leases.items()):
                 try:
-                    await asyncio.to_thread(
+                    await self._maintenance_offload(
                         self._coordinator.close_admission, lease, lambda: None
                     )
                 except Exception:
@@ -3032,7 +3810,7 @@ class NotesSyncRuntimeOwner:
         close_store = getattr(self._store, "close", None)
         if callable(close_store):
             try:
-                await asyncio.to_thread(close_store)
+                await self._maintenance_offload(close_store)
             except Exception:
                 pass
         if close_failed:
@@ -3041,6 +3819,38 @@ class NotesSyncRuntimeOwner:
             return
         self._status = "stopped"
         self._next_action = "none"
+
+
+def _receipt_ledger_reader(
+    ledger_path: Path,
+) -> Callable[[tuple[ImportSource, ...]], Mapping[str, "PriorImportObservation"]]:
+    """Read Import once's receipt ledger, importing it only on first use.
+
+    ADR-097: this module is resident at ``_ui_ready``, so a module-level
+    import of ``note_import_receipts`` would drag it -- and the execution
+    models it pulls in -- onto the boot path for a read that only ever
+    happens during a sync pass.
+
+    Args:
+        ledger_path: Database file holding Import once's receipts.
+
+    Returns:
+        A callable mapping discovered sources to their prior-import
+        observations.
+    """
+
+    def _read(
+        sources: tuple[ImportSource, ...],
+    ) -> Mapping[str, "PriorImportObservation"]:
+        from tldw_chatbook.Notes.note_import_receipts import (
+            NoteImportReceiptRepository,
+        )
+
+        return NoteImportReceiptRepository(
+            ledger_path
+        ).prior_imported_notes_read_only(sources)
+
+    return _read
 
 
 def build_notes_sync_runtime_owner(
@@ -3087,6 +3897,8 @@ def build_notes_sync_runtime_owner(
             notes_scope_service,
             local_user_id=local_user_id,
             recovery_capacity_bytes=recovery_capacity_bytes,
+            # task-32605: Import once's receipt ledger is in this same file.
+            prior_imports=_receipt_ledger_reader(path),
         )
     selected_coordinator = coordinator or (
         lambda: NotesSyncRootCoordinator(path.parent / "notes_sync_locks")
@@ -3157,9 +3969,11 @@ __all__ = [
     "NotesSyncControlResult",
     "NotesSyncRootRuntimeSnapshot",
     "NotesSyncRootSetup",
+    "RuntimeBindingLabel",
     "RuntimeConflictHistoryRow",
     "RuntimeConflictLabel",
     "RuntimeConflictReceipt",
+    "RuntimeWriteReceipt",
     "NotesSyncRuntimeOwner",
     "NotesSyncRuntimeSnapshot",
     "build_notes_sync_legacy_migrator",

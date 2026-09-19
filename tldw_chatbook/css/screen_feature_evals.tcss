@@ -62,6 +62,12 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -70,6 +76,8 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -87,6 +95,115 @@ $ds-space-inset: $ds-space-1;
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
+$ds-width-full: 100%;
+$ds-width-fill: 1fr;
+$ds-width-auto: auto;
+$ds-height-auto: auto;
+
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-22: 22;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-25: 25;
+$ds-size-26: 26;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-35: 35;
+$ds-size-36: 36;
+$ds-size-38: 38;
+$ds-size-40: 40;
+$ds-size-42: 42;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-46: 46;
+$ds-size-48: 48;
+$ds-size-50: 50;
+$ds-size-52: 52;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-80: 80;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-splash-progress-cap: 100;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+$ds-percent-25: 25%;
+$ds-percent-30: 30%;
+$ds-percent-40: 40%;
+$ds-percent-42: 42%;
+$ds-percent-45: 45%;
+$ds-percent-50: 50%;
+$ds-percent-70: 70%;
+$ds-percent-75: 75%;
+$ds-percent-80: 80%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-92: 92%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-3: 3fr;
+$ds-fr-13: 13fr;
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-research-chat-pane-floor: 58;
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+$ds-new-ingest-scrollbar-gutter: 6px;
+$ds-conversations-ai-generate-share: 12%;
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
+$ds-widgets-skeleton-title-share: 60%;
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
+$ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -106,6 +223,61 @@ $ds-sidebar-width: 25%;
 $ds-sidebar-min-width: 35;
 $ds-sidebar-max-width: 80;
 
+$ds-theme-preset-blues-0: #0099FF;
+$ds-theme-preset-blues-1: #006FB3;
+$ds-theme-preset-blues-2: #004D80;
+$ds-theme-preset-blues-3: #003366;
+$ds-theme-preset-blues-4: #002244;
+$ds-theme-preset-greens-0: #00CC66;
+$ds-theme-preset-greens-1: #009944;
+$ds-theme-preset-greens-2: #006633;
+$ds-theme-preset-greens-3: #004422;
+$ds-theme-preset-greens-4: #002211;
+$ds-theme-preset-reds-0: #FF3333;
+$ds-theme-preset-reds-1: #CC0000;
+$ds-theme-preset-reds-2: #990000;
+$ds-theme-preset-reds-3: #660000;
+$ds-theme-preset-reds-4: #330000;
+$ds-theme-preset-purples-0: #9966FF;
+$ds-theme-preset-purples-1: #7744DD;
+$ds-theme-preset-purples-2: #5522BB;
+$ds-theme-preset-purples-3: #330099;
+$ds-theme-preset-purples-4: #220066;
+$ds-theme-preset-grays-0: #FFFFFF;
+$ds-theme-preset-grays-1: #CCCCCC;
+$ds-theme-preset-grays-2: #999999;
+$ds-theme-preset-grays-3: #666666;
+$ds-theme-preset-grays-4: #333333;
+$ds-theme-preset-material-0: #2196F3;
+$ds-theme-preset-material-1: #4CAF50;
+$ds-theme-preset-material-2: #FF9800;
+$ds-theme-preset-material-3: #F44336;
+$ds-theme-preset-material-4: #9C27B0;
+$ds-theme-preset-pastels-0: #FFB3BA;
+$ds-theme-preset-pastels-1: #BAFFC9;
+$ds-theme-preset-pastels-2: #BAE1FF;
+$ds-theme-preset-pastels-3: #FFFFBA;
+$ds-theme-preset-pastels-4: #FFDFBA;
+$ds-theme-preset-dark-0: #1A1A1A;
+$ds-theme-preset-dark-1: #2D2D2D;
+$ds-theme-preset-dark-2: #404040;
+$ds-theme-preset-dark-3: #525252;
+$ds-theme-preset-dark-4: #656565;
+$ds-theme-preview-dark-ink: #000000;
+$ds-theme-preview-light-ink: #FFFFFF;
+$ds-theme-preview-invalid: #808080;
+
+$ds-console-settings-wide-max-width: 196;
+
+$ds-inspector-modal-width: 120;
+$ds-inspector-modal-height: 42;
+$ds-inspector-section-width: 28;
+$ds-inspector-recovery-max-height: 6;
+$ds-conversation-action-width: 4;
+$ds-conversation-action-ascii-width: 9;
+$ds-inspector-usage-list-width: 60;
+$ds-conversation-menu-width: 30;
+
 
 .tldw-agentic-split-preamble-end { }
 
@@ -116,12 +288,16 @@ $ds-sidebar-max-width: 80;
  * Shared design-system classes -- .ds-panel, .destination-workbench,
  * .destination-workbench-pane, .ds-inspector, .density-compact/comfortable
  * -- are already defined in components/_agentic_terminal.tcss and
- * layout/_panes.tcss; this file only adds Evals-specific rail/pane rules.
+ * layout/_destination.tcss; this file only adds Evals-specific rail/pane rules.
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 #evals-shell {
-    height: 100%;
-    min-height: 0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
 }
 
 /* I4: panes never scrolled. Vertical's own DEFAULT_CSS is
@@ -248,26 +424,26 @@ $ds-sidebar-max-width: 80;
 }
 
 .evals-rail-section-header {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-rail-section-label {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     text-style: bold;
     color: $ds-text-primary;
 }
 
 .evals-rail-section-toggle {
-    width: 3;
-    min-width: 3;
-    max-width: 3;
-    height: 1;
-    min-height: 1;
-    padding: 0;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
+    max-width: $ds-size-3;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0;
     border: none;
 }
 
@@ -276,10 +452,10 @@ $ds-sidebar-max-width: 80;
 }
 
 .evals-rail-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     text-align: left;
     content-align: left middle;
@@ -287,7 +463,7 @@ $ds-sidebar-max-width: 80;
 
 .evals-rail-empty-copy {
     color: $ds-text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* TASK-1076: the fully-first-run "Start here" callout above the sample
@@ -299,7 +475,7 @@ $ds-sidebar-max-width: 80;
 .evals-rail-first-run-hint {
     color: $ds-text-primary;
     text-style: bold;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Task 6 (empty states, sample bench, export). "No providers configured"
@@ -309,16 +485,16 @@ $ds-sidebar-max-width: 80;
    one. These two ids only ever render together, in place of that one
    section's bench list. */
 #evals-rail-no-providers {
-    padding: 1 1 0 1;
+    padding: $ds-space-1 $ds-space-1 $ds-space-0 $ds-space-1;
 }
 
 #evals-rail-no-providers-detail {
-    padding: 0 1 1 1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
 }
 
 #evals-rail-open-settings,
 #evals-create-sample-bench {
-    margin: 0 1 1 1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
     width: auto;
 }
 
@@ -329,11 +505,11 @@ $ds-sidebar-max-width: 80;
    empty-only version; only the Python call site changed. */
 .evals-rail-empty-actions {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-rail-empty-actions > Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Task 4 (task-1482): "+ New bench"'s zero-dataset hint. Same visual
@@ -347,7 +523,7 @@ $ds-sidebar-max-width: 80;
    a second copy of that wording to a class-scoped query. */
 .evals-rail-new-bench-hint {
     color: $ds-text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* I3: the labelled subgroup separating classic (non-word-bench) tasks from
@@ -356,14 +532,14 @@ $ds-sidebar-max-width: 80;
    the empty-copy line above it, never like a selectable row. */
 .evals-rail-classic-separator {
     color: $ds-text-muted;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-pane-title {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     text-style: bold;
     color: $ds-text-primary;
 }
@@ -374,8 +550,8 @@ $ds-sidebar-max-width: 80;
 }
 
 #evals-primary-action {
-    margin: 1 0 0 0;
-    width: 100%;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    width: $ds-width-full;
 }
 
 /* task-1482 Task 7 fix round 1: `#evals-duplicate-bench`/`#evals-delete-
@@ -390,8 +566,8 @@ $ds-sidebar-max-width: 80;
    `#evals-inspector-bench` comment above). */
 #evals-duplicate-bench,
 #evals-delete-bench {
-    margin: 1 0 0 0;
-    width: 100%;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    width: $ds-width-full;
 }
 
 /* Task 4 (bench editor + readiness inspector). Status colour lives here,
@@ -431,14 +607,14 @@ $ds-sidebar-max-width: 80;
    recovery-callout`'s identical spacing just below. */
 .evals-target-continuation {
     height: auto;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 .evals-bench-target-row {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Task 6 (task-1482): targets become editable. Each row's status Static
@@ -451,7 +627,7 @@ $ds-sidebar-max-width: 80;
 }
 
 .evals-bench-target-row-wrap > .evals-bench-target-row {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .evals-bench-target-remove {
@@ -466,9 +642,9 @@ $ds-sidebar-max-width: 80;
        raising`. "Remove" is 6 cells; 10 gives it a little breathing room
        without the stock floor eating most of the row.
     */
-    width: 10;
-    min-width: 10;
-    margin: 0 0 0 1;
+    width: $ds-size-10;
+    min-width: $ds-size-10;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 #evals-bench-add-target-row {
@@ -496,17 +672,17 @@ $ds-sidebar-max-width: 80;
        from the region numbers) once a real target row was ALSO present
        (`test_every_pane_descendant_stays_within_its_pane`, using
        `seeded_bench`, a one-target bench). */
-    height: 1;
+    height: $ds-size-1;
     align: left middle;
 }
 
 #evals-bench-add-target-row > Select {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #evals-bench-add-target-row > Button {
     width: auto;
-    margin: 0 0 0 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 #evals-bench-create-target {
@@ -539,8 +715,8 @@ $ds-sidebar-max-width: 80;
 }
 
 #evals-bench-create-target-form > Input {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 #evals-bench-create-target-form > #evals-bench-create-target {
@@ -548,9 +724,9 @@ $ds-sidebar-max-width: 80;
 }
 
 .evals-classic-run-row {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Whole-branch review, task-1611 fix round (final): `BenchEditor` itself
@@ -627,18 +803,18 @@ $ds-sidebar-max-width: 80;
 .evals-bench-field-label {
     text-style: bold;
     color: $ds-text-primary;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 #evals-bench-prompt-mode {
-    width: 1fr;
-    margin-bottom: 1;
+    width: $ds-width-fill;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-bench-name,
 #evals-bench-description,
 #evals-bench-top-k {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Bounded, not the widget's own default `1fr` (textual/widgets/_text_area.
@@ -648,9 +824,9 @@ $ds-sidebar-max-width: 80;
    Mirrors mcp_profile_form.py's identical #mcp-form-args/#mcp-form-env
    fix for the same "TextArea defaults to 1fr" trap. */
 #evals-bench-probes {
-    height: 6;
-    min-height: 4;
-    margin-bottom: 1;
+    height: $ds-size-6;
+    min-height: $ds-size-4;
+    margin-bottom: $ds-space-1;
 }
 
 /* The read-only ␣-marker preview of the CURRENTLY SAVED probes (see
@@ -661,9 +837,9 @@ $ds-sidebar-max-width: 80;
    I type", so this list does not also need to grow without limit. */
 #evals-bench-probes-preview {
     height: auto;
-    max-height: 6;
+    max-height: $ds-size-6;
     overflow-y: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .evals-bench-probe-preview-row {
@@ -672,7 +848,7 @@ $ds-sidebar-max-width: 80;
 
 #evals-bench-probes-preview-empty {
     color: $ds-text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* task-1710 T2: the per-cell continuation opt-in.
@@ -693,9 +869,9 @@ $ds-sidebar-max-width: 80;
    off the bottom of a 160x45 terminal. */
 #evals-bench-capture-continuations {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-bottom: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-1;
 }
 
 /* CRITICAL, found by live verification against a real llama.cpp: the rule
@@ -753,16 +929,16 @@ $ds-sidebar-max-width: 80;
 }
 
 #evals-bench-form-error {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-bench-form-actions {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-bench-form-actions Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Task 5 (snippet editor + import). The whitespace marker itself is a
@@ -776,21 +952,21 @@ $ds-sidebar-max-width: 80;
 .evals-snippet-table-header {
     text-style: bold;
     color: $ds-text-primary;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-snippet-row {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-snippet-index {
-    width: 4;
+    width: $ds-size-4;
     color: $ds-text-muted;
 }
 
 .evals-snippet-text {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .evals-snippet-meta {
@@ -803,11 +979,11 @@ $ds-sidebar-max-width: 80;
 }
 
 #evals-snippet-warnings-summary {
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 #evals-import-snippets {
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* Task 1 (results grid + lenses). The grid fills its detail pane; the
@@ -824,14 +1000,14 @@ $ds-sidebar-max-width: 80;
        that overflow; removing the border when Evals moved onto the Lab
        frame exposed it. `1fr` takes what is left after siblings, which is
        what "fills its detail pane" means. */
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 #evals-grid-meta,
 #evals-grid-state {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
@@ -842,28 +1018,28 @@ $ds-sidebar-max-width: 80;
    same design element on both views, per the design contract's "bench
    view and run view agree on how prominently it is presented". */
 #evals-grid-canary-callout {
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* TASK-1477: the run-level failure callout -- same treatment as the
    canary callout directly above (shared .ds-recovery-callout base, same
    trailing margin so the two stack consistently when both are present). */
 #evals-grid-failure-callout {
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #evals-grid-controls {
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #evals-grid-controls > Select {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #evals-grid-table {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 /* TASK-1034 lived here: the global `*:focus { outline: solid
@@ -945,12 +1121,12 @@ $ds-sidebar-max-width: 80;
    a read-only probe preview gets of the bench editor's). */
 #evals-card-picker-rows {
     height: auto;
-    max-height: 10;
+    max-height: $ds-size-10;
     overflow-y: auto;
 }
 
 .evals-card-row {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* Task 4 (task-1691 phase 2): the character bench editor
@@ -977,7 +1153,7 @@ $ds-sidebar-max-width: 80;
 .evals-cb-field-label {
     text-style: bold;
     color: $ds-text-primary;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 #evals-cb-name,
@@ -986,11 +1162,11 @@ $ds-sidebar-max-width: 80;
 #evals-cb-seed,
 #evals-cb-temperature,
 #evals-cb-max-tokens {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-probe-set {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* The read-only ␣/⏎-marker probe listing -- one line per probe (see
@@ -1002,31 +1178,31 @@ $ds-sidebar-max-width: 80;
    reach. */
 #evals-cb-probes {
     height: auto;
-    max-height: 6;
+    max-height: $ds-size-6;
     overflow-y: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .evals-cb-target-row {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 #evals-cb-targets-empty {
     color: $ds-text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-form-error {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-form-actions {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-form-actions Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Whole-branch review Important 2 (task-1691 phase 2 fix round):
@@ -1043,7 +1219,7 @@ $ds-sidebar-max-width: 80;
 }
 
 #evals-probeset-detail-count {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Mirrors `#evals-cb-probes` exactly -- the identical bounded,
@@ -1053,7 +1229,7 @@ $ds-sidebar-max-width: 80;
    colliding. */
 #evals-probeset-detail-probes {
     height: auto;
-    max-height: 6;
+    max-height: $ds-size-6;
     overflow-y: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }

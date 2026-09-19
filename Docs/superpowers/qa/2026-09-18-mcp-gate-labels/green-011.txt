@@ -1,0 +1,17 @@
+.                                                                        [100%]
+==================================== PASSES ====================================
+____ test_master_controls_and_receipts_paint_completely[size1-textual-dark] ____
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 14:31:33.928 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 14:31:33.934 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 14:31:33.934 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 14:31:33.935 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 14:31:34.399 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:31:34.515 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+2026-09-18 14:31:34.899 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+============================= slowest 25 durations =============================
+1.63s call     Tests/UI/test_mcp_master_settings.py::test_master_controls_and_receipts_paint_completely[size1-textual-dark]
+
+(2 durations < 1s hidden.)
+1 passed in 3.38s

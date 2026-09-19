@@ -1,0 +1,16 @@
+F
+=================================== FAILURES ===================================
+_ test_provider_recovery_routes_and_restores_draft_with_current_readiness[False-size0-textual-dark] _
+Tests/UI/test_library_rag_recovery_navigation.py:123: in test_provider_recovery_routes_and_restores_draft_with_current_readiness
+    await _tab_to(
+Tests/UI/test_library_rag_history_keyboard.py:75: in _tab_to
+    raise AssertionError(stops)
+E   AssertionError: ['library-rag-scope-toggle-notes', 'library-rag-scope-toggle-media', None, 'library-rail-collapse', 'library-ingest-top-button', 'library-search-input', 'library-search-clear', 'console-rail-section-toggle-library-browse', 'library-row-browse-media', 'library-row-browse-conversations', 'library-row-browse-notes', 'library-row-browse-prompts', 'library-row-browse-skills', 'library-row-browse-collections', 'library-row-browse-search', 'console-rail-section-toggle-library-create', 'library-row-create-note', 'library-row-create-prompt', 'library-row-create-skill', 'console-rail-section-toggle-library-study', 'library-row-create-study', 'library-row-create-flashcards', 'library-row-create-quizzes', 'console-rail-section-toggle-library-ingest', 'library-row-ingest-import-media', 'library-row-ingest-export', 'console-rail-section-toggle-library-details', 'library-search-rag-panel', 'library-rag-mode-toggle', 'library-rag-query-input']
+============================= slowest 25 durations =============================
+5.99s call     Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[False-size0-textual-dark]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[False-size0-textual-dark]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 16 deselected in 7.33s

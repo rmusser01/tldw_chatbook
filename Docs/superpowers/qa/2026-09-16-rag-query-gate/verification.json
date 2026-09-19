@@ -1,0 +1,15 @@
+{
+  "base_commit": "d6b8ea2566cc3c7c47709b025a6af774a8ba620c",
+  "targeted_command": ".venv/bin/python -m pytest Tests/UI/test_library_rag_query_gate_race.py Tests/UI/test_library_rag_keystroke.py Tests/UI/test_product_maturity_gate16_library_search_rag.py Tests/Library/test_library_rag_state.py Tests/UI/test_design_token_governance.py Tests/UI/test_css_bundle_sync_guard.py --deselect Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional --deselect Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_o_on_focused_card_opens_like_button -q --tb=short --show-capture=no",
+  "result": "275 passed, 2 deselected in 147.45s",
+  "full_suite_run": false,
+  "native_final_profile": "/private/tmp/tldw-2530-run-004",
+  "sha256": {
+    "tldw_chatbook/Library/library_rag_state.py": "b5a04fd0130250015078a32d11d9ff57109a60f190158e0867065592f419c6c0",
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": "7baeb9382eafa885246824fe317c6aa4cb29be14c267e77a90f319427e445b63",
+    "Tests/UI/test_library_rag_query_gate_race.py": "d27487e1dd639bb3b50533685146b717df897cb914d294bd2b3304989af6dae9",
+    "Tests/UI/test_product_maturity_gate16_library_search_rag.py": "0dad462bf3b07b85664e885aafb9cebc6028d4b6a67689b54d15016915070b86",
+    "Tests/Library/test_library_rag_state.py": "2370ed564e21a99ba9eb814f351da68653a628fccc76289e5543d1f65bc4d1a6",
+    "Docs/superpowers/qa/2026-09-16-rag-query-gate/native_check.py": "1e006b30f9adbee7dc7430021b67e4323fca6bc7b2a236e5d1b29215ba10edeb"
+  }
+}

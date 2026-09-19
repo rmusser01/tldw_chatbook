@@ -1,0 +1,154 @@
+[
+  {
+    "path": "Tests/UI/test_library_entry_compose_once.py",
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "new_diagnostics": [],
+    "format": [
+      {
+        "function": "test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_route_replace",
+        "formatted": true
+      },
+      {
+        "function": "test_library_notes_recompose_does_not_steal_newer_focus",
+        "formatted": true
+      },
+      {
+        "function": "test_pending_conversation_open_cannot_overwrite_same_route_user_selection",
+        "formatted": true
+      }
+    ]
+  },
+  {
+    "path": "Tests/UI/test_library_footer_focus.py",
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "new_diagnostics": [],
+    "format": [
+      {
+        "function": "_fake",
+        "formatted": true
+      }
+    ]
+  },
+  {
+    "path": "Tests/UI/test_library_prompts_canvas.py",
+    "baseline_diagnostics": 24,
+    "current_diagnostics": 24,
+    "new_diagnostics": [],
+    "format": [
+      {
+        "function": "_css_block",
+        "formatted": true
+      },
+      {
+        "function": "test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed",
+        "formatted": true
+      },
+      {
+        "function": "test_prompt_selection_navigation_context_clears_only_after_admission",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompts_unmount_revokes_late_apply_before_workspace_shutdown",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompts_stale_search_cannot_restore_an_old_filter_caret",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_row_class_matches_notes_row_visual_parity",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompts_header_filter_empty_have_css_blocks",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_editor_field_css_blocks_match_notes_editor_parity",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_field_hint_css_block_matches_field_label_parity",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompts_import_row_css_blocks_match_filter_status_parity",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_bulk_delete_focus_and_refresh_are_exactly_once",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_delete_refreshes_applied_final_page_once_and_clamps",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_delete_refresh_failure_keeps_reconciled_page_read_only",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_import_blocks_undo_until_import_settles",
+        "formatted": true
+      },
+      {
+        "function": "test_cancelled_prompt_import_retains_writer_ownership_until_commit",
+        "formatted": true
+      },
+      {
+        "function": "test_library_prompt_save_write_time_conflict_shows_conflict_bar",
+        "formatted": true
+      },
+      {
+        "function": "test_library_shell_create_prompt_save_creates_and_increments_count",
+        "formatted": true
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_browse_route_swap.py",
+    "baseline_diagnostics": 10,
+    "current_diagnostics": 10,
+    "new_diagnostics": [],
+    "format": [
+      {
+        "function": "_adopt_library_browse_canvas",
+        "formatted": true
+      },
+      {
+        "function": "swap_library_browse_route",
+        "formatted": true
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "baseline_diagnostics": 16,
+    "current_diagnostics": 16,
+    "new_diagnostics": [],
+    "format": [
+      {
+        "function": "_sync_library_prompt_save_action_widgets",
+        "formatted": true
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "baseline_diagnostics": 205,
+    "current_diagnostics": 205,
+    "new_diagnostics": [],
+    "format": [
+      {
+        "function": "_refresh_library_visit_surfaces",
+        "formatted": true
+      },
+      {
+        "function": "_reconcile_library_entry_state",
+        "formatted": true
+      }
+    ]
+  }
+]

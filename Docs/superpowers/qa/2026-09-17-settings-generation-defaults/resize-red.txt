@@ -1,0 +1,25 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_generation_resize_and_explicit_collapse_keep_state[textual-dark] _____
+Tests/UI/test_settings_generation_default_journeys.py:211: in test_generation_resize_and_explicit_collapse_keep_state
+    _assert_painted(host.screen, field)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: ('settings-model-profile-temperature', Region(x=44, y=72, width=29, height=1))
+E   assert None is not None
+____ test_generation_resize_and_explicit_collapse_keep_state[textual-light] ____
+Tests/UI/test_settings_generation_default_journeys.py:211: in test_generation_resize_and_explicit_collapse_keep_state
+    _assert_painted(host.screen, field)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: ('settings-model-profile-temperature', Region(x=44, y=72, width=29, height=1))
+E   assert None is not None
+============================= slowest 25 durations =============================
+12.47s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_resize_and_explicit_collapse_keep_state[textual-dark]
+12.36s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_resize_and_explicit_collapse_keep_state[textual-light]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_resize_and_explicit_collapse_keep_state[textual-dark]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_resize_and_explicit_collapse_keep_state[textual-light]
+2 failed, 13 deselected in 26.66s

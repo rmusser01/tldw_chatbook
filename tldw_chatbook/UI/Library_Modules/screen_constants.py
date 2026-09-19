@@ -64,7 +64,13 @@ LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
     # the notes reader laid out 32/18 with nothing in the work pane.
     list_first_when_empty=True,
 )
-LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=30)
+# task-32614: was ``work_min_width=30`` -- the lowest floor of any Library
+# destination, and the reason a 100-column terminal split this pane 56/34 and
+# folded a vault path over six rows in what is left. 44 is the shared default
+# (``READER_COMFORT_WIDTH``); at 100 columns the split becomes 46/44 and at
+# 235 and 60 nothing moves. Kept in step with the standalone-harness profile
+# in ``library_file_notes_workspace._apply_responsive_layout``.
+LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile()
 LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
@@ -203,6 +209,16 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 LIBRARY_PROMPT_DIRTY_VETO_COPY = (
     "Unsaved Prompt changes — Save or Discard changes first."
 )
+# task-32461: the same veto, refusing a deep link INTO a prompt
+# (``_open_library_item_by_id``, the Search/RAG "Open" and entry-reconcile
+# route) rather than an exit out of one. The controller's ruling: that
+# refusal explains rather than evaporating -- a link that vanishes is the
+# same click-does-nothing defect one layer out -- so it names what it did
+# not open. ``{target}`` is the blocked prompt, in the editor's own
+# unresolved-name shape ("Prompt 7"); nothing is queued for after the save.
+LIBRARY_PROMPT_ENTRY_DIRTY_VETO_COPY = (
+    "Can't open {target} — Save or Discard the open Prompt first."
+)
 # task-32393: the footer's Escape chip while that veto is in force. "esc back to
 # list" is a promise the key will refuse to keep once the editor is dirty, which
 # is the same lie task-31271/31272 closed at the other Library seams -- so the
@@ -244,6 +260,8 @@ LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
 LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
 LIBRARY_HUB_RECENT_LABEL_WIDTH = 32
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
+LIBRARY_CONVERSATION_HANDOFF_EXCERPT_CHARS = 3_000
+LIBRARY_CONVERSATION_HANDOFF_SENDER_CHARS = 80
 # `_refresh_library_rag_results_widgets` tears down every direct child of
 # `#library-rag-results` NOT in this set, then remounts fresh ones from
 # `library_rag_results_body_children` -- the same function `compose()`

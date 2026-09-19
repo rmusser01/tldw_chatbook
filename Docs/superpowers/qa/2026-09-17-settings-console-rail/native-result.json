@@ -1,0 +1,102 @@
+{
+  "pid": 86993,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "region": [
+        43,
+        28,
+        32,
+        1
+      ],
+      "clip": [
+        43,
+        8,
+        98,
+        43
+      ],
+      "painted": "\u2590X\u258c Stack collapsed rail labels ",
+      "draft_restored_without_write": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "region": [
+        42,
+        18,
+        32,
+        1
+      ],
+      "clip": [
+        42,
+        9,
+        32,
+        12
+      ],
+      "painted": "\u2590X\u258c Stack collapsed rail labels ",
+      "draft_restored_without_write": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        190,
+        55
+      ],
+      "region": [
+        43,
+        8,
+        32,
+        1
+      ],
+      "clip": [
+        43,
+        8,
+        98,
+        43
+      ],
+      "painted": "\u2590X\u258c Stack collapsed rail labels ",
+      "draft_restored_without_write": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "region": [
+        42,
+        18,
+        32,
+        1
+      ],
+      "clip": [
+        42,
+        9,
+        32,
+        12
+      ],
+      "painted": "\u2590X\u258c Stack collapsed rail labels ",
+      "draft_restored_without_write": true
+    }
+  ],
+  "runner_sha256": "842505763690d9446e831858f70dba4a18acb9ffecdd05671cf85d64c224e296",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "b9a54a031ba443262afc5d54efa3b1cb0bcab1b7e0fc7897457dc90889cf5c11",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "261f12ecd72fde979d0daff265a97bfa66fc79fbe031437b616dae472dde9b30",
+    "tldw_chatbook/css/features/_settings.tcss": "dc089c39448502c5e5d815c04ff8373064fc5fcc9a86ab1917fb8d9bd29a3471",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "b7c532c84b56bdab89922f4ccdee213e182e7fd1a76699e0e43ce25b428e6b07"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Notices clear",
+  "passed": true,
+  "app_run_returned": true
+}

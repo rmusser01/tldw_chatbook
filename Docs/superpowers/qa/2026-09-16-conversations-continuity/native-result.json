@@ -1,0 +1,59 @@
+{
+  "pid": 35447,
+  "steps": [
+    {
+      "theme": "textual-dark",
+      "editor": "filter",
+      "draft_selection_focus_and_typing_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "editor": "find",
+      "draft_selection_focus_and_typing_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "find_visible_through_resize": true,
+      "new_focus_respected": true,
+      "empty_filter_recovered_at": [
+        [
+          170,
+          48
+        ],
+        [
+          80,
+          24
+        ]
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "editor": "filter",
+      "draft_selection_focus_and_typing_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "editor": "find",
+      "draft_selection_focus_and_typing_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "find_visible_through_resize": true,
+      "new_focus_respected": true,
+      "empty_filter_recovered_at": [
+        [
+          170,
+          48
+        ],
+        [
+          80,
+          24
+        ]
+      ]
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "passed": true,
+  "app_run_returned": true
+}

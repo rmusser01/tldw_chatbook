@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Tool Profiles
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█rts      │
+│  Core   █                                                          █         │
+│     Over█                   Remove Tool Profile?                   █eserves  │
+│     Prov█                                                          █         │
+│     Web █   Remove native-light-80? Its id remains reserved by a   █      │  │
+│     Spee█                permanent Deny tombstone.                 █      │  │
+│  Interfa█                                                          █      │  │
+│     Appe█                                                          █      │  │
+│     Them█                 Cancel     Remove profile                █      │  │
+│     Spla█                                                          █──────┘  │
+│     Cons█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█       ▃ │
+│  Data & Privacy              │  │  │ ┌────────────────────────────────────┐  │
+│     Storage                  │  │  │ │ native-source                      │▂ │
+│     Workspaces               │  │  │ │ Local · Unbound · Policy lifecycle │  │
+│   > Tool Profiles            │  │  │ │ valid                              │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Remove this unreferenced profile.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -3,18 +3,28 @@
  * ======================================== 
  * Form elements: inputs, textareas, selects
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
 
+
+/* ADR-161 task 6: the winning declarations of the former
+ * features/_tools-settings.tcss bare duplicates were folded here
+ * (tokenized on arrival) so this owning sheet carries the single
+ * definition with unchanged computed styles. */
 .form-label {
-    margin-bottom: $ds-space-stack;
+    margin-top: $ds-space-1;
+    margin-bottom: $ds-space-0;
     text-style: $ds-text-strong;
+    color: $text-muted;
 }
 
 .form-section-title {
     text-style: $ds-text-strong;
-    color: $secondary;
-    margin: $ds-space-section 0 $ds-space-stack 0;
-    border-bottom: solid $primary-background;
-    padding-bottom: $ds-space-stack;
+    color: $primary;
+    margin: $ds-space-section $ds-space-0 $ds-space-stack $ds-space-0;
+    border-bottom: solid $primary;
+    padding-bottom: $ds-space-0;
 }
 
 .form-description {
@@ -26,12 +36,13 @@
 .form-actions {
     margin-top: $ds-space-section;
     layout: horizontal;
-    height: auto;
+    height: $ds-control-height;
+    width: $ds-width-full;
     align: center middle;
 }
 
 .form-actions Button {
-    margin: 0 $ds-space-inline 0 0;
+    margin: $ds-space-0 $ds-space-inline $ds-space-0 $ds-space-0;
 }
 
 .provider-models-textarea {
@@ -40,13 +51,8 @@
 }
 
 /* Standardized form components */
-.form-input {
-    width: 100%;
-    margin-bottom: $ds-space-stack;
-}
-
 .form-textarea {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     min-height: $ds-textarea-min-height;
     margin-bottom: $ds-space-stack;
@@ -54,76 +60,45 @@
 
 
 .form-checkbox {
-    margin: $ds-space-stack 0;
+    margin: $ds-space-stack $ds-space-0;
 }
 
 /* Form layout helpers */
 .form-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 .form-col {
-    width: 1fr;
-    padding: 0 $ds-space-inline;
+    width: $ds-width-fill;
+    padding: $ds-space-0 $ds-space-inline;
 }
 
 .form-col:first-child {
-    padding-left: 0;
+    padding-left: $ds-space-0;
 }
 
 .form-col:last-child {
-    padding-right: 0;
+    padding-right: $ds-space-0;
 }
 
 /* Form sections */
 .form-section-collapsible {
-    margin: $ds-space-stack 0;
-}
-
-/* Button groups */
-.button-group {
-    width: 100%;
-    height: auto;
-    margin: $ds-space-section 0;
-}
-
-.button-group-left {
-    align: left top;
-}
-
-.button-group-center {
-    align: center top;
-}
-
-.button-group-right {
-    align: right top;
+    margin: $ds-space-stack $ds-space-0;
 }
 
 .form-button {
-    margin: 0 $ds-space-inline;
+    margin: $ds-space-0 $ds-space-inline;
 }
 
-/* Status areas */
-.status-label {
-    margin-top: $ds-space-section;
-    margin-bottom: 0;
-    color: $ds-text-muted;
-}
-
-.status-area {
-    width: 100%;
-    background: $ds-surface-raised;
-    border: round $border;
-    padding: $ds-space-inset;
-    margin-top: $ds-space-stack;
-}
+/* ADR-161 task 8a: .status-label/.status-area moved to their family's
+ * owning sheet components/_status.tcss (byte-identical winners). */
 
 /* Title/Author input fields fix */
 .title-author-row Input {
     height: $ds-control-height;
-    width: 100%;
+    width: $ds-width-full;
     margin-bottom: $ds-space-stack;
 }
 
@@ -305,10 +280,10 @@ Switch:focus {
 /* New base media ingestion form styling */
 .form-input {
     height: $ds-control-height;
-    width: 100%;
+    width: $ds-width-full;
     margin-bottom: $ds-space-stack;
     border: solid $primary;
-    padding: 0 $ds-space-inline;
+    padding: $ds-space-0 $ds-space-inline;
 }
 
 .form-input:focus {
@@ -325,30 +300,30 @@ Switch:focus {
 
 .form-select {
     height: $ds-control-height;
-    width: 100%;
+    width: $ds-width-full;
     margin-bottom: $ds-space-stack;
 }
 
 .form-checkbox {
-    margin: $ds-space-stack 0;
+    margin: $ds-space-stack $ds-space-0;
 }
 
 /* Responsive metadata columns */
 .metadata-row {
     layout: horizontal;
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 .metadata-col {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
 }
 
 /* Mode toggle section - CRITICAL for visibility */
 .mode-toggle-container {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
     padding: $ds-space-inset;
@@ -361,34 +336,34 @@ Switch:focus {
 }
 
 .mode-toggle {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 /* Essential container sections - CRITICAL for Input widget visibility */
 .essential-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;        /* Allow container to size to content */
     margin-bottom: $ds-space-section;
     padding: $ds-space-inset;
 }
 
 .media-options-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-section;
 }
 
 .options-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-section;
     padding: $ds-space-inset;
 }
 
 .process-button-section {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-top: $ds-space-section;
     padding: $ds-space-inset;
@@ -397,23 +372,23 @@ Switch:focus {
 
 /* Time range inputs layout */
 .time-range-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
     margin-bottom: $ds-space-stack;
 }
 
 .time-col {
-    width: 1fr;
+    width: $ds-width-fill;
     height: auto;
-    padding: 0 $ds-space-inline;
+    padding: $ds-space-0 $ds-space-inline;
 }
 
 .time-col:first-child {
-    padding-left: 0;
+    padding-left: $ds-space-0;
 }
 
 .time-col:last-child {
-    padding-right: 0;
+    padding-right: $ds-space-0;
 }
 
 /* Advanced mode visibility controls */
@@ -431,9 +406,9 @@ Switch:focus {
 
 /* Form textarea styling */
 .form-textarea {
-    width: 100%;
+    width: $ds-width-full;
     min-height: $ds-textarea-min-height;
-    max-height: 10;
+    max-height: $ds-size-10;
     margin-bottom: $ds-space-stack;
     border: solid $primary;
     padding: $ds-space-inset;
@@ -444,6 +419,79 @@ Switch:focus {
     border-bottom: solid $ds-input-focus-accent;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
+}
+
+/* ADR-161 task 9: the Settings compact field vocabulary's cross-surface
+ * members, moved tokenized from components/_agentic_terminal.tcss.
+ * Probe evidence (task 9, production cascade): genuinely different from
+ * the standard form classes -- documented variants, not merge candidates:
+ *   settings-detail-row -- the read-only detail line (panel fill, primary
+ *       text, one-row minimum) vs form-row's auto-height unstyled row.
+ *       Consumed on TWO production surfaces (the Settings workbench and
+ *       the STTS speech settings pane via SpeechSettingsPane), so it rides
+ *       the boot bundle instead of the lazily-loaded settings screen
+ *       sheet (same rationale as AGENTIC_SPLIT_PINNED_TOKENS).
+ *   settings-compact-input -- the one-row editable field with the task-1586
+ *       left-edge control convention (TASK-13154.1: the border suppression
+ *       is what lets the single row paint its text; form-input's full
+ *       border would spend the row on chrome). Also composed by the
+ *       pattern gallery, so it too rides the boot bundle.
+ * The Settings-screen-only siblings (settings-input-row,
+ * settings-select-row, settings-status-row, settings-compact-select,
+ * settings-focus-card) stay in the monolith for the task-10 feature carve,
+ * as do the scoped overrides (#settings-impact-pane .settings-detail-row,
+ * #settings-web-search-panel .settings-compact-input, ...) that belong to
+ * their surfaces. */
+.settings-detail-row {
+    width: $ds-width-full;
+    min-height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input {
+    width: $ds-width-fill;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    /* task-1586 control convention: the one-column left edge marks "this
+       row is editable" at rest; full borders stay off because they cost
+       a row above and below on these one-row fields. */
+    border: none;
+    border-left: solid $ds-control-edge;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    /* No underline: it made placeholder copy read as a link (task-185). */
+    text-style: $ds-text-strong;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input {
+    background: $ds-status-error 18%;
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input:focus {
+    /* task-1369: keep the error tint while focused so the invalid marker is
+       not lost; slightly stronger than the unfocused 18% to still read as
+       focused. */
+    background: $ds-status-error 28%;
+    color: $ds-text-primary;
+    text-opacity: 1;
+    text-style: $ds-text-strong;
+    outline: none;
 }
 
 /* Note: Textual doesn't support @media queries

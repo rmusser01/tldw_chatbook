@@ -443,6 +443,8 @@ class LibrarySkillsController:
         library_entry_reconcile_is_current,
         capture_library_entry_focus,
         restore_library_entry_focus,
+        arm_library_list_entry_focus,
+        select_library_rail_row,
         # -- shared shell state this cluster reads/writes (group (b)).
         library_selected_row_id_accessor,
         set_library_selected_row_id,
@@ -524,6 +526,8 @@ class LibrarySkillsController:
         )
         self._capture_library_entry_focus_fn = capture_library_entry_focus
         self._restore_library_entry_focus_fn = restore_library_entry_focus
+        self._arm_library_list_entry_focus_fn = arm_library_list_entry_focus
+        self._select_library_rail_row_fn = select_library_rail_row
         self._library_selected_row_id_accessor = library_selected_row_id_accessor
         self._set_library_selected_row_id_fn = set_library_selected_row_id
         self._library_snapshot_state_generation_accessor = (
@@ -795,6 +799,7 @@ class LibrarySkillsController:
             previous.reader_width == 0
             and previous.library_width == 0
             and previous.items_width == 0
+            and previous.priority_pane is None
         ):
             previous = None
         if (
@@ -1095,7 +1100,6 @@ class LibrarySkillsController:
         if (
             result.request_token != controller.result.request_token
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
-            or self._library_skills_view != "list"
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
 
@@ -1119,6 +1123,12 @@ class LibrarySkillsController:
         )
 
         def restore_focus() -> None:
+            current = self.focused
+            if (
+                current is not None and current is not focused
+                and current.parent is not None and current.id != focus_identity
+            ):
+                return
             if not focus_identity:
                 return
             if result.status == "loading" and focus_identity in {
@@ -1143,10 +1153,20 @@ class LibrarySkillsController:
                 if cursor_position is not None and isinstance(target, Input):
                     target.cursor_position = cursor_position
 
+        if self._library_skills_view == "editor":
+            # Refresh retained Items independently: Work may hold a newer draft.
+            try:
+                canvas = self.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
+            except (NoMatches, QueryError):
+                return LibraryEntryReconcileResult.FAILED
+            if focus_identity:
+                canvas.queue_default_after_recompose(restore_focus)
+            canvas.sync_state(**self._library_skills_list_canvas_kwargs())
+            return LibraryEntryReconcileResult.APPLIED
         if _sync_library_canvas(
             self,
             "skills",
-            then=restore_focus,
+            then=restore_focus if focus_identity else None,
             allow_screen_fallback=False,
         ):
             return LibraryEntryReconcileResult.APPLIED
@@ -1187,10 +1207,7 @@ class LibrarySkillsController:
             )
         else:
             controller.invalidate(refresh_scope)
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
-        ):
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
             self._request_library_skills_browse(refresh_scope)
 
     async def _load_library_skills_trust_posture(
@@ -1473,11 +1490,7 @@ class LibrarySkillsController:
         self._refresh_library_skill_script_grant()
 
     def _arm_library_skill_editor(self) -> None:
-        """Enable dirty-tracking once the skill editor's mount-time
-        ``Input.Changed``/``TextArea.Changed`` (fired for the non-empty
-        initial values) has already been delivered, so it is never mistaken
-        for a real edit.
-        """
+        """Enable dirty tracking after initial field-change events have settled."""
         self._library_skill_editor_armed = True
 
     def _enter_library_skill_create_editor(self) -> None:
@@ -1735,13 +1748,7 @@ class LibrarySkillsController:
             )
         except (NoMatches, QueryError):
             pass
-        # Task 7 (skills-script-execution): reads the CACHED grant
-        # (``_library_skill_script_grant``), never the trust service
-        # directly -- ``script_execution_granted`` re-scans the skill's
-        # on-disk directory to verify its fingerprint, which is blocking
-        # file I/O this method (called from synchronous event handlers) must
-        # not perform. ``_refresh_library_skill_script_grant`` is what keeps
-        # the cache current, off-thread.
+        # Render the cached script grant; disk scans stay in the worker.
         try:
             self.query_one("#library-skill-script-grant", Static).update(
                 skill_script_grant_line(self._library_skill_script_grant)
@@ -1751,6 +1758,11 @@ class LibrarySkillsController:
             ).disabled = not self._library_skill_script_grant
         except (NoMatches, QueryError):
             pass
+        panes = self.query("#library-skill-work-pane")
+        if panes:
+            pane = panes.first()
+            pane.call_after_refresh(pane.restore_workflow_focus)
+
 
     @on(Input.Changed, "#library-skill-name")
     def handle_library_skill_name_changed(self, event: Input.Changed) -> None:
@@ -2047,25 +2059,10 @@ class LibrarySkillsController:
                 self._sync_library_skill_lifecycle_actions()
 
     async def _save_library_skill(self) -> None:
-        """Save the open Library skill's current editor text.
+        """Save explicitly using the service's optimistic-version guard.
 
-        Unlike the prompts editor (whose ``update_prompt_by_id`` has no
-        caller-supplied expected-version parameter, forcing a manual
-        pre-read staleness check), ``LocalSkillsService.update_skill``
-        accepts ``expected_version`` directly and raises
-        ``local_skill_version_conflict:...`` itself on a real mismatch --
-        so this never needs its own pre-read; ``classify_skill_save_error``
-        classifies whatever the real write call raises/returns.
-
-        The create/update response mapping is already a full skill detail
-        (``LocalSkillsService._response_for_record``'s shape, same as
-        ``get_skill``'s), so a successful save's "refresh snapshot" is just
-        rebuilding the editor state from THIS call's own result -- no
-        second service round-trip needed. This is also how the
-        save-marks-needs-review re-quarantine becomes visible without any
-        special-casing: the write never passes ``trust_approved=True``, so
-        a currently-trusted skill's post-save ``trust_status`` in the
-        response is already ``quarantined_modified``.
+        The service response carries the committed detail and trust state;
+        reuse it instead of a second fetch, and preserve post-submission edits.
         """
         if self._library_skills_view != "editor":
             return
@@ -2102,16 +2099,8 @@ class LibrarySkillsController:
         if is_create:
             editor_name = live_name or base_state.name
         else:
-            # Renaming an existing skill isn't supported -- the service has
-            # no rename primitive, and ``update_skill`` writes under the
-            # ORIGINAL directory name regardless of what the frontmatter's
-            # ``name`` field says. The Name Input is disabled for existing
-            # skills (see ``LibrarySkillsListCanvas._compose_editor``), but
-            # this pins the persisted name defensively too: even if the
-            # live value somehow diverged, the frontmatter written to disk
-            # never does, so a save can never get marked
-            # ``validation_status: "invalid"`` (name != parent directory
-            # name) the way it silently did before this fix.
+            # Existing directories cannot be renamed; pin their manifest name
+            # even if a synthetic event bypasses the disabled Name input.
             editor_name = base_state.name
 
         write_state = dataclasses.replace(
@@ -2158,14 +2147,7 @@ class LibrarySkillsController:
             except Exception as caught:
                 exc = caught
 
-        # Discard out-of-order results, same stale-race guard as
-        # ``_refresh_library_skill_detail``/``_save_library_prompt``'s
-        # equivalent ``prompt_id != self._selected_prompt_id`` check --
-        # applied uniformly for creates too (``name`` was already ``""``
-        # at capture time when ``is_create``, so this still lets a
-        # still-in-flight create through as long as nothing else got
-        # selected meanwhile, but bails if a DIFFERENT skill's editor
-        # opened while this create was in flight).
+        # Ignore completion after another selection or editor exit.
         if name != self._selected_skill_name or self._library_skills_view != "editor":
             return
 
@@ -2188,33 +2170,50 @@ class LibrarySkillsController:
             )
             return
 
+        # The editor remains usable during I/O. Preserve anything typed or
+        # toggled since submission, but advance its version/trust metadata to
+        # the completed write so the next explicit Save uses the right version.
+        live_fields = self._read_library_skill_editor_fields()
+        latest_state = self._library_skill_editor_state
+        newer_edits = (
+            live_fields is not None and live_fields != fields
+        ) or latest_state != base_state
+        self._snapshot_library_skill_live_fields()
+        live_draft = self._library_skill_editor_state
         self._apply_library_skill_save_success(result, is_create=is_create)
+        if newer_edits and live_draft is not None:
+            saved_state = self._library_skill_editor_state
+            self._library_skill_editor_state = dataclasses.replace(
+                live_draft,
+                name=saved_state.name,
+                version=saved_state.version,
+                trust_status=saved_state.trust_status,
+                trust_blocked=saved_state.trust_blocked,
+                trust_changed_files=saved_state.trust_changed_files,
+                supporting_files=saved_state.supporting_files,
+            )
+            self._library_skill_dirty = True
+            self._set_library_skill_discard_enabled(True)
+            self._update_library_skill_status_static(
+                "Saved earlier changes. Newer edits are still unsaved."
+            )
 
     def _apply_library_skill_save_success(
         self, result: Any, *, is_create: bool
     ) -> None:
-        """Apply a successful save's response: rebuild state, clear dirty,
-        show "Saved.", and refresh the trust panel + warnings in place.
+        """Apply committed detail, trust, warnings and list invalidation.
 
         Args:
-            result: The create/update call's response mapping (a full
-                skill detail).
-            is_create: Whether this save created a brand-new skill (adopts
-                the new name as ``_selected_skill_name`` and kicks a
-                snapshot refresh so the rail badge/list pick up the new
-                row).
+            result: Full committed Skill detail from create/update.
+            is_create: Whether this write introduces a new list member.
         """
         if not isinstance(result, Mapping):
             self._update_library_skill_status_static(
                 LIBRARY_SKILL_SAVE_STATUS_COPY["error"]
             )
             return
-        # Deliberately NOT ``_apply_library_skill_detail`` (which recomposes
-        # + re-arms): recomposing here would remount fresh Input/TextArea
-        # widgets while the editor is still armed, and Textual's spurious
-        # mount-time ``Changed`` event for a non-empty initial value would
-        # immediately re-mark the just-saved skill dirty -- same discipline
-        # ``_save_library_prompt``'s success tail documents.
+        # Patch existing fields in place; remount echoes can falsely mark the
+        # saved draft dirty. Only a first save needs structural recomposition.
         self._library_skill_detail = dict(result)
         self._library_skill_editor_state = build_skill_editor_state(
             self._library_skill_detail
@@ -2229,8 +2228,6 @@ class LibrarySkillsController:
         # trust receipt identified. Never leave that receipt approvable.
         self._library_skill_active_review = None
         self._refresh_library_skills_after_committed_mutation()
-        # task-449: this success tail deliberately never recomposes, so the
-        # Discard button is re-disabled in place alongside the dirty clear.
         self._set_library_skill_discard_enabled(False)
         if is_create:
             self._selected_skill_name = self._library_skill_editor_state.name
@@ -2238,10 +2235,7 @@ class LibrarySkillsController:
             # would reset the canvas scroll to the top, away from the Save
             # button the user just pressed -- arm the one-shot scroll-back.
             self._library_skill_scroll_pending = True
-            # A brand-new skill changes the list's membership/count, so the
-            # Skills rail badge and list must pick up the new row now --
-            # fire-and-forget, mirrors ``_save_library_prompt``'s equivalent
-            # post-create refresh.
+            # Refresh the new row and rail count after the durable create.
             self._refresh_local_source_snapshot()
         self._update_library_skill_status_static(
             (
@@ -2302,16 +2296,7 @@ class LibrarySkillsController:
         )
 
     async def _flush_library_skill_save(self) -> bool:
-        """Veto leaving the skill editor while an edit is unsaved.
-
-        Mirrors ``_flush_library_prompt_save`` exactly: the skill editor is
-        explicit-Save-only, so this simply reports whether it is safe to
-        proceed -- ``False`` whenever ``_library_skill_dirty`` is set.
-
-        Returns:
-            ``True`` when there is nothing unsaved (safe to proceed);
-            ``False`` when a dirty edit must be resolved first.
-        """
+        """Permit editor exit only when no unsaved changes remain."""
         return not self._library_skill_dirty
 
     def _notify_skill_dirty_veto(self) -> None:
@@ -2383,14 +2368,23 @@ class LibrarySkillsController:
         await self._exit_library_skill_editor_guarded()
 
     @on(Button.Pressed, "#library-skill-cancel")
-    def handle_library_skill_cancel(self, event: Button.Pressed) -> None:
-        """Cancel a never-saved Skill draft and return to the list."""
+    async def handle_library_skill_cancel(self, event: Button.Pressed) -> None:
+        """Cancel a never-saved Skill draft and return to Browse Skills."""
         event.stop()
         if self._selected_skill_name or self._library_skill_mutation_in_flight:
             return
         self._reset_library_skill_editor_state()
-        self._refresh_local_source_snapshot()
-        _sync_library_canvas(self, "skills")
+        await self._select_library_rail_row_fn(LIBRARY_ROW_BROWSE_SKILLS)
+        self._library_skills_reader_preferences = dataclasses.replace(
+            self._library_skills_reader_preferences, items_open=True
+        )
+        self._library_skills_reader_layout = dataclasses.replace(
+            self._library_skills_reader_layout, priority_pane="items"
+        )
+        self.call_after_refresh(
+            self._sync_library_skills_reader_layout_from_shell, "items"
+        )
+        self._arm_library_list_entry_focus_fn()
 
     @on(Button.Pressed, "#library-skill-more-actions")
     def handle_library_skill_more_actions(self, event: Button.Pressed) -> None:
@@ -2418,25 +2412,21 @@ class LibrarySkillsController:
 
     @on(Button.Pressed, "#library-skill-discard")
     def handle_library_skill_discard(self, event: Button.Pressed) -> None:
-        """Leave the skill editor WITHOUT saving the dirty edit (task-449).
+        """Discard a dirty draft and reveal/focus the saved Skills list.
 
-        The explicit counterpart to the dirty vetoes: Back and every row
-        switch refuse to move while ``_library_skill_dirty`` is set, so
-        this button is the one deliberate way out that drops the edit.
-        Same exit tail as a clean Back (reset + snapshot + recompose); the
-        button renders disabled until the editor is actually dirty, so a
-        stray click on a clean editor can't discard anything.
-
-        Args:
-            event: Button press event emitted by the "Discard changes"
-                action.
+        Clean editors ignore stray events; ordinary Back vetoes dirty exits.
         """
         event.stop()
         if not self._library_skill_dirty:
             return
         self._reset_library_skill_editor_state()
+        self._library_skills_reader_preferences = dataclasses.replace(
+            self._library_skills_reader_preferences, items_open=True
+        )
+        self._sync_library_skills_reader_layout_from_shell(priority="items")
         self._refresh_local_source_snapshot()
         _sync_library_canvas(self, "skills")
+        self._arm_library_list_entry_focus_fn()
 
     def _snapshot_library_skill_live_fields(self) -> None:
         """Fold the editor's live (possibly unsaved) field values back into

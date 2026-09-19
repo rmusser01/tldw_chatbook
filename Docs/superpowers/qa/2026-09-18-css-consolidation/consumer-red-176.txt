@@ -1,0 +1,1021 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_console_archive_undo_then_resume_reuses_original_and_full_search[size1] _
+
+size = (160, 44)
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2260/test_console_archive_undo_then0')
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("size", [(100, 30), (160, 44)])
+    async def test_console_archive_undo_then_resume_reuses_original_and_full_search(
+        size, tmp_path
+    ):
+        from tldw_chatbook.config import save_setting_to_cli_config
+    
+        save_setting_to_cli_config("splash_screen", "enabled", False)
+        app = _build_test_app()
+        from tldw_chatbook.Chat.chat_conversation_scope_service import (
+            ChatConversationScopeService,
+        )
+        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    
+        db = CharactersRAGDB(tmp_path / "console-archive.db", client_id="archive-ui")
+        app.chachanotes_db = db
+        service = app.local_chat_conversation_service = ChatConversationService(db)
+        app.chat_conversation_scope_service = ChatConversationScopeService(
+            local_service=service, server_service=None
+        )
+        cid = service.create_conversation(title="Archive recovery example")
+        app.chachanotes_db.add_message(
+            {
+                "conversation_id": cid,
+                "sender": "user",
+                "content": "Retained original transcript",
+            }
+        )
+        unrelated = service.create_conversation(title="Unrelated saved discussion")
+        db.add_message(
+            {"conversation_id": unrelated, "sender": "user", "content": "Different topic"}
+        )
+        app.workspace_registry_service.create_workspace(
+            workspace_id="named-workspace", name="Named workspace"
+        )
+        app.workspace_registry_service.set_active_workspace("named-workspace")
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+        from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    
+        host = app
+>       async with host.run_test(size=size) as pilot:
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_conversation_archive_flow.py:66: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})
+headless = True, size = (160, 44), tooltips = False, notifications = False
+message_hook = None
+
+    @asynccontextmanager
+    async def run_test(
+        self,
+        *,
+        headless: bool = True,
+        size: tuple[int, int] | None = (80, 24),
+        tooltips: bool = False,
+        notifications: bool = False,
+        message_hook: Callable[[Message], None] | None = None,
+    ) -> AsyncGenerator[Pilot[ReturnType], None]:
+        """An asynchronous context manager for testing apps.
+    
+        !!! tip
+    
+            See the guide for [testing](/guide/testing) Textual apps.
+    
+        Use this to run your app in "headless" mode (no output) and drive the app via a [Pilot][textual.pilot.Pilot] object.
+    
+        Example:
+    
+            ```python
+            async with app.run_test() as pilot:
+                await pilot.click("#Button.ok")
+                assert ...
+            ```
+    
+        Args:
+            headless: Run in headless mode (no output or input).
+            size: Force terminal size to `(WIDTH, HEIGHT)`,
+                or None to auto-detect.
+            tooltips: Enable tooltips when testing.
+            notifications: Enable notifications when testing.
+            message_hook: An optional callback that will be called each time any message arrives at any
+                message pump in the app.
+        """
+        from textual.pilot import Pilot
+    
+        app = self
+        app._disable_tooltips = not tooltips
+        app._disable_notifications = not notifications
+        app_ready_event = asyncio.Event()
+    
+        def on_app_ready() -> None:
+            """Called when app is ready to process events."""
+            app_ready_event.set()
+    
+        async def run_app(app: App[ReturnType]) -> None:
+            """Run the apps message loop.
+    
+            Args:
+                app: App to run.
+            """
+    
+            with app._context():
+                try:
+                    if message_hook is not None:
+                        message_hook_context_var.set(message_hook)
+                    app._loop = asyncio.get_running_loop()
+                    app._thread_id = threading.get_ident()
+                    await app._process_messages(
+                        ready_callback=on_app_ready,
+                        headless=headless,
+                        terminal_size=size,
+                    )
+                finally:
+                    app_ready_event.set()
+    
+        # Launch the app in the "background"
+    
+        self._task = app_task = create_task(run_app(app), name=f"run_test {app}")
+    
+        # Wait until the app has performed all startup routines.
+        await app_ready_event.wait()
+        with app._context():
+            # Context manager returns pilot object to manipulate the app
+            try:
+                pilot = Pilot(app)
+                await pilot._wait_for_screen()
+                yield pilot
+            finally:
+                await asyncio.sleep(0)
+                # Shutdown the app cleanly
+                await app._shutdown()
+                await app_task
+                # Re-raise the exception which caused panic so test frameworks are aware
+                if self._exception:
+>                   raise self._exception
+E                   textual.worker.WorkerFailed: Worker raised exception: ScreenStackError('No screens on stack')
+
+.venv/lib/python3.12/site-packages/textual/app.py:2218: WorkerFailed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 11:32:27.127 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 11:32:27.133 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 11:32:27.134 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 11:32:27.134 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 11:32:27.136 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+2026-09-18 11:32:27.148 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+2026-09-18 11:32:27.157 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/tmp/32813-consumer-matrix-002/176/profile/config/config.toml
+2026-09-18 11:32:27.159 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 11:32:27.159 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 11:32:27.160 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 11:32:27.160 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 11:32:27.173 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/32813-consumer-matrix-002/176/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 11:32:27.174 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 11:32:27.175 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+2026-09-18 11:32:27.230 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+2026-09-18 11:32:27.246 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+2026-09-18 11:32:27.246 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+2026-09-18 11:32:27.246 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+2026-09-18 11:32:27.247 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+2026-09-18 11:32:27.306 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/32813-consumer-matrix-002/176/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 11:32:27.361 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jbxgyrp2/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 11:32:27.492 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jbxgyrp2/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 11:32:27.502 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-09-18 11:32:27.503 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jbxgyrp2/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 11:32:27.503 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jbxgyrp2/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 11:32:27.623 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-09-18 11:32:27.658 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-09-18 11:32:27.695 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-09-18 11:32:27.729 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-09-18 11:32:27.764 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+2026-09-18 11:32:27.799 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-09-18 11:32:27.799 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-jbxgyrp2/scheduled_tasks.sqlite [Client: default]
+2026-09-18 11:32:27.833 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-09-18 11:32:27.833 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-09-18 11:32:27.839 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+2026-09-18 11:32:27.899 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-09-18 11:32:27.899 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/32813-consumer-matrix-002/176/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-09-18 11:32:27.899 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-09-18 11:32:27.945 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-09-18 11:32:27.946 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+2026-09-18 11:32:27.946 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+2026-09-18 11:32:27.946 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.765 seconds
+2026-09-18 11:32:27.947 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.063s (8.2%)
+2026-09-18 11:32:27.947 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+2026-09-18 11:32:27.947 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.001s (0.2%)
+2026-09-18 11:32:27.947 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+2026-09-18 11:32:27.948 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+2026-09-18 11:32:27.948 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.0% of parallel_init)
+2026-09-18 11:32:27.948 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+2026-09-18 11:32:27.949 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+2026-09-18 11:32:27.949 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3364 - Initializing CharactersRAGDB db_sha256=aa54ff62b81c [Client ID: archive-ui]
+2026-09-18 11:32:27.984 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3540 - Opened/Reopened SQLite connection db_sha256=aa54ff62b81c thread=8346099072
+2026-09-18 11:32:27.987 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24035 - Started outermost transaction on thread 8346099072.
+2026-09-18 11:32:27.988 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8452 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 73
+2026-09-18 11:32:27.988 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4423 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:27.988 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:27.994 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4464 - [rag_char_chat_schema V4] Full schema script executed.
+2026-09-18 11:32:27.994 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4471 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:27.996 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4735 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:27.996 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4756 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:27.996 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.005 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4766 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-09-18 11:32:28.005 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4775 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.006 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4809 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.006 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.007 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4817 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-09-18 11:32:28.007 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4826 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.008 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4860 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.008 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.010 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4868 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-09-18 11:32:28.010 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4877 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.010 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8366 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.010 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.012 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8374 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-09-18 11:32:28.013 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8383 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.013 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4911 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.013 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.016 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4919 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-09-18 11:32:28.016 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4928 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.016 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4962 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.017 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.017 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4970 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-09-18 11:32:28.018 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4979 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.018 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5013 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.018 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.021 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5021 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-09-18 11:32:28.021 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5030 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.021 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5064 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.022 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.029 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5072 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-09-18 11:32:28.029 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5081 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.030 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5107 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.030 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.052 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5115 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-09-18 11:32:28.053 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5123 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.053 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5148 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.054 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.060 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5156 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-09-18 11:32:28.060 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5164 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.060 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5189 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.061 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.062 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5197 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-09-18 11:32:28.062 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5205 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.063 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5231 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.063 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.064 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5274 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-09-18 11:32:28.064 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5284 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.064 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5310 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.065 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.065 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5318 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-09-18 11:32:28.065 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5326 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.065 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5354 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.066 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.069 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5362 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-09-18 11:32:28.069 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5370 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.069 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8316 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.070 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.070 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8324 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-09-18 11:32:28.070 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8332 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.071 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5398 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.071 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.074 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5417 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-09-18 11:32:28.074 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5425 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.075 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5453 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.075 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.076 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5474 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-09-18 11:32:28.076 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5482 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.076 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5504 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.077 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.077 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5522 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-09-18 11:32:28.078 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5528 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.078 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5550 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.079 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.079 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5558 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-09-18 11:32:28.080 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5564 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.080 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5587 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.080 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.082 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5605 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-09-18 11:32:28.083 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5611 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.083 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5634 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.083 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.084 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5642 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-09-18 11:32:28.084 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5648 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.084 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5672 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.085 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.089 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5694 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-09-18 11:32:28.089 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5700 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.089 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.092 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.093 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 3 on thread 8346099072.
+2026-09-18 11:32:28.096 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5887 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.096 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.097 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5895 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-09-18 11:32:28.097 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5903 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.098 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5930 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.098 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.100 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5956 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-09-18 11:32:28.101 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5980 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.101 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6007 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.101 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.104 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6033 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-09-18 11:32:28.104 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6057 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.104 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:6090 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.105 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4735 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.105 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:6116 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.106 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.107 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.110 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.112 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.113 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.117 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.117 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.118 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.119 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.120 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6436 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.121 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6500 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-09-18 11:32:28.122 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6550 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.122 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.123 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6689 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.123 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6719 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.124 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.132 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6759 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.132 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6828 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-09-18 11:32:28.133 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.134 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6861 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-09-18 11:32:28.134 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6905 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.134 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.138 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6951 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=aa54ff62b81c. Purged 0 unreachable sync_log row(s) of 1.
+2026-09-18 11:32:28.139 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6993 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.139 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.140 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:7028 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.141 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.145 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:7184 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.146 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.146 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:7219 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.147 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:7267 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.147 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.147 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:7301 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=aa54ff62b81c.
+2026-09-18 11:32:28.148 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.151 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.160 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7426 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=aa54ff62b81c...
+2026-09-18 11:32:28.160 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.161 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7491 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=aa54ff62b81c (examined 0, compacted 0, skipped 0 unreadable).
+2026-09-18 11:32:28.161 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.165 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.166 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.178 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.180 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.194 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.195 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.196 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.197 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.214 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.219 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.236 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.238 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.242 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 3 on thread 8346099072.
+2026-09-18 11:32:28.242 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 3 on thread 8346099072.
+2026-09-18 11:32:28.244 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.247 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.267 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.269 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.270 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.276 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.288 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24004 - Entered nested transaction level 2 on thread 8346099072.
+2026-09-18 11:32:28.289 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8584 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 73.
+2026-09-18 11:32:28.292 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24098 - Transaction (outermost) committed successfully on thread 8346099072.
+2026-09-18 11:32:28.292 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3387 - CharactersRAGDB initialization completed successfully db_sha256=aa54ff62b81c
+2026-09-18 11:32:28.295 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24035 - Started outermost transaction on thread 8346099072.
+2026-09-18 11:32:28.297 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24098 - Transaction (outermost) committed successfully on thread 8346099072.
+2026-09-18 11:32:28.297 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10956 - Added conversation ID: 5b65350a-4c9c-4ce7-9a60-70902cf25c3b.
+2026-09-18 11:32:28.299 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24035 - Started outermost transaction on thread 8346099072.
+2026-09-18 11:32:28.307 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24098 - Transaction (outermost) committed successfully on thread 8346099072.
+2026-09-18 11:32:28.307 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_add_message_with_semantic_sidecars:13479 - Added message ID: 3e99973b-b657-498e-985a-df13041721ff to conversation 5b65350a-4c9c-4ce7-9a60-70902cf25c3b (Image: No).
+2026-09-18 11:32:28.310 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24035 - Started outermost transaction on thread 8346099072.
+2026-09-18 11:32:28.310 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24098 - Transaction (outermost) committed successfully on thread 8346099072.
+2026-09-18 11:32:28.311 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10956 - Added conversation ID: 505b1184-4c52-4c34-b1f5-3c8019383202.
+2026-09-18 11:32:28.313 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24035 - Started outermost transaction on thread 8346099072.
+2026-09-18 11:32:28.314 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24098 - Transaction (outermost) committed successfully on thread 8346099072.
+2026-09-18 11:32:28.315 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_add_message_with_semantic_sidecars:13479 - Added message ID: dad3d459-a541-4198-850b-413379072855 to conversation 505b1184-4c52-4c34-b1f5-3c8019383202 (Image: No).
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/worker.py:370 in _run  │
+│                                                                              │
+│   367 │   │   │   self.state = WorkerState.RUNNING                           │
+│   368 │   │   │   app.log.worker(self)                                       │
+│   369 │   │   │   try:                                                       │
+│ ❱ 370 │   │   │   │   self._result = await self.run()                        │
+│   371 │   │   │   except asyncio.CancelledError as error:                    │
+│   372 │   │   │   │   self.state = WorkerState.CANCELLED                     │
+│   373 │   │   │   │   self._error = error                                    │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │           app = TldwCli(                                                 │ │
+│ │                 │   title='tldw chatbook',                               │ │
+│ │                 │   classes={'-dark-mode'},                              │ │
+│ │                 │   pseudo_classes={'dark', 'focus', 'nocolor'}          │ │
+│ │                 )                                                        │ │
+│ │         error = ScreenStackError('No screens on stack')                  │ │
+│ │          self = <Worker                                                  │ │
+│ │                 │   ERROR                                                │ │
+│ │                 │   name='_sync_native_console_chat_ui'                  │ │
+│ │                 │   group='console-sync'                                 │ │
+│ │                 │   description='<coroutine object                       │ │
+│ │                 ChatScreen._sync_native_console_chat_ui at 0x11734d140>' │ │
+│ │                 >                                                        │ │
+│ │ worker_failed = WorkerFailed("Worker raised exception:                   │ │
+│ │                 ScreenStackError('No screens on stack')")                │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/worker.py:354 in run   │
+│                                                                              │
+│   351 │   │   Returns:                                                       │
+│   352 │   │   │   Return value of the work.                                  │
+│   353 │   │   """                                                            │
+│ ❱ 354 │   │   return await (                                                 │
+│   355 │   │   │   self._run_threaded() if self._thread_worker else self._run │
+│   356 │   │   )                                                              │
+│   357                                                                        │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ self = <Worker                                                           │ │
+│ │        │   ERROR                                                         │ │
+│ │        │   name='_sync_native_console_chat_ui'                           │ │
+│ │        │   group='console-sync'                                          │ │
+│ │        │   description='<coroutine object                                │ │
+│ │        ChatScreen._sync_native_console_chat_ui at 0x11734d140>'          │ │
+│ │        >                                                                 │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/worker.py:341 in       │
+│ _run_async                                                                   │
+│                                                                              │
+│   338 │   │   ):                                                             │
+│   339 │   │   │   return await self._work()                                  │
+│   340 │   │   elif inspect.isawaitable(self._work):                          │
+│ ❱ 341 │   │   │   return await self._work                                    │
+│   342 │   │   elif callable(self._work):                                     │
+│   343 │   │   │   raise WorkerError("Request to run a non-async function as  │
+│   344 │   │   raise WorkerError("Unsupported attempt to run an async worker" │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ self = <Worker                                                           │ │
+│ │        │   ERROR                                                         │ │
+│ │        │   name='_sync_native_console_chat_ui'                           │ │
+│ │        │   group='console-sync'                                          │ │
+│ │        │   description='<coroutine object                                │ │
+│ │        ChatScreen._sync_native_console_chat_ui at 0x11734d140>'          │ │
+│ │        >                                                                 │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:18607 in                  │
+│ _sync_native_console_chat_ui                                                 │
+│                                                                              │
+│   18604 │   │   │   # THIS coroutine's task reads the cache — workers and ha │
+│   18605 │   │   │   # interleaving during the awaits keep building live.     │
+│   18606 │   │   │   with self._workspace.tick_workspace_build_scope():       │
+│ ❱ 18607 │   │   │   │   if self._sync_console_rail_and_controls() is False:  │
+│   18608 │   │   │   │   │   self._console_control_bar_replay_whole_sync = Tr │
+│   18609 │   │   │   │   │   return                                           │
+│   18610 │   │   │   │   # Settings failures may arrive after Apply has retur │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │  live_session_ids = {                                                    │ │
+│ │                     │   'eb0662fd-712f-4340-8f9d-078bc23ee70a',          │ │
+│ │                     │   '85b4275b-30a0-4c8b-88f8-5f27293251cd'           │ │
+│ │                     }                                                    │ │
+│ │ prior_session_ids = {                                                    │ │
+│ │                     │   'eb0662fd-712f-4340-8f9d-078bc23ee70a',          │ │
+│ │                     │   '85b4275b-30a0-4c8b-88f8-5f27293251cd'           │ │
+│ │                     }                                                    │ │
+│ │          registry = <tldw_chatbook.Chat.console_image_edit_operations.I… │ │
+│ │                     object at 0x1160e6e70>                               │ │
+│ │              self = ChatScreen(classes='shell-header-normal')            │ │
+│ │             store = <tldw_chatbook.Chat.console_chat_store.ConsoleChatS… │ │
+│ │                     object at 0x1172da480>                               │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:21607 in                  │
+│ _sync_console_rail_and_controls                                              │
+│                                                                              │
+│   21604 │   │   │   self._sync_console_settings_summary()                    │
+│   21605 │   │   │   self._sync_console_control_bar_under_config(rail_state)  │
+│   21606 │   │                                                                │
+│ ❱ 21607 │   │   return self._run_console_config_sync(sync)                   │
+│   21608 │                                                                    │
+│   21609 │   def _run_console_config_sync(self, sync: Callable[[], None]) ->  │
+│   21610 │   │   """Render synchronously, or defer entry to the existing coal │
+│                                                                              │
+│ ╭───────────────────── locals ─────────────────────╮                         │
+│ │ self = ChatScreen(classes='shell-header-normal') │                         │
+│ ╰──────────────────────────────────────────────────╯                         │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:21645 in                  │
+│ _run_console_config_sync                                                     │
+│                                                                              │
+│   21642 │   │   │   │   raise error from failure                             │
+│   21643 │   │   │   raise                                                    │
+│   21644 │   │   if failure is not None:                                      │
+│ ❱ 21645 │   │   │   raise failure                                            │
+│   21646 │   │   return True                                                  │
+│   21647 │                                                                    │
+│   21648 │   def _sync_console_control_bar_under_config(                      │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │  config = <module 'tldw_chatbook.config' from                            │ │
+│ │           '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees… │ │
+│ │ entered = True                                                           │ │
+│ │ failure = ScreenStackError('No screens on stack')                        │ │
+│ │    self = ChatScreen(classes='shell-header-normal')                      │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:21626 in                  │
+│ _run_console_config_sync                                                     │
+│                                                                              │
+│   21623 │   │   │   with operation(config):                                  │
+│   21624 │   │   │   │   entered = True                                       │
+│   21625 │   │   │   │   try:                                                 │
+│ ❱ 21626 │   │   │   │   │   sync()                                           │
+│   21627 │   │   │   │   except BaseException as error:  # noqa: BLE001 - re- │
+│   21628 │   │   │   │   │   # A UI error must not mark config persistence as │
+│   21629 │   │   │   │   │   # Nested config failures retain their own failur │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │  config = <module 'tldw_chatbook.config' from                            │ │
+│ │           '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees… │ │
+│ │ entered = True                                                           │ │
+│ │ failure = ScreenStackError('No screens on stack')                        │ │
+│ │    self = ChatScreen(classes='shell-header-normal')                      │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:21605 in sync             │
+│                                                                              │
+│   21602 │   │   def sync() -> None:                                          │
+│   21603 │   │   │   rail_state = self._current_console_rail_state()          │
+│   21604 │   │   │   self._sync_console_settings_summary()                    │
+│ ❱ 21605 │   │   │   self._sync_console_control_bar_under_config(rail_state)  │
+│   21606 │   │                                                                │
+│   21607 │   │   return self._run_console_config_sync(sync)                   │
+│   21608                                                                      │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ rail_state = ConsoleRailState(                                           │ │
+│ │              │   left_open=True,                                         │ │
+│ │              │   right_open=False,                                       │ │
+│ │              │   preferred_left_open=True,                               │ │
+│ │              │   preferred_right_open=False,                             │ │
+│ │              │   left_label='Context ▸',                                 │ │
+│ │              │   right_label='◂ Inspector',                              │ │
+│ │              │   left_badge='session',                                   │ │
+│ │              │   right_badge='setup',                                    │ │
+│ │              │                                                           │ │
+│ │              persistence_key='console_rail_state:global:shared-layout-v… │ │
+│ │              │   right_forced_collapsed=False,                           │ │
+│ │              │   left_forced_collapsed=False,                            │ │
+│ │              │   single_pane=False,                                      │ │
+│ │              │   right_compact_override=False,                           │ │
+│ │              │   left_compact_override=False,                            │ │
+│ │              │   compact_override=False,                                 │ │
+│ │              │   workspace_open=False,                                   │ │
+│ │              │   conversations_open=True,                                │ │
+│ │              │   model_open=False,                                       │ │
+│ │              │   details_open=False,                                     │ │
+│ │              │   agent_open=False,                                       │ │
+│ │              │   character_open=False,                                   │ │
+│ │              │   inspector_more_open=False,                              │ │
+│ │              │   environment_open=True,                                  │ │
+│ │              │   tasks_open=True                                         │ │
+│ │              )                                                           │ │
+│ │       self = ChatScreen(classes='shell-header-normal')                   │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:21659 in                  │
+│ _sync_console_control_bar_under_config                                       │
+│                                                                              │
+│   21656 │   │   )                                                            │
+│   21657 │   │   workbench_state = self._build_console_workbench_state(contro │
+│   21658 │   │   self._push_console_control_state_if_changed(control_state, w │
+│ ❱ 21659 │   │   self._sync_console_transcript_guidance()                     │
+│   21660 │   │   # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, docume │
+│   21661 │   │   # the task-251 report: the brief's Change 3 asked to skip th │
+│   21662 │   │   # build+push entirely while the right rail is hidden. Measur │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │   control_state = ConsoleControlState(                                   │ │
+│ │                   │   provider_label='Provider: OpenAI',                 │ │
+│ │                   │   model_label='Model: gpt-5.6-terra',                │ │
+│ │                   │   assistant_label='Assistant: General',              │ │
+│ │                   │   rag_label='Library · Auto off · Agent blocked',    │ │
+│ │                   │   sources_label='Sources: 0',                        │ │
+│ │                   │   tools_label='Tools: —',                            │ │
+│ │                   │   approvals_label='Approvals: 0 pending',            │ │
+│ │                   │   system_prompt_label='System Prompt: off',          │ │
+│ │                   │   sources_active=False,                              │ │
+│ │                   │   tools_active=False,                                │ │
+│ │                   │   approvals_active=False                             │ │
+│ │                   )                                                      │ │
+│ │      rail_state = ConsoleRailState(                                      │ │
+│ │                   │   left_open=True,                                    │ │
+│ │                   │   right_open=False,                                  │ │
+│ │                   │   preferred_left_open=True,                          │ │
+│ │                   │   preferred_right_open=False,                        │ │
+│ │                   │   left_label='Context ▸',                            │ │
+│ │                   │   right_label='◂ Inspector',                         │ │
+│ │                   │   left_badge='session',                              │ │
+│ │                   │   right_badge='setup',                               │ │
+│ │                   │                                                      │ │
+│ │                   persistence_key='console_rail_state:global:shared-lay… │ │
+│ │                   │   right_forced_collapsed=False,                      │ │
+│ │                   │   left_forced_collapsed=False,                       │ │
+│ │                   │   single_pane=False,                                 │ │
+│ │                   │   right_compact_override=False,                      │ │
+│ │                   │   left_compact_override=False,                       │ │
+│ │                   │   compact_override=False,                            │ │
+│ │                   │   workspace_open=False,                              │ │
+│ │                   │   conversations_open=True,                           │ │
+│ │                   │   model_open=False,                                  │ │
+│ │                   │   details_open=False,                                │ │
+│ │                   │   agent_open=False,                                  │ │
+│ │                   │   character_open=False,                              │ │
+│ │                   │   inspector_more_open=False,                         │ │
+│ │                   │   environment_open=True,                             │ │
+│ │                   │   tasks_open=True                                    │ │
+│ │                   )                                                      │ │
+│ │            self = ChatScreen(classes='shell-header-normal')              │ │
+│ │ workbench_state = WorkbenchState(                                        │ │
+│ │                   │   header=WorkbenchHeaderState(                       │ │
+│ │                   │   │   title='Console',                               │ │
+│ │                   │   │   subtitle='— Chat, source handoffs, live runs,  │ │
+│ │                   and control actions.',                                 │ │
+│ │                   │   │   status='blocked',                              │ │
+│ │                   │   │   density='normal',                              │ │
+│ │                   │   │   status_label=''                                │ │
+│ │                   │   ),                                                 │ │
+│ │                   │   modes=(                                            │ │
+│ │                   │   │   WorkbenchMode(                                 │ │
+│ │                   │   │   │   id='provider',                             │ │
+│ │                   │   │   │   label='Provider: OpenAI',                  │ │
+│ │                   │   │   │   active=True,                               │ │
+│ │                   │   │   │   status='blocked'                           │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchMode(                                 │ │
+│ │                   │   │   │   id='model',                                │ │
+│ │                   │   │   │   label='Model: gpt-5.6-terra',              │ │
+│ │                   │   │   │   active=False,                              │ │
+│ │                   │   │   │   status='blocked'                           │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchMode(                                 │ │
+│ │                   │   │   │   id='assistant',                            │ │
+│ │                   │   │   │   label='Assistant: General',                │ │
+│ │                   │   │   │   active=False,                              │ │
+│ │                   │   │   │   status='ready'                             │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchMode(                                 │ │
+│ │                   │   │   │   id='rag',                                  │ │
+│ │                   │   │   │   label='Library · Auto off · Agent          │ │
+│ │                   blocked',                                              │ │
+│ │                   │   │   │   active=False,                              │ │
+│ │                   │   │   │   status='ready'                             │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchMode(                                 │ │
+│ │                   │   │   │   id='sources',                              │ │
+│ │                   │   │   │   label='Sources: 0',                        │ │
+│ │                   │   │   │   active=False,                              │ │
+│ │                   │   │   │   status='ready'                             │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchMode(                                 │ │
+│ │                   │   │   │   id='tools',                                │ │
+│ │                   │   │   │   label='Tools: —',                          │ │
+│ │                   │   │   │   active=False,                              │ │
+│ │                   │   │   │   status='ready'                             │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchMode(                                 │ │
+│ │                   │   │   │   id='approvals',                            │ │
+│ │                   │   │   │   label='Approvals: 0 pending',              │ │
+│ │                   │   │   │   active=False,                              │ │
+│ │                   │   │   │   status='ready'                             │ │
+│ │                   │   │   )                                              │ │
+│ │                   │   ),                                                 │ │
+│ │                   │   actions=(                                          │ │
+│ │                   │   │   WorkbenchAction(                               │ │
+│ │                   │   │   │   id='new-tab',                              │ │
+│ │                   │   │   │   label='New tab',                           │ │
+│ │                   │   │   │   tooltip='Create a Console tab',            │ │
+│ │                   │   │   │   disabled=False,                            │ │
+│ │                   │   │   │   primary=False                              │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchAction(                               │ │
+│ │                   │   │   │   id='settings',                             │ │
+│ │                   │   │   │   label='Settings',                          │ │
+│ │                   │   │   │   tooltip='Configure provider, model, tools, │ │
+│ │                   and generation',                                       │ │
+│ │                   │   │   │   disabled=False,                            │ │
+│ │                   │   │   │   primary=False                              │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchAction(                               │ │
+│ │                   │   │   │   id='attach-context',                       │ │
+│ │                   │   │   │   label='Context rail',                      │ │
+│ │                   │   │   │   tooltip='Open the Console context rail;    │ │
+│ │                   stage sources from Library',                           │ │
+│ │                   │   │   │   disabled=False,                            │ │
+│ │                   │   │   │   primary=False                              │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchAction(                               │ │
+│ │                   │   │   │   id='run-library-rag',                      │ │
+│ │                   │   │   │   label='Search Library',                    │ │
+│ │                   │   │   │   tooltip='Search Library evidence before    │ │
+│ │                   sending',                                              │ │
+│ │                   │   │   │   disabled=False,                            │ │
+│ │                   │   │   │   primary=False                              │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchAction(                               │ │
+│ │                   │   │   │   id='send',                                 │ │
+│ │                   │   │   │   label='Send',                              │ │
+│ │                   │   │   │   tooltip='Send composer draft',             │ │
+│ │                   │   │   │   disabled=True,                             │ │
+│ │                   │   │   │   primary=False                              │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchAction(                               │ │
+│ │                   │   │   │   id='stop',                                 │ │
+│ │                   │   │   │   label='Stop',                              │ │
+│ │                   │   │   │   tooltip='Stop active generation',          │ │
+│ │                   │   │   │   disabled=True,                             │ │
+│ │                   │   │   │   primary=False                              │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchAction(                               │ │
+│ │                   │   │   │   id='help',                                 │ │
+│ │                   │   │   │   label='Help',                              │ │
+│ │                   │   │   │   tooltip='Show visible Console actions and  │ │
+│ │                   shortcuts',                                            │ │
+│ │                   │   │   │   disabled=False,                            │ │
+│ │                   │   │   │   primary=False                              │ │
+│ │                   │   │   )                                              │ │
+│ │                   │   ),                                                 │ │
+│ │                   │   panes=(                                            │ │
+│ │                   │   │   WorkbenchPaneState(                            │ │
+│ │                   │   │   │   id='context',                              │ │
+│ │                   │   │   │   title='Context',                           │ │
+│ │                   │   │   │   status='ready',                            │ │
+│ │                   │   │   │   collapsed=False                            │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchPaneState(                            │ │
+│ │                   │   │   │   id='transcript',                           │ │
+│ │                   │   │   │   title='Transcript',                        │ │
+│ │                   │   │   │   status='ready',                            │ │
+│ │                   │   │   │   collapsed=False                            │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchPaneState(                            │ │
+│ │                   │   │   │   id='inspector',                            │ │
+│ │                   │   │   │   title='Inspector',                         │ │
+│ │                   │   │   │   status='ready',                            │ │
+│ │                   │   │   │   collapsed=False                            │ │
+│ │                   │   │   ),                                             │ │
+│ │                   │   │   WorkbenchPaneState(                            │ │
+│ │                   │   │   │   id='composer',                             │ │
+│ │                   │   │   │   title='Composer',                          │ │
+│ │                   │   │   │   status='ready',                            │ │
+│ │                   │   │   │   collapsed=False                            │ │
+│ │                   │   │   )                                              │ │
+│ │                   │   ),                                                 │ │
+│ │                   │   recovery=None,                                     │ │
+│ │                   │   density='normal',                                  │ │
+│ │                   │   route_id='chat'                                    │ │
+│ │                   )                                                      │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:15244 in                  │
+│ _sync_console_transcript_guidance                                            │
+│                                                                              │
+│   15241 │   │   │   │   provider_action_tooltip=empty_action_tooltip,        │
+│   15242 │   │   │   )                                                        │
+│   15243 │   │                                                                │
+│ ❱ 15244 │   │   self._sync_console_setup_modal(                              │
+│   15245 │   │   │   card_state,                                              │
+│   15246 │   │   │   action_label=empty_action_label,                         │
+│   15247 │   │   │   action_tooltip=empty_action_tooltip,                     │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │       _action_target = 'settings'                                        │ │
+│ │         action_label = 'Set up provider'                                 │ │
+│ │       action_tooltip = 'Configure OpenAI API and API key in Settings'    │ │
+│ │         blocker_copy = 'Provider setup needed: API key missing for       │ │
+│ │                        OpenAI'                                           │ │
+│ │           card_state = ConsoleSetupCardState(                            │ │
+│ │                        │   mode='quiet',                                 │ │
+│ │                        │   steps=(),                                     │ │
+│ │                        │   body_copy='No messages yet.'                  │ │
+│ │                        )                                                 │ │
+│ │   empty_action_label = 'Set up provider'                                 │ │
+│ │ empty_action_tooltip = 'Configure OpenAI API and API key in Settings'    │ │
+│ │                 self = ChatScreen(classes='shell-header-normal')         │ │
+│ │   settings_readiness = (                                                 │ │
+│ │                        │   ConsoleSessionSettings(                       │ │
+│ │                        │   │   provider='openai',                        │ │
+│ │                        │   │   model='gpt-5.6-terra',                    │ │
+│ │                        │   │   base_url=None,                            │ │
+│ │                        │   │   temperature=0.6,                          │ │
+│ │                        │   │   top_p=0.95,                               │ │
+│ │                        │   │   min_p=0.05,                               │ │
+│ │                        │   │   top_k=50,                                 │ │
+│ │                        │   │   max_tokens=4096,                          │ │
+│ │                        │   │   seed=None,                                │ │
+│ │                        │   │   presence_penalty=None,                    │ │
+│ │                        │   │   frequency_penalty=None,                   │ │
+│ │                        │   │   reasoning_effort=None,                    │ │
+│ │                        │   │   reasoning_summary=None,                   │ │
+│ │                        │   │   verbosity=None,                           │ │
+│ │                        │   │   thinking_effort=None,                     │ │
+│ │                        │   │   thinking_budget_tokens=None,              │ │
+│ │                        │   │   streaming=False,                          │ │
+│ │                        │   │   character_label='',                       │ │
+│ │                        │   │   system_prompt=None,                       │ │
+│ │                        │   │   source='derived',                         │ │
+│ │                        │   │   pinned_prefill=None,                      │ │
+│ │                        │   │   persona_memory_mode=None                  │ │
+│ │                        │   ),                                            │ │
+│ │                        │   ConsoleSettingsReadiness(                     │ │
+│ │                        │   │   label='Missing key',                      │ │
+│ │                        │   │   detail='openai is not ready: Missing API  │ │
+│ │                        key. Set OPENAI_API_KEY or add api_key under      │ │
+│ │                        [a'+20,                                           │ │
+│ │                        │   │   native_send_supported=False,              │ │
+│ │                        │   │   operability='not_ready',                  │ │
+│ │                        │   │   blocker='credential_missing',             │ │
+│ │                        │   │   recovery_action='configure_credential',   │ │
+│ │                        │   │   provider_display_name='OpenAI',           │ │
+│ │                        │   │   configuration='incomplete',               │ │
+│ │                        │   │   configuration_issue='credential_missing', │ │
+│ │                        │   │   credential='missing',                     │ │
+│ │                        │   │   credential_source='none',                 │ │
+│ │                        │   │   endpoint='not_tested',                    │ │
+│ │                        │   │   endpoint_category=None,                   │ │
+│ │                        │   │   model='unconfirmed',                      │ │
+│ │                        │   │   generation='not_tested',                  │ │
+│ │                        │   │   generation_category=None,                 │ │
+│ │                        │   │   subscription_status=None                  │ │
+│ │                        │   )                                             │ │
+│ │                        )                                                 │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:15282 in                  │
+│ _sync_console_setup_modal                                                    │
+│                                                                              │
+│   15279 │   │   │   )                                                        │
+│   15280 │   │   )                                                            │
+│   15281 │   │   blocking = modal.is_blocking                                 │
+│ ❱ 15282 │   │   self._apply_console_setup_block(blocking)                    │
+│   15283 │   │   if blocking:                                                 │
+│   15284 │   │   │   self._maybe_start_console_local_discovery()              │
+│   15285 │   │   │   if not self._resume_navigation_startup_in_progress:      │
+│                                                                              │
+│ ╭──────────────────────────── locals ─────────────────────────────╮          │
+│ │   action_label = 'Set up provider'                              │          │
+│ │ action_tooltip = 'Configure OpenAI API and API key in Settings' │          │
+│ │       blocking = False                                          │          │
+│ │     card_state = ConsoleSetupCardState(                         │          │
+│ │                  │   mode='quiet',                              │          │
+│ │                  │   steps=(),                                  │          │
+│ │                  │   body_copy='No messages yet.'               │          │
+│ │                  )                                              │          │
+│ │          modal = ConsoleSetupModal(                             │          │
+│ │                  │   id='console-setup-modal',                  │          │
+│ │                  │   classes='console-setup-modal-backdrop'     │          │
+│ │                  )                                              │          │
+│ │           self = ChatScreen(classes='shell-header-normal')      │          │
+│ ╰─────────────────────────────────────────────────────────────────╯          │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:15484 in                  │
+│ _apply_console_setup_block                                                   │
+│                                                                              │
+│   15481 │   │   # FR-06 (TASK-2154.8): the footer hints must track the block │
+│   15482 │   │   # every transition, including before the composer query belo │
+│   15483 │   │   # early-return (e.g. mid-recompose).                         │
+│ ❱ 15484 │   │   self._register_console_footer_shortcuts()                    │
+│   15485 │   │   try:                                                         │
+│   15486 │   │   │   composer = self.query_one("#console-native-composer", Co │
+│   15487 │   │   except QueryError:                                           │
+│                                                                              │
+│ ╭─────────────────────── locals ───────────────────────╮                     │
+│ │ blocking = False                                     │                     │
+│ │     self = ChatScreen(classes='shell-header-normal') │                     │
+│ ╰──────────────────────────────────────────────────────╯                     │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:5195 in                   │
+│ _register_console_footer_shortcuts                                           │
+│                                                                              │
+│    5192 │   │   # exits are F6 and Esc, taught at the point of need. Precede │
+│    5193 │   │   # nothing (prepended like the others: footer degradation dro │
+│    5194 │   │   # hints from the END).                                       │
+│ ❱  5195 │   │   if self._console_rail_focus_active():                        │
+│    5196 │   │   │   shortcuts = (("Esc", "composer · F6 panes"), *shortcuts) │
+│    5197 │   │   self.register_footer_shortcuts(source="console", shortcuts=s │
+│    5198                                                                      │
+│                                                                              │
+│ ╭──────────────────────── locals ─────────────────────────╮                  │
+│ │ focus_label = 'focus'                                   │                  │
+│ │        self = ChatScreen(classes='shell-header-normal') │                  │
+│ │   shortcuts = (                                         │                  │
+│ │               │   ('Ctrl+Shift+F', 'focus'),            │                  │
+│ │               │   ('F6', 'next pane'),                  │                  │
+│ │               │   ('Shift+F6', 'previous pane'),        │                  │
+│ │               │   ('F1', 'help'),                       │                  │
+│ │               │   ('Enter', 'send / queue'),            │                  │
+│ │               │   ('Y', 'trace'),                       │                  │
+│ │               │   ('Ctrl+K', 'switch session'),         │                  │
+│ │               │   ('Ctrl+T', 'new tab'),                │                  │
+│ │               │   ('Alt+I', 'inspect'),                 │                  │
+│ │               │   ('Alt+A', 'approval'),                │                  │
+│ │               │   ... +2                                │                  │
+│ │               )                                         │                  │
+│ ╰─────────────────────────────────────────────────────────╯                  │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/tldw_chatbook/UI/Screens/chat_screen.py:5203 in                   │
+│ _console_rail_focus_active                                                   │
+│                                                                              │
+│    5200 │   │   """Return whether live focus is inside either mounted rail ( │
+│    5201 │   │   from tldw_chatbook.UI.Console_Modules.left_rail import Conso │
+│    5202 │   │                                                                │
+│ ❱  5203 │   │   focused = self.app.focused                                   │
+│    5204 │   │   if not isinstance(focused, Widget):                          │
+│    5205 │   │   │   return False                                             │
+│    5206 │   │   for rail_id in ("console-left-rail", "console-right-rail"):  │
+│                                                                              │
+│ ╭───────────────────── locals ─────────────────────╮                         │
+│ │ self = ChatScreen(classes='shell-header-normal') │                         │
+│ ╰──────────────────────────────────────────────────╯                         │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/app.py:1299 in focused │
+│                                                                              │
+│   1296 │   │   Returns:                                                      │
+│   1297 │   │   │   The currently focused widget, or `None` if nothing is foc │
+│   1298 │   │   """                                                           │
+│ ❱ 1299 │   │   focused = self.screen.focused                                 │
+│   1300 │   │   if focused is not None and focused.loading:                   │
+│   1301 │   │   │   return None                                               │
+│   1302 │   │   return focused                                                │
+│                                                                              │
+│ ╭──────────────────────── locals ────────────────────────╮                   │
+│ │ self = TldwCli(                                        │                   │
+│ │        │   title='tldw chatbook',                      │                   │
+│ │        │   classes={'-dark-mode'},                     │                   │
+│ │        │   pseudo_classes={                            │                   │
+│ │        │   │   'dark',                                 │                   │
+│ │        │   │   'focus',                                │                   │
+│ │        │   │   'nocolor'                               │                   │
+│ │        │   }                                           │                   │
+│ │        )                                               │                   │
+│ ╰────────────────────────────────────────────────────────╯                   │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+│ rn-library/.venv/lib/python3.12/site-packages/textual/app.py:1641 in screen  │
+│                                                                              │
+│   1638 │   │   except KeyError:                                              │
+│   1639 │   │   │   raise UnknownModeError(f"No known mode {self._current_mod │
+│   1640 │   │   except IndexError:                                            │
+│ ❱ 1641 │   │   │   raise ScreenStackError("No screens on stack") from None   │
+│   1642 │                                                                     │
+│   1643 │   @property                                                         │
+│   1644 │   def _background_screens(self) -> list[Screen]:                    │
+│                                                                              │
+│ ╭──────────────────────── locals ────────────────────────╮                   │
+│ │ self = TldwCli(                                        │                   │
+│ │        │   title='tldw chatbook',                      │                   │
+│ │        │   classes={'-dark-mode'},                     │                   │
+│ │        │   pseudo_classes={                            │                   │
+│ │        │   │   'dark',                                 │                   │
+│ │        │   │   'focus',                                │                   │
+│ │        │   │   'nocolor'                               │                   │
+│ │        │   }                                           │                   │
+│ │        )                                               │                   │
+│ ╰────────────────────────────────────────────────────────╯                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ScreenStackError: No screens on stack
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:12312 Splash screen enabled: False
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+============================= slowest 25 durations =============================
+15.48s call     Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_conversation_archive_flow.py::test_console_archive_undo_then_resume_reuses_original_and_full_search[size1]
+1 failed in 17.32s

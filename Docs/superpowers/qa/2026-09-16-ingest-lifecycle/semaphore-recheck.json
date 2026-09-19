@@ -1,0 +1,23 @@
+{
+  "checked_at_utc": "2026-09-16T19:31:31.133180+00:00",
+  "isolated_probe": {
+    "checked_at_utc": "2026-09-16T19:31:31.133180+00:00",
+    "python": "3.12.11",
+    "platform": "Darwin",
+    "sandbox": "outside",
+    "probe": "multiprocessing.get_context(\"spawn\").Lock()",
+    "passed": true
+  },
+  "real_spawn_test": {
+    "node": "Tests/Local_Ingestion/test_ingest_parse_worker.py::test_run_parse_job_through_real_spawn_pool",
+    "outside_sandbox": true,
+    "passed": 1,
+    "failed": 0,
+    "duration_seconds": 0.7,
+    "output_sha256": "fd37e494c27d8119d74066caf1e0686d832970974250de44187f1ccafb031cc0"
+  },
+  "semaphore_blocker_cleared": true,
+  "full_native_import_lifecycle_rechecked": false,
+  "resource_ownership_or_recovery_cause_identified": false,
+  "host_changes_performed": false
+}

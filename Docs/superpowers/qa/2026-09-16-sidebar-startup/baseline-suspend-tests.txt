@@ -1,0 +1,79 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______________ test_on_screen_suspend_does_not_call_save_state ________________
+Tests/UI/test_chat_screen_suspend.py:115: in test_on_screen_suspend_does_not_call_save_state
+    calls = asyncio.run(_run_suspend_with_stubs(screen))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/UI/test_chat_screen_suspend.py:94: in _run_suspend_with_stubs
+    screen.on_screen_suspend()
+tldw_chatbook/UI/Screens/chat_screen.py:23219: in on_screen_suspend
+    controller = self._console_chat_controller
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9951: in _console_chat_controller
+    return self._console_runtime().chat_controller
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9904: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4714: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:3970: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3747: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:10258: in console_view_hooks
+    "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute '_console_wake_user_priority'
+_______________ test_on_screen_suspend_quiesces_every_visit_seam _______________
+Tests/UI/test_chat_screen_suspend.py:130: in test_on_screen_suspend_quiesces_every_visit_seam
+    calls = asyncio.run(_run_suspend_with_stubs(screen))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/UI/test_chat_screen_suspend.py:94: in _run_suspend_with_stubs
+    screen.on_screen_suspend()
+tldw_chatbook/UI/Screens/chat_screen.py:23219: in on_screen_suspend
+    controller = self._console_chat_controller
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9951: in _console_chat_controller
+    return self._console_runtime().chat_controller
+           ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9904: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:4714: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:3970: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:3747: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:10258: in console_view_hooks
+    "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute '_console_wake_user_priority'
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_chat_screen_suspend.py::test_on_screen_suspend_does_not_call_save_state
+FAILED Tests/UI/test_chat_screen_suspend.py::test_on_screen_suspend_quiesces_every_visit_seam
+2 failed in 1.95s

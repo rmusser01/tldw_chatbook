@@ -1,0 +1,96 @@
+{
+  "pid": 35146,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "overview_links_keyboard": true,
+      "masked_draft_navigation_and_revert": true,
+      "exact_saved_delta": true,
+      "explicit_http_failure_and_retry": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "overview_links_keyboard": true,
+      "masked_draft_navigation_and_revert": true,
+      "exact_saved_delta": true,
+      "explicit_http_failure_and_retry": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "overview_links_keyboard": true,
+      "masked_draft_navigation_and_revert": true,
+      "exact_saved_delta": true,
+      "explicit_http_failure_and_retry": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "overview_links_keyboard": true,
+      "masked_draft_navigation_and_revert": true,
+      "exact_saved_delta": true,
+      "explicit_http_failure_and_retry": true
+    }
+  ],
+  "requests": [
+    {
+      "query": "tldw chatbook",
+      "status": 401
+    },
+    {
+      "query": "tldw chatbook",
+      "status": 200
+    },
+    {
+      "query": "tldw chatbook",
+      "status": 401
+    },
+    {
+      "query": "tldw chatbook",
+      "status": 200
+    },
+    {
+      "query": "tldw chatbook",
+      "status": 401
+    },
+    {
+      "query": "tldw chatbook",
+      "status": 200
+    },
+    {
+      "query": "tldw chatbook",
+      "status": 401
+    },
+    {
+      "query": "tldw chatbook",
+      "status": 200
+    }
+  ],
+  "runner_sha256": "7bc277c902f634d0e50190bed1201b48ca4f6f9776ad326b77ec21031de4e0d4",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "29b4eaaed23a9ec03a6888bdbdd7b935e5b25162959586371f1188acecea3441",
+    "tldw_chatbook/UI/Screens/settings_web_search.py": "6b0356a5475f794c793b486f92893a569bc9f0967e2aafb4f4e5c4d8a0a86b3a",
+    "tldw_chatbook/Widgets/settings_web_search_panel.py": "08b75bc4367b101d93489f570408e9904b69d1cc8c6b3c56d3e9f6db66ec9cd7",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a34cfafccea5c5e0ef18989cbf94731b373f9449438bc391b1a1badbd4d74dd5",
+    "tldw_chatbook/css/features/_settings.tcss": "c3ef51179a32286a4c4bd32b51d79eb399034132e82472e62ea37bb05c8d5bad",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "1baf693ac8752c144653bdaf507700537aab929d806d047f0d864ac9770ee76d"
+  },
+  "waiting_for": "Notices clear",
+  "passed": true,
+  "app_run_returned": true,
+  "loopback_server_closed": true
+}

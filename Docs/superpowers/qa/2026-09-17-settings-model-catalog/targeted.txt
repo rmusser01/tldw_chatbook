@@ -1,0 +1,29 @@
+........................                                                 [100%]
+============================= slowest 25 durations =============================
+10.02s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-light]
+9.84s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-dark]
+9.81s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size1-textual-dark]
+9.44s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_keyboard_failure_retry_and_fractional_interval[size0-textual-light]
+2.58s call     Tests/UI/test_settings_model_catalog_layout.py::test_model_catalog_group_renders_all_controls[size2]
+2.38s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_saved_values_load_back_on_recompose
+2.28s call     Tests/UI/test_settings_model_catalog_layout.py::test_model_catalog_group_renders_all_controls[size0]
+2.27s call     Tests/UI/test_settings_model_catalog_layout.py::test_model_catalog_group_renders_all_controls[size1]
+2.07s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[abc]
+2.03s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[]
+2.02s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-1]
+2.00s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[nan]
+1.98s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[24]
+1.97s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_serializes_rapid_edits_including_saved_value_roundtrip[12]
+1.78s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_exception_preserves_choices_and_redacts_message
+1.77s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[inf]
+1.76s call     Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_invalid_intervals_do_not_write_and_explain_recovery[-inf]
+1.43s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_toggle_change_persists_immediately
+1.38s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_fractional_hours_persist_as_float
+1.29s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_ignores_unrelated_checkbox_events
+1.25s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_empty_hours_skips_persist
+1.23s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_invalid_hours_input_skips_persist
+1.22s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_toggles_initialize_from_saved_config
+1.13s call     Tests/UI/test_settings_model_catalog_toggles.py::test_model_catalog_toggles_render_for_all_providers_with_defaults
+
+(1 durations < 1s hidden.)
+24 passed in 83.40s (0:01:23)

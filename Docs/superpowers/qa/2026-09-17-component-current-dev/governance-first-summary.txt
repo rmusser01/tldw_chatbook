@@ -1,0 +1,12 @@
+=========================== short test summary info ============================
+FAILED Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+FAILED Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+FAILED Tests/UI/test_css_build_integrity.py::test_library_notes_compact_source_module_is_exactly_bundled
+FAILED Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+10 failed, 91 passed in 223.19s (0:03:43)

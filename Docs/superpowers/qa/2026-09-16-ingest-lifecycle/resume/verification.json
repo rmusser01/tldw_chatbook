@@ -1,0 +1,43 @@
+{
+  "baseline": "d576cb93c7",
+  "application_source_changes": false,
+  "runner_sha256": "89d682209e0e5a4849722777192059d7f507bea6032324ae240aebf2dc41c8ea",
+  "native_phases": [
+    "success",
+    "interrupt",
+    "recover",
+    "reopen"
+  ],
+  "pytest": {
+    "passed": 83,
+    "failed": 0,
+    "seconds": 80.95,
+    "exit_code": 0,
+    "outside_sandbox": true,
+    "selection": [
+      "Tests/Library/test_library_ingest_jobs_restore.py",
+      "Tests/DB/test_library_ingest_jobs_db.py",
+      "Tests/Library/test_library_ingest_runner.py::test_retry_of_failed_job_succeeds_once_transient_error_clears",
+      "Tests/Library/test_library_ingest_runner.py::test_duplicate_content_at_different_path_resolves_existing_media_id",
+      "Tests/Library/test_library_ingest_runner.py::test_shutdown_flag_stops_late_parse_completion_callbacks",
+      "Tests/Library/test_library_ingest_runner.py::test_shutdown_detaches_and_cleans_progress_resources_off_caller_thread",
+      "Tests/Library/test_library_ingest_runner.py::test_real_pool_worker_exit_is_reported_for_owning_generation",
+      "Tests/Local_Ingestion/test_ingest_parse_worker.py::test_run_parse_job_through_real_spawn_pool",
+      "Tests/UI/test_library_ingest_entry_journeys.py",
+      "Tests/UI/test_library_ingest_recent_journeys.py",
+      "Docs/superpowers/qa/2026-09-16-ingest-lifecycle/test_profile_guard.py"
+    ],
+    "output": "targeted-tests.txt"
+  },
+  "full_suite_run": false,
+  "external_providers_exercised": false,
+  "review_status": "No remaining actionable harness findings; parent separately inspected visuals and checked final persistence.",
+  "static_checks": {
+    "ruff_check": "passed",
+    "ruff_format_check": "passed",
+    "json_parse": "passed",
+    "readme_relative_links": "passed",
+    "capture_hashes_and_xml": "passed",
+    "tracked_diff_whitespace": "passed"
+  }
+}

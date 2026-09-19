@@ -1,0 +1,662 @@
+.F.F..                                                                   [100%]
+=================================== FAILURES ===================================
+______ test_poll_before_deferred_controls_compose_is_safe[workspace_root] ______
+
+self = <Coroutine test_poll_before_deferred_controls_compose_is_safe[workspace_root]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_poll_before_deferred_controls_compose_is_safe[workspace_root]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x114831880>, 'key': 'workspace_root'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1998/test_poll_before_deferred_cont1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ______ test_poll_before_deferred_controls_compose_is_safe[workspace_root] ______
+E
+E           request = <FixtureRequest for <Coroutine test_poll_before_deferred_controls_compose_is_safe[workspace_root]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1136efd10>
+E           key = 'workspace_root'
+E
+E               @pytest.mark.parametrize("key", ["local_tools_enabled", "workspace_root"])
+E               @private_profile_test
+E               async def test_poll_before_deferred_controls_compose_is_safe(request, monkeypatch, key):
+E                   app = WorkbenchAppWithBundledCSS()
+E                   await _failed_receipt(app, key)
+E                   original = MCPToolsMode.mount_composed_widgets
+E                   observations = []
+E
+E                   async def poll_before_children(canvas, widgets):
+E                       workbench = app.query_one(MCPWorkbench)
+E                       observations.append(
+E                           (canvas.is_attached, canvas.is_mounted, _poll_outcome(workbench))
+E                       )
+E                       await original(canvas, widgets)
+E
+E                   monkeypatch.setattr(MCPToolsMode, "mount_composed_widgets", poll_before_children)
+E                   async with app.run_test() as pilot:
+E                       workbench = await _ready(pilot)
+E                       assert observations == [(True, False, None)]
+E                       workbench._sync_local_config_save_status()
+E                       status_id = (
+E                           "#mcp-tools-local-config-status"
+E                           if key == "local_tools_enabled"
+E                           else "#mcp-tools-workspace-status"
+E                       )
+E           >           assert "failed" in str(workbench.query_one(status_id).renderable).lower()
+E           E           AssertionError: assert 'failed' in ''
+E           E            +  where '' = <built-in method lower of str object at 0x104291420>()
+E           E            +    where <built-in method lower of str object at 0x104291420> = ''.lower
+E           E            +      where '' = str('')
+E           E            +        where '' = Static(id='mcp-tools-workspace-status', classes='ds-text-muted h-auto').renderable
+E           E            +          where Static(id='mcp-tools-workspace-status', classes='ds-text-muted h-auto') = query_one('#mcp-tools-workspace-status')
+E           E            +            where query_one = MCPWorkbench(id='mcp-workbench').query_one
+E
+E           Tests/UI/test_mcp_workbench_lifetime.py:74: AssertionError
+E
+E           During handling of the above exception, another exception occurred:
+E
+E           request = <FixtureRequest for <Coroutine test_poll_before_deferred_controls_compose_is_safe[workspace_root]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1136efd10>
+E           key = 'workspace_root'
+E
+E               @pytest.mark.parametrize("key", ["local_tools_enabled", "workspace_root"])
+E               @private_profile_test
+E               async def test_poll_before_deferred_controls_compose_is_safe(request, monkeypatch, key):
+E                   app = WorkbenchAppWithBundledCSS()
+E                   await _failed_receipt(app, key)
+E                   original = MCPToolsMode.mount_composed_widgets
+E                   observations = []
+E
+E                   async def poll_before_children(canvas, widgets):
+E                       workbench = app.query_one(MCPWorkbench)
+E                       observations.append(
+E                           (canvas.is_attached, canvas.is_mounted, _poll_outcome(workbench))
+E                       )
+E                       await original(canvas, widgets)
+E
+E                   monkeypatch.setattr(MCPToolsMode, "mount_composed_widgets", poll_before_children)
+E           >       async with app.run_test() as pilot:
+E                              ^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_mcp_workbench_lifetime.py:65:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+E               await self.gen.athrow(value)
+E           .venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+E               raise self._exception
+E           .venv/lib/python3.12/site-packages/textual/timer.py:189: in _tick
+E               await invoke(self._callback)
+E           .venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+E               return await _invoke(callback, *params)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           .venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+E               result = callback(*params[:parameter_count])
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4278: in _sync_local_config_save_status
+E               self._sync_root_save_status()
+E           tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4363: in _sync_root_save_status
+E               canvas.project_workspace_root_save(
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = MCPToolsMode(id='mcp-mode-canvas-tools')
+E           state = ConfigSaveState(revision=1, request=ConfigSaveRequest(value='/unsaved-root', draft_identity=None, config_path=PosixPat...ches_reloaded=False, cache_generation=None, file_revision=None, previous_generation=None, previous_file_revision=None))
+E           generation = 1
+E           file_revision = (16777234, 221449292, 1789748110920262966, 97171)
+E
+E               def project_workspace_root_save(
+E                   self,
+E                   state: ConfigSaveState,
+E                   *,
+E                   generation: int | None = None,
+E                   file_revision: tuple[int, int, int, int] | None = None,
+E               ) -> None:
+E                   """Project an owned outcome without overwriting a newer local draft."""
+E                   if state.request.config_path != self._workspace_root_config:
+E                       return
+E                   field = self.query_one("#mcp-tools-workspace-root", Input)
+E                   same_draft = state.request.draft_identity == self.workspace_root_draft_identity
+E                   newer_draft = not same_draft and (
+E           >           state.request.draft_identity[0] is self._workspace_root_origin
+E                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                       or self._workspace_root_dirty
+E                   )
+E           E       TypeError: 'NoneType' object is not subscriptable
+E
+E           tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py:591: TypeError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:15:12.097 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:15:12.102 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:15:12.103 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:15:12.103 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 09:15:12.651 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4278 in             │
+E           │ _sync_local_config_save_status                                               │
+E           │                                                                              │
+E           │   4275 │   │   │   )                                                         │
+E           │   4276 │                                                                     │
+E           │   4277 │   def _sync_local_config_save_status(self) -> None:                 │
+E           │ ❱ 4278 │   │   self._sync_root_save_status()                                 │
+E           │   4279 │   │   self._sync_master_save_status()                               │
+E           │   4280 │                                                                     │
+E           │   4281 │   async def _observe_local_master_save(self, task) -> None:         │
+E           │                                                                              │
+E           │ ╭──────────────── locals ─────────────────╮                                  │
+E           │ │ self = MCPWorkbench(id='mcp-workbench') │                                  │
+E           │ ╰─────────────────────────────────────────╯                                  │
+E           │                                                                              │
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4363 in             │
+E           │ _sync_root_save_status                                                       │
+E           │                                                                              │
+E           │   4360 │   │   if canvas is None:                                            │
+E           │   4361 │   │   │   return                                                    │
+E           │   4362 │   │   self._root_save_projection = stamp                            │
+E           │ ❱ 4363 │   │   canvas.project_workspace_root_save(                           │
+E           │   4364 │   │   │   state,                                                    │
+E           │   4365 │   │   │   generation=current_config_identity()[0],                  │
+E           │   4366 │   │   │   file_revision=config_file_revision(get_cli_config_path()) │
+E           │                                                                              │
+E           │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+E           │ │ canvas = MCPToolsMode(id='mcp-mode-canvas-tools')                        │ │
+E           │ │  owner = <tldw_chatbook.MCP.local_config_saves.MCPLocalConfigSaves       │ │
+E           │ │          object at 0x113957ef0>                                          │ │
+E           │ │   self = MCPWorkbench(id='mcp-workbench')                                │ │
+E           │ │  stamp = (                                                               │ │
+E           │ │          │   1,                                                          │ │
+E           │ │          │   False,                                                      │ │
+E           │ │          │   1,                                                          │ │
+E           │ │          │   (                                                           │ │
+E           │ │          │   │   1,                                                      │ │
+E           │ │          │   │                                                           │ │
+E           │ │          '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyte… │ │
+E           │ │          │   ),                                                          │ │
+E           │ │          │   (16777234, 221449292, 1789748110920262966, 97171)           │ │
+E           │ │          )                                                               │ │
+E           │ │  state = ConfigSaveState(                                                │ │
+E           │ │          │   revision=1,                                                 │ │
+E           │ │          │   request=ConfigSaveRequest(                                  │ │
+E           │ │          │   │   value='/unsaved-root',                                  │ │
+E           │ │          │   │   draft_identity=None,                                    │ │
+E           │ │          │   │                                                           │ │
+E           │ │          config_path=PosixPath('/private/var/folders/sn/m80n2j152t9gw3w… │ │
+E           │ │          │   │   cwd=None,                                               │ │
+E           │ │          │   │   key='workspace_root'                                    │ │
+E           │ │          │   ),                                                          │ │
+E           │ │          │   result=ConfigSaveResult(                                    │ │
+E           │ │          │   │   phase='failed',                                         │ │
+E           │ │          │   │   stored=None,                                            │ │
+E           │ │          │   │   caches_reloaded=False,                                  │ │
+E           │ │          │   │   cache_generation=None,                                  │ │
+E           │ │          │   │   file_revision=None,                                     │ │
+E           │ │          │   │   previous_generation=None,                               │ │
+E           │ │          │   │   previous_file_revision=None                             │ │
+E           │ │          │   )                                                           │ │
+E           │ │          )                                                               │ │
+E           │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E           │                                                                              │
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py:591 in             │
+E           │ project_workspace_root_save                                                  │
+E           │                                                                              │
+E           │   588 │   │   field = self.query_one("#mcp-tools-workspace-root", Input)     │
+E           │   589 │   │   same_draft = state.request.draft_identity == self.workspace_ro │
+E           │   590 │   │   newer_draft = not same_draft and (                             │
+E           │ ❱ 591 │   │   │   state.request.draft_identity[0] is self._workspace_root_or │
+E           │   592 │   │   │   or self._workspace_root_dirty                              │
+E           │   593 │   │   )                                                              │
+E           │   594 │   │   self._workspace_root_pending = state.result is None            │
+E           │                                                                              │
+E           │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+E           │ │         field = Input(id='mcp-tools-workspace-root')                     │ │
+E           │ │ file_revision = (16777234, 221449292, 1789748110920262966, 97171)        │ │
+E           │ │    generation = 1                                                        │ │
+E           │ │    same_draft = False                                                    │ │
+E           │ │          self = MCPToolsMode(id='mcp-mode-canvas-tools')                 │ │
+E           │ │         state = ConfigSaveState(                                         │ │
+E           │ │                 │   revision=1,                                          │ │
+E           │ │                 │   request=ConfigSaveRequest(                           │ │
+E           │ │                 │   │   value='/unsaved-root',                           │ │
+E           │ │                 │   │   draft_identity=None,                             │ │
+E           │ │                 │   │                                                    │ │
+E           │ │                 config_path=PosixPath('/private/var/folders/sn/m80n2j15… │ │
+E           │ │                 │   │   cwd=None,                                        │ │
+E           │ │                 │   │   key='workspace_root'                             │ │
+E           │ │                 │   ),                                                   │ │
+E           │ │                 │   result=ConfigSaveResult(                             │ │
+E           │ │                 │   │   phase='failed',                                  │ │
+E           │ │                 │   │   stored=None,                                     │ │
+E           │ │                 │   │   caches_reloaded=False,                           │ │
+E           │ │                 │   │   cache_generation=None,                           │ │
+E           │ │                 │   │   file_revision=None,                              │ │
+E           │ │                 │   │   previous_generation=None,                        │ │
+E           │ │                 │   │   previous_file_revision=None                      │ │
+E           │ │                 │   )                                                    │ │
+E           │ │                 )                                                        │ │
+E           │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E           ╰──────────────────────────────────────────────────────────────────────────────╯
+E           TypeError: 'NoneType' object is not subscriptable
+E
+E           NOTE: 1 of 2 errors shown. Run with textual run --dev to see all errors.
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[workspace_root]
+E           1 failed in 2.59s
+
+Tests/private_profile.py:84: Failed
+_ test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root] _
+
+self = <Coroutine test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a989ee0>, 'key': 'workspace_root'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1998/test_poll_during_descendant_de1/private-profile-process/pytest.log
+E           escendant_detach_is_safe_and_remount_recovers[workspace_root]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111baa8d0>
+E           key = 'workspace_root'
+E
+E               @pytest.mark.parametrize("key", ["local_tools_enabled", "workspace_root"])
+E               @private_profile_test
+E               async def test_poll_during_descendant_detach_is_safe_and_remount_recovers(
+E                   request, monkeypatch, key
+E               ):
+E                   app = WorkbenchAppWithBundledCSS()
+E                   observations = []
+E                   async with app.run_test() as pilot:
+E                       workbench = await _ready(pilot)
+E                       button = workbench.query_one("#mcp-tools-local-enabled")
+E                       original = Widget._message_loop_exit
+E
+E                       async def poll_after_control_detach(widget):
+E                           await original(widget)
+E                           if widget is button:
+E                               # A save can settle while descendants are being removed. Its
+E                               # new receipt must neither crash nor be consumed by a dead UI.
+E                               await _failed_receipt(app, key)
+E                               observations.append(
+E                                   (workbench.is_attached, workbench._pruning, _poll_outcome(workbench))
+E                               )
+E
+E                       monkeypatch.setattr(Widget, "_message_loop_exit", poll_after_control_detach)
+E                       await workbench.remove()
+E                       assert observations == [(True, True, None)]
+E                       await app.mount(MCPWorkbench(app_instance=app, id="replacement-workbench"))
+E                       replacement = await _ready(pilot)
+E                       replacement._sync_local_config_save_status()
+E                       assert replacement is not workbench
+E                       status_id = (
+E                           "#mcp-tools-local-config-status"
+E                           if key == "local_tools_enabled"
+E                           else "#mcp-tools-workspace-status"
+E                       )
+E           >           assert "failed" in str(replacement.query_one(status_id).renderable).lower()
+E           E           AssertionError: assert 'failed' in ''
+E           E            +  where '' = <built-in method lower of str object at 0x102801420>()
+E           E            +    where <built-in method lower of str object at 0x102801420> = ''.lower
+E           E            +      where '' = str('')
+E           E            +        where '' = Static(id='mcp-tools-workspace-status', classes='ds-text-muted h-auto').renderable
+E           E            +          where Static(id='mcp-tools-workspace-status', classes='ds-text-muted h-auto') = query_one('#mcp-tools-workspace-status')
+E           E            +            where query_one = MCPWorkbench(id='replacement-workbench').query_one
+E
+E           Tests/UI/test_mcp_workbench_lifetime.py:111: AssertionError
+E
+E           During handling of the above exception, another exception occurred:
+E
+E           request = <FixtureRequest for <Coroutine test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111baa8d0>
+E           key = 'workspace_root'
+E
+E               @pytest.mark.parametrize("key", ["local_tools_enabled", "workspace_root"])
+E               @private_profile_test
+E               async def test_poll_during_descendant_detach_is_safe_and_remount_recovers(
+E                   request, monkeypatch, key
+E               ):
+E                   app = WorkbenchAppWithBundledCSS()
+E                   observations = []
+E           >       async with app.run_test() as pilot:
+E                              ^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_mcp_workbench_lifetime.py:84:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E           ../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+E               await self.gen.athrow(value)
+E           .venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+E               raise self._exception
+E           .venv/lib/python3.12/site-packages/textual/timer.py:189: in _tick
+E               await invoke(self._callback)
+E           .venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+E               return await _invoke(callback, *params)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           .venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+E               result = callback(*params[:parameter_count])
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4278: in _sync_local_config_save_status
+E               self._sync_root_save_status()
+E           tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4363: in _sync_root_save_status
+E               canvas.project_workspace_root_save(
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = MCPToolsMode(id='mcp-mode-canvas-tools')
+E           state = ConfigSaveState(revision=1, request=ConfigSaveRequest(value='/unsaved-root', draft_identity=None, config_path=PosixPat...ches_reloaded=False, cache_generation=None, file_revision=None, previous_generation=None, previous_file_revision=None))
+E           generation = 1
+E           file_revision = (16777234, 221449698, 1789748117622839522, 97171)
+E
+E               def project_workspace_root_save(
+E                   self,
+E                   state: ConfigSaveState,
+E                   *,
+E                   generation: int | None = None,
+E                   file_revision: tuple[int, int, int, int] | None = None,
+E               ) -> None:
+E                   """Project an owned outcome without overwriting a newer local draft."""
+E                   if state.request.config_path != self._workspace_root_config:
+E                       return
+E                   field = self.query_one("#mcp-tools-workspace-root", Input)
+E                   same_draft = state.request.draft_identity == self.workspace_root_draft_identity
+E                   newer_draft = not same_draft and (
+E           >           state.request.draft_identity[0] is self._workspace_root_origin
+E                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                       or self._workspace_root_dirty
+E                   )
+E           E       TypeError: 'NoneType' object is not subscriptable
+E
+E           tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py:591: TypeError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 09:15:18.781 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 09:15:18.786 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 09:15:18.787 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 09:15:18.787 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 09:15:19.335 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           2026-09-18 09:15:19.679 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1616 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+E           ╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4278 in             │
+E           │ _sync_local_config_save_status                                               │
+E           │                                                                              │
+E           │   4275 │   │   │   )                                                         │
+E           │   4276 │                                                                     │
+E           │   4277 │   def _sync_local_config_save_status(self) -> None:                 │
+E           │ ❱ 4278 │   │   self._sync_root_save_status()                                 │
+E           │   4279 │   │   self._sync_master_save_status()                               │
+E           │   4280 │                                                                     │
+E           │   4281 │   async def _observe_local_master_save(self, task) -> None:         │
+E           │                                                                              │
+E           │ ╭──────────────────── locals ─────────────────────╮                          │
+E           │ │ self = MCPWorkbench(id='replacement-workbench') │                          │
+E           │ ╰─────────────────────────────────────────────────╯                          │
+E           │                                                                              │
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4363 in             │
+E           │ _sync_root_save_status                                                       │
+E           │                                                                              │
+E           │   4360 │   │   if canvas is None:                                            │
+E           │   4361 │   │   │   return                                                    │
+E           │   4362 │   │   self._root_save_projection = stamp                            │
+E           │ ❱ 4363 │   │   canvas.project_workspace_root_save(                           │
+E           │   4364 │   │   │   state,                                                    │
+E           │   4365 │   │   │   generation=current_config_identity()[0],                  │
+E           │   4366 │   │   │   file_revision=config_file_revision(get_cli_config_path()) │
+E           │                                                                              │
+E           │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+E           │ │ canvas = MCPToolsMode(id='mcp-mode-canvas-tools')                        │ │
+E           │ │  owner = <tldw_chatbook.MCP.local_config_saves.MCPLocalConfigSaves       │ │
+E           │ │          object at 0x112f17920>                                          │ │
+E           │ │   self = MCPWorkbench(id='replacement-workbench')                        │ │
+E           │ │  stamp = (                                                               │ │
+E           │ │          │   1,                                                          │ │
+E           │ │          │   False,                                                      │ │
+E           │ │          │   1,                                                          │ │
+E           │ │          │   (                                                           │ │
+E           │ │          │   │   1,                                                      │ │
+E           │ │          │   │                                                           │ │
+E           │ │          '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pyte… │ │
+E           │ │          │   ),                                                          │ │
+E           │ │          │   (16777234, 221449698, 1789748117622839522, 97171)           │ │
+E           │ │          )                                                               │ │
+E           │ │  state = ConfigSaveState(                                                │ │
+E           │ │          │   revision=1,                                                 │ │
+E           │ │          │   request=ConfigSaveRequest(                                  │ │
+E           │ │          │   │   value='/unsaved-root',                                  │ │
+E           │ │          │   │   draft_identity=None,                                    │ │
+E           │ │          │   │                                                           │ │
+E           │ │          config_path=PosixPath('/private/var/folders/sn/m80n2j152t9gw3w… │ │
+E           │ │          │   │   cwd=None,                                               │ │
+E           │ │          │   │   key='workspace_root'                                    │ │
+E           │ │          │   ),                                                          │ │
+E           │ │          │   result=ConfigSaveResult(                                    │ │
+E           │ │          │   │   phase='failed',                                         │ │
+E           │ │          │   │   stored=None,                                            │ │
+E           │ │          │   │   caches_reloaded=False,                                  │ │
+E           │ │          │   │   cache_generation=None,                                  │ │
+E           │ │          │   │   file_revision=None,                                     │ │
+E           │ │          │   │   previous_generation=None,                               │ │
+E           │ │          │   │   previous_file_revision=None                             │ │
+E           │ │          │   )                                                           │ │
+E           │ │          )                                                               │ │
+E           │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E           │                                                                              │
+E           │ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-patte │
+E           │ rn-library/tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py:591 in             │
+E           │ project_workspace_root_save                                                  │
+E           │                                                                              │
+E           │   588 │   │   field = self.query_one("#mcp-tools-workspace-root", Input)     │
+E           │   589 │   │   same_draft = state.request.draft_identity == self.workspace_ro │
+E           │   590 │   │   newer_draft = not same_draft and (                             │
+E           │ ❱ 591 │   │   │   state.request.draft_identity[0] is self._workspace_root_or │
+E           │   592 │   │   │   or self._workspace_root_dirty                              │
+E           │   593 │   │   )                                                              │
+E           │   594 │   │   self._workspace_root_pending = state.result is None            │
+E           │                                                                              │
+E           │ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+E           │ │         field = Input(id='mcp-tools-workspace-root')                     │ │
+E           │ │ file_revision = (16777234, 221449698, 1789748117622839522, 97171)        │ │
+E           │ │    generation = 1                                                        │ │
+E           │ │    same_draft = False                                                    │ │
+E           │ │          self = MCPToolsMode(id='mcp-mode-canvas-tools')                 │ │
+E           │ │         state = ConfigSaveState(                                         │ │
+E           │ │                 │   revision=1,                                          │ │
+E           │ │                 │   request=ConfigSaveRequest(                           │ │
+E           │ │                 │   │   value='/unsaved-root',                           │ │
+E           │ │                 │   │   draft_identity=None,                             │ │
+E           │ │                 │   │                                                    │ │
+E           │ │                 config_path=PosixPath('/private/var/folders/sn/m80n2j15… │ │
+E           │ │                 │   │   cwd=None,                                        │ │
+E           │ │                 │   │   key='workspace_root'                             │ │
+E           │ │                 │   ),                                                   │ │
+E           │ │                 │   result=ConfigSaveResult(                             │ │
+E           │ │                 │   │   phase='failed',                                  │ │
+E           │ │                 │   │   stored=None,                                     │ │
+E           │ │                 │   │   caches_reloaded=False,                           │ │
+E           │ │                 │   │   cache_generation=None,                           │ │
+E           │ │                 │   │   file_revision=None,                              │ │
+E           │ │                 │   │   previous_generation=None,                        │ │
+E           │ │                 │   │   previous_file_revision=None                      │ │
+E           │ │                 │   )                                                    │ │
+E           │ │                 )                                                        │ │
+E           │ ╰──────────────────────────────────────────────────────────────────────────╯ │
+E           ╰──────────────────────────────────────────────────────────────────────────────╯
+E           TypeError: 'NoneType' object is not subscriptable
+E           ============================= slowest 25 durations =============================
+E           1.24s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root]
+E           1 failed in 2.88s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+3.57s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root]
+3.30s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[local_tools_enabled]
+3.23s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[workspace_root]
+2.86s call     Tests/UI/test_mcp_workbench_lifetime.py::test_deferred_initial_load_remains_pending_until_dispatched
+2.82s call     Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[local_tools_enabled]
+
+(13 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_workbench_lifetime.py::test_poll_before_deferred_controls_compose_is_safe[workspace_root]
+FAILED Tests/UI/test_mcp_workbench_lifetime.py::test_poll_during_descendant_detach_is_safe_and_remount_recovers[workspace_root]
+2 failed, 4 passed in 18.37s

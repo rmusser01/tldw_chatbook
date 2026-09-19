@@ -1,0 +1,66 @@
+{
+  "base": "0f69e0ba96",
+  "files": [
+    {
+      "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+      "base_diagnostics": 1,
+      "current_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_collections_capture_reader.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Library/collections_capture_service.py",
+      "base_diagnostics": 5,
+      "current_diagnostics": 5,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_controller.py",
+      "base_diagnostics": 11,
+      "current_diagnostics": 10,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_state.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Library/library_collections_capture_reader.py",
+      "base_diagnostics": 1,
+      "current_diagnostics": 1,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_collection_browse_journeys.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Tests/UI/test_library_collection_saved_search_loading.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-09-15-collections-browse/native_check.py",
+      "base_diagnostics": 0,
+      "current_diagnostics": 0,
+      "new_diagnostics": []
+    }
+  ],
+  "new_diagnostics": 0
+}

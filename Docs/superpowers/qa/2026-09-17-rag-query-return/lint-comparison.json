@@ -1,0 +1,12 @@
+{
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "baseline_diagnostics": 205,
+    "current_diagnostics": 205,
+    "new_diagnostics": []
+  },
+  "tldw_chatbook/Widgets/Library/library_search_rag_panel.py": {
+    "baseline_diagnostics": 5,
+    "current_diagnostics": 5,
+    "new_diagnostics": []
+  }
+}

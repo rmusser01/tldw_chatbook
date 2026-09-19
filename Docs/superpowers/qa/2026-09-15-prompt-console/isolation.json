@@ -1,0 +1,18 @@
+{
+  "fresh_storage": true,
+  "configured_paths": [
+    "<private-profile>/data/db/chachanotes.db",
+    "<private-profile>/data/db/prompts.db",
+    "<private-profile>/data/db/media.db",
+    "<private-profile>/data/db/research.db",
+    "<private-profile>/data/db/writing.db",
+    "<private-profile>/data/db/library_collections.db",
+    "<private-profile>/data/db/workspaces.db",
+    "<private-profile>/data/db/evals.db",
+    "<private-profile>/data/db/rag_indexing.db",
+    "<private-profile>/data/db/subscriptions.db",
+    "<private-profile>/data/db",
+    "<private-profile>/data"
+  ],
+  "all_paths_inside_profile": true
+}

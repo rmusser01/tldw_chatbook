@@ -1,0 +1,50 @@
+[
+  {
+    "path": "Tests/UI/test_library_crit10_layout.py",
+    "baseline_lint_count": 2,
+    "current_lint_count": 2,
+    "new_findings": [],
+    "format": [
+      {
+        "version": "baseline",
+        "whole_file_formatted": false
+      },
+      {
+        "version": "current",
+        "whole_file_formatted": false
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py",
+    "baseline_lint_count": 5,
+    "current_lint_count": 5,
+    "new_findings": [],
+    "format": [
+      {
+        "version": "baseline",
+        "whole_file_formatted": false
+      },
+      {
+        "version": "current",
+        "whole_file_formatted": false
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "baseline_lint_count": 205,
+    "current_lint_count": 205,
+    "new_findings": [],
+    "format": [
+      {
+        "version": "baseline",
+        "whole_file_formatted": false
+      },
+      {
+        "version": "current",
+        "whole_file_formatted": false
+      }
+    ]
+  }
+]

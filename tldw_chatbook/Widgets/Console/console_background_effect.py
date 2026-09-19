@@ -85,7 +85,8 @@ class ConsoleBackgroundEffect(Widget):
 
     def on_mount(self) -> None:
         """Start frame updates once the widget is mounted and active."""
-        self._sync_timer()
+        # Textual sets is_mounted after dispatching Mount.
+        self.call_after_refresh(self._sync_timer)
 
     def on_unmount(self) -> None:
         """Stop frame updates when the widget leaves the DOM."""
@@ -171,7 +172,7 @@ class ConsoleBackgroundEffect(Widget):
 
     def _sync_timer(self) -> None:
         self._stop_timer()
-        if not self.is_effect_active or not self.is_mounted:
+        if not self.is_effect_active or not self.is_mounted or not self.is_attached:
             return
         interval = 1 / self.frame_rate
         self._timer = self.set_interval(interval, self._advance_frame)
@@ -243,19 +244,15 @@ class ConsoleTranscriptSurface(Container):
 
     can_focus = False
     BUNDLED_CSS = """
-    ConsoleTranscriptSurface {
-        layers: background content;
-    }
-
-    ConsoleTranscriptSurface > ConsoleBackgroundEffect {
-        layer: background;
+    ConsoleTranscriptSurface > ConsoleTranscript > ConsoleBackgroundEffect {
+        layer: console-background;
         dock: top;
         width: 100%;
         height: 100%;
     }
 
     ConsoleTranscriptSurface > ConsoleTranscript {
-        layer: content;
+        layers: console-background default;
         dock: top;
         width: 100%;
         height: 100%;
@@ -275,12 +272,19 @@ class ConsoleTranscriptSurface(Container):
             id="console-native-transcript"
         )
 
-    def compose(self) -> ComposeResult:
-        yield ConsoleBackgroundEffect(
+        # Textual's compositor does not expose sibling glyphs through a blank
+        # transcript strip. Dock the dedicated renderer below message children.
+        # A factory also restores that decoration after transcript recomposition.
+        self.transcript.background_effect_factory = self._make_background_effect
+
+    def _make_background_effect(self) -> ConsoleBackgroundEffect:
+        return ConsoleBackgroundEffect(
             self.settings,
             id="console-transcript-background-effect",
             classes="console-background-effect",
         )
+
+    def compose(self) -> ComposeResult:
         yield self.transcript
 
     def update_settings(self, settings: ConsoleBackgroundEffectSettings) -> None:

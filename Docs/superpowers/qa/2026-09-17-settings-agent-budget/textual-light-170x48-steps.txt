@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.            │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │ │ │  Limits on ONE agent run (one message you send). Raise them for long, expensive     │ │  │  │  │                              │
+│  category search             │  │  │ │ │  sessions. The token budget is what normally stops a long run - the turn and step   │ │  │  │  │ Selected category: Console   │
+│                              │  │  │ │ │  limits are backstops. Sub-agents inherit these, so a run that spawns helpers can   │ │  │  │  │ Behavior                     │
+│  Core                        │  │  │ │ │  spend several times the token budget.                                              │ │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │ │ Token budget (per run)  │ 0                                                         │ │  │  │  │  Guided edits: change a      │
+│     Providers & Models       │  │  │ │ │  0 = unlimited - no runaway-spend backstop. The limit that actually stops a long    │ │  │  │  │  field first.                │
+│     Web Search               │  │  │ │ │  run. Counts prompt + completion for ONE run (one message), not the whole           │ │  │  │  │  Save (s) — no changes       │
+│     Speech & TTS             │  │  │ │ │  conversation - and the whole conversation is re-sent every turn, so spend grows    │ │  │  │  │  Revert (r) — no changes     │
+│  Interface                   │  │  │ │ │  quadratically: 25M is typically reached around turn 250. Sub-agents each get this  │ │  │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │ │  same ceiling rather than a share of it, so one message's worst case is about 3x    │ │  │  │  │ config file.                 │
+│     Theme                    │  │  │ │ │  it. 0 = unlimited. Loop detection stops identical repeated calls and 3             │ │  │  │  │  Purpose: Focus a Console    │
+│     Splash Screen            │  │  │ │ │  consecutive failures from the same tool; successful calls with changing arguments  │ │  │  │  │  Behavior field for          │
+│   > Console Behavior         │  │  │ │ │  can still loop.                                                                    │ │▅ │  │  │  setting-specific            │
+│  Data & Privacy              │  │  │ │ │ Wall-clock (seconds)    │ 120.5                                                     │ │  │  │  │  guidance.                   │
+│     Storage                  │  │  │ │ │  = 2m. How long ONE run may take end to end. Stop works throughout. Sub-agents are  │ │  │  │  │                              │
+│     Workspaces               │  │  │ │ │  bounded separately by  child_max_wall_seconds, so raising this does not extend     │ │  │  │  │  Consequences: No            │
+│     Tool Profiles            │  │  │ │ │  them.                                                                              │ │  │  │  │  field-specific guidance     │
+│     Privacy & Security       │  │  │ │ │ Per-tool-call (seconds) │ 0.0                                                       │ │  │  │  │  is active right now.        │
+│     Network                  │  │  │ │ │  0 = unlimited. Ceiling on a SINGLE tool call - the real limit on long crawls,      │ │  │  │  │                              │
+│     My Profile               │  │  │ │ │  ingests, and builds, which a large wall-clock budget alone will not save. 0 = no   │ │  │  │  │  Saved as: varies by field   │
+│  Troubleshooting             │  │  │ │ │  ceiling (Stop still works: it is polled every 0.5s while a tool runs). A call      │ │  │  │  │                              │
+│     Diagnostics (view)       │  │  │ │ │  reported as timed out may still finish later on its own thread, so lowering this   │ │  │  │  │  Applies: varies by field    │
+│     About (view)             │  │  │ │ │  below ~186s can double-execute an MCP tool.                                        │ │  │  │  │                              │
+│     Agents                   │  │  │ │ │ Model turns (backstop)  │ 200                                                       │ │  │  │  │ Override rules               │
+│  Expert                      │  │  │ │ │  Tool-calling rounds per message. A backstop, not the usual limiter - at the        │ │  │  │  │  Priority: active Console  ▆ │
+│     Internal Prompts         │  │  │ │ │  default token budget a run stops on spend first, long before this.                 │ │  │  │  │  session, then               │
+│     Advanced Config          │  │  │ │ │ Steps (backstop)        █ 199999                                                    │ │  │  │  │  provider+model profile,     │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  Individual loop steps. One tool round costs 3 (think, call, result) and the        │ │  │  │  │  then these global           │
+│                              │  │  │ │ │  closing reply costs 1, so N turns need 3*(N-1)+1 steps. Set below that and this,   │ │  │  │  │  fallbacks                   │
+│                              │  │  │ │ │  not the turn count, becomes your limiter. Maximum supported: 199,999 steps.        │ │  │  │  │                              │
+│                              │  │  │ │ │                                                                                     │ │  │  │  │  Scope:  response            │
+│                              │  │  │ │ │                                                                                     │ │  │  │  │  fallbacks and  paste        │
+│                              │  │  │ │ │  Agent tool-result display cap                                                      │ │  │  │  │  display settings            │
+│                              │  │  │ │ │ Display cap (chars)     │ 160                                                       │ │  │  │  │                              │
+│                              │  │  │ │ │  How much of an agent tool result the Console shows you here -- distinct from       │ │  │  │  │  Save: staged - press s to ▆ │
+│                              │  │  │ │ │  max_tool_result_chars, which caps what the model itself saw. Open a run's "View    │ │  │  │  │ ▼ more — scroll the          │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

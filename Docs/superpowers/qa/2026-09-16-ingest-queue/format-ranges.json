@@ -1,0 +1,27 @@
+[
+  {
+    "path": "Tests/UI/test_library_ingest_option_event_order.py",
+    "formatted_changed_ranges": 1,
+    "lines": 325
+  },
+  {
+    "path": "Tests/UI/test_library_ingest_structural.py",
+    "formatted_changed_ranges": 3,
+    "lines": 1076
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py",
+    "formatted_changed_ranges": 1,
+    "lines": 3080
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "formatted_changed_ranges": 2,
+    "lines": 35214
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_ingest_canvas.py",
+    "formatted_changed_ranges": 7,
+    "lines": 2341
+  }
+]

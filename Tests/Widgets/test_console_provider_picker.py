@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import pytest
 from textual import on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Input, OptionList, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsOption
 from tldw_chatbook.Widgets.Console.console_provider_picker import (
     ConsoleProviderPicker,

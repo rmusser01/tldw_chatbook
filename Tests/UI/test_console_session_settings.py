@@ -13,11 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 from loguru import logger as loguru_logger
 from textual import events
-
-# Harness apps load the consolidated widget CSS the real app loads
-# (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.geometry import Region
 from textual.widgets import (
@@ -34,9 +30,16 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
+)
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text as _screen_visible_text,
 )
 from tldw_chatbook.Chat.console_chat_models import (
@@ -49,6 +52,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
 )
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -62,9 +66,6 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
-)
-from tldw_chatbook.Widgets.Console.console_context_controls import (
-    build_console_context_control_state,
 )
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.Chat.provider_test_evidence import (
@@ -90,13 +91,22 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     SettingsEndpointProbePurpose,
 )
-from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Console import (
     console_settings_summary as settings_summary_module,
+)
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    build_console_context_control_state,
+)
+from tldw_chatbook.Widgets.Console.console_provider_picker import (
+    ConsoleProviderPicker,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
@@ -105,26 +115,22 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
     PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
-    ConsoleSettingsInput,
-    ConsoleSettingsCredentialRequest,
     ConsoleModelDiscoveryIdentity,
+    ConsoleSettingsCredentialRequest,
     ConsoleSettingsDraftSnapshot,
+    ConsoleSettingsInput,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
     ConsoleUnverifiedModelDecision,
     _settings_screen_region,
 )
-from tldw_chatbook.Widgets.Console.console_provider_picker import (
-    ConsoleProviderPicker,
-)
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
 )
-from tldw_chatbook.Widgets.Console.console_bounded_section import (
-    ConsoleBoundedSection,
-)
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     APPLY_BUTTON_ID as SYSTEM_PROMPT_APPLY_BUTTON_ID,
+)
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
@@ -227,12 +233,8 @@ def _assert_schema_key_absent(
 def _bare_console_state_screen(store: ConsoleChatStore) -> ChatScreen:
     """Build the minimal real Console serializer fixture used by privacy tests."""
     screen = ChatScreen.__new__(ChatScreen)
-    screen._console_runtime_ref = SimpleNamespace(
-        chat_store=store,
-        set_chat_store=lambda value: setattr(
-            screen._console_runtime_ref, "chat_store", value
-        ),
-    )
+    screen._console_runtime_ref = ConsoleRuntime(app=None)
+    screen._console_runtime_ref.set_chat_store(store)
     screen._ensure_console_chat_store = lambda: store
     screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
     image_state = SimpleNamespace(
@@ -13149,17 +13151,23 @@ async def test_model_change_cancels_probe_restores_action_and_rejects_late_resul
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        if change_path == "input":
+            modal.query_one("#console-settings-model-custom", Button).press()
+            await pilot.pause()
+            assert modal.query_one(
+                "#console-settings-model-picker", ModelSearchPicker
+            ).custom_mode
         action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         action.press()
-        await tester.started.wait()
+        await asyncio.wait_for(tester.started.wait(), timeout=3)
         assert action.disabled is True
 
         if change_path == "select":
             model_select = modal.query_one("#console-settings-model-select", Select)
-            modal._model_select_changed(Select.Changed(model_select, "model-b"))
+            model_select.value = "model-b"
         elif change_path == "input":
             model_input = modal.query_one("#console-settings-model-input", Input)
-            modal._model_input_changed(Input.Changed(model_input, "model-b"))
+            model_input.value = "model-b"
         elif change_path == "picker_selected":
             modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
         else:
@@ -13179,15 +13187,48 @@ async def test_model_change_cancels_probe_restores_action_and_rejects_late_resul
         assert "model listed" not in str(
             modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
         )
-        assert modal._connection_evidence_store.evidence_for(
-            modal._current_connection_probe_identity()
-        ) is None
+        assert (
+            modal._connection_evidence_store.evidence_for(
+                modal._current_connection_probe_identity()
+            )
+            is None
+        )
         cancelled_readiness = str(
             modal.query_one("#console-settings-readiness", Static).renderable
         )
         assert "Endpoint · Not tested" in cancelled_readiness
         assert "Endpoint · Testing…" not in cancelled_readiness
         assert "Endpoint · Reachable" not in cancelled_readiness
+
+
+@pytest.mark.asyncio
+async def test_dismissed_modal_discards_cancellation_resistant_connection_result() -> (
+    None
+):
+    """A provider returning during teardown must not query removed controls."""
+    app = ModalHarness()
+    tester = _CancellationResistantConnectionTester(
+        ProviderProbeResult("reachable", ("stale-model",))
+    )
+    modal = _basic_modal(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", base_url="http://127.0.0.1:9099"
+        ),
+        app,
+        providers_models={"llama_cpp": ["model-a"]},
+        connection_tester=tester,
+    )
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await asyncio.wait_for(tester.started.wait(), timeout=3)
+        await app.pop_screen()
+        await pilot.pause()
+        assert not modal.is_attached
+        assert tester.cancelled
+        assert modal._active_connection_probe_token is None
+        assert "stale-model" not in modal._current_discovered_model_ids
 
 
 @pytest.mark.parametrize(

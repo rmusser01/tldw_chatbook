@@ -3,9 +3,9 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Input
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Persona_Buddy.inbox import BuddyInboxEntry
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 from tldw_chatbook.Persona_Buddy.speech import BuddySpeechQueue

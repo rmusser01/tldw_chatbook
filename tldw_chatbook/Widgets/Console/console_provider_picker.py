@@ -50,7 +50,7 @@ class ConsoleProviderPicker(Widget):
     MAX_RESULTS = 30
     _GROUP_ORDER = ("Cloud", "Local", "Custom", "Other")
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleProviderPicker {
         height: auto;
         width: 1fr;
@@ -306,9 +306,7 @@ class ConsoleProviderPicker(Widget):
                 f"provider{'s' if len(matches) != 1 else ''} available."
             )
         else:
-            self._set_status(
-                f"{selection} · No matching providers. Clear the filter."
-            )
+            self._set_status(f"{selection} · No matching providers. Clear the filter.")
 
     def _hide_results(self) -> None:
         if not self.is_mounted:

@@ -1,0 +1,10 @@
+{
+  "root": "/private/tmp/tldw-32767-native-005",
+  "pid": 68738,
+  "exit_code": 1,
+  "app_imported": false,
+  "pid_absent": true,
+  "owned_terminal_closed": true,
+  "failure": "Private data directories must exist before launch",
+  "repair": "Create data/db before calling validate_profile with the repository venv and launching the fresh run"
+}

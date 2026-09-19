@@ -1,0 +1,46 @@
+{
+  "counts": {
+    "import": [
+      643,
+      669
+    ],
+    "ui_ready": [
+      975,
+      1022
+    ]
+  },
+  "guards": {
+    "MAX_TLDW_MODULE_COUNT": {
+      "values": [
+        660,
+        686
+      ],
+      "otherwise_ast_identical": true
+    },
+    "MAX_TLDW_MODULES_AT_UI_READY": {
+      "values": [
+        975,
+        1022
+      ],
+      "otherwise_ast_identical": true
+    }
+  },
+  "snapshots": {
+    "boot_import_modules.txt": {
+      "count": 669,
+      "unique": true,
+      "matches_probe_set": true
+    },
+    "ui_ready_modules.txt": {
+      "count": 1022,
+      "unique": true,
+      "matches_probe_set": true
+    }
+  },
+  "testcases": {
+    "count": 11,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0
+  }
+}

@@ -708,12 +708,13 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
             ]
         }
         monkeypatch.setattr(
-            screen, "_console_provider_blocker_copy", lambda: "Provider setup needed"
+            screen, "_console_provider_blocker_copy",
+            lambda *, settings_readiness=None: "Provider setup needed"
         )
         monkeypatch.setattr(
             screen,
             "_console_provider_recovery_action",
-            lambda: ("Open Settings", "settings", "Open provider settings"),
+            lambda *, settings_readiness=None: ("Open Settings", "settings", "Open provider settings"),
         )
 
         state = screen._build_console_inspector_state(None)

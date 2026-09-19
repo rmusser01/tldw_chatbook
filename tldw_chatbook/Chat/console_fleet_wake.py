@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,
     set_fleet_unseen_completion,
 )
+from tldw_chatbook.DB.base_db import run_owned_db_call
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
     from tldw_chatbook.app import TldwCli
@@ -507,7 +508,8 @@ class ConsoleFleetWakeCoordinator:
 
     def _priority_allows(self, session_id, *, accepting=False):
         controller = self._controller
-        if not autowake_enabled() or getattr(controller, "_disposed", False):
+        if (not autowake_enabled() or getattr(controller, "_disposed", False)
+                or getattr(controller, "_maintenance_paused", False)):
             return False
         if not any(s.id == session_id for s in controller.store.sessions()):
             return False
@@ -530,6 +532,8 @@ class ConsoleFleetWakeCoordinator:
             return False
 
     def _attempt(self, conversation_id):
+        if self._controller is None or getattr(self._controller, "_maintenance_paused", False):
+            return
         if not self._recovery_ready or conversation_id in self._active:
             return
         if self._disposed or getattr(self._controller, "_disposed", False) or conversation_id in self._conversation_fences:
@@ -627,15 +631,16 @@ class ConsoleFleetWakeCoordinator:
             authorization.preflight_refused = True
             return False
         authorization.acceptance_started = True
-        accepted = await asyncio.to_thread(
-            self._runs_db().automatic_work.accept_wake,
+        ledger = authorization.context.ledger
+        accepted = await run_owned_db_call(ledger._db,
+            ledger.accept_wake,
             authorization.attempt_id,
             owner_id=self._owner_id,
             limits=AutomaticWorkLimits.from_settings(),
         )
         if not accepted:
             raise AutomaticWorkRefused("attempt_not_prepared")
-        await asyncio.to_thread(authorization.context.mark_accepted)
+        await run_owned_db_call(authorization.context.ledger._db, authorization.context.mark_accepted)
         authorization.accepted = True
         if not self.authorizes(authorization, session_id):
             raise AutomaticWorkRefused("wake_owner_released")
@@ -651,8 +656,9 @@ class ConsoleFleetWakeCoordinator:
         self._retry_after.pop(conversation_id, None)
         if chain_id is not None:
             try:
-                await asyncio.to_thread(
-                    self._runs_db().automatic_work.pause,
+                ledger = self._runs_db().automatic_work
+                await run_owned_db_call(ledger._db,
+                    ledger.pause,
                     chain_id,
                     reason,
                     review_required=review,
@@ -675,7 +681,7 @@ class ConsoleFleetWakeCoordinator:
             await asyncio.sleep(0.25)
             if authorization.accepted:
                 try:
-                    await asyncio.to_thread(authorization.context.check)
+                    await run_owned_db_call(authorization.context.ledger._db, authorization.context.check)
                 except AutomaticWorkRefused:
                     self._controller._signal_stop(session_id=authorization.session_id)
                     delivery_task.cancel()
@@ -712,7 +718,8 @@ class ConsoleFleetWakeCoordinator:
                 return
             with self._registry_lock:
                 bucket = dict(self._pending.get(conversation_id) or {})
-            rows = await asyncio.to_thread(self._rows_for, conversation_id, bucket)
+            db = self._runs_db()
+            rows = await run_owned_db_call(db, self._rows_for, conversation_id, bucket, database=db)
             rows.sort(key=lambda row: (row.get("updated_at") or "", str(row["id"])))
             eligible = []
             for row in rows:
@@ -731,7 +738,7 @@ class ConsoleFleetWakeCoordinator:
             ]
             run_ids = tuple(str(row["id"]) for row in selected)
             attempt_id = uuid4().hex
-            await asyncio.to_thread(
+            await run_owned_db_call(ledger._db,
                 ledger.claim_wake,
                 chain_id,
                 attempt_id=attempt_id,
@@ -814,20 +821,20 @@ class ConsoleFleetWakeCoordinator:
 
     async def _finish_attempt(self, authorization, returned):
         cid, chain_id = authorization.conversation_id, authorization.work_chain_id
-        ledger = self._runs_db().automatic_work
+        ledger = authorization.context.ledger
         try:
-            attempt = await asyncio.to_thread(
+            attempt = await run_owned_db_call(ledger._db,
                 ledger.read_attempt, authorization.attempt_id, owner_id=self._owner_id
             )
             if attempt.state == "prepared" and authorization.preflight_refused:
-                await asyncio.to_thread(
+                await run_owned_db_call(ledger._db,
                     ledger.abort_wake, attempt.id, owner_id=self._owner_id
                 )
                 self._retry_after[cid] = time.monotonic() + self.RETRY_DELAY_SECONDS
                 return
-            snapshot = await asyncio.to_thread(ledger.snapshot, chain_id)
+            snapshot = await run_owned_db_call(ledger._db, ledger.snapshot, chain_id)
             if attempt.state == "accepted" and returned and snapshot.status == "active":
-                await asyncio.to_thread(
+                await run_owned_db_call(ledger._db,
                     ledger.complete_wake, attempt.id, owner_id=self._owner_id
                 )
                 with self._registry_lock:
@@ -855,14 +862,14 @@ class ConsoleFleetWakeCoordinator:
         except Exception:  # noqa: BLE001 - bookkeeping and UI fail closed
             await self._pause(cid, chain_id, "completion_unrecorded", review=True)
 
-    def seed_from_marks(self) -> int:
+    def seed_from_marks(self, *, database=None) -> int:
         """Discover pending results from durable history, independently of badges.
 
         Returns:
             Number of eligible conversations whose results were seeded, including
             conversations already represented in the local registry.
         """
-        db = self._runs_db()
+        db = self._runs_db() if database is None else database
         if self._disposed or db is None:
             return 0
         seeded = 0
@@ -918,12 +925,12 @@ class ConsoleFleetWakeCoordinator:
             if self._disposed:
                 return
             ledger = self._runs_db().automatic_work
-            await asyncio.to_thread(ledger.recover, current_owner_id=self._owner_id)
-            await asyncio.to_thread(self.seed_from_marks)
+            await run_owned_db_call(ledger._db, ledger.recover, current_owner_id=self._owner_id)
+            await run_owned_db_call(ledger._db, self.seed_from_marks, database=ledger._db)
             with self._registry_lock:
                 pending = {cid: dict(bucket) for cid, bucket in self._pending.items()}
             for cid, bucket in pending.items():
-                rows = await asyncio.to_thread(self._rows_for, cid, bucket)
+                rows = await run_owned_db_call(ledger._db, self._rows_for, cid, bucket, database=ledger._db)
                 self._result_chains.update(
                     (str(row["id"]), row.get("work_chain_id")) for row in rows
                 )
@@ -931,7 +938,7 @@ class ConsoleFleetWakeCoordinator:
                     if chain_id is None:
                         self._paused[(cid, None)] = "legacy_lineage"
                     else:
-                        snapshot = await asyncio.to_thread(ledger.snapshot, chain_id)
+                        snapshot = await run_owned_db_call(ledger._db, ledger.snapshot, chain_id)
                         if snapshot.status != "active":
                             self._paused[(cid, chain_id)] = (
                                 snapshot.pause_reason or "review_required"
@@ -1099,7 +1106,7 @@ class ConsoleFleetWakeCoordinator:
             return None
         return getattr(bridge, "runs_db", None)
 
-    def _rows_for(self, conversation_id: str, bucket: Mapping[str, str]) -> list[dict]:
+    def _rows_for(self, conversation_id: str, bucket: Mapping[str, str], *, database=None) -> list[dict]:
         """Read the pending runs' rows; synthesize an honest stand-in for
         a row that cannot be read (a wiped runs DB must not strand the
         pending entry forever). A run the durable ledger already shows
@@ -1118,7 +1125,7 @@ class ConsoleFleetWakeCoordinator:
         with self._registry_lock:
             if self._disposed or conversation_id in self._conversation_fences:
                 return []
-        runs_db = self._runs_db()
+        runs_db = self._runs_db() if database is None else database
         rows: list[dict] = []
         stale: list[str] = []
         excluded: list[str] = []

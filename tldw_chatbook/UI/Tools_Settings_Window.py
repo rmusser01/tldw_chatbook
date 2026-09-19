@@ -257,7 +257,7 @@ class ToolsSettingsWindow(Container):
         padding: 1;
     }
     
-    .settings-label, .form-label {
+    .form-label {
         margin-top: 1;
         margin-bottom: 0;
         text-style: bold;
@@ -657,7 +657,7 @@ class ToolsSettingsWindow(Container):
             yield Static("🎯 Application Settings", classes="settings-group-title")
 
             with Container(classes="settings-form-grid"):
-                yield Label("Default Tab:", classes="settings-label")
+                yield Label("Default Tab:", classes="form-label")
                 tab_options = [
                     ("💬 Chat", "chat"),
                     ("🎭 Character Chat", "character"),
@@ -673,7 +673,7 @@ class ToolsSettingsWindow(Container):
                     tooltip="The tab that opens when you start the app",
                 )
 
-                yield Label("User Name:", classes="settings-label")
+                yield Label("User Name:", classes="form-label")
                 yield Input(
                     value=general_config.get("users_name", "default_user"),
                     id="general-username",
@@ -690,7 +690,7 @@ class ToolsSettingsWindow(Container):
             with Container(classes="settings-group"):
                 yield Static("🎨 Appearance", classes="settings-group-title")
 
-                yield Label("Theme:", classes="settings-label")
+                yield Label("Theme:", classes="form-label")
 
                 # Import themes to get all available options
                 from ..css.Themes.themes import ALL_THEMES
@@ -750,7 +750,7 @@ class ToolsSettingsWindow(Container):
                 )
 
                 with Container(classes="settings-indent"):
-                    yield Label("Duration (seconds):", classes="settings-label")
+                    yield Label("Duration (seconds):", classes="form-label")
                     yield Input(
                         value=str(splash_screen_config.get("duration", 1.5)),
                         id="general-splash-duration",
@@ -767,7 +767,7 @@ class ToolsSettingsWindow(Container):
             with Container(classes="settings-group"):
                 yield Static("📥 Media Ingestion", classes="settings-group-title")
 
-                yield Label("UI Style:", classes="settings-label")
+                yield Label("UI Style:", classes="form-label")
                 ui_style_options = [
                     ("📋 Simplified (Default)", "simplified"),
                     ("⚡ Grid Layout", "grid"),
@@ -800,7 +800,7 @@ class ToolsSettingsWindow(Container):
             with Container(classes="settings-group"):
                 yield Static("🔧 Developer", classes="settings-group-title")
 
-                yield Label("Log Level:", classes="settings-label")
+                yield Label("Log Level:", classes="form-label")
                 log_options = [
                     ("🐛 Debug", "DEBUG"),
                     ("ℹ️ Info", "INFO"),
@@ -857,7 +857,7 @@ class ToolsSettingsWindow(Container):
                 )
 
                 with Container(classes="settings-form-grid"):
-                    yield Label("Provider:", classes="settings-label")
+                    yield Label("Provider:", classes="form-label")
                     current_chat_provider = chat_config.get("provider", "OpenAI")
                     if current_chat_provider not in providers:
                         current_chat_provider = providers[0] if providers else "OpenAI"
@@ -876,7 +876,7 @@ class ToolsSettingsWindow(Container):
                     _key_state = chat_api_key_field_state(
                         _readiness, locked=self._config_is_locked()
                     )
-                    yield Label("API Key:", classes="settings-label")
+                    yield Label("API Key:", classes="form-label")
                     yield Input(
                         value=_key_state.value,
                         password=True,
@@ -887,7 +887,7 @@ class ToolsSettingsWindow(Container):
                         tooltip="API key for the selected provider. Saved to [api_settings.<provider>].",
                     )
 
-                    yield Label("Model:", classes="settings-label")
+                    yield Label("Model:", classes="form-label")
                     yield Input(
                         value=chat_config.get("model", "gpt-4o"),
                         id="general-chat-model",
@@ -896,7 +896,7 @@ class ToolsSettingsWindow(Container):
                         tooltip="Default model to use for chat",
                     )
 
-                    yield Label("Temperature:", classes="settings-label")
+                    yield Label("Temperature:", classes="form-label")
                     yield Input(
                         value=str(chat_config.get("temperature", 0.6)),
                         id="general-chat-temperature",
@@ -1020,7 +1020,7 @@ class ToolsSettingsWindow(Container):
                 )
 
                 with Container(classes="settings-form-grid"):
-                    yield Label("Provider:", classes="settings-label")
+                    yield Label("Provider:", classes="form-label")
                     current_char_provider = character_config.get(
                         "provider", "Anthropic"
                     )
@@ -1036,7 +1036,7 @@ class ToolsSettingsWindow(Container):
                         tooltip="Default AI provider for character conversations",
                     )
 
-                    yield Label("Model:", classes="settings-label")
+                    yield Label("Model:", classes="form-label")
                     yield Input(
                         value=character_config.get("model", "claude-haiku-4-5"),
                         id="general-character-model",
@@ -1045,7 +1045,7 @@ class ToolsSettingsWindow(Container):
                         tooltip="Default model for character chats",
                     )
 
-                    yield Label("Temperature:", classes="settings-label")
+                    yield Label("Temperature:", classes="form-label")
                     yield Input(
                         value=str(character_config.get("temperature", 0.8)),
                         id="general-character-temperature",
@@ -2800,7 +2800,7 @@ class ToolsSettingsWindow(Container):
             # ChaChaNotes Database Section
             yield Collapsible(
                 Container(
-                    Label("Status:", classes="settings-label"),
+                    Label("Status:", classes="form-label"),
                     Static(
                         "Size: Loading...",
                         id="db-size-chachanotes",
@@ -2814,7 +2814,7 @@ class ToolsSettingsWindow(Container):
                     classes="db-status-container",
                 ),
                 Container(
-                    Static("Advanced Operations:", classes="settings-label"),
+                    Static("Advanced Operations:", classes="form-label"),
                     Button("Export Conversations", id="db-export-conversations"),
                     Button("Export Notes", id="db-export-notes"),
                     Button(
@@ -2829,7 +2829,7 @@ class ToolsSettingsWindow(Container):
             # Media Database Section
             yield Collapsible(
                 Container(
-                    Label("Status:", classes="settings-label"),
+                    Label("Status:", classes="form-label"),
                     Static("Size: Loading...", id="db-size-media", classes="db-status"),
                     Static(
                         "Media Items: Loading...",
@@ -2844,7 +2844,7 @@ class ToolsSettingsWindow(Container):
                     classes="db-status-container",
                 ),
                 Container(
-                    Static("Advanced Operations:", classes="settings-label"),
+                    Static("Advanced Operations:", classes="form-label"),
                     Button("Cleanup Orphaned Files", id="db-cleanup-media"),
                     Button("Rebuild Thumbnails", id="db-rebuild-thumbnails"),
                     Button("Export Media List", id="db-export-media"),
@@ -2857,7 +2857,7 @@ class ToolsSettingsWindow(Container):
             # Prompts Database Section
             yield Collapsible(
                 Container(
-                    Label("Status:", classes="settings-label"),
+                    Label("Status:", classes="form-label"),
                     Static(
                         "Size: Loading...", id="db-size-prompts", classes="db-status"
                     ),
@@ -2869,7 +2869,7 @@ class ToolsSettingsWindow(Container):
                     classes="db-status-container",
                 ),
                 Container(
-                    Static("Advanced Operations:", classes="settings-label"),
+                    Static("Advanced Operations:", classes="form-label"),
                     Button("Export Prompts", id="db-export-prompts"),
                     Button("Import Prompts", id="db-import-prompts", variant="primary"),
                     classes="db-advanced-actions",
@@ -2881,7 +2881,7 @@ class ToolsSettingsWindow(Container):
             # Evaluations Database Section
             yield Collapsible(
                 Container(
-                    Label("Status:", classes="settings-label"),
+                    Label("Status:", classes="form-label"),
                     Static("Size: Loading...", id="db-size-evals", classes="db-status"),
                     Static(
                         "Evaluation Runs: Loading...",
@@ -2891,7 +2891,7 @@ class ToolsSettingsWindow(Container):
                     classes="db-status-container",
                 ),
                 Container(
-                    Static("Advanced Operations:", classes="settings-label"),
+                    Static("Advanced Operations:", classes="form-label"),
                     Button("Clear Old Results", id="db-clear-old-evals"),
                     Button("Export Reports", id="db-export-evals"),
                     classes="db-advanced-actions",
@@ -2903,7 +2903,7 @@ class ToolsSettingsWindow(Container):
             # RAG/Embeddings Database Section
             yield Collapsible(
                 Container(
-                    Label("Status:", classes="settings-label"),
+                    Label("Status:", classes="form-label"),
                     Static("Size: Loading...", id="db-size-rag", classes="db-status"),
                     Static(
                         "Vectors Count: Loading...",
@@ -2918,7 +2918,7 @@ class ToolsSettingsWindow(Container):
                     classes="db-status-container",
                 ),
                 Container(
-                    Static("Advanced Operations:", classes="settings-label"),
+                    Static("Advanced Operations:", classes="form-label"),
                     Button("Rebuild Index", id="db-rebuild-rag-index"),
                     Button(
                         "Clear Embeddings", id="db-clear-embeddings", variant="error"
@@ -2933,7 +2933,7 @@ class ToolsSettingsWindow(Container):
             # Subscriptions Database Section
             yield Collapsible(
                 Container(
-                    Label("Status:", classes="settings-label"),
+                    Label("Status:", classes="form-label"),
                     Static(
                         "Size: Loading...",
                         id="db-size-subscriptions",
@@ -2947,7 +2947,7 @@ class ToolsSettingsWindow(Container):
                     classes="db-status-container",
                 ),
                 Container(
-                    Static("Advanced Operations:", classes="settings-label"),
+                    Static("Advanced Operations:", classes="form-label"),
                     Button("Export Feeds", id="db-export-feeds"),
                     Button("Cleanup History", id="db-cleanup-subscription-history"),
                     classes="db-advanced-actions",
@@ -2992,7 +2992,7 @@ class ToolsSettingsWindow(Container):
 
         with Container(classes="settings-container"):
             # Theme Selection
-            yield Label("Application Theme:", classes="settings-label")
+            yield Label("Application Theme:", classes="form-label")
 
             # Import themes to get all available options
             from ..css.Themes.themes import ALL_THEMES
@@ -3032,7 +3032,7 @@ class ToolsSettingsWindow(Container):
             # Font Settings
             yield Static("Font Settings", classes="form-section-title")
 
-            yield Label("Code Font Size:", classes="settings-label")
+            yield Label("Code Font Size:", classes="form-label")
             yield Select(
                 options=[
                     ("Small (10px)", "10"),
@@ -3048,7 +3048,7 @@ class ToolsSettingsWindow(Container):
             # UI Density
             yield Static("UI Density", classes="form-section-title")
 
-            yield Label("Interface Density:", classes="settings-label")
+            yield Label("Interface Density:", classes="form-label")
             yield Select(
                 options=[
                     ("Compact", "compact"),
@@ -3074,7 +3074,7 @@ class ToolsSettingsWindow(Container):
             # Color Customization
             yield Static("Color Customization", classes="form-section-title")
 
-            yield Label("Accent Color:", classes="settings-label")
+            yield Label("Accent Color:", classes="form-label")
             yield Input(
                 value="#0078D4",
                 placeholder="#0078D4",
@@ -3082,7 +3082,7 @@ class ToolsSettingsWindow(Container):
                 classes="settings-input",
             )
 
-            yield Label("Success Color:", classes="settings-label")
+            yield Label("Success Color:", classes="form-label")
             yield Input(
                 value="#10B981",
                 placeholder="#10B981",
@@ -3090,7 +3090,7 @@ class ToolsSettingsWindow(Container):
                 classes="settings-input",
             )
 
-            yield Label("Warning Color:", classes="settings-label")
+            yield Label("Warning Color:", classes="form-label")
             yield Input(
                 value="#F59E0B",
                 placeholder="#F59E0B",
@@ -3098,7 +3098,7 @@ class ToolsSettingsWindow(Container):
                 classes="settings-input",
             )
 
-            yield Label("Error Color:", classes="settings-label")
+            yield Label("Error Color:", classes="form-label")
             yield Input(
                 value="#EF4444",
                 placeholder="#EF4444",
@@ -3124,7 +3124,7 @@ class ToolsSettingsWindow(Container):
         detected_providers = get_detected_api_providers() if has_api_keys else []
 
         # Status section
-        yield Label("Encryption Status", classes="settings-label")
+        yield Label("Encryption Status", classes="form-label")
         if encryption_enabled:
             yield Static(
                 "🔐 Encryption is ENABLED", classes="encryption-status-enabled"
@@ -3152,7 +3152,7 @@ class ToolsSettingsWindow(Container):
         with Container(classes="encryption-controls"):
             if not encryption_enabled:
                 if has_api_keys:
-                    yield Label("Enable Encryption", classes="settings-label")
+                    yield Label("Enable Encryption", classes="form-label")
                     yield Static(
                         "Protect your API keys with a master password.",
                         classes="section-description",
@@ -3165,7 +3165,7 @@ class ToolsSettingsWindow(Container):
                     )
             else:
                 # Encryption is enabled - show management options
-                yield Label("Encryption Management", classes="settings-label")
+                yield Label("Encryption Management", classes="form-label")
 
                 with Container(classes="encryption-button-group"):
                     yield Button(
@@ -3182,7 +3182,7 @@ class ToolsSettingsWindow(Container):
                     )
 
         # Information section
-        yield Label("About Config Encryption", classes="settings-label")
+        yield Label("About Config Encryption", classes="form-label")
         yield Static(
             "Config encryption uses AES-256 to protect your API keys and sensitive data. "
             "When enabled, you'll need to enter your master password each time you start the application.",
@@ -3207,7 +3207,7 @@ class ToolsSettingsWindow(Container):
                 gateable_builtin_tools,
             )
 
-            yield Label("Available Tools", classes="settings-label")
+            yield Label("Available Tools", classes="form-label")
             yield Static(
                 "Enable tools for the agent. Enabling one makes it reachable, "
                 "not automatic: a tool with a risk tag asks for approval before "

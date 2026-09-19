@@ -1,0 +1,40 @@
+..........FF.                                                            [100%]
+=================================== FAILURES ===================================
+_ test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-dark] _
+Tests/UI/test_settings_generation_default_journeys.py:123: in test_generation_keyboard_validation_revert_save_clear_and_return
+    await _edit(host, pilot, TEMPERATURE, "2.1")
+Tests/UI/test_settings_provider_keyboard_journeys.py:52: in _edit
+    _assert_painted(host.screen, field)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: ('settings-model-profile-temperature', Region(x=44, y=21, width=29, height=1))
+E   assert None is not None
+_ test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-light] _
+Tests/UI/test_settings_generation_default_journeys.py:123: in test_generation_keyboard_validation_revert_save_clear_and_return
+    await _edit(host, pilot, TEMPERATURE, "2.1")
+Tests/UI/test_settings_provider_keyboard_journeys.py:52: in _edit
+    _assert_painted(host.screen, field)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: ('settings-model-profile-temperature', Region(x=44, y=21, width=29, height=1))
+E   assert None is not None
+============================= slowest 25 durations =============================
+48.20s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light]
+47.57s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-dark]
+16.39s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-openai]
+16.26s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-openai]
+15.61s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-light-openai]
+15.35s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-dark-anthropic]
+15.35s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-dark-openai]
+15.20s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size1-textual-light-anthropic]
+14.57s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-light-anthropic]
+13.84s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_controls_paint_labels_values_and_visible_keyboard_focus[size0-textual-dark-anthropic]
+12.59s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-dark]
+12.53s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-light]
+1.87s call     Tests/UI/test_settings_generation_default_journeys.py::test_generation_nonfinite_value_is_rejected_before_persistence
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-dark]
+FAILED Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size1-textual-light]
+2 failed, 11 passed in 250.39s (0:04:10)

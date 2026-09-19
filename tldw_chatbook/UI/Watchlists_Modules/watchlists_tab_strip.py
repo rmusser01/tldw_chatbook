@@ -42,7 +42,7 @@ class WatchlistsTabStrip(Horizontal):
         super().__init__(**kwargs)
         self.add_class("watchlists-tab-strip")
         self.active_section = active_section
-        self.styles.height = 1
+        self.add_class("h-1")
         self.styles.min_height = 1
 
     def compose(self) -> ComposeResult:

@@ -1,0 +1,28 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______ test_qwencloud_api_mode_field_search_enter_focuses_selector[mode] _______
+Tests/UI/test_settings_qwencloud_api_mode.py:153: in test_qwencloud_api_mode_field_search_enter_focuses_selector
+    assert host.focused.id == "settings-provider-api-mode"
+E   AssertionError: assert 'settings-cat...viders-models' == 'settings-provider-api-mode'
+E
+E     - settings-provider-api-mode
+E     + settings-category-providers-models
+_____ test_malformed_qwencloud_table_selection_test_and_save_stay_blocked ______
+Tests/UI/test_settings_qwencloud_api_mode.py:878: in test_malformed_qwencloud_table_selection_test_and_save_stay_blocked
+    await pilot.click("#settings-test-provider")
+.venv/lib/python3.12/site-packages/textual/pilot.py:249: in click
+    raise error from None
+.venv/lib/python3.12/site-packages/textual/pilot.py:238: in click
+    return await self._post_mouse_events(
+.venv/lib/python3.12/site-packages/textual/pilot.py:442: in _post_mouse_events
+    raise OutOfBounds(
+E   textual.pilot.OutOfBounds: Target offset is outside of currently-visible screen region.
+============================= slowest 25 durations =============================
+2.04s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_qwencloud_api_mode_field_search_enter_focuses_selector[mode]
+1.63s call     Tests/UI/test_settings_qwencloud_api_mode.py::test_malformed_qwencloud_table_selection_test_and_save_stay_blocked
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_qwencloud_api_mode.py::test_qwencloud_api_mode_field_search_enter_focuses_selector[mode]
+FAILED Tests/UI/test_settings_qwencloud_api_mode.py::test_malformed_qwencloud_table_selection_test_and_save_stay_blocked
+2 failed in 5.37s

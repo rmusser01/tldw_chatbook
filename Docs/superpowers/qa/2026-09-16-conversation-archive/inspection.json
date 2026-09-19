@@ -1,0 +1,95 @@
+{
+  "inspection_rounds": 1,
+  "render_method": "macOS QuickLook SVG render at 1400px, visually inspected in three tool batches of 4, 4 and 2 after the initial combined response was truncated",
+  "normalization": "Whitespace-only source lines emptied; visible SVG text and geometry unchanged",
+  "production_visual_changes": false,
+  "finding": "No actionable archive/recovery defect in these bounded captures",
+  "compact_limit": "At 80x24 the Items pane was explicitly reopened for receipts and collapsed for reader actions; the full transcript is not simultaneously visible in the receipt capture. Complete Tab traversal was not exercised.",
+  "restart_theme_and_size": [
+    "textual-dark",
+    170,
+    48
+  ],
+  "captures": [
+    {
+      "file": "confirm-textual-dark-170.svg",
+      "phase": "exercise",
+      "raw_sha256": "5bf5a73c518255b85a4d8722c31974c95073171610295c258c4f1cf6a274d29c",
+      "stored_sha256": "76ade95a9212dac946b9759c92c7dce947a7950000a8a5f45db0f57f5c900995",
+      "render_viewed": "confirm-textual-dark-170.svg.png",
+      "observation": "Archive confirmation title, recoverability copy, Cancel and Archive are fully painted and readable. Cancel has a visible focus indicator."
+    },
+    {
+      "file": "confirm-textual-dark-80.svg",
+      "phase": "exercise",
+      "raw_sha256": "de229a59ecb8690b8fbc47e1195f78365dc69c941925a54c1833b9d1832712ff",
+      "stored_sha256": "9b66b536881e68aa4ba284cf7b575a48021cef041cea061de360c7bab0878f83",
+      "render_viewed": "confirm-textual-dark-80.svg.png",
+      "observation": "Archive confirmation title, recoverability copy, Cancel and Archive are fully painted and readable. Cancel has a visible focus indicator."
+    },
+    {
+      "file": "confirm-textual-light-170.svg",
+      "phase": "exercise",
+      "raw_sha256": "b8606a309b73d7bdd71c3e85174648c9465031bc0c11808677fae9198487f2e1",
+      "stored_sha256": "6c3deead804bdce4cceb70b57a5d67d4669bdde51c26934b94a62171e32f8e39",
+      "render_viewed": "confirm-textual-light-170.svg.png",
+      "observation": "Archive confirmation title, recoverability copy, Cancel and Archive are fully painted and readable. Cancel has a visible focus indicator."
+    },
+    {
+      "file": "confirm-textual-light-80.svg",
+      "phase": "exercise",
+      "raw_sha256": "a265d04862bf0deed83cccf39b2225f72ed327fe285eb55394d4b6cd5bb8e394",
+      "stored_sha256": "674f3be2edeace3b1b38fa490fc76e49b784f58c229623a6862f2a481e5dff30",
+      "render_viewed": "confirm-textual-light-80.svg.png",
+      "observation": "Archive confirmation title, recoverability copy, Cancel and Archive are fully painted and readable. Cancel has a visible focus indicator."
+    },
+    {
+      "file": "receipt-textual-dark-170.svg",
+      "phase": "exercise",
+      "raw_sha256": "16d773b72b457abd7e7b4b1d6d42bc316a273affd80906d320aca21059a2827d",
+      "stored_sha256": "45527e5d3f5b4cee0becd119b1306f1082891ac7d0d15d6dffd3546d7201ada3",
+      "render_viewed": "receipt-textual-dark-170.svg.png",
+      "observation": "Archived receipt, Undo focus indicator, View archived and retained query are fully painted. Active results retain Beta while the reader retains Alpha."
+    },
+    {
+      "file": "receipt-textual-dark-80.svg",
+      "phase": "exercise",
+      "raw_sha256": "7712fcc640b070cb9ab1c693eb0ac24436db892d05a86902bb530dfedaaa0e83",
+      "stored_sha256": "d6a91c2d6c443b40601e188a88b45a5dd13a90f13c3f56c3d74262f897a5ae1f",
+      "render_viewed": "receipt-textual-dark-80.svg.png",
+      "observation": "Archived receipt, Undo focus indicator, View archived and retained query are fully painted. Active results retain Beta while the reader retains Alpha."
+    },
+    {
+      "file": "receipt-textual-light-170.svg",
+      "phase": "exercise",
+      "raw_sha256": "c8b676d5de38bcd618fd21c8b9e3657c3f483d64f746a23b5c6f19cdcd3a53d8",
+      "stored_sha256": "7bdf0ce38a3d8706227b968fcef134bf2a622ed409ab36f4f02b081678261f9b",
+      "render_viewed": "receipt-textual-light-170.svg.png",
+      "observation": "Archived receipt, Undo focus indicator, View archived and retained query are fully painted. Active results retain Beta while the reader retains Alpha."
+    },
+    {
+      "file": "receipt-textual-light-80.svg",
+      "phase": "exercise",
+      "raw_sha256": "6f2e648f33e118bdd61df2ed47039de3521cea519bb62e95c8392f0ed853bde5",
+      "stored_sha256": "be7787a201f9b279135c3691a64e5b2257c3b765b0cf93dc80a3e96c498ca7ba",
+      "render_viewed": "receipt-textual-light-80.svg.png",
+      "observation": "Archived receipt, Undo focus indicator, View archived and retained query are fully painted. Active results retain Beta while the reader retains Alpha."
+    },
+    {
+      "file": "archived-after-restart.svg",
+      "phase": "restart",
+      "raw_sha256": "e006ee85f57a2a4f98cf7dd2bd84cc5a47ff23463a93ac128b3abc1e6dbde3ea",
+      "stored_sha256": "5d0b25d81b1c0d88afcdc2a07c6501d2dde8a81267b06259548a120d88ef35df",
+      "render_viewed": "archived-after-restart.svg.png",
+      "observation": "Archived scope lists Alpha, its two saved message bodies are readable, and Restore only is visible."
+    },
+    {
+      "file": "restored-after-restart.svg",
+      "phase": "restart",
+      "raw_sha256": "3fd07fbced62a5b025e1aa155b150cc5cb7640c839d8d424fbca741017167928",
+      "stored_sha256": "0e1a7921b26f661246b04a9bc040b5cfbc0d60a5dca7563558fc65aae9d871d5",
+      "render_viewed": "restored-after-restart.svg.png",
+      "observation": "Active scope lists Alpha and Beta; Alpha retains its two readable messages. The restoration receipt states that Console context is unchanged."
+    }
+  ]
+}

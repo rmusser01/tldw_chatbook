@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 A  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌───────────────────────────┐Search everything, pick a section, or add something
+│ Navigat…    Collapse      │new.
+│     Import…               │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │Notes (0) · Media (0) · Conversations (2)
+│ ▊ Search Library…   ▎▊x▎  │From your Library
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │ Conversations · Quarterly planning sync
+│                           │Quick actions
+│ ────────────────────────  │
+│ Browse               ▾    │     Import…         New note         Search
+│    Media (0)              │
+│    Conversations (2)    ▇ │
+│    Notes (0)              │
+│    Prompts — reuse        │
+│    Skills (0)             │
+│    Collections (0)        │
+│    Search / RAG           │
+│ ────────────────────────  │
+│  ▾ scroll for more        │
+└───────────────────────────┘
+  / focus search | i import content | F1 · F6 · Ctrl+P · Ctrl+Q

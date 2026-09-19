@@ -14,7 +14,7 @@ from pathlib import Path
 from textual import on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
-from textual.events import Mount
+from textual.events import Mount, Resize
 from textual.widgets import Button, Input, Label, Select
 
 ##############################################################################
@@ -96,6 +96,7 @@ class BaseFileDialog(FileSystemPickerScreen):
         *,
         filters: Filters | None = None,
         default_file: str | Path | None = None,
+        notes_context: str = "",
     ) -> None:
         """Initialise the base dialog.
 
@@ -106,9 +107,15 @@ class BaseFileDialog(FileSystemPickerScreen):
             cancel_button: The label for the cancel button.
             filters: Optional filters to show in the dialog.
             default_file: The default filename to place in the input.
+            notes_context: Which Library Notes folder door this is, if any;
+                see `FileSystemPickerScreen.__init__` (task-32643).
         """
         super().__init__(
-            location, title, select_button=select_button, cancel_button=cancel_button
+            location,
+            title,
+            select_button=select_button,
+            cancel_button=cancel_button,
+            notes_context=notes_context,
         )
         self._filters = filters
         """The filters for the dialog."""
@@ -150,6 +157,10 @@ class BaseFileDialog(FileSystemPickerScreen):
         immediately clearing the flag it just set.
         """
 
+    def on_resize(self, event: Resize) -> None:
+        """Give the filename its own row when the footer needs compact layout."""
+        self.set_class(event.size.width < 96 or event.size.height < 30, "-compact")
+
     def _input_bar(self) -> ComposeResult:
         """Provide any widgets for the input before, before the buttons."""
         # (task-3304, MI-15) Name the field: the bar's Input was unlabeled.
@@ -170,7 +181,7 @@ class BaseFileDialog(FileSystemPickerScreen):
             )
 
     def _field_label_text(self, value: str) -> str:
-        """"File name:", or "Folder path:" once the typed text is a folder.
+        """ "File name:", or "Folder path:" once the typed text is a folder.
 
         Only ``FileOpen(offer_select_folder=True)`` sets ``_offer_select_
         folder`` -- ``FileSave`` (also a ``BaseFileDialog``) never does, so
@@ -320,6 +331,8 @@ class BaseFileDialog(FileSystemPickerScreen):
         Args:
             event: The event to handle.
         """
+        if event.select.id in {"listing-sort", "listing-direction"}:
+            return
         if self._filters is not None and isinstance(event.value, int):
             self.query_one(DirectoryNavigation).file_filter = self._filters[event.value]
         else:

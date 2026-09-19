@@ -1,0 +1,20 @@
+{
+  "profile": "run-003",
+  "phases": [
+    {
+      "phase": "submit",
+      "pid": 87212,
+      "app_run_returned": true,
+      "exit_code": 0,
+      "pid_absent": true
+    },
+    {
+      "phase": "restart",
+      "pid": 88244,
+      "app_run_returned": true,
+      "exit_code": 0,
+      "pid_absent": true
+    }
+  ],
+  "owned_tmux_session_closed": true
+}

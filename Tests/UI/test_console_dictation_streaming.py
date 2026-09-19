@@ -55,10 +55,8 @@ _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 class _ComposerCSSApp(ConsolidatedCSSApp):
     """Mount the composer with the production stylesheet for visual assertions."""
 
-    CSS_PATH = [
-        str(_BUNDLED_STYLESHEET),
-        str(_REPO_ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"),
-    ]
+    # ADR-161 task 10: the console vocabulary rides the bundle itself.
+    CSS_PATH = [str(_BUNDLED_STYLESHEET)]
 
     def compose(self) -> ComposeResult:
         yield ConsoleComposerBar(id="console-native-composer")

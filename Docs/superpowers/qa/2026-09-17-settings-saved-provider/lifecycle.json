@@ -1,0 +1,113 @@
+{
+  "root": "/private/tmp/tldw-214-defaults-native-003",
+  "pid": 7986,
+  "exit_code": 0,
+  "app_run_returned": true,
+  "server_closed": true,
+  "database_checks": {
+    "data/db/agent_runs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/chachanotes.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/evals.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/library_collections.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/media.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/prompts.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/subscriptions.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/db/workspaces.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_library_ingest_jobs.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_scheduled_tasks.db": [
+      [
+        "ok"
+      ]
+    ],
+    "data/default_user/tldw_chatbook_sync_state.db": [
+      [
+        "ok"
+      ]
+    ]
+  },
+  "counts": {
+    "conversations": 0,
+    "messages": 0
+  },
+  "default_before": {
+    "/Users/macbook-dev/.config/tldw_cli/config.toml": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+  },
+  "default_after": {
+    "/Users/macbook-dev/.config/tldw_cli/config.toml": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+    "/Users/macbook-dev/.config/tldw_cli/ui_state.toml": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+    "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+  },
+  "defaults_unchanged": true,
+  "faulthandler_bytes": {
+    "faulthandler.log": 0,
+    "data/default_user/faulthandler.log": 0
+  },
+  "error_lines": [],
+  "normal_stop": true,
+  "earlier_runs": [
+    {
+      "profile": "/private/tmp/tldw-214-defaults-native-001",
+      "pid": 1028,
+      "passed": true,
+      "app_run_returned": true,
+      "server_closed": true,
+      "exit_code": 0,
+      "pid_absent_before_terminal_close": true,
+      "owned_terminal_closed": true
+    },
+    {
+      "profile": "/private/tmp/tldw-214-defaults-native-002",
+      "pid": 5370,
+      "passed": true,
+      "app_run_returned": true,
+      "server_closed": true,
+      "exit_code": 0,
+      "pid_absent_before_terminal_close": true,
+      "owned_terminal_closed": true
+    }
+  ],
+  "pid_absent": {
+    "command": "ps -p 7986 -o pid=,stat=,command=",
+    "exit_code": 1,
+    "output": ""
+  },
+  "owned_terminal_closed": true
+}

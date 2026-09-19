@@ -1,0 +1,174 @@
+/* ========================================
+ * COMPONENTS: DS Primitives (atomic layer)
+ * ========================================
+ * The token-native primitive containers that grew up inside the
+ * agentic-terminal monolith and form the base layer other families
+ * compose from: panels, toolbars, field rows, callouts, approval cards,
+ * the destination header, and the six app-wide shell primitives task 10
+ * added (inspector, status badge, recovery callout, source role, event
+ * row, shortcut bar). Family reference:
+ * backlog/docs/component-patterns.md (ADR-161).
+ *
+ * ADR-161 task 9: the first six classes were extracted from
+ * components/_agentic_terminal.tcss, tokenized on arrival, and placed
+ * FIRST among the component sheets as the atomic layer. Tie semantics of
+ * that move (task-9 review correction): sheets between this entry and
+ * the old monolith position could NOT override these rules at equal
+ * specificity before the move and now can -- neutral in practice only
+ * because single-definition governance keeps conflicting definitions
+ * from existing, not because ordering is unchanged. The move is
+ * bundle-internal only (two-track rule): no local $ds-* fallbacks live
+ * here.
+ *
+ * Density variants: every .density-compact/.density-comfortable half
+ * that touches a class in this sheet rides with it here (task 10 moved
+ * the ds-inspector / ds-recovery-callout halves in with their classes).
+ * ======================================== */
+
+.ds-destination-header {
+    height: auto;
+    min-height: $ds-destination-header-min-height;
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: tall $ds-action-focus;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
+}
+
+.ds-panel {
+    height: auto;
+    min-height: $ds-panel-min-height;
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.ds-approval-card {
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: thick $ds-status-approval-required;
+    background: $ds-status-approval-required 12%;
+    color: $ds-text-primary;
+}
+
+/* Field rows are label-above-value: every current user (Personas card and
+   editors) composes them as Vertical containers, so the row must not force a
+   horizontal layout (it jammed "Name"+value side by side and squeezed Inputs
+   into the leftover width). */
+.ds-field-row {
+    height: auto;
+    min-height: $ds-field-row-min-height;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+.ds-toolbar {
+    height: auto;
+    min-height: $ds-toolbar-min-height;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.ds-info-callout {
+    border: round $ds-status-info;
+    background: $ds-status-info 10%;
+    padding: $ds-space-0 $ds-space-1;
+    height: auto;
+}
+
+.density-compact .ds-panel,
+.density-compact .ds-approval-card {
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.density-compact .ds-destination-header {
+    min-height: $ds-destination-header-compact-min-height;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+.density-comfortable .ds-panel,
+.density-comfortable .ds-approval-card {
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-1 $ds-space-1;
+}
+
+.density-comfortable .ds-destination-header {
+    min-height: $ds-destination-header-comfortable-min-height;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+/* ADR-161 task 10: the six app-wide shell primitives below
+ * (.ds-inspector, .ds-status-badge, .ds-recovery-callout, .ds-source-role,
+ * .ds-event-row, .ds-shortcut-bar) live in this sheet -- moved in
+ * tokenized from components/_agentic_terminal.tcss because three of them
+ * are composed across surfaces (MCP/Evals/Personas/ACP/Schedules/
+ * Settings/Skills/Workbench audited 2026-09-14), which is the components
+ * home. They are not registry classes until a catalog pass documents
+ * them. */
+
+.ds-inspector {
+    height: auto;
+    min-width: $ds-size-24;
+    padding: $ds-space-1;
+    border: round $ds-grid-line;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.ds-status-badge {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    text-style: bold;
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.ds-recovery-callout {
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-status-warning;
+    background: $ds-status-warning 10%;
+    color: $ds-text-primary;
+}
+
+.ds-source-role {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    border: round $ds-source-role-context;
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.ds-event-row {
+    height: auto;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    border-bottom: solid $ds-grid-line;
+    color: $ds-text-primary;
+}
+
+.ds-shortcut-bar {
+    dock: bottom;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-inspector;
+    color: $ds-text-muted;
+}
+
+.density-compact .ds-inspector,
+.density-compact .ds-recovery-callout {
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.density-comfortable .ds-inspector,
+.density-comfortable .ds-recovery-callout {
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-1 $ds-space-1;
+}

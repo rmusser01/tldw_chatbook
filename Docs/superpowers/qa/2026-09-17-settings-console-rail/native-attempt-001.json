@@ -1,0 +1,40 @@
+{
+  "pid": 86238,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        190,
+        55
+      ],
+      "region": [
+        43,
+        28,
+        32,
+        1
+      ],
+      "clip": [
+        43,
+        8,
+        98,
+        43
+      ],
+      "painted": "\u2590X\u258c Stack collapsed rail labels ",
+      "draft_restored_without_write": true
+    }
+  ],
+  "runner_sha256": "842505763690d9446e831858f70dba4a18acb9ffecdd05671cf85d64c224e296",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "b9a54a031ba443262afc5d54efa3b1cb0bcab1b7e0fc7897457dc90889cf5c11",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "261f12ecd72fde979d0daff265a97bfa66fc79fbe031437b616dae472dde9b30",
+    "tldw_chatbook/css/features/_settings.tcss": "83cd926352abdac59ebfad5307f00a9aa1e0c051f8bf9cb73ef90b3fa73115f4",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "78561cf66d8f8ec2cff5ee143687fa00692969f0e046289bbb729753cc016cb8"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Search focuses rail-label toggle",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-console-rail/native_check.py\", line 135, in journey\n    assert region.intersection(clip) == region\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "app_run_returned": true
+}

@@ -116,7 +116,7 @@ def compose_library_choice_strip(
         The composed strip container with its option Buttons.
     """
     strip = Horizontal(id=strip_id, classes="ds-toolbar library-choice-strip")
-    strip.styles.height = "auto"
+    strip.add_class("h-auto")
     with strip:
         for option_id, value, label in options:
             button = Button(

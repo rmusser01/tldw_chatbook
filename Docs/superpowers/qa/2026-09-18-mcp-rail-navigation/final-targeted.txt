@@ -1,0 +1,29 @@
+........................................................................ [ 60%]
+...............................................                          [100%]
+============================= slowest 25 durations =============================
+27.58s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-light]
+26.47s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_long_rail_rows_fit_and_keep_exact_targets_through_resize_and_refresh[textual-dark]
+19.89s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-dark]
+18.70s call     Tests/UI/test_mcp_compact_readability.py::test_purpose_and_both_source_labels_are_fully_painted[textual-light]
+18.01s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+16.71s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+11.17s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_all_servers_is_fully_painted_in_the_real_compact_rail[textual-light]
+10.92s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_all_servers_is_fully_painted_in_the_real_compact_rail[textual-dark]
+9.14s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-light]
+8.93s call     Tests/UI/test_mcp_compact_readability.py::test_tool_and_state_stay_readable_through_resize_without_mutation[textual-dark]
+7.35s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-light]
+7.02s call     Tests/UI/test_mcp_compact_readability.py::test_tools_empty_recovery_action_is_visible_when_focused[textual-dark]
+6.23s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_a_delayed_rail_press_cannot_select_a_replacement_row
+4.28s call     Tests/UI/test_mcp_rail_compact_navigation.py::test_catalog_refresh_keeps_the_focused_server_control
+4.11s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.92s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[True]
+3.68s call     Tests/UI/test_mcp_compact_readability.py::test_wrapped_unicode_rows_keep_filter_and_exact_action_context[False]
+3.03s call     Tests/UI/test_widget_css_consolidation.py::test_class_level_css_blocks_outside_the_package_parse[Tests]
+2.99s call     Tests/UI/test_widget_css_consolidation.py::test_consolidated_classes_declare_no_textual_css_attribute
+2.43s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.81s call     Tests/UI/test_mcp_table_refresh_selection.py::test_hidden_findings_refresh_preserves_active_execution_gesture
+1.69s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-click-row]
+1.68s call     Tests/UI/test_widget_css_consolidation.py::test_scope_rewrite_matches_textuals_own_scoping
+1.68s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[findings-down-row]
+1.67s call     Tests/UI/test_mcp_table_refresh_selection.py::test_queued_refresh_highlights_are_quiet_and_next_gesture_selects[tools-click-row]
+119 passed, 2 deselected in 286.99s (0:04:46)

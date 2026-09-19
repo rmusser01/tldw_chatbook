@@ -1,0 +1,14 @@
+{
+  "captures_inspected": 1,
+  "native_phase": "restart",
+  "size": [
+    170,
+    48
+  ],
+  "theme": "textual-dark",
+  "method": "Quick Look render of native SVG inspected once",
+  "observation": "Console reaches Ready with composer, navigation, Context and Inspect affordances visible. State restoration is proven by runtime/persistence receipts, not this image.",
+  "raw_sha256": "f523f63b5f71df5c02aaff19fd4051e0a9253622ef07b7259f5bb37449247335",
+  "stored_sha256": "3633fe56802adc524e7bb97ac9eb895ea89c49b5743cc6e9db9c0ebfb841bcaf",
+  "normalization": "Whitespace-only source lines emptied; rendered content unchanged."
+}

@@ -1,0 +1,19 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_________ test_rechunk_control_class_defines_all_states_with_ds_tokens _________
+Tests/UI/test_library_rag_rechunk_action.py:429: in test_rechunk_control_class_defines_all_states_with_ds_tokens
+    assert bodies, f"missing {state} rule for .library-rag-recovery-action"
+E   AssertionError: missing rest rule for .library-rag-recovery-action
+E   assert []
+____ test_rechunk_summary_and_report_lines_use_the_styled_quiet_line_class _____
+Tests/UI/test_library_rag_rechunk_action.py:465: in test_rechunk_summary_and_report_lines_use_the_styled_quiet_line_class
+    assert f".{token}" in bundle or f"#{token}" in bundle, (
+E   AssertionError: panel composes unstyled class token 'library-rag-quiet-line'
+E   assert ('.library-rag-quiet-line' in '/* ========================================\n * GENERATED FILE - DO NOT EDIT DIRECTLY\n * ===========================...   color: $text;\n    border: round $primary;\n    padding: $ds-space-0 $ds-space-1;\n    max-width: $ds-size-60;\n}\n' or '#library-rag-quiet-line' in '/* ========================================\n * GENERATED FILE - DO NOT EDIT DIRECTLY\n * ===========================...   color: $text;\n    border: round $primary;\n    padding: $ds-space-0 $ds-space-1;\n    max-width: $ds-size-60;\n}\n')
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_rechunk_action.py::test_rechunk_control_class_defines_all_states_with_ds_tokens
+FAILED Tests/UI/test_library_rag_rechunk_action.py::test_rechunk_summary_and_report_lines_use_the_styled_quiet_line_class
+2 failed in 1.13s

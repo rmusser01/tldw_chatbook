@@ -1,0 +1,19 @@
+{
+  "pid": 55523,
+  "runner_sha256": "a15360ea223f95312139ae1b1e5dbe8e12e37ff6f882dabe0f8f57d5eea5b060",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Import",
+      "retained": true
+    }
+  ],
+  "waiting_for": "#library-row-browse-search",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/native_check.py\", line 201, in journey\n    await press(\"#library-row-browse-search\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/native_check.py\", line 118, in press\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-recovery-navigation/native_check.py\", line 99, in wait_for\n    raise AssertionError(f\"{label}: focus={app.screen.focused!r}\")\nAssertionError: #library-row-browse-search: focus=LibraryRailRowButton(id='library-row-browse-search', classes='-style-default library-rail-row -textual-compact h-1')\n",
+  "app_run_returned": true
+}

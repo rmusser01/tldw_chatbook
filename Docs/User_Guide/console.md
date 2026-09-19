@@ -271,12 +271,21 @@ they are, the empty transcript reads "Ready — type a message to begin."
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
 New note view directly. A local-first user who came for notes is not stuck
-behind a provider-only card.
+behind a provider-only card. A third action joins them when a loopback
+server is found on this machine — "Use detected \<provider\> (\<host:port\>)",
+naming what it found and where (only `127.0.0.1` and `localhost` are ever
+offered, and the endpoint is shown without credentials or scheme). Every
+action on the card is drawn as a button with a rounded edge, one under the
+other; Tab moves between them and the focused one grows heavy side rails, so
+which one Enter will press is visible without reading the text. *(Was "Both
+actions" — superseded by task-32558 below: the count contradicted this page's
+own task-32555 stamp, which names three.)*
 
 If you land here with a handoff already staged — e.g. from Library's
-**Use in Console** on a Search/RAG result while a provider isn't set up
-yet — the card shows an extra line under "Get started" naming what's
-staged and that finishing setup is what unlocks it (for example,
+**Use in Console** on a Search/RAG result or on an open note while a
+provider isn't set up yet — the card shows an extra line under
+"Get started" naming what's staged and that finishing setup is what
+unlocks it (for example,
 "Library Search/RAG evidence staged — finish provider setup to use it.").
 The handoff itself is never lost: it's the same staged context the
 composer-level strip below shows once setup completes.
@@ -724,3 +733,36 @@ added the "Write a note in Library" action beside the Get started card's
 provider steps — needs no provider, opens Library's New note view, and
 stays available for the whole time the card is blocking. Widget-level
 check in `Tests/UI/test_library_notes_wave_onboarding.py`.)*
+
+*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
+AC#1, at 235x52 and 100x30): the Get started card's actions render as bordered
+buttons — "Set up provider", "Write a note in Library" and, when one is found,
+"Use detected llama.cpp …" — and the focused one is marked by heavy left and
+right rails rather than by text styling
+(`wave4-caps/console-handoff/handoff-10-console-card`, `11-card-focus`,
+`10b-console-card-100x30`). They were `compact` Buttons before, which Textual
+renders with `border: none !important`, so all three read as plain text lines
+two rows apart.*
+
+*Not verified live — task-32533, 2026-09-14, fix/library-notes-w4-crash.* The
+quick **Model** popover's provider picker (**Alt+M**) can no longer be handed a
+provider it does not list: an empty or unrecognised provider opens the picker
+blank instead of raising `InvalidSelectValueError`, and the same guard now
+covers the later re-sync that **Custom ID** plus a keystroke triggers
+(`Widgets/select_values.py`, pinned by
+`Tests/UI/test_console_model_popover_no_provider.py`). This carries no "Verified
+against" stamp on purpose: no profile that can be driven live reaches the broken
+state. With no provider configured, **Alt+M** is refused by the setup gate
+("Typing is locked until setup finishes — press Enter to continue setup"); with
+one configured, the draft always names a provider the picker lists. The evidence
+is the three headless pins, not a capture.
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep). The Get started card's body said "Both actions" while
+this page's own task-32555 stamp, in this same "Verified against" section,
+named three: a
+detected loopback server adds "Use detected \<provider\> (\<host:port\>)"
+(`Chat/console_onboarding_state.py:101-153`, loopback-only, scheme and
+credentials stripped). Corrected from the source, not from a capture — this
+sweep drove no Console profile with a local server running, and does not
+claim to have seen the third button.)*

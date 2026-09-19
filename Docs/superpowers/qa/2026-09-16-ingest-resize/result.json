@@ -1,0 +1,394 @@
+{
+  "pid": 36974,
+  "steps": [
+    {
+      "control": "title",
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "title",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "title",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "title",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "title",
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "title",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "title",
+      "theme": "textual-light",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "title",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-light",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "encoding",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-light",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "details",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-light",
+      "size": [
+        170,
+        24
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    },
+    {
+      "control": "recent",
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "same_focused_widget_painted": true,
+      "draft_and_selection_preserved": true,
+      "source_snapshot_preflight_and_compose_unchanged": true,
+      "config_unchanged": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "synthetic_registry_without_store": true,
+  "passed": true,
+  "app_run_returned": true
+}

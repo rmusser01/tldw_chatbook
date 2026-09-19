@@ -1,0 +1,1351 @@
+[
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[none]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/001",
+    "classes": [
+      "WorkspacePersonaDefaultModal",
+      "WorkspacePersonaPicker"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_no_edit_apply_preserves_control_named_saved_persona[auto]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/002",
+    "classes": [
+      "WorkspacePersonaDefaultModal",
+      "WorkspacePersonaPicker"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[none]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/003",
+    "classes": [
+      "WorkspacePersonaPicker"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_create_control_named_persona_survives_folder_recomposition[auto]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/004",
+    "classes": [
+      "WorkspacePersonaPicker"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_modal_offers_all_personas_beyond_first_page",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/005",
+    "classes": [
+      "WorkspacePersonaDefaultModal",
+      "WorkspacePersonaPicker"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_offers_and_selects_persona_beyond_first_page",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/006",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/007",
+    "classes": [
+      "WorkspacePersonaDefaultModal",
+      "WorkspacePersonaPicker"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_failed_list_resolves_saved_identity_without_silent_rebinding[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/008",
+    "classes": [
+      "WorkspacePersonaDefaultModal",
+      "WorkspacePersonaPicker"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_workspace_persona_picker_identity.py::test_settings_keeps_readable_saved_choice_when_catalog_fails",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/009",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/010",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/011",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/012",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/013",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/014",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/015",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/016",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_kill_switch_denies_everything",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_kill_switch_denies_everything",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_kill_switch_denies_everything",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_kill_switch_denies_everything",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/017",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_persona_layers",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_persona_layers",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_persona_layers",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_persona_layers",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/018",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_permission_resolution",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_permission_resolution",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_permission_resolution",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_permission_resolution",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/019",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_empty_tool_names_degrades",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_empty_tool_names_degrades",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_empty_tool_names_degrades",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_empty_tool_names_degrades",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/020",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/021",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/022",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/023",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/024",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/025",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/026",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/027",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/028",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/029",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/030",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/031",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[False]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[False]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[False]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[False]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/032",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/033",
+    "classes": [
+      "WorkspaceChangeReviewPanel"
+    ],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_session_metadata_crud",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_session_metadata_crud",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_session_metadata_crud",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_session_metadata_crud",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/034",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_card_crud",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_card_crud",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_card_crud",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_routes_character_card_crud",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/035",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_supports_persona_session_metadata",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_supports_persona_session_metadata",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_supports_persona_session_metadata",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_supports_persona_session_metadata",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/036",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_profile_crud",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_profile_crud",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_profile_crud",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_profile_crud",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/037",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_passes_through_shared_validation",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_passes_through_shared_validation",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_passes_through_shared_validation",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_passes_through_shared_validation",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/038",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_validation_failure_is_path_free",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_validation_failure_is_path_free",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_validation_failure_is_path_free",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_store_path_validation_failure_is_path_free",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/039",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_service_has_only_persona_store_and_private_names",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_service_has_only_persona_store_and_private_names",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_service_has_only_persona_store_and_private_names",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_service_has_only_persona_store_and_private_names",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/040",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_list_and_get_are_lossless_without_rewriting_store",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_list_and_get_are_lossless_without_rewriting_store",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_list_and_get_are_lossless_without_rewriting_store",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_list_and_get_are_lossless_without_rewriting_store",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/041",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_updates_merge_only_supplied_fields_and_survive_restart",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_updates_merge_only_supplied_fields_and_survive_restart",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_updates_merge_only_supplied_fields_and_survive_restart",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_persona_updates_merge_only_supplied_fields_and_survive_restart",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/042",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_exemplar_crud",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_exemplar_crud",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_exemplar_crud",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_persona_exemplar_crud",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/043",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_character_exemplar_crud",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_character_exemplar_crud",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_character_exemplar_crud",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_persists_character_exemplar_crud",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/044",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_wraps_chat_execution_adjuncts",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_wraps_chat_execution_adjuncts",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_wraps_chat_execution_adjuncts",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_local_character_persona_service_wraps_chat_execution_adjuncts",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/045",
+    "classes": [],
+    "mismatches": 0
+  },
+  {
+    "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+    "returncode": 0,
+    "qualified": true,
+    "outcomes": [
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+        "phase": "setup",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+        "phase": "call",
+        "outcome": "passed",
+        "wasxfail": null
+      },
+      {
+        "node": "Tests/Character_Chat/test_local_character_persona_service.py::test_persona_catalog_only_materializes_requested_page",
+        "phase": "teardown",
+        "outcome": "passed",
+        "wasxfail": null
+      }
+    ],
+    "directory": "/private/tmp/2707-page-related/046",
+    "classes": [],
+    "mismatches": 0
+  }
+]

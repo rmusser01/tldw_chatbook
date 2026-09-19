@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+4.48s call     Tests/UI/test_settings_tool_profiles.py::test_export_worker_uses_exact_profile_context_and_captured_destination
+4.46s call     Tests/UI/test_settings_tool_profiles.py::test_edit_policy_deep_link_captures_exact_profile_authority
+
+(4 durations < 1s hidden.)
+2 passed in 10.74s

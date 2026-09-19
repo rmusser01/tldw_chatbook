@@ -1,0 +1,47 @@
+{
+  "status": "diagnostic attachment verified; Windows repeat pending",
+  "product_revision": "4a50a22cffd5ae0ca029dad4c1e10eada8a2c3a5",
+  "tests": {
+    "cleanup_red": {
+      "failed": 7,
+      "cause": "helper absent"
+    },
+    "root_observer_modules": {
+      "passed": 65,
+      "seconds": 3.97
+    },
+    "independent_cleanup": {
+      "passed": 7,
+      "seconds": 1.01
+    },
+    "installed_console_settings_library_before_cleanup_wrapper": {
+      "passed": 15,
+      "seconds": 187.57,
+      "includes_helper_tests": true
+    },
+    "final_installed_settings": {
+      "passed": 1,
+      "call_seconds": 47.77,
+      "total_seconds": 58.98
+    }
+  },
+  "installed": {
+    "python_sources_verified": 2474,
+    "mismatches": [],
+    "installed_files": 2866,
+    "wheel_sha256": "7cbd7776625a1a5aa1a06697948f79cb7062d8700ddd14411266dc523531c15d"
+  },
+  "ruff": "clean",
+  "bandit": {
+    "baseline_B101": 165,
+    "candidate_B101": 172,
+    "B105": 1,
+    "nonassert_finding_unchanged": true
+  },
+  "timing_limitations": "Instrumented observations; loop profile stop is scheduled and can be delayed by a blocked loop. Window may precede lease wait; native group observer reports each invocation separately.",
+  "sources": {
+    "thread_diagnostics.py": "54f8a6b05547d71b96c872777c21a2e3e91293a9654b8e9c3241941e77b79bb4",
+    "test_thread_diagnostics.py": "bd5485093e2050ea55288c68a85b1e3b7d09cc98f14316febe9bc033ae681f57",
+    "test_mounted_console_backup.py": "40a4b18ac9bde4fdf0e9ccfddfe1dd65ebd3312e16a8944b879fee5676e67cc3"
+  }
+}

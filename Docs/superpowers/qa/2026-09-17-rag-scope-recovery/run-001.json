@@ -1,0 +1,36 @@
+{
+  "pid": 19948,
+  "runner_sha256": "dde3cc997f0f638782f37ed930fce411ceddda3f31cc5a61c6c3727a160f3f72",
+  "scope": "injected snapshots; actual navigation, local retrieval and DB",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 1,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "final_source_count": 0,
+      "query_focus_retained": true,
+      "steady_snapshot_retains_children": true,
+      "exact_local_result": false
+    }
+  ],
+  "exclusive_profile": true,
+  "waiting_for": "focus #library-row-browse-search",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-scope-recovery/native_check.py\", line 186, in journey\n    await press(\"#library-row-browse-search\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-scope-recovery/native_check.py\", line 84, in press\n    await wait_for(lambda: app.screen.focused is button, \"focus \" + selector)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-rag-scope-recovery/native_check.py\", line 77, in wait_for\n    raise AssertionError(label)\nAssertionError: focus #library-row-browse-search\n",
+  "app_run_returned": true,
+  "exit_code": 1,
+  "pid_absent_verified": true
+}

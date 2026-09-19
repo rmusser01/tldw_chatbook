@@ -1,4 +1,8 @@
 /* _chatbooks_improved.tcss */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 /* Enhanced styles for improved chatbook functionality */
 
 /* Textual doesn't support @keyframes - using static hover effects instead */
@@ -6,7 +10,7 @@
 /* Main Window Enhancements */
 ChatbooksWindowImproved {
     layout: vertical;
-    height: 100%;
+    height: $ds-height-full;
     background: $background;
 }
 
@@ -14,7 +18,7 @@ ChatbooksWindowImproved {
 ChatbooksWindowImproved .chatbooks-header {
     height: auto;
     background: $boost;
-    padding: 2 3;
+    padding: $ds-space-2 $ds-space-3;
     border-bottom: thick $background-darken-1;
 }
 
@@ -23,16 +27,16 @@ ChatbooksWindowImproved .chatbooks-title {
     text-align: center;
     color: $primary;
     font-size: 140%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Quick action cards with better hover */
 ChatbooksWindowImproved .action-card {
-    padding: 2;
+    padding: $ds-space-2;
     background: $boost;
     border: round $background-darken-1;
     align: center middle;
-    height: 8;
+    height: $ds-size-8;
 }
 
 ChatbooksWindowImproved .action-card:hover {
@@ -50,7 +54,7 @@ ChatbooksWindowImproved .search-input {
     background: $surface;
     border: solid $surface-lighten-1;
     border-bottom: solid $surface-lighten-1;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 ChatbooksWindowImproved .search-input:focus {
@@ -62,11 +66,11 @@ ChatbooksWindowImproved .search-input:focus {
 
 /* Enhanced chatbook cards */
 ChatbookCard {
-    height: 10;
+    height: $ds-size-10;
     background: $boost;
     border: round $background-darken-1;
-    padding: 1 2;
-    margin: 0 1 1 1;
+    padding: $ds-space-1 $ds-space-2;
+    margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
 }
 
 ChatbookCard:hover {
@@ -78,41 +82,41 @@ ChatbookCard:hover {
 ChatbookCard .chatbook-card-title {
     text-style: bold;
     color: $text;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 ChatbookCard .chatbook-card-description {
     color: $text-muted;
     text-overflow: ellipsis;
-    max-height: 2;
-    margin: 0 0 1 0;
+    max-height: $ds-size-2;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 ChatbookCard .chatbook-card-stats {
     color: $primary;
-    margin: 1 0;
+    margin: $ds-space-1 $ds-space-0;
 }
 
 ChatbookCard .chatbook-card-meta {
     layout: horizontal;
-    height: 1;
-    margin-top: 1;
+    height: $ds-size-1;
+    margin-top: $ds-space-1;
 }
 
 /* Empty state improvements */
 EmptyStateWidget {
     align: center middle;
-    height: 100%;
-    padding: 4;
-    max-width: 80;
-    margin: 0 auto;
+    height: $ds-height-full;
+    padding: $ds-size-4;
+    max-width: $ds-size-80;
+    margin: $ds-space-0 auto;
 }
 
 EmptyStateWidget .empty-state-icon {
     text-align: center;
     color: $primary;
     text-style: bold;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-2;
 }
 
 
@@ -120,21 +124,21 @@ EmptyStateWidget .empty-state-title {
     text-align: center;
     text-style: bold;
     color: $text;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 EmptyStateWidget .empty-state-description {
     text-align: center;
     color: $text-muted;
-    margin-bottom: 3;
-    max-width: 60;
+    margin-bottom: $ds-space-3;
+    max-width: $ds-size-60;
 }
 
 /* View toggle buttons */
 ChatbooksWindowImproved .view-toggle {
-    margin-left: 1;
-    min-width: 10;
-    height: 3;
+    margin-left: $ds-space-1;
+    min-width: $ds-size-10;
+    height: $ds-size-3;
 }
 
 ChatbooksWindowImproved .view-toggle:hover {
@@ -147,7 +151,7 @@ ChatbooksWindowImproved .chatbooks-grid {
     grid-size: 3;
     grid-gutter: 1 2;
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
 }
 
 /* Responsive adjustments - apply these classes dynamically based on terminal size */
@@ -166,10 +170,10 @@ ChatbooksWindowImproved .chatbooks-grid {
 /* Stats bar at bottom */
 ChatbooksWindowImproved .stats-bar {
     dock: bottom;
-    height: 3;
+    height: $ds-size-3;
     background: $panel;
     border-top: solid $background-darken-1;
-    padding: 1;
+    padding: $ds-space-1;
     align: center middle;
 }
 
@@ -181,28 +185,28 @@ ChatbooksWindowImproved .stats-text {
 /* Section headers */
 ChatbooksWindowImproved .section-header {
     layout: horizontal;
-    height: 3;
-    margin-bottom: 1;
-    padding: 0 1;
+    height: $ds-size-3;
+    margin-bottom: $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
     align: left middle;
 }
 
 ChatbooksWindowImproved .section-title {
     text-style: bold;
     color: $primary;
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 /* List view styling */
 ChatbooksWindowImproved .chatbooks-list {
-    height: 100%;
-    padding: 1;
+    height: $ds-height-full;
+    padding: $ds-space-1;
     background: $background;
 }
 
 ChatbooksWindowImproved .chatbooks-list ListItem {
-    padding: 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     background: $boost;
     border: round $background-darken-1;
 }

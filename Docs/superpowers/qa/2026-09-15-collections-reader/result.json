@@ -1,0 +1,65 @@
+{
+  "pid": 21491,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "drafts_preserved": true,
+      "saved_note_exact": true,
+      "saved_note_action_focused_and_visible": true,
+      "selected_highlight_painted": true,
+      "highlight_saved_once_and_cleared": true,
+      "highlights_follow_capture": true,
+      "archive_loads_successor": true,
+      "undo_reachable_and_restores_saved": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "drafts_preserved": true,
+      "saved_note_exact": true,
+      "saved_note_action_focused_and_visible": true,
+      "selected_highlight_painted": true,
+      "highlight_saved_once_and_cleared": true,
+      "highlights_follow_capture": true,
+      "archive_loads_successor": true,
+      "undo_reachable_and_restores_saved": true
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "capture_ids": [
+    "capture-01d7e2fd1af34fbd82b6b5cb378407d5",
+    "capture-b69e844ec99d4359a1a788d2762b6276"
+  ],
+  "persisted": [
+    {
+      "capture_id": "capture-01d7e2fd1af34fbd82b6b5cb378407d5",
+      "title": "Alpha",
+      "note": "Native note at 80 columns",
+      "status": "saved",
+      "highlights": [
+        "Alpha annotation",
+        "Quote at 170",
+        "Quote at 80"
+      ]
+    },
+    {
+      "capture_id": "capture-b69e844ec99d4359a1a788d2762b6276",
+      "title": "Beta",
+      "note": "Saved Beta note",
+      "status": "saved",
+      "highlights": [
+        "Beta annotation"
+      ]
+    }
+  ],
+  "passed": true,
+  "app_run_returned": true
+}

@@ -1,0 +1,11 @@
+{
+  "max_id": 32665,
+  "ref_count": 265,
+  "worktree_count": 27,
+  "maximum_sources": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "max_id": 32665
+    }
+  ]
+}

@@ -248,7 +248,8 @@ async def test_scope_rows_are_contextual_bounded_and_show_only_active_total() ->
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        assert len(app.query(".library-collections-scope-row")) == 7
+        # Six built-ins, the fixture's saved search, and actionable continuation.
+        assert len(app.query(".library-collections-scope-row")) == 8
         assert str(
             app.query_one("#library-collections-scope-reading", Button).label
         ).startswith("▸ Reading")
@@ -258,7 +259,8 @@ async def test_scope_rows_are_contextual_bounded_and_show_only_active_total() ->
         assert "Long reads" in str(
             app.query_one("#library-collections-saved-search-search-1", Button).label
         )
-        assert app.query_one("#library-collections-more-saved-searches", Button)
+        more = app.query_one("#library-collections-more-saved-searches", Button)
+        assert not more.disabled and more.saved_search_page == 2
 
 
 async def test_items_keep_capture_controls_rows_and_stale_recovery_reachable() -> None:

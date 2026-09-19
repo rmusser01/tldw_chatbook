@@ -1,0 +1,35 @@
+{
+  "baseline": "69060a097c",
+  "targeted_passes": 104,
+  "runs": [
+    {
+      "file": "Tests/UI/test_library_ingest_provider_recovery.py",
+      "passed": 16,
+      "warnings": 2,
+      "seconds": 108.77
+    },
+    {
+      "files": [
+        "Tests/UI/test_library_ingest_queue_journeys.py",
+        "Tests/UI/test_library_ingest_option_journeys.py",
+        "Tests/UI/test_component_pattern_governance.py",
+        "Tests/UI/test_design_token_governance.py",
+        "Tests/UI/test_library_screen.py::test_transcribe_cpp_picker_filters_to_gguf",
+        "Tests/UI/test_library_screen.py::test_transcribe_cpp_config_worker_reports_path_free_success",
+        "Tests/UI/test_library_screen.py::test_transcribe_cpp_config_success_requeues_failed_job_without_path",
+        "Tests/UI/test_library_screen.py::test_faster_whisper_recovery_handler_uses_explicit_provider",
+        "Tests/UI/test_library_ingest_characterization.py::test_choose_gguf_button_opens_the_gguf_picker_for_the_failed_job",
+        "Tests/UI/test_library_ingest_characterization.py::test_retry_faster_whisper_button_retries_with_the_named_provider",
+        "Tests/UI/test_library_ingest_canvas.py::test_transcribe_cpp_failure_renders_only_eligible_recovery_actions",
+        "Tests/UI/test_library_ingest_canvas.py::test_transcribe_cpp_provider_shows_path_free_configured_picker"
+      ],
+      "passed": 88,
+      "warnings": 5,
+      "seconds": 218.99
+    }
+  ],
+  "pytest_flags": "-q --tb=short --show-capture=no",
+  "full_repository_suite_run": false,
+  "native_steps_passed": 10,
+  "native_run": "run-004"
+}

@@ -1,0 +1,26 @@
+{
+  "base": "94eea5346581fd1d8bf230ceae6278045eebca51",
+  "method": "Exact baseline static test functions with exact baseline stylesheet inputs under disposable root; no mounted/base-app claim.",
+  "results": {
+    "test_settings_active_category_focus_style_keeps_label_readable": {
+      "result": "same baseline failure",
+      "message": ""
+    },
+    "test_settings_action_button_focus_style_keeps_label_readable": {
+      "result": "same baseline failure",
+      "message": ""
+    },
+    "test_settings_shell_button_focus_does_not_use_heavy_outline": {
+      "result": "same baseline failure",
+      "message": ""
+    },
+    "test_settings_invalid_compact_fields_keep_focused_text_readable": {
+      "result": "same baseline failure",
+      "message": "\\.settings-compact-select\\.settings-invalid-input:focus not found in _agentic_terminal.tcss"
+    },
+    "test_compact_inputs_carry_rest_edge_and_focus_edge": {
+      "result": "same baseline failure",
+      "message": ""
+    }
+  }
+}

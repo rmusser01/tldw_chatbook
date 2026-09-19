@@ -1,0 +1,40 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+____ test_snapshot_gate_survives_a_suspended_status_refresh[sources-arrive] ____
+Tests/UI/test_library_rag_query_gate_race.py:87: in test_snapshot_gate_survives_a_suspended_status_refresh
+    assert during == expected
+E   AssertionError: assert (False, ()) == (False, ('RAG...ays local.',))
+E
+E     At index 1 diff: () != ('RAG Answer sends your question and the evidence to openai. Search stays local.',)
+E     Use -v to get more diff
+__ test_snapshot_gate_survives_a_suspended_status_refresh[sources-disappear] ___
+Tests/UI/test_library_rag_query_gate_race.py:87: in test_snapshot_gate_survives_a_suspended_status_refresh
+    assert during == expected
+E   AssertionError: assert (True, ()) == (True, ('',))
+E
+E     At index 1 diff: () != ('',)
+E     Use -v to get more diff
+___ test_snapshot_gate_survives_a_suspended_status_refresh[provider-changes] ___
+Tests/UI/test_library_rag_query_gate_race.py:87: in test_snapshot_gate_survives_a_suspended_status_refresh
+    assert during == expected
+E   AssertionError: assert (False, ()) == (False, ('RAG...ays local.',))
+E
+E     At index 1 diff: () != ('RAG Answer sends your question and the evidence to anthropic. Search stays local.',)
+E     Use -v to get more diff
+________ test_snapshot_cannot_enable_run_without_its_disclosure_widget _________
+Tests/UI/test_library_rag_query_gate_race.py:106: in test_snapshot_cannot_enable_run_without_its_disclosure_widget
+    assert screen.query_one("#library-rag-run-query", Button).disabled
+E   AssertionError: assert False
+E    +  where False = Button(id='library-rag-run-query', classes='-style-default').disabled
+E    +    where Button(id='library-rag-run-query', classes='-style-default') = query_one('#library-rag-run-query', Button)
+E    +      where query_one = LibraryScreen(classes='shell-header-normal').query_one
+============================= slowest 25 durations =============================
+1.17s call     Tests/UI/test_library_rag_query_gate_race.py::test_snapshot_gate_survives_a_suspended_status_refresh[sources-arrive]
+
+(11 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_snapshot_gate_survives_a_suspended_status_refresh[sources-arrive]
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_snapshot_gate_survives_a_suspended_status_refresh[sources-disappear]
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_snapshot_gate_survives_a_suspended_status_refresh[provider-changes]
+FAILED Tests/UI/test_library_rag_query_gate_race.py::test_snapshot_cannot_enable_run_without_its_disclosure_widget
+4 failed in 5.64s

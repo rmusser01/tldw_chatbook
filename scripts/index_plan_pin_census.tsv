@@ -12,6 +12,9 @@
 # measurements in its docstring where a textbook index was simply never
 # chosen because no media DB has ever run ANALYZE.
 
+# ADR-138: existing workflow history index, bounded history read.
+workflow_revisions_history	plan-pinned	Tests/DB/test_workflows_authoring_storage.py::test_history_page_uses_workflow_revisions_history_without_statistics
+
 # ADR-098 completed-pair reconciliation locators (schema 72).
 idx_console_dispatch_checkpoints_user_message	plan-pinned	Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py
 idx_console_trace_events_semantic_revision_exact	plan-pinned	Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py
@@ -319,3 +322,8 @@ idx_automatic_claims_attempt	plan-pinned	Tests/DB/test_automatic_work_budget.py
 # task-32186: the Library ▸ Notes "Linked from" lookup (schema 73). The
 # plan must SEARCH note_links on this index and never SCAN notes.
 idx_note_links_target	plan-pinned	Tests/Notes/test_note_backlink_query.py::test_the_lookup_does_not_scan_the_note_corpus
+
+# Existing keyword-link indexes; recovery checks recognize the legacy schema.
+idx_collkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
+idx_convkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
+idx_notekw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only

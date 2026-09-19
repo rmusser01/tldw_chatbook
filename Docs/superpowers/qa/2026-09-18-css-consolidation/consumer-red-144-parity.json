@@ -1,0 +1,28 @@
+{
+  "exitstatus": 1,
+  "cases": [
+    "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id"
+  ],
+  "outcomes": [
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+      "phase": "setup",
+      "outcome": "passed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+      "phase": "call",
+      "outcome": "failed",
+      "wasxfail": null
+    },
+    {
+      "node": "Tests/Widgets/test_console_endpoint_template_modal.py::test_template_modal_creates_entry_and_dismisses_with_id",
+      "phase": "teardown",
+      "outcome": "passed",
+      "wasxfail": null
+    }
+  ],
+  "classes": {},
+  "mismatches": []
+}

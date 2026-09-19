@@ -1,0 +1,55 @@
+                                                                                                                                             ╭─────────────╮
+ ‹  ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meeting  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Appearance
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Needs correction | Font size must be between 6 and 32.                                              │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │                                                                                                             │  │  │                                   │
+│  category search             │  │  │  Appearance                                                                                                 │  │  │ Selected category: Appearance     │
+│                              │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Unsaved changes                   │
+│  Core                        │  │  │ │                                                                                                        │  │  │  │  Guided edits: Font size must be  │
+│     Overview (view)          │  │  │ │  Global visual defaults                                                                                │  │  │  │  between 6 and 32.                │
+│     Providers & Models       │  │  │ │  Settings owns launch visual defaults. Open the Theme category for full theme editing and deeper       │  │  │  │     Save (s)                      │
+│     Web Search               │  │  │ │  visual preview.                                                                                       │  │  │  │    Revert (r)                     │
+│     Speech & TTS             │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ Local-only: saves write your      │
+│  Interface                   │  │  │ │ Theme                   │ Review Textual Dark 80 (saved)                                           ▼ │ │  │  │  │ config file.                      │
+│   > Appearance *             │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Focused setting: Web font size   │
+│     Theme                    │  │  │ │ Palette limit (themes)  │ 1                                                                            │  │  │  │                                 ▂ │
+│     Splash Screen            │  │  │ │ Web font size (px)      │ 99                                                                           │  │  │  │  Purpose: Controls Textual-web    │
+│     Console Behavior         │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  terminal cell density.           │
+│  Data & Privacy              │  │  │ │ Density                 │ Normal                                                                   ▼ │ │  │  │  │                                   │
+│     Storage                  │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  Saved as: web_server.font_size   │
+│     Workspaces               │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │                                   │
+│     Tool Profiles            │  │  │ │ Console transcript      │ Role accents                                                             ▼ │ │  │  │  │  Save: staged - press s to        │
+│     Privacy & Security       │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  save, r to revert                │
+│     Network                  │  │  │ │                                                                                                        │  │  │  │                                   │
+│     My Profile               │  │  │ │  Motion and scrolling                                                                                  │  │  │  │  Validation: whole number from    │
+│  Troubleshooting             │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  6 to 32                          │
+│     Diagnostics (view)       │  │  │ │ Character expressions   │ Dynamic                                                                  ▼ │ │  │  │  │                                   │
+│     About (view)             │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │ Boundary                          │
+│     Agents                   │  │  │ │ Motion is suppressed by Reduce motion. Expressions still change.                                       │  │  │  │  Settings owns: global defaults   │
+│  Expert                      │  │  │ │ Animations              ▐X…                                                                            │  │  │  │  and validation before saving     │
+│     Internal Prompts         │  │  │ │ Reduce motion               Enabled                                                                    │  │  │  │                                   │
+│     Advanced Config          │  │  │ │ ASCII glyphs                Disabled                                                                   │  │  │  │  Theme owns: full theme           │
+│   Domain Defaults ▸ (11)     │  │  │ │ Smooth scrolling            Enabled                                                                    │  │  │  │  editing, custom colors, and      │
+│                              │  │  │ │                                                                                                        │  │  │  │  deeper preview                   │
+│                              │  │  │ │  Shared Library rail                                                                                   │  │  │  │                                   │
+│                              │  │  │ │ Library rail                  Open                                                                     │  │  │  │  Open Theme editor                │
+│                              │  │  │ │ Width mode               Automatic widths                                                              │  │  │  │  Runtime owner: Settings          │
+│                              │  │  │ │ Preferred rail width    │ 36                                                                           │  │  │  │  persisted defaults               │
+│                              │  │  │ │ Automatic: 3:13 plus five, bounded to 29–39 cells. Custom: preferred 24–48 cells; it may shrink        │  │  │  │                                   │
+│                              │  │  │ │ temporarily to keep 40 content cells. Adaptive readers may collapse panes. In ordinary views below 64  │  │  │  │  Writes allowed: Yes              │
+│                              │  │  │ │ columns, use ‹ Library (< Library in ASCII) to return to the rail.                                     │  │  │  │                                   │
+│                              │  │  │ │                                                                                                        │  │  │  │  Owns: general.default_theme      │
+│                              │  │  │ │  Destination list panes                                                                                │  │  │  │  general.                         │
+│                              │  │  │ │ Media Items pane              Open                                                                     │  │  │  │    palette_theme_limit            │
+│                              │  │  │ │ Media Items width       │ 50                                                                           │  │  │  │  web_server.font_size             │
+│                              │  │  │ │ Collections Items pane        Open                                                                     │  │  │  │  appearance.density               │
+│                              │  │  │ │ Collections Items width │ 50                                                                           │  │  │  │  appearance.                      │
+│                              │  │  │ │ Conversations Items pane      Open                                                                     │  │  │  │ ▼ more — scroll the inspector     │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+
+  s save category | r revert category | t preview appearance | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

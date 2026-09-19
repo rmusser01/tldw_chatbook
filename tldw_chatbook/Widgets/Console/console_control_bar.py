@@ -123,7 +123,9 @@ class ConsoleControlBar(Vertical):
     def _set_recovery_height(self, visible: bool) -> None:
         """Set the exact bar height for its recovery-row visibility."""
         height = 2 if visible else 1
-        self.styles.height = height
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-2" if visible else "h-1")
         self.styles.min_height = height
         self.styles.max_height = height
 
@@ -135,9 +137,13 @@ class ConsoleControlBar(Vertical):
         legacy control-bar child IDs while visible state moves to ModeStrip.
         """
         widget.styles.display = "none"
-        widget.styles.width = 0
+        widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+        widget.set_styles(width=None)
+        widget.add_class("w-0")
         widget.styles.min_width = 0
-        widget.styles.height = 0
+        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+        widget.set_styles(height=None)
+        widget.add_class("h-0")
         widget.styles.min_height = 0
         return widget
 
@@ -289,7 +295,9 @@ class ConsoleControlBar(Vertical):
             for action in self._visible_actions():
                 yield self._action(action)
         with Horizontal(id="console-auto-speak-row") as speech_row:
-            speech_row.styles.height = 1
+            speech_row.remove_class(*(name for name in speech_row.classes if name.startswith("h-")))
+            speech_row.set_styles(height=None)
+            speech_row.add_class("h-1")
             speech_row.styles.min_height = 1
             speech_row.styles.max_height = 1
             retry = Button(

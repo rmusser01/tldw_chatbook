@@ -5,12 +5,16 @@
  * Shared design-system classes -- .ds-panel, .destination-workbench,
  * .destination-workbench-pane, .ds-inspector, .density-compact/comfortable
  * -- are already defined in components/_agentic_terminal.tcss and
- * layout/_panes.tcss; this file only adds Evals-specific rail/pane rules.
+ * layout/_destination.tcss; this file only adds Evals-specific rail/pane rules.
  * ======================================== */
+/* ADR-161 §3.10 in-place literal migration (2026-09-13): every dimension
+   value below is a $ds token (space/size/percent scales), transcribed
+   value-identically from the raw literals; comments stay load-bearing. */
+
 
 #evals-shell {
-    height: 100%;
-    min-height: 0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
 }
 
 /* I4: panes never scrolled. Vertical's own DEFAULT_CSS is
@@ -137,26 +141,26 @@
 }
 
 .evals-rail-section-header {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-rail-section-label {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     text-style: bold;
     color: $ds-text-primary;
 }
 
 .evals-rail-section-toggle {
-    width: 3;
-    min-width: 3;
-    max-width: 3;
-    height: 1;
-    min-height: 1;
-    padding: 0;
+    width: $ds-size-3;
+    min-width: $ds-size-3;
+    max-width: $ds-size-3;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0;
     border: none;
 }
 
@@ -165,10 +169,10 @@
 }
 
 .evals-rail-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     text-align: left;
     content-align: left middle;
@@ -191,7 +195,7 @@
 
 .evals-rail-empty-copy {
     color: $ds-text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* TASK-1076: the fully-first-run "Start here" callout above the sample
@@ -203,7 +207,7 @@
 .evals-rail-first-run-hint {
     color: $ds-text-primary;
     text-style: bold;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Task 6 (empty states, sample bench, export). "No providers configured"
@@ -213,16 +217,16 @@
    one. These two ids only ever render together, in place of that one
    section's bench list. */
 #evals-rail-no-providers {
-    padding: 1 1 0 1;
+    padding: $ds-space-1 $ds-space-1 $ds-space-0 $ds-space-1;
 }
 
 #evals-rail-no-providers-detail {
-    padding: 0 1 1 1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
 }
 
 #evals-rail-open-settings,
 #evals-create-sample-bench {
-    margin: 0 1 1 1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
     width: auto;
 }
 
@@ -233,11 +237,11 @@
    empty-only version; only the Python call site changed. */
 .evals-rail-empty-actions {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-rail-empty-actions > Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Task 4 (task-1482): "+ New bench"'s zero-dataset hint. Same visual
@@ -251,7 +255,7 @@
    a second copy of that wording to a class-scoped query. */
 .evals-rail-new-bench-hint {
     color: $ds-text-muted;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* I3: the labelled subgroup separating classic (non-word-bench) tasks from
@@ -260,14 +264,14 @@
    the empty-copy line above it, never like a selectable row. */
 .evals-rail-classic-separator {
     color: $ds-text-muted;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-pane-title {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     text-style: bold;
     color: $ds-text-primary;
 }
@@ -278,8 +282,8 @@
 }
 
 #evals-primary-action {
-    margin: 1 0 0 0;
-    width: 100%;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    width: $ds-width-full;
 }
 
 /* task-1482 Task 7 fix round 1: `#evals-duplicate-bench`/`#evals-delete-
@@ -294,8 +298,8 @@
    `#evals-inspector-bench` comment above). */
 #evals-duplicate-bench,
 #evals-delete-bench {
-    margin: 1 0 0 0;
-    width: 100%;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    width: $ds-width-full;
 }
 
 /* Task 4 (bench editor + readiness inspector). Status colour lives here,
@@ -335,14 +339,14 @@
    recovery-callout`'s identical spacing just below. */
 .evals-target-continuation {
     height: auto;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 .evals-bench-target-row {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* Task 6 (task-1482): targets become editable. Each row's status Static
@@ -355,7 +359,7 @@
 }
 
 .evals-bench-target-row-wrap > .evals-bench-target-row {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .evals-bench-target-remove {
@@ -370,9 +374,9 @@
        raising`. "Remove" is 6 cells; 10 gives it a little breathing room
        without the stock floor eating most of the row.
     */
-    width: 10;
-    min-width: 10;
-    margin: 0 0 0 1;
+    width: $ds-size-10;
+    min-width: $ds-size-10;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 #evals-bench-add-target-row {
@@ -400,17 +404,17 @@
        from the region numbers) once a real target row was ALSO present
        (`test_every_pane_descendant_stays_within_its_pane`, using
        `seeded_bench`, a one-target bench). */
-    height: 1;
+    height: $ds-size-1;
     align: left middle;
 }
 
 #evals-bench-add-target-row > Select {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #evals-bench-add-target-row > Button {
     width: auto;
-    margin: 0 0 0 1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 #evals-bench-create-target {
@@ -443,8 +447,8 @@
 }
 
 #evals-bench-create-target-form > Input {
-    width: 1fr;
-    margin-right: 1;
+    width: $ds-width-fill;
+    margin-right: $ds-space-1;
 }
 
 #evals-bench-create-target-form > #evals-bench-create-target {
@@ -452,13 +456,13 @@
 }
 
 .evals-classic-run-row {
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #evals-inspector-bench .ds-recovery-callout {
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* Whole-branch review, task-1611 fix round (final): `BenchEditor` itself
@@ -535,18 +539,18 @@
 .evals-bench-field-label {
     text-style: bold;
     color: $ds-text-primary;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 #evals-bench-prompt-mode {
-    width: 1fr;
-    margin-bottom: 1;
+    width: $ds-width-fill;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-bench-name,
 #evals-bench-description,
 #evals-bench-top-k {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Bounded, not the widget's own default `1fr` (textual/widgets/_text_area.
@@ -556,9 +560,9 @@
    Mirrors mcp_profile_form.py's identical #mcp-form-args/#mcp-form-env
    fix for the same "TextArea defaults to 1fr" trap. */
 #evals-bench-probes {
-    height: 6;
-    min-height: 4;
-    margin-bottom: 1;
+    height: $ds-size-6;
+    min-height: $ds-size-4;
+    margin-bottom: $ds-space-1;
 }
 
 /* The read-only ␣-marker preview of the CURRENTLY SAVED probes (see
@@ -569,9 +573,9 @@
    I type", so this list does not also need to grow without limit. */
 #evals-bench-probes-preview {
     height: auto;
-    max-height: 6;
+    max-height: $ds-size-6;
     overflow-y: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .evals-bench-probe-preview-row {
@@ -580,7 +584,7 @@
 
 #evals-bench-probes-preview-empty {
     color: $ds-text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* task-1710 T2: the per-cell continuation opt-in.
@@ -601,9 +605,9 @@
    off the bottom of a 160x45 terminal. */
 #evals-bench-capture-continuations {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-bottom: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-1;
 }
 
 /* CRITICAL, found by live verification against a real llama.cpp: the rule
@@ -661,16 +665,16 @@
 }
 
 #evals-bench-form-error {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-bench-form-actions {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-bench-form-actions Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Task 5 (snippet editor + import). The whitespace marker itself is a
@@ -684,21 +688,21 @@
 .evals-snippet-table-header {
     text-style: bold;
     color: $ds-text-primary;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-snippet-row {
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .evals-snippet-index {
-    width: 4;
+    width: $ds-size-4;
     color: $ds-text-muted;
 }
 
 .evals-snippet-text {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .evals-snippet-meta {
@@ -711,11 +715,11 @@
 }
 
 #evals-snippet-warnings-summary {
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 #evals-import-snippets {
-    margin: 1 0 0 0;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* Task 1 (results grid + lenses). The grid fills its detail pane; the
@@ -732,14 +736,14 @@
        that overflow; removing the border when Evals moved onto the Lab
        frame exposed it. `1fr` takes what is left after siblings, which is
        what "fills its detail pane" means. */
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 #evals-grid-meta,
 #evals-grid-state {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     color: $ds-text-muted;
 }
 
@@ -750,28 +754,28 @@
    same design element on both views, per the design contract's "bench
    view and run view agree on how prominently it is presented". */
 #evals-grid-canary-callout {
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 /* TASK-1477: the run-level failure callout -- same treatment as the
    canary callout directly above (shared .ds-recovery-callout base, same
    trailing margin so the two stack consistently when both are present). */
 #evals-grid-failure-callout {
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #evals-grid-controls {
     height: auto;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #evals-grid-controls > Select {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 #evals-grid-table {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
 }
 
 /* TASK-1034 lived here: the global `*:focus { outline: solid
@@ -853,12 +857,12 @@
    a read-only probe preview gets of the bench editor's). */
 #evals-card-picker-rows {
     height: auto;
-    max-height: 10;
+    max-height: $ds-size-10;
     overflow-y: auto;
 }
 
 .evals-card-row {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 /* Task 4 (task-1691 phase 2): the character bench editor
@@ -885,7 +889,7 @@
 .evals-cb-field-label {
     text-style: bold;
     color: $ds-text-primary;
-    margin-bottom: 0;
+    margin-bottom: $ds-space-0;
 }
 
 #evals-cb-name,
@@ -894,11 +898,11 @@
 #evals-cb-seed,
 #evals-cb-temperature,
 #evals-cb-max-tokens {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-probe-set {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* The read-only ␣/⏎-marker probe listing -- one line per probe (see
@@ -910,31 +914,31 @@
    reach. */
 #evals-cb-probes {
     height: auto;
-    max-height: 6;
+    max-height: $ds-size-6;
     overflow-y: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 .evals-cb-target-row {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 #evals-cb-targets-empty {
     color: $ds-text-muted;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-form-error {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-form-actions {
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 #evals-cb-form-actions Button {
-    margin: 0 1 0 0;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 /* Whole-branch review Important 2 (task-1691 phase 2 fix round):
@@ -951,7 +955,7 @@
 }
 
 #evals-probeset-detail-count {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }
 
 /* Mirrors `#evals-cb-probes` exactly -- the identical bounded,
@@ -961,7 +965,7 @@
    colliding. */
 #evals-probeset-detail-probes {
     height: auto;
-    max-height: 6;
+    max-height: $ds-size-6;
     overflow-y: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-1;
 }

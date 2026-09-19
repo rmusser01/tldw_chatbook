@@ -140,6 +140,7 @@ _TRUST_SETUP_EXPLANATION_COPY = (
 # (``library_skills_state.py``); the "" key never renders a button (see
 # ``_compose_list``).
 _TRUST_HEADER_ACTION_LABELS = {
+    "recovery_review": "Review restored skills",
     "setup": "Set up skill trust",
     "resetup": "Set up skill trust",
     "retry": "Retry",
@@ -600,7 +601,7 @@ class LibrarySkillsTrustHeader(Vertical):
         self.blocked_count = blocked_count
         self.trust_posture = trust_posture
         self.confirming_reset = confirming_reset
-        self.styles.height = "auto"
+        self.add_class("h-auto")
 
     def compose(self) -> ComposeResult:
         """Render only the posture-dependent header controls.
@@ -638,7 +639,7 @@ class LibrarySkillsTrustHeader(Vertical):
                     markup=False,
                 )
                 toolbar = Horizontal(classes="ds-toolbar")
-                toolbar.styles.height = "auto"
+                toolbar.add_class("h-auto")
                 with toolbar:
                     yield Button(
                         "Reset",
@@ -828,6 +829,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
         self.tool_filter = tool_filter
         self.mutation_in_flight = mutation_in_flight
+        self._save_focus_pending = False
         self.more_actions_open = more_actions_open
         self.trust_details_open = trust_details_open
         self.script_access_granted = script_access_granted
@@ -841,7 +843,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             if mode == "list"
             else "library-skills-editor-mode"
         )
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
@@ -1082,6 +1084,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         is_create: bool | None = None,
     ) -> None:
         """Patch lifecycle-valid actions without replacing editor fields."""
+        was_busy = self.mutation_in_flight
+        save = self.query_one("#library-skill-save", Button)
+        if mutation_in_flight and not was_busy:
+            self._save_focus_pending = self.screen.focused is save
         if dirty is not None:
             self.dirty = bool(dirty)
         if conflict is not None:
@@ -1136,9 +1142,21 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         }
         for selector, visible in visibility.items():
             self.query_one(selector).display = visible
-        self.query_one("#library-skill-save", Button).label = (
-            "Save skill" if self.is_create else "Save changes"
-        )
+        save.label = "Save skill" if self.is_create else "Save changes"
+        # Hiding Save may retain its focus or clear it at the next layout.
+        # Only repair that outgoing focus; a newer field/pane keeps focus.
+        if not busy and self._save_focus_pending:
+            self._save_focus_pending = False
+            if self.screen.focused in (None, save):
+                target = (
+                    "#library-skill-conflict-reload"
+                    if conflict_active
+                    else "#library-skill-save"
+                    if create or dirty_active
+                    else "#library-skill-back"
+                )
+                if visibility[target]:
+                    self.query_one(target, Button).focus()
 
     def _tool_picker_selections(self, filter_value: str = "") -> list[Selection]:
         """Build unique chooser rows while retaining raw content separately."""
@@ -1213,8 +1231,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # in its own retained region so that update cannot invalidate a row's
         # already-posted Button.Pressed event.
         yield LibrarySkillsTrustHeader(
-            has_skills=state.source_summary_fresh
-            and (bool(state.rows) or bool(title_count) or state.blocked_total > 0),
+            has_skills=self.trust_posture == "recovery_review" or (state.source_summary_fresh
+            and (bool(state.rows) or bool(title_count) or state.blocked_total > 0)),
             blocked_count=(
                 state.blocked_total
                 if state.pager is not None
@@ -1229,11 +1247,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             id=LIBRARY_SKILLS_FILTER_ID,
             value=self.filter_value,
         )
-        # One horizontal ds-toolbar row for sort/Import -- mirrors
-        # library_prompts_canvas.py's toolbar exactly (same render-safe
-        # shape: every child is a fixed-width compact Button).
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar = Vertical(classes="ds-toolbar library-skills-actions")
+        toolbar.add_class("h-auto")
         # task-14902: the sort choice strip replaces this toolbar row while
         # open (the Notes Sort precedent).
         toolbar.display = not self.sort_choices_visible
@@ -1393,7 +1408,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             markup=False,
         )
         toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.add_class("h-auto")
         with toolbar:
             yield Button(
                 "Reset",
@@ -1434,8 +1449,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             value=self.import_path,
             disabled=self.import_in_flight,
         )
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar = Horizontal(classes="ds-toolbar library-skills-actions")
+        toolbar.add_class("h-auto")
         with toolbar:
             # Browse… picks a FILE via the shared FileOpen dialog;
             # task-422 adds the folder variant beside it (SelectDirectory)
@@ -1455,6 +1470,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 compact=True,
                 disabled=self.import_in_flight,
             )
+        with Horizontal(classes="ds-toolbar library-skills-actions h-auto"):
             yield Button(
                 "Import",
                 id="library-skills-import-run",
@@ -1720,7 +1736,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         delete_copy.display = confirming_delete and not self.mutation_in_flight
         yield delete_copy
         toolbar = Horizontal(id="library-skill-lifecycle-actions", classes="ds-toolbar")
-        toolbar.styles.height = "auto"
+        toolbar.add_class("h-auto")
         with toolbar:
             busy = self.mutation_in_flight
             conflict = self.conflict and not busy
@@ -1921,7 +1937,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 # forward, rendered here since this state has no list
                 # header to surface it from.
                 reset_toolbar = Horizontal(classes="ds-toolbar")
-                reset_toolbar.styles.height = "auto"
+                reset_toolbar.add_class("h-auto")
                 with reset_toolbar:
                     yield Button(
                         _RESET_TRUST_BUTTON_LABEL,
@@ -1938,7 +1954,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     markup=False,
                 )
                 setup_toolbar = Horizontal(classes="ds-toolbar")
-                setup_toolbar.styles.height = "auto"
+                setup_toolbar.add_class("h-auto")
                 with setup_toolbar:
                     yield Button(
                         "Set up skill trust",
@@ -1963,7 +1979,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 markup=False,
             )
             toolbar = Horizontal(classes="ds-toolbar")
-            toolbar.styles.height = "auto"
+            toolbar.add_class("h-auto")
             with toolbar:
                 yield Button(
                     "Unlock",

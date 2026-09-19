@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, replace
 from math import isfinite
-from typing import Any, Literal, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from textual import events, on
@@ -17,6 +17,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
@@ -54,6 +55,9 @@ from tldw_chatbook.Widgets.model_search_picker import (
     ModelSearchPicker,
 )
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Utils.token_counter import ContextWindowResolution
+
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
 
 
@@ -72,6 +76,9 @@ class ConsoleModelPopoverResult:
 _CONSOLE_POPOVER_TEMPERATURE_MIN = 0.0
 _CONSOLE_POPOVER_TEMPERATURE_MAX = 2.0
 _FULL_SETTINGS_ACTION = "full_settings"
+#: Viewport width where the popover's wide tier engages, matching the
+#: Conversation settings modal's wide tier (PR #2670).
+_CONSOLE_POPOVER_WIDE_VIEWPORT_COLUMNS = 150
 
 
 class DraftRebaser(Protocol):
@@ -161,6 +168,19 @@ class ConsoleModelPopover(
         border: tall $surface-lighten-1;
         background: $panel;
         padding: 1 2;
+    }
+
+    /* Wide-terminal tier (viewport >= 150 columns): the fixed 60-column
+       quick popover reads as cramped next to the wide-tiered Conversation
+       settings modal on wide terminals, so grow the container to 85% of
+       the viewport, capped at 170 columns -- deliberately below the
+       settings modal's 196 so the quick surface stays visually lighter.
+       The class is toggled by Python from the app viewport width -- the
+       container's own width cannot drive this without a chicken-and-egg
+       loop. Everything else (height, padding, borders) is unchanged. */
+    #console-model-popover.-console-popover-wide {
+        width: 85%;
+        max-width: 170;
     }
 
     #console-model-popover-body {
@@ -259,6 +279,10 @@ class ConsoleModelPopover(
         initial_draft: ConsoleSettingsDraftState,
         providers_models: Mapping[str, Sequence[str]],
         context_state: ConsoleContextControlState | None = None,
+        context_window_resolver: Callable[
+            [ConsoleSessionSettings], Awaitable[ContextWindowResolution]
+        ]
+        | None = None,
         scope_copy: str,
         durability_copy: str,
         draft_rebaser: DraftRebaser,
@@ -275,6 +299,7 @@ class ConsoleModelPopover(
             providers_models: Mapping of provider key to its available model
                 names, used to build the provider and model selects.
             context_state: Current context usage/policy presentation state.
+            context_window_resolver: Bounded asynchronous serving-capacity lookup.
             scope_copy: Exact conversation scope label.
             durability_copy: Exact unsaved or temporary durability label.
             draft_rebaser: Controller-owned provider/model rebase callback.
@@ -292,6 +317,9 @@ class ConsoleModelPopover(
         self._app_config = app_config
         self._draft = initial_draft
         self._providers_models = providers_models
+        self._context_window_resolver = context_window_resolver
+        self._context_window_target: tuple[str, str | None, str | None] | None = None
+        self._context_window_generation = 0
         self._context_state = context_state or build_console_context_control_state(
             settings=initial_draft.settings,
             estimate=ConsoleSettingsContextEstimate(
@@ -412,6 +440,8 @@ class ConsoleModelPopover(
 
     def compose(self) -> ComposeResult:
         """Build the provider, model, temperature, and streaming controls."""
+        from tldw_chatbook.Widgets.select_values import select_value_or_blank
+
         settings = self._draft.settings
         provider_options = self._provider_select_options()
         model_options = [
@@ -433,10 +463,17 @@ class ConsoleModelPopover(
                 error.display = False
                 yield error
                 yield Static("Provider", classes="console-popover-field-label")
+                # TASK-32533: a no-provider draft carries "" and a stale draft
+                # can carry a key the option builder no longer lists; Textual's
+                # Select raises InvalidSelectValueError at mount for either,
+                # and that exit took the whole app with it (critique #3 P0).
+                # Same guard as the model select below, and as the update path
+                # in `_sync_controls_from_draft`.
                 yield Select(
                     provider_options,
-                    value=settings.provider,
+                    value=select_value_or_blank(provider_options, settings.provider),
                     id="console-popover-provider",
+                    allow_blank=True,
                 )
                 yield Static("Model", classes="console-popover-field-label")
                 model_select = Select(
@@ -482,6 +519,12 @@ class ConsoleModelPopover(
                     self._field_provenance_copy("streaming"),
                     id="console-popover-streaming-provenance",
                     classes="console-popover-provenance",
+                    markup=False,
+                )
+                yield Static(
+                    self._model_window_copy(),
+                    id="console-popover-model-window",
+                    classes="console-popover-context-row",
                     markup=False,
                 )
                 yield Static(
@@ -640,9 +683,130 @@ class ConsoleModelPopover(
         """Settle the narrow-height fold affordance after first layout."""
         self._sync_default_content()
         self.call_after_refresh(self._sync_fold_hint)
+        self.call_after_refresh(self._sync_responsive_width)
+        self.call_after_refresh(self._refresh_context_window)
+
+    def _refresh_context_window(self) -> None:
+        """Resolve the exact target in a worker without retaining stale results."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        if (
+            not self.is_mounted
+            or self not in self.app.screen_stack
+            or self._context_window_resolver is None
+        ):
+            return
+        settings = self._draft.settings
+        target = (settings.provider, settings.model, settings.base_url)
+        if target == self._context_window_target:
+            return
+        self._context_window_target = target
+        self._context_window_generation += 1
+        generation = self._context_window_generation
+        self._publish_context_window(
+            resolve_context_window(settings.provider, settings.model or "")
+        )
+
+        async def refresh() -> None:
+            try:
+                result = await self._context_window_resolver(settings)
+            except (OSError, ValueError):
+                return
+            if (
+                self.is_mounted
+                and self in self.app.screen_stack
+                and generation == self._context_window_generation
+                and target == self._context_window_target
+            ):
+                self._publish_context_window(result)
+
+        self.run_worker(
+            refresh,
+            group="console-popover-context-window",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _model_window_copy(self) -> str:
+        state = self._context_state
+        suffix = " (estimated)" if not state.model_window_verified else ""
+        return (
+            "Model window  "
+            f"{format_context_tokens(state.model_window_tokens)} tokens{suffix}"
+        )
+
+    def _publish_context_window(self, result: ContextWindowResolution) -> None:
+        """Recalculate input and policy budgets from the selected serving window."""
+        previous = self._context_state
+        rebuilt = build_console_context_control_state(
+            settings=self._draft.settings,
+            estimate=ConsoleSettingsContextEstimate(
+                used_tokens=previous.request_tokens,
+                token_limit=result.tokens,
+                label="",
+                token_limit_verified=result.verified,
+                token_limit_source=result.source,
+            ),
+            overrides=self._draft.context_policy_overrides,
+            global_overrides=ConsoleContextPolicyOverrides(
+                **asdict(previous.inherited_policy)
+            ),
+            effective_memory=previous.effective_memory,
+            conversation_tokens=previous.conversation_tokens,
+            request_overhead_tokens=previous.request_overhead_tokens,
+            busy=previous.busy,
+            status_message=previous.status_message,
+        )
+        self._context_state = replace(
+            rebuilt,
+            thinking_history=previous.thinking_history,
+            breakdown_rows=previous.breakdown_rows,
+        )
+        state = self._context_state
+        updates = {
+            "console-popover-model-window": self._model_window_copy(),
+            "console-popover-request-usage": f"Request       {state.request_row}",
+            "console-popover-conversation-usage": (
+                f"Conversation  {state.conversation_row}"
+            ),
+            "console-popover-compaction-threshold": (
+                "Compaction    at "
+                f"{format_context_tokens(state.compaction_trigger_tokens)} tokens"
+            ),
+        }
+        for control_id, text in updates.items():
+            self.query_one(f"#{control_id}", Static).update(text)
+        self.query_one("#console-popover-model-window", Static).tooltip = result.source
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Recompute the fold affordance when the terminal size changes."""
+        """Re-sync the fold hint and the responsive width tier on resize.
+
+        One terminal resize now drives two syncs, each re-run after the
+        resize settles via ``call_after_refresh``: the narrow-height fold
+        affordance (``_sync_fold_hint``) and the wide-terminal width tier
+        (``_sync_responsive_width``), which itself re-chains the fold hint
+        because a tier flip changes body overflow.
+
+        Args:
+            _event: The terminal resize event; unused directly because
+                the wide tier reads the app viewport width, not the
+                event's size.
+        """
+        self.call_after_refresh(self._sync_fold_hint)
+        self.call_after_refresh(self._sync_responsive_width)
+
+    def _sync_responsive_width(self) -> None:
+        """Derive the wide-terminal layout tier from the viewport width."""
+        try:
+            container = self.query_one("#console-model-popover", Vertical)
+        except NoMatches:
+            return
+        # The wide tier keys off the app viewport, never the container's own
+        # width: sizing the container from the container would oscillate.
+        container.set_class(
+            self.app.size.width >= _CONSOLE_POPOVER_WIDE_VIEWPORT_COLUMNS,
+            "-console-popover-wide",
+        )
         self.call_after_refresh(self._sync_fold_hint)
 
     def _sync_fold_hint(self) -> None:
@@ -818,13 +982,18 @@ class ConsoleModelPopover(
     ) -> None:
         if not self.is_mounted:
             return
+        from tldw_chatbook.Widgets.select_values import assign_select_value
+
         settings = self._draft.settings
         self._updating_controls = True
         try:
             provider_select = self.query_one("#console-popover-provider", Select)
             if provider_select.value != settings.provider:
                 with provider_select.prevent(Select.Changed):
-                    provider_select.value = settings.provider
+                    # TASK-32533 (review fix 1): the mount is guarded, and so is
+                    # this. A blank popover plus Custom ID plus one keystroke
+                    # rebases the draft to `provider=""` and lands here.
+                    assign_select_value(provider_select, settings.provider)
             temperature = self.query_one("#console-popover-temperature", Input)
             with temperature.prevent(Input.Changed):
                 temperature.value = (
@@ -863,6 +1032,7 @@ class ConsoleModelPopover(
         self._model_options_provider = settings.provider
         self._sync_provenance_labels()
         self._sync_default_content()
+        self._refresh_context_window()
 
     def _sync_provenance_labels(self) -> None:
         if not self.is_mounted:

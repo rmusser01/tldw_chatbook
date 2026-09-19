@@ -258,6 +258,9 @@ async def test_registry_ticks_only_reflow_footer_when_retry_availability_changes
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _ingest_screen(host, pilot)
+        # Settle the initial registry projection before measuring repeated,
+        # identical ticks; direct route entry can still hold its entry label.
+        screen._handle_library_ingest_registry_changed()
         footer = screen.query_one(AppFooterStatus)
         real_set_shortcuts = footer.set_workbench_shortcuts
         registrations: list[tuple[str, tuple]] = []

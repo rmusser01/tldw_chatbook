@@ -474,7 +474,9 @@ class HomeScreen(BaseAppScreen):
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
         """Assemble the T190 content snapshot from real seams, degrading quietly."""
-        console_ready = await asyncio.to_thread(self._home_console_provider_ready)
+        console_ready = await asyncio.to_thread(
+            self._home_console_provider_ready, background_credentials=False
+        )
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         conversation_service = getattr(
             self.app_instance, "chat_conversation_scope_service", None
@@ -561,23 +563,44 @@ class HomeScreen(BaseAppScreen):
                     return await result
                 return result
 
+            from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+            from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+            from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+            scope_service = getattr(callable_obj, "__self__", None)
+            method = getattr(callable_obj, "__func__", None)
+            local_media = getattr(scope_service, "local_service", None)
+            media_db = getattr(local_media, "media_db", None)
+            owns_media = (
+                type(scope_service) is MediaReadingScopeService
+                and method is MediaReadingScopeService.list_media_items
+                and kwargs.get("mode", "local") in (None, "local")
+                and type(local_media) is LocalMediaReadingService
+                and type(media_db) is MediaDatabase
+                and not media_db.is_memory_db
+            )
+
             def invoke_seam_in_worker() -> Any:
-                result = callable_obj(**kwargs)
-                if inspect.isawaitable(result):
-                    # This thread has no event loop, and the awaitable must
-                    # complete here so blocking async services stay off the
-                    # UI loop (mirrors Library's _run_library_service_call).
-                    return asyncio.run(
-                        _await_home_seam_result(result)
-                    )  # policy-exception: worker-thread loop
-                return result
+                db = media_db if owns_media else None
+                try:
+                    result = callable_obj(**kwargs)
+                    if inspect.isawaitable(result):
+                        return asyncio.run(
+                            _await_home_seam_result(result)
+                        )  # policy-exception: worker-thread loop
+                    return result
+                finally:
+                    if type(db) is MediaDatabase and not db.is_memory_db:
+                        db.close_connection()
 
             return await asyncio.to_thread(invoke_seam_in_worker)
         except Exception as exc:
             logger.debug(f"Home content snapshot seam call failed: {exc}")
             return None
 
-    def _home_console_provider_ready(self, *, allow_fresh_load: bool = True) -> bool:
+    def _home_console_provider_ready(
+        self, *, background_credentials: bool, allow_fresh_load: bool = True
+    ) -> bool:
         """Return Console provider readiness from the freshest config.
 
         Reuses the exact readiness seams Console uses
@@ -590,6 +613,9 @@ class HomeScreen(BaseAppScreen):
         ``_provider_readiness_app_config``.
 
         Args:
+            background_credentials: Return cached credential readiness without
+                waiting during compose. The content-snapshot thread passes
+                False so its completion publishes resolved readiness.
             allow_fresh_load: When True (the async content-snapshot path),
                 refresh from ``load_settings()`` for freshness. When False
                 (TASK-31805's synchronous compose path for the "Model:"
@@ -615,7 +641,11 @@ class HomeScreen(BaseAppScreen):
                 config = fresh
         try:
             settings = build_default_console_session_settings(config)
-            readiness = build_console_settings_readiness(settings, app_config=config)
+            readiness = build_console_settings_readiness(
+                settings,
+                app_config=config,
+                background_credentials=background_credentials,
+            )
         except Exception as exc:
             logger.debug(f"Home Console readiness check failed: {exc}")
             return False
@@ -653,7 +683,9 @@ class HomeScreen(BaseAppScreen):
         # config, keeping the badge in lockstep with ``console_ready``.
         dashboard_input = replace(
             dashboard_input,
-            model_ready=self._home_console_provider_ready(allow_fresh_load=False),
+            model_ready=self._home_console_provider_ready(
+                background_credentials=True, allow_fresh_load=False
+            ),
         )
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         snapshot = getattr(manager, "snapshot", None)
@@ -705,7 +737,7 @@ class HomeScreen(BaseAppScreen):
         triage_grid = Horizontal(
             id="home-triage-grid", classes="ds-panel destination-workbench"
         )
-        triage_grid.styles.height = "1fr"
+        triage_grid.add_class("h-fill")
         triage_grid.styles.min_height = 12
         with triage_grid:
             rail = HomeRail(
@@ -714,7 +746,7 @@ class HomeScreen(BaseAppScreen):
                 id="home-rail",
                 classes="destination-workbench-pane",
             )
-            rail.styles.height = "100%"
+            rail.add_class("h-full")
             yield rail
             canvas = HomeCanvas(
                 triage.canvas,
@@ -722,7 +754,7 @@ class HomeScreen(BaseAppScreen):
                 id="home-canvas",
                 classes="destination-workbench-pane",
             )
-            canvas.styles.height = "100%"
+            canvas.add_class("h-full")
             yield canvas
 
     def _home_action_button(

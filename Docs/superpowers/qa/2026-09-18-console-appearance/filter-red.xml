@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="30.521" timestamp="2026-09-18T12:43:56.399554-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_console_appearance_compact" name="test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]" time="13.407"><failure message="Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2406/test_filter_typing_survives_de0/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;____ test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark] ____&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]&gt;&gt;&#10;catalog = [], theme = 'textual-dark'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;theme&quot;, [&quot;textual-dark&quot;, &quot;textual-light&quot;])&#10;    @private_profile_test&#10;    async def test_filter_typing_survives_debounced_grid_focus_refresh(request, catalog, theme):&#10;        app = StyledPickerHarness(conversation_id=&quot;fixture&quot;, icon=&quot;🎨&quot;)&#10;        app.theme = theme&#10;        async with app.run_test(size=(80, 24)) as pilot:&#10;            modal = app.screen&#10;            field = modal.query_one(f&quot;#{picker.FILTER_INPUT_ID}&quot;, Input)&#10;            for length, char in enumerate(&quot;rocket&quot;, start=1):&#10;                await pilot.press(char)&#10;                await pilot.pause(picker.FILTER_DEBOUNCE_SECONDS + 0.15)&#10;                assert app.focused is field&#10;                assert field.value == &quot;rocket&quot;[:length]&#10;&gt;               assert field.selection.is_empty&#10;E               AssertionError: assert False&#10;E                +  where False = Selection(start=0, end=1).is_empty&#10;E                +    where Selection(start=0, end=1) = Input(id='console-appearance-picker-filter', classes='-valid').selection&#10;&#10;Tests/UI/test_console_appearance_compact.py:156: AssertionError&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-18 12:44:03.657 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'&#10;2026-09-18 12:44:04.091 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-18 12:44:04.092 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:65 - Sounddevice not available. Install with: pip install sounddevice&#10;2026-09-18 12:44:04.092 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:76 - WebRTC VAD not available. Install with: pip install webrtcvad&#10;2026-09-18 12:44:04.266 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:&lt;module&gt;:53 - python-frontmatter not installed. Markdown import will not be available.&#10;2026-09-18 12:44:05.378 | INFO     | tldw_chatbook.Evals.task_loader:&lt;module&gt;:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets&#10;============================= slowest 25 durations =============================&#10;3.46s call     Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]&#10;1.79s setup    Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]&#10;&#10;(1 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]&#10;1 failed in 9.78s">self = &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': &lt;FixtureRequest for &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]&gt;&gt;, 'catalog': [], 'theme': 'textual-dark'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2406/test_filter_typing_survives_de0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark] ____
+E           
+E           request = &lt;FixtureRequest for &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]&gt;&gt;
+E           catalog = [], theme = 'textual-dark'
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_filter_typing_survives_debounced_grid_focus_refresh(request, catalog, theme):
+E                   app = StyledPickerHarness(conversation_id="fixture", icon="🎨")
+E                   app.theme = theme
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       modal = app.screen
+E                       field = modal.query_one(f"#{picker.FILTER_INPUT_ID}", Input)
+E                       for length, char in enumerate("rocket", start=1):
+E                           await pilot.press(char)
+E                           await pilot.pause(picker.FILTER_DEBOUNCE_SECONDS + 0.15)
+E                           assert app.focused is field
+E                           assert field.value == "rocket"[:length]
+E           &gt;               assert field.selection.is_empty
+E           E               AssertionError: assert False
+E           E                +  where False = Selection(start=0, end=1).is_empty
+E           E                +    where Selection(start=0, end=1) = Input(id='console-appearance-picker-filter', classes='-valid').selection
+E           
+E           Tests/UI/test_console_appearance_compact.py:156: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 12:44:03.657 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 12:44:04.091 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 12:44:04.092 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 12:44:04.092 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 12:44:04.266 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:&lt;module&gt;:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 12:44:05.378 | INFO     | tldw_chatbook.Evals.task_loader:&lt;module&gt;:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E           3.46s call     Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]
+E           1.79s setup    Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]
+E           
+E           (1 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-dark]
+E           1 failed in 9.78s
+
+Tests/private_profile.py:84: Failed</failure></testcase><testcase classname="Tests.UI.test_console_appearance_compact" name="test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]" time="14.571"><failure message="Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2406/test_filter_typing_survives_de1/private-profile-process/pytest.log&#10;F                                                                        [100%]&#10;=================================== FAILURES ===================================&#10;___ test_filter_typing_survives_debounced_grid_focus_refresh[textual-light] ____&#10;&#10;request = &lt;FixtureRequest for &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]&gt;&gt;&#10;catalog = [], theme = 'textual-light'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;theme&quot;, [&quot;textual-dark&quot;, &quot;textual-light&quot;])&#10;    @private_profile_test&#10;    async def test_filter_typing_survives_debounced_grid_focus_refresh(request, catalog, theme):&#10;        app = StyledPickerHarness(conversation_id=&quot;fixture&quot;, icon=&quot;🎨&quot;)&#10;        app.theme = theme&#10;        async with app.run_test(size=(80, 24)) as pilot:&#10;            modal = app.screen&#10;            field = modal.query_one(f&quot;#{picker.FILTER_INPUT_ID}&quot;, Input)&#10;            for length, char in enumerate(&quot;rocket&quot;, start=1):&#10;                await pilot.press(char)&#10;                await pilot.pause(picker.FILTER_DEBOUNCE_SECONDS + 0.15)&#10;                assert app.focused is field&#10;                assert field.value == &quot;rocket&quot;[:length]&#10;&gt;               assert field.selection.is_empty&#10;E               AssertionError: assert False&#10;E                +  where False = Selection(start=0, end=1).is_empty&#10;E                +    where Selection(start=0, end=1) = Input(id='console-appearance-picker-filter', classes='-valid').selection&#10;&#10;Tests/UI/test_console_appearance_compact.py:156: AssertionError&#10;---------------------------- Captured stderr setup -----------------------------&#10;2026-09-18 12:44:18.632 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'&#10;2026-09-18 12:44:18.953 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio&#10;2026-09-18 12:44:18.960 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:65 - Sounddevice not available. Install with: pip install sounddevice&#10;2026-09-18 12:44:18.961 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:76 - WebRTC VAD not available. Install with: pip install webrtcvad&#10;2026-09-18 12:44:19.637 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:&lt;module&gt;:53 - python-frontmatter not installed. Markdown import will not be available.&#10;2026-09-18 12:44:21.366 | INFO     | tldw_chatbook.Evals.task_loader:&lt;module&gt;:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets&#10;============================= slowest 25 durations =============================&#10;2.99s setup    Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]&#10;2.53s call     Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]&#10;&#10;(1 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]&#10;1 failed in 11.53s">self = &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': &lt;FixtureRequest for &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]&gt;&gt;, 'catalog': [], 'theme': 'textual-light'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+&gt;           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2406/test_filter_typing_survives_de1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ___ test_filter_typing_survives_debounced_grid_focus_refresh[textual-light] ____
+E           
+E           request = &lt;FixtureRequest for &lt;Coroutine test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]&gt;&gt;
+E           catalog = [], theme = 'textual-light'
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @private_profile_test
+E               async def test_filter_typing_survives_debounced_grid_focus_refresh(request, catalog, theme):
+E                   app = StyledPickerHarness(conversation_id="fixture", icon="🎨")
+E                   app.theme = theme
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       modal = app.screen
+E                       field = modal.query_one(f"#{picker.FILTER_INPUT_ID}", Input)
+E                       for length, char in enumerate("rocket", start=1):
+E                           await pilot.press(char)
+E                           await pilot.pause(picker.FILTER_DEBOUNCE_SECONDS + 0.15)
+E                           assert app.focused is field
+E                           assert field.value == "rocket"[:length]
+E           &gt;               assert field.selection.is_empty
+E           E               AssertionError: assert False
+E           E                +  where False = Selection(start=0, end=1).is_empty
+E           E                +    where Selection(start=0, end=1) = Input(id='console-appearance-picker-filter', classes='-valid').selection
+E           
+E           Tests/UI/test_console_appearance_compact.py:156: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 12:44:18.632 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 12:44:18.953 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 12:44:18.960 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 12:44:18.961 | WARNING  | tldw_chatbook.Audio.recording_service:&lt;module&gt;:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 12:44:19.637 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:&lt;module&gt;:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 12:44:21.366 | INFO     | tldw_chatbook.Evals.task_loader:&lt;module&gt;:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E           2.99s setup    Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]
+E           2.53s call     Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]
+E           
+E           (1 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_appearance_compact.py::test_filter_typing_survives_debounced_grid_focus_refresh[textual-light]
+E           1 failed in 11.53s
+
+Tests/private_profile.py:84: Failed</failure></testcase></testsuite></testsuites>

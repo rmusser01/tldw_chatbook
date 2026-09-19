@@ -1,0 +1,43 @@
+{
+  "opened_read_only": true,
+  "verified": [
+    {
+      "prompt": {
+        "id": 16,
+        "name": "Native collections 37223 170",
+        "user_prompt": "Reusable [bold] message.",
+        "version": 1,
+        "deleted": 0
+      },
+      "collection": {
+        "collection_id": 1,
+        "name": "[bold] caf\u00e9 renamed 170",
+        "version": 3,
+        "deleted": 0
+      },
+      "membership_ids": [
+        1
+      ],
+      "unsaved_title_was_not_persisted": true
+    },
+    {
+      "prompt": {
+        "id": 17,
+        "name": "Native collections 37223 80",
+        "user_prompt": "Reusable [bold] message.",
+        "version": 1,
+        "deleted": 0
+      },
+      "collection": {
+        "collection_id": 2,
+        "name": "[bold] caf\u00e9 renamed 80",
+        "version": 3,
+        "deleted": 0
+      },
+      "membership_ids": [
+        2
+      ],
+      "unsaved_title_was_not_persisted": true
+    }
+  ]
+}

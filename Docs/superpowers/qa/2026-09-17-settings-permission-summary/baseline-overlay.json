@@ -1,0 +1,12 @@
+{
+  "source_commit": "5ac787ce6a2b3bbc4a32cb36a53b2678eccc452e",
+  "command": ".venv/bin/python /private/tmp/permission-summary-baseline/run.py",
+  "mechanism": "Import finder loads the two changed production owners from the saved commit; all other production modules and original wiring tests are unchanged.",
+  "runner": "import importlib.abc, importlib.machinery, pathlib, sys\nROOT = pathlib.Path(__file__).parent\nSOURCES = {'tldw_chatbook.config': ROOT / 'config.py', 'tldw_chatbook.UI.Screens.settings_screen': ROOT / 'settings_screen.py'}\nclass Loader(importlib.machinery.SourceFileLoader):\n def get_code(self, fullname):\n  return compile(SOURCES[fullname].read_bytes(), self.path, 'exec')\nclass Finder(importlib.abc.MetaPathFinder):\n def find_spec(self, fullname, path=None, target=None):\n  if fullname in SOURCES:\n   spec=importlib.machinery.PathFinder.find_spec(fullname,path)\n   spec.loader=Loader(fullname,spec.origin)\n   return spec\nsys.meta_path.insert(0,Finder())\nsys.path.insert(0,str(pathlib.Path.cwd()))\nimport pytest\nraise SystemExit(pytest.main(['Tests/Chat/test_permission_summary_wiring.py','-q','--timeout=120']))\n",
+  "source_hashes": {
+    "run.py": "303bd4b37defdfe7ab2599b85eaa0cda9f1359de78bf87c2968d638f84232b69",
+    "config.py": "f638da33e221bdd27cb14f683603f9c80cdd3d78ae68e020eb88106418a1653a",
+    "settings_screen.py": "3f2dbd76ff0dc8668e0cf990f24d45ea3aaccd4858fcebd3ac7fd25c8dadc5ea"
+  },
+  "outcome": "Same six failures, four passes as current source."
+}

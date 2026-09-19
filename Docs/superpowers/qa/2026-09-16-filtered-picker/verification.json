@@ -1,0 +1,36 @@
+{
+  "base": "2d4412ea12",
+  "new_journeys": {
+    "command": ".venv/bin/python -m pytest Tests/UI/test_fspicker_filtered_compact.py -q",
+    "passed": 12,
+    "summary": "12 passed, 2 warnings in 18.69s"
+  },
+  "neighbor_checks": {
+    "files": [
+      "Tests/UI/test_fspicker_compact_journeys.py",
+      "Tests/UI/test_fspicker_keyboard_save.py",
+      "Tests/UI/test_fspicker_path_highlight.py",
+      "Tests/UI/test_fspicker_listing_columns.py",
+      "Tests/UI/test_fspicker_entry_display.py",
+      "Tests/UI/test_eval_file_picker_dialog.py",
+      "Tests/UI/test_enhanced_file_dialog_mount.py",
+      "Tests/UI/test_enhanced_file_dialog_bundle_css.py",
+      "Tests/UI/test_library_ingest_provider_recovery.py",
+      "Tests/UI/test_design_token_governance.py",
+      "Tests/UI/test_component_pattern_governance.py",
+      "Tests/UI/test_css_bundle_sync_guard.py",
+      "Tests/Performance/test_boot_css_byte_budget.py"
+    ],
+    "passed": 167,
+    "summary": "167 passed, 6 warnings in 223.68s (0:03:43)"
+  },
+  "full_suite": false,
+  "boot_css_bytes": 616506,
+  "boot_css_budget": 634050,
+  "formatter": "3 files already formatted",
+  "final_css_recheck": {
+    "command": ".venv/bin/python -m pytest Tests/UI/test_css_bundle_sync_guard.py Tests/Performance/test_boot_css_byte_budget.py -q",
+    "passed": 6,
+    "summary": "6 passed, 3 warnings in 2.22s"
+  }
+}

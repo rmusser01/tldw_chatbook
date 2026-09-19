@@ -1,0 +1,27 @@
+{
+  "phase": "save",
+  "pid": 44402,
+  "runner_sha256": "93312b7e2f7a4e6240070090d5623f83ac1c3beab13b53112c9f82ff64cfda45",
+  "screen_sha256": "568ca487dd4645e4373ac7bbd7a250bf332f54416abee2c6554033a763829140",
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "restored": {
+    "collapsible_states": {
+      "notes": true,
+      "chat": false
+    },
+    "search_query": "saved search",
+    "last_active_section": "notes"
+  },
+  "pending_change_at_quit": {
+    "collapsible_states": {
+      "notes": true,
+      "chat": false,
+      "restart-check": true
+    },
+    "search_query": "saved search",
+    "last_active_section": "notes"
+  },
+  "passed": true,
+  "app_run_returned": true
+}

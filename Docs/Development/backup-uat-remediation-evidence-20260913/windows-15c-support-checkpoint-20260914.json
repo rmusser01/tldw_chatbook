@@ -1,0 +1,114 @@
+{
+  "revision": "15c1541f77780c7897a11ba136d738bad679e9b4",
+  "product_selection": "support-diagnostic",
+  "verified_artifact_files": 146,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 4.501,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 275,
+      "counts": {
+        "passed": 272,
+        "failed": 3
+      },
+      "seconds": 2003.309,
+      "failures": [
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[console]",
+          "status": "failed",
+          "seconds": 154.836,
+          "full_traceback_path": "/private/tmp/uat-windows-15c-support/junit-failures/6526b41a87beaaa0.txt",
+          "failure_evidence": [
+            "except TimeoutError:",
+            "E       AssertionError: #x1B[0m:#x1B[36m107#x1B[0m - #x1B[34m#x1B[1mScheduling schema migrated to version 7 (automation_results server_id unique index)#x1B[0m",
+            "E         AssertionError: ('dependency_unavailable', 'unavailable', 'undeclared_alias')",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyring\\nfrom"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[settings]",
+          "status": "failed",
+          "seconds": 204.973,
+          "full_traceback_path": "/private/tmp/uat-windows-15c-support/junit-failures/fba1b81bd111b8be.txt",
+          "failure_evidence": [
+            "except TimeoutError:",
+            "E       AssertionError: m | #x1B[36mtldw_chatbook.DB.base_db#x1B[0m:#x1B[36m__init__#x1B[0m:#x1B[36m806#x1B[0m - #x1B[1mScheduledTasksDB initialized with path: [PRIVATE_ROOT]\\product-pytest\\test_mounted_console_complete_1\\home\\.local\\share\\tldw_cli\\default_user\\tldw_chatbook_scheduled_tasks.db [Client: default]#x1B[0m",
+            "E         AssertionError: {'operation_id': '9de58aa47e80435eaa0774286fd4b06a', 'kind': 'backup', 'state': 'failed', 'phase': 'capturing', 'cancellation_requested': False, 'result': mappingproxy({}), 'issues': ('admission_timeout',), 'review_issues': ()}",
+            "E       assert 1 == 0",
+            "E        +  where 1 = CompletedProcess(args=['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyring\\nfrom"
+          ]
+        },
+        {
+          "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+          "status": "failed",
+          "seconds": 420.224,
+          "full_traceback_path": "/private/tmp/uat-windows-15c-support/junit-failures/344f17c907ca7f60.txt",
+          "failure_evidence": [
+            "a TimeoutExpired exception will be raised.",
+            ">               raise TimeoutExpired(self.args, orig_timeout)",
+            "E               subprocess.TimeoutExpired: Command '['C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe', '-c', '\\nimport asyncio,json,os,sys,threading,time,zipfile\\nfrom pathlib import Path\\nfrom contextlib import ExitStack\\nfrom Tests.network_guard import install,blocked_attempts\\ninstall()\\nimport keyri",
+            "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\subprocess.py:1630: TimeoutExpired"
+          ]
+        }
+      ],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "661f22550a65bc63e4d6a593f52624b15f8df3f82c41ae4232c63253e0cd66fd",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    },
+    {
+      "fixture": "product-pytest/f9-native-package1/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "0579b6c1db3bbd2b0d728632a4734aaa05522c3016df6878777e27f3834145b2",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "source_files": 16560,
+  "git_blob_verification": {
+    "revision": "15c1541f77780c7897a11ba136d738bad679e9b4",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 2,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/34881797168",
+  "diagnosis": {
+    "console": "Preview WAL opened_state changes only mtime_ns/ctime_ns; core unavailable blocks seven dependencies. Subsequent undeclared_alias follows missing proven cohort; no independent alias bug or actual writer identified.",
+    "settings": "Complete previews followed by timeout entering exclusive namespace lease. Native pause observation21root group65.572s but0.3125s ownCPU. No named false drain; current mainCPU window incomplete.",
+    "library": "Local leases retire8 to1 to0. Capture remains in held inventory at420s parent timeout; startup readmission waits behind native capture gate. No final capture result or precise cleanup-unwind phase established."
+  },
+  "reviews": [
+    "windows-15c-console-review-20260914.md",
+    "windows-15c-settings-review-20260914.md",
+    "windows-15c-library-review-20260914.md"
+  ],
+  "evidence_hashes": {
+    "/private/tmp/uat-windows-15c-support/verification.json": "2d9dab188646af834c574513a7e07b64b38bd532dfa9274347b0a90e49134851",
+    "/private/tmp/uat-windows-15c-support/git-blob-verification.json": "7866c2e16bf1bd7a9cd35d5e36d5896be702aa943462e46a2a04f6b9924ec792",
+    "/private/tmp/uat-windows-15c-settings-summary.json": "fe7a9747fb795cf15a7a3c3b8cfc684be30d15cb20d131ea91b526595f951e39"
+  },
+  "limits": [
+    "No guards, shared cohort declaration, snapshot checks or timeouts changed.",
+    "Earlier65a WorkerFailed/Scheduler and789 snapshot failures remain separate; repeat does not identify their exact cause.",
+    "This run predates2f97FileNotes merge; next existing support selection283includes8newFileNotes cases."
+  ]
+}

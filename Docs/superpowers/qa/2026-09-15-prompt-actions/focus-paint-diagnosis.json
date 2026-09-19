@@ -1,0 +1,26 @@
+{
+  "diagnosis": "Focus already belongs to the Advanced content field while its ancestor scroll position is still moving toward its target. Waiting only for a generic pause or animator-idle did not establish a painted frame.",
+  "representative_observations": [
+    {
+      "field_region": "Region(x=14, y=33, width=62, height=6)",
+      "focused_id": "prompt-block-content-message",
+      "content_scroll": {
+        "id": "library-prompt-editor-content",
+        "scroll_y": 4.096765776898731,
+        "scroll_target_y": 27,
+        "region": "Region(x=10, y=4, width=70, height=17)"
+      }
+    },
+    {
+      "field_region": "Region(x=14, y=25, width=62, height=6)",
+      "focused_id": "prompt-block-content-message",
+      "content_scroll": {
+        "id": "library-prompt-editor-content",
+        "scroll_y": 12.266615096151714,
+        "scroll_target_y": 27,
+        "region": "Region(x=10, y=4, width=70, height=17)"
+      }
+    }
+  ],
+  "after_condition_wait": "8 passed in 29.81s; the same focus-and-paint predicate eventually succeeds without changing focus, forcing scrolling, disabling animation or altering production code."
+}

@@ -95,7 +95,7 @@ class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
     def __init__(self, state: LibraryExportFormState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
-        self.styles.width = "1fr"
+        self.add_class("w-fill")
         self.styles.min_width = 40
 
     def sync_state(self, state: LibraryExportFormState) -> None:

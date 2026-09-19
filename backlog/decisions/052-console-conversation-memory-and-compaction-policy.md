@@ -14,7 +14,7 @@ Chatbook will treat the model context window, provider-safety windowing, the
 user's conversation budget, and model-generated memory as four separate
 concepts with separate owners.
 
-- Model capability data owns the model context window.
+- Server metadata and model capability data own context-window resolution.
 - The request builder owns the response reservation, safety margin, projected
   payload accounting, and mandatory whole-unit safety windowing.
 - Global Console Behavior settings own conversation-memory defaults.
@@ -39,10 +39,23 @@ reservation, safety margin, and mandatory non-compactable request material,
 including the active request. A custom
 budget is preserved as user intent. If current overhead makes it larger than
 the available capacity, the effective value is reduced for that request and
-the UI reports why; stored intent is not silently rewritten. An unknown model
-window cannot claim a safe automatic ceiling. It blocks Automatic compaction
-until the user repairs the model capability or supplies a bounded custom
-conversation budget, and it remains visibly safety-unverified.
+the UI reports why; stored intent is not silently rewritten.
+
+### Context-window amendment (2026-09-16, TASK-32709)
+
+Resolve the selected model's context window from the selected remote server
+when available, then model/API defaults, then exactly 32,000 tokens. Discovery
+is asynchronous, deadline- and size-bounded, and cached by provider entry,
+endpoint, model, and credential identity. Only positive integers are accepted;
+unrelated model records and training-window metadata are not serving limits.
+Failures fall back without blocking settings controls. The display, request
+preparation, and compaction consume the same resolution and provenance.
+
+Automatic budgets may use the fallback, after the existing response reservation
+and safety margin. Provider and system fallbacks remain visibly estimated and
+safety-unverified; they do not claim server-confirmed capacity. Explicit user
+budgets retain their existing meaning. This supersedes the former rule blocking
+Automatic solely because a model had no catalog entry.
 
 Compaction policy is a tri-state value:
 

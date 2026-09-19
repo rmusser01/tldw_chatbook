@@ -1,0 +1,27 @@
+{
+  "pid": 29872,
+  "cells": [],
+  "requests": [
+    {
+      "query": "tldw chatbook",
+      "status": 401
+    }
+  ],
+  "runner_sha256": "ff1b46a176941eccac47d5080c0430679093de8fe48d505ea082a0359a2649a1",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "29b4eaaed23a9ec03a6888bdbdd7b935e5b25162959586371f1188acecea3441",
+    "tldw_chatbook/UI/Screens/settings_web_search.py": "6b0356a5475f794c793b486f92893a569bc9f0967e2aafb4f4e5c4d8a0a86b3a",
+    "tldw_chatbook/Widgets/settings_web_search_panel.py": "08b75bc4367b101d93489f570408e9904b69d1cc8c6b3c56d3e9f6db66ec9cd7",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a34cfafccea5c5e0ef18989cbf94731b373f9449438bc391b1a1badbd4d74dd5"
+  },
+  "waiting_for": "Successful HTTP retry",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-overview-web-search/native_check.py\", line 307, in journey\n    await wait_for(\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-overview-web-search/native_check.py\", line 144, in wait_for\n    raise AssertionError(label)\nAssertionError: Successful HTTP retry\n",
+  "app_run_returned": true,
+  "loopback_server_closed": true,
+  "exit_code": 1,
+  "defaults_unchanged": true,
+  "exact_pid_absent": true,
+  "owned_terminal_closed": true,
+  "qualification": "Unqualified: runner assumed focus stayed on the disabled test button; retry Enter opened the default selector. Runner now tabs back to Test before retry."
+}

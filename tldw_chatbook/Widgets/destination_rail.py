@@ -110,10 +110,10 @@ class DestinationRailHandle(Vertical):
         button = Button(self._display_label(), id=self.button_id, compact=True)
         button.add_class("console-rail-handle-button")
         button.add_class(f"console-rail-handle-button-{self.side}")
-        button.styles.width = button_width
+        button.add_class("w-11")
         button.styles.min_width = 0
         button.styles.max_width = button_width
-        button.styles.height = button_height
+        button.add_class("h-3" if self.side == "right" else "h-full")
         button.styles.min_height = button_height
         button.styles.max_height = button_height
         button.tooltip = self.open_tooltip
@@ -204,7 +204,7 @@ class DestinationRailSectionHeader(Horizontal):
             classes="console-rail-section-title",
             markup=False,
         )
-        title.styles.width = "1fr"
+        title.add_class("w-fill")
         yield title
         toggle = Button(
             self._toggle_label(),
@@ -213,7 +213,7 @@ class DestinationRailSectionHeader(Horizontal):
             compact=True,
         )
         toggle.tooltip = self._toggle_tooltip()
-        toggle.styles.width = 3
+        toggle.add_class("w-3")
         toggle.styles.min_width = 3
         toggle.styles.max_width = 3
         yield toggle

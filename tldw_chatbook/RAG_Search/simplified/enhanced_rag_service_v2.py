@@ -15,11 +15,16 @@ from dataclasses import replace
 from typing import Any, Collection, Dict, List, Literal, Optional, Tuple, Union
 
 from loguru import logger
+from ...Backup_Recovery.rag_definition_participant import definition_experiment_operation
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, timeit
+from ..generation import service_query
+from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant as projection_lifetime
 from .enhanced_rag_service import EnhancedRAGService
 from .rag_service import MetadataAllowlist
 from .config import RAGConfig
+from ..activation import async_guarded as activation_async_guarded
+from ..activation import guarded as activation_guarded
 from .data_models import IndexingResult
 from .vector_store import SearchResult, SearchResultWithCitations
 from ..parallel_processor import (
@@ -122,6 +127,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
     - Configuration profiles and A/B testing
     """
 
+    @activation_guarded
     def __init__(
         self,
         config: Optional[Union[RAGConfig, ProfileConfig, str]] = None,
@@ -262,6 +268,9 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
         return cls(config=profile, profile_manager=manager, **kwargs)
 
     @timeit("rag_search_v2")
+    @projection_lifetime.async_operation
+    @service_query
+    @activation_async_guarded
     async def search(
         self,
         query: str,
@@ -452,6 +461,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
 
         return results
 
+    @activation_async_guarded
     async def index_batch_optimized(
         self,
         documents: List[Dict[str, Any]],
@@ -487,12 +497,14 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             batch_size=batch_size or 32,
         )
 
+    @definition_experiment_operation
     def start_experiment(self, experiment_config: ExperimentConfig):
         """Start an A/B testing experiment."""
         self._current_experiment = experiment_config
         self.profile_manager.start_experiment(experiment_config)
         logger.info(f"Started RAG experiment: {experiment_config.name}")
 
+    @definition_experiment_operation
     def end_experiment(self) -> Dict[str, Any]:
         """End current experiment and get results."""
         if not self._current_experiment:
@@ -504,6 +516,7 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
 
         return results
 
+    @activation_guarded
     def switch_profile(self, profile_name: str):
         """
         Switch to a different configuration profile.

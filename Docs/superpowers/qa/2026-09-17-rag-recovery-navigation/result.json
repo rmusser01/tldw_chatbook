@@ -1,0 +1,137 @@
+{
+  "pid": 59386,
+  "runner_sha256": "bc093885e50c981bdac029db1368513e71b50afc80ae979906292cd7965d577c",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Import",
+      "retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Providers & Models",
+      "blocker": "unselected",
+      "returned_ready": false,
+      "retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Providers & Models",
+      "blocker": "credential",
+      "returned_ready": true,
+      "retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Providers & Models",
+      "blocker": "unselected",
+      "returned_ready": false,
+      "retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Providers & Models",
+      "blocker": "credential",
+      "returned_ready": true,
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Providers & Models",
+      "blocker": "unselected",
+      "returned_ready": false,
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "route": "Providers & Models",
+      "blocker": "credential",
+      "returned_ready": true,
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Providers & Models",
+      "blocker": "unselected",
+      "returned_ready": false,
+      "retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "route": "Providers & Models",
+      "blocker": "credential",
+      "returned_ready": true,
+      "retained": true
+    }
+  ],
+  "waiting_for": "current provider gate after return",
+  "passed": true,
+  "source_unchanged": true,
+  "retrieval_calls": 0,
+  "answer_calls": 0,
+  "ingest_calls": 0,
+  "app_run_returned": true
+}

@@ -1,0 +1,100 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+CSS destination tour: ['home', 'console', 'library', 'personas', 'watchlists_collections', 'artifacts', 'schedules', 'workflows', 'mcp', 'acp', 'lab', 'logs', 'settings', 'research', 'meetings']
+.                                                                        [100%]
+==================================== PASSES ====================================
+_________ test_tour_plus_modal_opens_stay_under_the_soft_source_limit __________
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 13:41:32.875 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-18 13:41:32.912 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6129 - Attempting to load CLI config from: /private/tmp/32820-final-005/031/profile/config/config.toml
+2026-09-18 13:41:32.913 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6158 - CLI Config file not found at /private/tmp/32820-final-005/031/profile/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-18 13:41:32.915 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6167 - Created default CLI config file at /private/tmp/32820-final-005/031/profile/config/config.toml
+2026-09-18 13:41:32.915 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6234 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-18 13:41:32.915 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6238 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-18 13:41:32.921 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 13:41:32.921 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 13:41:32.922 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 13:41:32.923 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 13:41:32.946 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/32820-final-005/031/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 13:41:32.946 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 13:41:32.946 | INFO     | tldw_chatbook.config:<module>:9748 - Default API Endpoint (from config.py global scope): openai
+2026-09-18 13:41:32.947 | DEBUG    | tldw_chatbook.config:<module>:9771 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-18 13:41:33.042 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-18 13:41:33.051 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-18 13:41:33.123 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 13:41:33.202 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 13:41:33.203 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 13:41:33.203 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+2026-09-18 13:41:33.315 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-18 13:41:33.610 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+----------------------------- Captured stdout call -----------------------------
+
+TASK-21115 PROBE: tour=45 tour+12modals=46 tour+all_targets=46 (cliff=64, soft=56)
+----------------------------- Captured stderr call -----------------------------
+2026-09-18 13:41:33.623 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [splash_screen].enabled = False
+2026-09-18 13:41:33.637 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+2026-09-18 13:41:33.646 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/tmp/32820-final-005/031/profile/config/config.toml
+2026-09-18 13:41:33.648 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 13:41:33.648 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+2026-09-18 13:41:33.649 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-18 13:41:33.649 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-18 13:41:33.664 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/tmp/32820-final-005/031/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-18 13:41:33.665 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+2026-09-18 13:41:33.665 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+2026-09-18 13:41:33.733 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+2026-09-18 13:41:33.750 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+2026-09-18 13:41:33.750 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+2026-09-18 13:41:33.751 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+2026-09-18 13:41:33.751 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+2026-09-18 13:41:33.820 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/tmp/32820-final-005/031/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 13:41:33.886 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1d3407iq/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 13:41:34.020 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1d3407iq/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-09-18 13:41:34.031 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-09-18 13:41:34.032 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1d3407iq/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 13:41:34.032 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1d3407iq/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-09-18 13:41:34.160 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-09-18 13:41:34.204 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-09-18 13:41:34.248 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-09-18 13:41:34.291 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-09-18 13:41:34.332 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+2026-09-18 13:41:34.373 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-09-18 13:41:34.374 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-1d3407iq/scheduled_tasks.sqlite [Client: default]
+2026-09-18 13:41:34.412 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-09-18 13:41:34.413 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-09-18 13:41:34.420 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+2026-09-18 13:41:34.492 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-09-18 13:41:34.493 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/32820-final-005/031/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-09-18 13:41:34.493 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-09-18 13:41:34.604 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-09-18 13:41:34.604 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+2026-09-18 13:41:34.605 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+2026-09-18 13:41:34.605 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 0.925 seconds
+2026-09-18 13:41:34.606 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.068s (7.3%)
+2026-09-18 13:41:34.606 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+2026-09-18 13:41:34.606 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.002s (0.2%)
+2026-09-18 13:41:34.607 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.1% of parallel_init)
+2026-09-18 13:41:34.607 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.1% of parallel_init)
+2026-09-18 13:41:34.607 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.0% of parallel_init)
+2026-09-18 13:41:34.608 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.0% of parallel_init)
+2026-09-18 13:41:34.608 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+2026-09-18 13:41:49 [WARNING ] tldw_chatbook.Local_Ingestion.transcription_service:496 - faster-whisper not available. Install with: pip install faster-whisper
+2026-09-18 13:41:49 [WARNING ] tldw_chatbook.Local_Ingestion.transcription_service:496 - Qwen2Audio not available. Install transformers and torch for Qwen2Audio support.
+2026-09-18 13:41:49 [WARNING ] tldw_chatbook.Local_Ingestion.transcription_service:496 - soundfile not available. Install with: pip install soundfile
+2026-09-18 13:41:49 [WARNING ] tldw_chatbook.Local_Ingestion.transcription_service:496 - scipy not available. Some audio processing features may be limited.
+2026-09-18 13:41:49 [WARNING ] tldw_chatbook.Local_Ingestion.transcription_service:496 - NeMo toolkit not available. Install with: pip install nemo-toolkit[asr]
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:12312 Splash screen enabled: False
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+INFO     root:Logging_Config.py:596 --- _setup_logging START (from Logging_Config.py) ---
+INFO     root:Logging_Config.py:607 Loguru: All pre-existing sinks removed.
+INFO     root:Logging_Config.py:632 Loguru: Configured to forward its messages to standard Python logging system.
+============================= slowest 25 durations =============================
+15.89s call     Tests/UI/test_css_parse_cache_modal_probe.py::test_tour_plus_modal_opens_stay_under_the_soft_source_limit
+
+(2 durations < 1s hidden.)
+1 passed in 17.31s

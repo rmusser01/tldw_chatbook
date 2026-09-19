@@ -46,7 +46,9 @@ async def run_db_off_loop(
             touches it.
         fn: A synchronous callable doing the database work. It must not hold a
             ``db.transaction()`` open across the call boundary and must not
-            need the event loop.
+            need the event loop. For an exact file-backed ``SubscriptionsDB``,
+            return materialized results, never a live cursor or connection;
+            its current worker's cached connection is retired after the call.
         *args: Positional arguments for ``fn``.
         **kwargs: Keyword arguments for ``fn``.
 
@@ -62,4 +64,14 @@ async def run_db_off_loop(
     # event loop.
     if getattr(db, "is_memory_db", None) is True:
         return fn(*args, **kwargs)
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    if type(db) is SubscriptionsDB:
+        def run_and_close() -> T:
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                db.close()
+
+        return await asyncio.to_thread(run_and_close)
     return await asyncio.to_thread(fn, *args, **kwargs)

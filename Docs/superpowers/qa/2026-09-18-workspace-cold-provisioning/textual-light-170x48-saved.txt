@@ -1,0 +1,48 @@
+                                                                                                                       ╭─────────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each action reversible: unarchive, rename again, or set        │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │  active.                                                                                     │  │  │                              │
+│  category search             │  │  │ │                                                                                         │  │  │  │ Selected category:           │
+│                              │  │  │ │  Folders (agent file-tool access)                                                       │  │  │  │ Workspaces                   │
+│  Core                        │  │  │ │ │ ~/path/to/folder                                                        Add folder    │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │                                                                                         │  │  │  │  Immediate actions:          │
+│     Providers & Models       │  │  │ │                                                                                         │  │  │  │  workspace changes apply as  │
+│     Web Search               │  │  │ │  Change review (post-run diffs)                                                         │  │  │  │  you make them; there is no  │
+│     Speech & TTS             │  │  │ │  Change Review stores shadow Git history in application data, including file contents,  │  │  │  │  draft to save or revert.    │
+│  Interface                   │  │  │ │  for 30 days by default. Disabling stops new review snapshots but does not erase        │  │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │  existing history.                                                                      │▄ │  │  │ config file.                 │
+│     Theme                    │  │  │ │  Tracking disabled for this workspace: runs record no diffs and offer no review.        │  │  │  │ Impact and boundaries        │
+│     Splash Screen            │  │  │ │  Enable change review                                                                   │  │  │  │ Create, rename, archive, and │
+│     Console Behavior         │  │  │ │                                                                                         │  │  │  │ bind folders for agent file  │
+│  Data & Privacy              │  │  │ │                                                                                         │  │  │  │ tools.                       │
+│     Storage                  │  │  │ │  Default assistant                                                                      │  │  │  │  Runtime owner: Workspace    │
+│   > Workspaces               │  │  │ │  Effective: textual-light-170x48 Agent (memory: read_only)                              │  │  │  │  registry (immediate         │
+│     Tool Profiles            │  │  │ │ textual-light-170x48 Agent                                                              │  │  │  │  actions)                    │
+│     Privacy & Security       │  │  │ │ textual-light-80x24 Agent                                                               │  │  │  │                              │
+│     Network                  │  │  │ │ textual-dark-170x48 Agent                                                               │  │  │  │  Writes allowed: Yes         │
+│     My Profile               │  │  │ │ textual-dark-80x24 Agent                                                                │  │  │  │                              │
+│  Troubleshooting             │  │  │ │  Set memory: read_write                                                                 │  │  │  │  Affected config: workspace  │
+│     Diagnostics (view)       │  │  │ │                                                                                         │  │  │  │  lifecycle records and       │
+│     About (view)             │  │  │ │ default                                                                                 │  │  │  │  their bound folders         │
+│     Agents                   │  │  │ │ ws-workspace-local-1                                                                    │  │  │  │                              │
+│  Expert                      │  │  │ │ ws-workspace-local-2                                                                    │  │  │  │  Recovery:                   │
+│     Internal Prompts         │  │  │ │ ws-workspace-local-3                                                                    │▆ │  │  │  switch/rename/archive in    │
+│     Advanced Config          │  │  │ │ ws-workspace-local-4                                                                    │  │  │  │  Console (Alt+W); create a   │
+│   Domain Defaults ▸ (11)     │  │  │ │  Clear default assistant                                                                │  │  │  │  workspace in Library        │
+│                              │  │  │ │  chat_with_llm: ask — permissions                                                       │  │  │  │                              │
+│                              │  │  │ │  chat_with_character: ask — permissions                                                 │  │  │  │  Boundary: lifecycle and     │
+│                              │  │  │ │  search_rag: ask — permissions                                                          │  │  │  │  folder bindings apply       │
+│                              │  │  │ │  search_conversations: ask — permissions                                                │  │  │  │  immediately; there is no    │
+│                              │  │  │ │  create_note: ask — permissions                                                         │  │  │  │  draft state here            │
+│                              │  │  │ │  search_notes: ask — permissions                                                        │  │  │  │                              │
+│                              │  │  │ │  list_characters: ask — permissions                                                     │  │  │  │                              │
+│                              │  │  │ │  get_conversation_history: ask — permissions                                            │  │  │  │                              │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

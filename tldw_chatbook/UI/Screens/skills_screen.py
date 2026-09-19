@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import inspect
 import asyncio
-from collections.abc import Mapping
-from typing import Any
+import inspect
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Rule, Static
 
@@ -23,6 +24,9 @@ from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from ..Navigation.base_app_screen import BaseAppScreen
 from .destination_recovery import DestinationRecoveryState, policy_denied_recovery_state
+
+if TYPE_CHECKING:
+    from ...Skills_Interop.recovery_activation import RecoveryReview
 
 
 logger = logger.bind(module="SkillsScreen")
@@ -52,49 +56,6 @@ SKILL_TEXT_LIMITS = {
 
 class SkillTrustPassphraseModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Prompt for the local skill trust passphrase without logging it."""
-
-    DEFAULT_CSS = """
-    SkillTrustPassphraseModal {
-        align: center middle;
-    }
-
-    #skill-trust-passphrase-modal {
-        width: 64;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
-
-    #skill-trust-passphrase-message {
-        margin: 1 0;
-    }
-
-    #skill-trust-passphrase-input {
-        width: 100%;
-    }
-
-    #skill-trust-passphrase-error {
-        height: auto;
-        min-height: 1;
-        color: red;
-    }
-
-    #skill-trust-passphrase-actions {
-        height: 3;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
-
-    #skill-trust-passphrase-cancel,
-    #skill-trust-passphrase-submit {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
-    """
 
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
     SAFE_MODAL_CONTENT = "#skill-trust-passphrase-modal"
@@ -180,6 +141,127 @@ class SkillTrustPassphraseModal(SafeModalDismissMixin, ModalScreen[str | None]):
         self.dismiss(passphrase)
 
 
+class SkillRecoveryReviewModal(SafeModalDismissMixin, ModalScreen[bool]):
+    """Confirm the actual immutable current bundles before fresh trust setup."""
+
+    BUNDLED_CSS = """
+    SkillRecoveryReviewModal { align: center middle; }
+    #skills-recovery-review { width: 90%; max-width: 110; height: 90%; border: tall $accent; padding: 1 2; background: $surface; }
+    #skills-recovery-scroll { height: 1fr; }
+    #skills-recovery-scroll Static.skill-recovery-review-modal-static { height: auto; margin-bottom: 1; }
+    #skills-recovery-actions { height: 3; align-horizontal: right; }
+    #skills-recovery-actions Button.skill-recovery-review-modal-button { width: auto; margin-left: 1; }
+    #skills-recovery-status { height: auto; color: $warning; }
+    """
+    BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#skills-recovery-review"
+
+    def __init__(
+        self, review: RecoveryReview, root: Path, is_current: Callable[[], bool]
+    ) -> None:
+        super().__init__()
+        self._review = review
+        self._root = root
+        self._is_current = is_current
+
+    def compose(self) -> ComposeResult:
+        review = self._review
+        files = []
+        for snapshot in review.skills:
+            files.append(snapshot.skill_name)
+            for item in snapshot.fingerprints:
+                files.append(
+                    f"{item.relative_path} — {item.byte_length} bytes — SHA256 {item.sha256}"
+                )
+            for name, content in snapshot.text_files.items():
+                files.append(f"\n{snapshot.skill_name}/{name}\n{content}")
+        with Vertical(id="skills-recovery-review"):
+            yield Static(
+                "Review restored skills",
+                markup=False,
+                classes="skill-recovery-review-modal-static",
+            )
+            with VerticalScroll(id="skills-recovery-scroll"):
+                yield Static(
+                    "Review these current local files. Setup preserves the imported trust files and creates fresh local trust. If finishing an interrupted setup, use the same passphrase you chose then. Script execution still requires a separate explicit grant.",
+                    markup=False,
+                    classes="skill-recovery-review-modal-static",
+                )
+                yield Static(
+                    "Local trust folder: "
+                    + str(self._root)
+                    + (
+                        "\nCreate these missing parent folders:\n"
+                        + "\n".join(review.missing_trust_parents)
+                        if review.missing_trust_parents
+                        else ""
+                    ),
+                    id="skills-recovery-root",
+                    markup=False,
+                    classes="skill-recovery-review-modal-static",
+                )
+                yield Static(
+                    "Retained script grants (inactive):\n"
+                    + ("\n".join(review.historical_script_grants) or "None"),
+                    id="skills-recovery-history",
+                    markup=False,
+                    classes="skill-recovery-review-modal-static",
+                )
+                yield Static(
+                    "This setup uses a local file marker. Protection against restoring an older copy of the entire trust folder is reduced.",
+                    markup=False,
+                    classes="skill-recovery-review-modal-static",
+                )
+                yield Static(
+                    "\n\n".join(files) or "No current Skills bundles.",
+                    id="skills-recovery-files",
+                    markup=False,
+                    classes="skill-recovery-review-modal-static",
+                )
+            yield Static(
+                "",
+                id="skills-recovery-status",
+                markup=False,
+                classes="skill-recovery-review-modal-static",
+            )
+            with Horizontal(id="skills-recovery-actions"):
+                yield Button(
+                    "Cancel",
+                    id="skills-recovery-cancel",
+                    classes="skill-recovery-review-modal-button",
+                )
+                yield Button(
+                    "Confirm review",
+                    id="skills-recovery-continue",
+                    variant="primary",
+                    classes="skill-recovery-review-modal-button",
+                )
+
+    def on_mount(self) -> None:
+        self.set_interval(0.2, self._check_selection)
+        self._check_selection()
+
+    def _check_selection(self) -> bool:
+        current = self._is_current()
+        if not current:
+            self.query_one("#skills-recovery-continue", Button).disabled = True
+            self.query_one("#skills-recovery-status", Static).update(
+                "Selection changed. Cancel and capture a fresh review."
+            )
+        return current
+
+    @on(Button.Pressed, "#skills-recovery-continue")
+    def _confirm(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._check_selection():
+            self.dismiss(True)
+
+    @on(Button.Pressed, "#skills-recovery-cancel")
+    async def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self.request_safe_cancel(source="visible")
+
+
 class SkillTrustBootstrapModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Prompt for a brand-new local skill trust passphrase, twice, before bootstrap.
 
@@ -192,54 +274,6 @@ class SkillTrustBootstrapModal(SafeModalDismissMixin, ModalScreen[str | None]):
     Skills editor's first-run "Set up skill trust" state (the Phase-1 gate
     fix: a brand-new install previously had no live-UI path to bootstrap
     trust at all).
-    """
-
-    DEFAULT_CSS = """
-    SkillTrustBootstrapModal {
-        align: center middle;
-    }
-
-    #skill-trust-bootstrap-modal {
-        width: 64;
-        height: auto;
-        border: tall gray;
-        background: black;
-        padding: 1 2;
-    }
-
-    #skill-trust-bootstrap-message {
-        margin: 1 0;
-    }
-
-    #skill-trust-bootstrap-input {
-        width: 100%;
-        margin: 0 0 1 0;
-    }
-
-    #skill-trust-bootstrap-confirm-input {
-        width: 100%;
-    }
-
-    #skill-trust-bootstrap-error {
-        height: auto;
-        min-height: 1;
-        color: red;
-    }
-
-    #skill-trust-bootstrap-actions {
-        height: 3;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
-
-    #skill-trust-bootstrap-cancel,
-    #skill-trust-bootstrap-submit {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-    }
     """
 
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]

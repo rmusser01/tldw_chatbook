@@ -1,0 +1,15 @@
+Read-only review: /root/appearance_compact_review
+Base b76e759af5a13dfb140445b19f29a3ed3936eefe, working tree TASK-32816 changes.
+No actionable findings. Generated CSS stays within Appearance; handlers/persistence unchanged. Central-token resolution preserves theme aliases, block isolation and forward-reference rejection without adding stylesheet sources. Native procedure covers four theme/size combinations and cancellation without saving. Reviewer did not run tests/native or inspect captures.
+Follow-up: aligned the class-level CSS parse helper with the production resolved-token map instead of concatenating raw declarations.
+
+Follow-up review after the native-discovered typing failure: no actionable findings. select_on_focus=False prevents the existing focus handler from selecting/replacing the query after grid refresh. Regression exercises debounced typing in both themes, text/cursor retention, Enter selection and cancellation without recents writes. Read-only; no duplicate tests/native run.
+
+TASK-32818 read-only diagnostic/final review: the second timed child dump identifies
+Runner.close executor drain waiting for system_audio_tap.ensure_helper compilation.
+Final shared test-builder diff isolates only the instance tap probe; real owner,
+preparation, screen, fifteen routes/body sentinels and source thresholds remain.
+No actionable finding. Reviewer ran no tests or apps and made no edits. Earlier
+review inference that diagnostics did not propagate was corrected after reading
+the actual PYTEST_PLUGINS child output. Archived trace excerpt is labelled as a
+transcription because the pytest temporary directory was removed before archival.

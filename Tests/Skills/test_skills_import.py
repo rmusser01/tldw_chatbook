@@ -684,7 +684,8 @@ async def test_mounted_library_multi_skill_choice_imports_one_to_trust_review(tm
             screen._library_skills_import_status
             == 'Imported "zeta" · re-review it in the trust panel'
         )
-        await host.workers.wait_for_complete()
+        # The import's terminal outcome is authoritative; unrelated superseded
+        # Library refresh workers may legitimately have been cancelled.
 
     context = await service.get_context(mode="local")
     assert [skill["name"] for skill in context["blocked_skills"]] == ["zeta"]
@@ -924,6 +925,7 @@ def test_stale_candidate_modal_callback_cannot_target_a_new_package(monkeypatch)
     fake = SimpleNamespace(
         _skills_state=SimpleNamespace(choice_presented_generation=-1),
         is_mounted=True,
+        call_after_refresh=lambda callback, *args: callback(*args),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _library_skill_import_coordinator=coordinator,
     )
@@ -983,6 +985,7 @@ def test_replaced_library_screen_fences_stale_choice_callback(
         return SimpleNamespace(
             _skills_state=SimpleNamespace(choice_presented_generation=-1),
             is_mounted=True,
+            call_after_refresh=lambda callback, *args: callback(*args),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
             _library_skill_import_coordinator=coordinator,
         )
@@ -1275,7 +1278,7 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-skills", Button).press()
             await _wait_for_selector(screen, pilot, "#library-skills-import")
-            screen.handle_library_skills_import(SimpleNamespace(stop=lambda: None))
+            await screen.handle_library_skills_import(SimpleNamespace(stop=lambda: None))
             await _wait_for_selector(screen, pilot, "#library-skills-import-path")
             path_input = screen.query_one("#library-skills-import-path", Input)
             path_input.value = str(import_value)
@@ -1598,13 +1601,9 @@ async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
     _wire_empty_non_skill_services(app)
     app.skills_scope_service = service
 
-    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        for _ in range(200):
-            if isinstance(app.screen, LibraryScreen):
-                break
-            await pilot.pause(0.01)
-        assert isinstance(app.screen, LibraryScreen)
-        screen = app.screen
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_skills_import_row(screen, pilot)
 

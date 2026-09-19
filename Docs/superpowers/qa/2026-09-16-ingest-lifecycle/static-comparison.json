@@ -1,0 +1,91 @@
+{
+  "baseline_findings": 21,
+  "current_findings": 21,
+  "no_new_findings": true,
+  "findings": [
+    [
+      "B033",
+      "Sets should not contain duplicate items, but `0` and `False` has the same value"
+    ],
+    [
+      "B033",
+      "Sets should not contain duplicate items, but `1` and `True` has the same value"
+    ],
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`"
+    ],
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`"
+    ],
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`"
+    ],
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`"
+    ],
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`"
+    ],
+    [
+      "UP017",
+      "Use `datetime.UTC` alias"
+    ],
+    [
+      "UP017",
+      "Use `datetime.UTC` alias"
+    ],
+    [
+      "UP017",
+      "Use `datetime.UTC` alias"
+    ],
+    [
+      "UP017",
+      "Use `datetime.UTC` alias"
+    ],
+    [
+      "UP017",
+      "Use `datetime.UTC` alias"
+    ],
+    [
+      "UP035",
+      "Import from `collections.abc` instead: `Callable`, `Iterable`"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ],
+    [
+      "UP037",
+      "Remove quotes from type annotation"
+    ]
+  ]
+}

@@ -1,0 +1,7 @@
+Read-only review by /root/mcp_tools_access_review; no app tests or edits.
+
+Initial findings: truncated markup could crash resize; same-catalog refresh removed focused controls, and a test manually refocused after refresh.
+
+Final source review: No new actionable findings. Literal Text resolves markup parsing; ordinary refresh preserves controls and focus; deferred reveal reads current focus without restoring stale controls. Scrollbar changes trigger viewport refitting. No-refocus resize and scrollbar-transition checks remained to be executed at review time.
+
+Final follow-up: No additional actionable findings. Compact padding leaves six cells for Server while retaining border, arrow and existing selection handlers. Test source covers keyboard source switching, no-refocus resize and settled 1→many→1 scrollbar widths. Static review and git diff --check only; no app tests or edits.

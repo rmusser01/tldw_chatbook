@@ -1,0 +1,147 @@
+{
+  "pid": 28168,
+  "runner_sha256": "45ae367888862d57a2f58931eaaa5288e8090cffbbbdfcb2b08e2ad4643fe2d7",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "newer_focus": false,
+      "focused": "library-rag-query-input",
+      "focused_region": [
+        40,
+        10,
+        125,
+        3
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "newer_focus": true,
+      "focused": "library-rag-mode-toggle",
+      "focused_region": [
+        40,
+        7,
+        31,
+        2
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "newer_focus": false,
+      "focused": "library-rag-query-input",
+      "focused_region": [
+        29,
+        4,
+        50,
+        3
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "newer_focus": true,
+      "focused": "library-rag-mode-toggle",
+      "focused_region": [
+        29,
+        4,
+        31,
+        2
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "newer_focus": false,
+      "focused": "library-rag-query-input",
+      "focused_region": [
+        40,
+        7,
+        125,
+        3
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "newer_focus": true,
+      "focused": "library-rag-mode-toggle",
+      "focused_region": [
+        40,
+        7,
+        31,
+        2
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "newer_focus": false,
+      "focused": "library-rag-query-input",
+      "focused_region": [
+        29,
+        4,
+        50,
+        3
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "newer_focus": true,
+      "focused": "library-rag-mode-toggle",
+      "focused_region": [
+        29,
+        4,
+        31,
+        2
+      ],
+      "fully_painted": true,
+      "exact_local_result": true
+    }
+  ],
+  "waiting_for": "Evidence title visible",
+  "real_keyword_searches": 8,
+  "source_unchanged": true,
+  "passed": true,
+  "app_run_returned": true
+}

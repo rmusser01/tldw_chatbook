@@ -1,0 +1,26 @@
+.....................                                                    [100%]
+============================= slowest 25 durations =============================
+7.52s call     Tests/UI/test_settings_web_search_lifecycle.py::test_save_result_reaches_recreated_settings[True]
+7.03s call     Tests/UI/test_settings_web_search_lifecycle.py::test_pending_test_stays_in_progress_after_navigation_and_discards_result
+6.87s call     Tests/UI/test_settings_web_search_lifecycle.py::test_recreated_clear_detects_intervening_credential_edit
+6.81s call     Tests/UI/test_settings_web_search.py::test_settings_navigation_preserves_masked_drafts_and_save_revert_work[size0]
+6.80s call     Tests/UI/test_settings_web_search.py::test_settings_navigation_preserves_masked_drafts_and_save_revert_work[size1]
+6.41s call     Tests/UI/test_settings_web_search_lifecycle.py::test_explicit_clear_or_revert_wins_over_pending_input[revert]
+6.17s call     Tests/UI/test_settings_web_search_lifecycle.py::test_backend_and_masked_draft_survive_destination_recreation
+6.09s call     Tests/UI/test_settings_web_search_lifecycle.py::test_explicit_clear_or_revert_wins_over_pending_input[clear-serper_search_api_key]
+6.07s call     Tests/UI/test_settings_web_search_lifecycle.py::test_save_result_reaches_recreated_settings[False]
+6.06s call     Tests/UI/test_settings_web_search.py::test_all_backend_fields_render_and_switching_is_clean
+6.04s call     Tests/UI/test_settings_web_search.py::test_probe_completion_does_not_repaint_another_category
+5.59s call     Tests/UI/test_settings_web_search.py::test_category_search_finds_backend_terms
+5.54s call     Tests/UI/test_settings_web_search_lifecycle.py::test_status_refresh_keeps_queued_masked_input
+3.47s call     Tests/UI/test_settings_web_search_lifecycle.py::test_committed_write_with_reload_failure_reports_saved_to_disk
+2.18s call     Tests/UI/test_settings_web_search.py::test_clear_legacy_alias_and_env_precedence_are_explicit
+2.17s call     Tests/UI/test_settings_web_search.py::test_existing_searx_alias_is_visible_in_editable_url
+2.04s call     Tests/UI/test_settings_web_search.py::test_external_change_is_not_overwritten
+2.00s call     Tests/UI/test_settings_web_search.py::test_other_backend_setup_preserves_default_and_saves_atomic_delta
+1.87s call     Tests/UI/test_settings_web_search.py::test_probe_is_explicit_saved_only_and_stale_completion_is_discarded
+1.87s call     Tests/UI/test_settings_web_search.py::test_save_failure_retains_draft_and_has_safe_message
+1.86s call     Tests/UI/test_settings_web_search.py::test_blank_secret_keeps_saved_and_revert_preserves_config
+
+(4 durations < 1s hidden.)
+21 passed in 103.93s (0:01:43)

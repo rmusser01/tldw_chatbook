@@ -146,6 +146,11 @@ def build_console_readiness_presentation(
         Fixed-copy presentation values safe to render in the settings summary.
     """
     provider = readiness.provider_display_name or "Provider"
+    subscription_copy = {
+        "pending": "Checking Claude subscription credential",
+        "expired": "Claude subscription credential expired — log in with Claude Code",
+        "missing": "Claude subscription credential missing — log in with Claude Code",
+    }.get(readiness.subscription_status)
     if readiness.operability == "ready_to_send":
         primary = "Ready to send"
         if readiness.credential == "present_unverified":
@@ -155,7 +160,7 @@ def build_console_readiness_presentation(
     else:
         blocker_copy = _BLOCKER_COPY.get(readiness.blocker, "review provider settings")
         if readiness.blocker == "credential_missing":
-            blocker_copy = f"API key missing for {provider}"
+            blocker_copy = subscription_copy or f"API key missing for {provider}"
         elif readiness.blocker == "credential_rejected":
             blocker_copy = f"{provider} {blocker_copy}"
         primary = f"Not ready — {blocker_copy}"
@@ -165,11 +170,24 @@ def build_console_readiness_presentation(
             ("Review settings", "console", "Review this Console session's settings"),
         )
         if readiness.recovery_action == "configure_credential":
-            action = (
-                "Configure API key",
-                "settings",
-                f"Configure {provider} API and API key in Settings",
-            )
+            if readiness.subscription_status == "pending":
+                action = (
+                    "Checking credential",
+                    "hidden",
+                    "Credential check in progress",
+                )
+            elif subscription_copy:
+                action = (
+                    "Review credentials",
+                    "settings",
+                    "Review Claude subscription authentication in Settings",
+                )
+            else:
+                action = (
+                    "Configure API key",
+                    "settings",
+                    f"Configure {provider} API and API key in Settings",
+                )
         elif readiness.recovery_action == "save_endpoint":
             action = (
                 "Configure endpoint",
@@ -183,13 +201,17 @@ def build_console_readiness_presentation(
         "authenticated": "Authenticated",
         "present_unverified": "Present — not verified",
     }[readiness.credential]
+    if readiness.subscription_status == "pending":
+        credential_value = "Checking…"
+    elif readiness.subscription_status == "ready":
+        credential_value = "Claude subscription — not verified"
     if readiness.credential == "present_unverified":
         source = {
             "stored": "local config",
             "environment": "environment variable",
             "draft": "unsaved draft",
         }.get(readiness.credential_source)
-        if source:
+        if source and readiness.subscription_status is None:
             credential_value += f" ({source})"
 
     if readiness.endpoint == "unreachable":
@@ -258,7 +280,9 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         self.state = state
         self._on_reconcile = on_reconcile
         self.add_class("console-settings-summary")
-        self.styles.height = "auto"
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 0
 
     def sync_state(self, state: ConsoleSettingsSummaryState) -> None:
@@ -300,13 +324,17 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             ),
             CONSOLE_SETTINGS_BUTTON_MAX_WIDTH,
         )
-        button.styles.width = button_width
+        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        # ds-runtime: Action-label text length determines the bounded button width.
+        button.set_styles(width=button_width)
         button.styles.min_width = button_width
         button.styles.max_width = button_width
-        button.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
+        button.set_styles(height=None)
+        button.add_class("h-1")
         button.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         button.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
-        button.styles.margin = 0
+        button.add_class("m-0")
 
     @staticmethod
     def _row_text(value: str | None) -> str:
@@ -416,7 +444,9 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         header = Horizontal(
             id="console-settings-header", classes="console-settings-header"
         )
-        header.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+        header.remove_class(*(name for name in header.classes if name.startswith("h-")))
+        header.set_styles(height=None)
+        header.add_class("h-1")
         header.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         with header:
@@ -425,9 +455,13 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
                 id="console-settings-title",
                 classes="destination-section console-settings-title",
             )
-            title.styles.width = "1fr"
+            title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+            title.set_styles(width=None)
+            title.add_class("w-fill")
             title.styles.min_width = 0
-            title.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
+            title.remove_class(*(name for name in title.classes if name.startswith("h-")))
+            title.set_styles(height=None)
+            title.add_class("h-1")
             title.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
             title.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
             yield title

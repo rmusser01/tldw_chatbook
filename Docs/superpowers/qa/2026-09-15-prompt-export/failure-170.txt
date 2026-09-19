@@ -1,0 +1,48 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌──────────────────────────────────┐  N  ┌────────────────────────────────────────────────┐  P  Error exporting prompt: FileNotFoundError                              │
+│ │ Navigation          Collapse     │  a  │ Prompts (8)                                    │  r                                                                         │
+│ │     Import…                      │  v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  o                               More actions                              │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │ ▊ Filter prompts… (Enter)                    ▎ │  m  ┃                              Export…                               ┃ │
+│ │ ▊ Search Library…           ▎▊x▎ │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  p                              Copy Markdown                              │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │                                                │  t                                Duplicate                                │
+│ │                                  │     │   collection: All prompts                      │  s                               Collections                               │
+│ │ ──────────────────────────────── │     │    sort: Newest        Select                  │                                    History                                 │
+│ │ Browse                       ▾   │     │      Import…          Export…                  │                                     Delete                                 │
+│ │    Media (0) — your files        │     │  Native export 41434 café                      │                                                                            │
+│ │    Conversations (0)             │     │  Local · User only                             │                                                                            │
+│ │    Notes (1)                     │     │                                                │                                                                            │
+│ │    Prompts (8) — reuse           │     │  Native actions audit 1573                     │                                                                            │
+│ │    Skills (0) — AI add-ons       │     │  Local · User only                             │                                                                            │
+│ │    Collections (0)               │<--- │                                                │                                                                            │
+│ │    Search / RAG — find all       │     │  Native resize audit 87681                     │                                                                            │
+│ │ ──────────────────────────────── │     │  Local · User only                             │                                                                            │
+│ │ Create                       ▾   │     │                                                │                                                                            │
+│ │    New note                      │     │  Prompt continuity audit 80 64024           ▅  │                                                                            │
+│ │  ▸ New prompt                    │     │  Local · User only                             │                                                                            │
+│ │    New skill                     │     │                                                │<---                                                                        │
+│ │ ──────────────────────────────── │     │  Prompt continuity audit 80 59263              │                                                                            │
+│ │ Study                        ▸   │     │  Local · User only                             │                                                                            │
+│ │ ──────────────────────────────── │     │                                                │                                                                            │
+│ │ Import / Export              ▸   │     │ 1-8 of 8                                       │                                                                            │
+│ │ ──────────────────────────────── │     │                                                │                                                                            │
+│ │ Details                      ▸   │<--- │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ │                                  │     │                                                │                                                                            │
+│ └──────────────────────────────────┘     └────────────────────────────────────────────────┘                                                                            │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

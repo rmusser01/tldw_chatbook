@@ -68,7 +68,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -90,6 +90,9 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ("run", "scheduling"),
         # -- ChatScreen / Console (initial-screen mount) --
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),
+        # TASK-32826: batch-read durable manual reminders off-loop so restored
+        # conversation rows display their saved unread state on first use.
+        ("_load_manual_unread_rows", "console-manual-unread-load"),
         ("_refresh_console_skill_candidates", "default"),
         ("_sync_console_legacy_workspace_context_aliases", "console-workspace-context-legacy-aliases"),
         # TASK-26042: this one off-loop snapshot is required to render truthful
@@ -110,6 +113,9 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
 #: normalized to ``#`` so pool sizing (machine-dependent) cannot flake.
 ALLOWED_BOOT_THREADS: frozenset[tuple[str, str, str]] = frozenset(
     {
+        # ADR-126: hold native ordinary admission before any application storage
+        # opens, so a requested restore cannot replace live application data.
+        ("chatbook-storage-admission", "tldw_chatbook.Backup_Recovery.storage_admission", "_Hold._run"),
         # The parallel service-init pool (app startup).
         ("ThreadPoolExecutor-#_#", "concurrent.futures.thread", "_worker"),
         # asyncio's default executor: Textual thread workers land here.
@@ -219,8 +225,6 @@ asyncio.run(main())
 @pytest.mark.parametrize("arrives", [True, False])
 async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch, arrives):
     """Run the actual probe main with a clock and a 1.5-second queued starter."""
-    import tldw_chatbook.app as app_module
-
     now = 0.0
     required = sorted(EXPECTED_BOOT_WORKERS)
     # Delay a required sentinel; staggered FTS is only allowlisted on current dev.
@@ -245,7 +249,14 @@ async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch
         async def __aexit__(self, *args):
             pass
 
-    monkeypatch.setattr(app_module, "TldwCli", App)
+    # This clock/loop unit test supplies its own App; importing the real app
+    # solely to replace it would acquire unrelated process-lifetime storage.
+    app_module = ModuleType("tldw_chatbook.app")
+    app_module.TldwCli = App
+    import tldw_chatbook
+
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.app", app_module)
+    monkeypatch.setattr(tldw_chatbook, "app", app_module, raising=False)
     probe = ast.parse(_CENSUS_SCRIPT)
     main = next(node for node in probe.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "main")
     namespace = {

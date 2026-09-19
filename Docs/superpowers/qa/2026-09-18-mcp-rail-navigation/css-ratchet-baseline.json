@@ -1,0 +1,164 @@
+{
+  "baseline": "9a4ba3cef335639aa0ca937489d459da126a91d4",
+  "method": "Original test and unchanged offender modules; substitute only modified Python module with git-show HEAD source for the actual static walker and ratchet assertion. No app or profile boot.",
+  "offenders": [
+    [
+      "UI/LLM_Management/vllm_setup_view.py",
+      "VllmSetupView",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Library_Modules/library_character_repair_controller.py",
+      "LibraryCharacterRepairDialog",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Library_Modules/skill_import_choice_modal.py",
+      "SkillImportChoiceModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Navigation/character_conversation_navigation.py",
+      "RoleplayDraftNavigationDialog",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Navigation/character_conversation_navigation.py",
+      "RoleplayDraftRecoveryDialog",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Screens/artifact_share_dialog.py",
+      "ArtifactShareDialog",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Screens/backup_restore_screen.py",
+      "BackupRestoreScreen",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Screens/scheduling/forms/automation_definition_form.py",
+      "AutomationDefinitionForm",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Screens/scheduling/forms/new_task_choice_modal.py",
+      "NewTaskChoiceModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "UI/Screens/skills_screen.py",
+      "SkillRecoveryReviewModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Console/console_appearance_picker_modal.py",
+      "ConsoleAppearancePickerModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Console/console_edit_message_modal.py",
+      "ConsoleEditThinkingModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Console/console_endpoint_template_modal.py",
+      "ConsoleEndpointTemplateModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Console/console_provider_picker.py",
+      "ConsoleProviderPicker",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Console/console_save_markdown_modal.py",
+      "ConsoleSaveMarkdownModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Console/console_terminal_session_modal.py",
+      "ConsoleTerminalSessionModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Console/console_workspace_switcher_modal.py",
+      "WorkspaceArchiveReceiptModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Library/notes_recovery_dialog.py",
+      "NotesRecoveryDialog",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Persona_Widgets/buddy_conversation_modal.py",
+      "BuddyConversationModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Persona_Widgets/buddy_management_modal.py",
+      "BuddyManagementModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Persona_Widgets/buddy_speech_controls.py",
+      "BuddySpeechControls",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Persona_Widgets/buddy_workspace_modal.py",
+      "BuddyWorkspaceModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Settings_Widgets/tool_profiles_panel.py",
+      "ToolProfilesPanel",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/Settings_Widgets/workspace_change_review.py",
+      "WorkspaceChangeReviewPanel",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/workspace_persona_default.py",
+      "WorkspacePersonaDefaultModal",
+      "DEFAULT_CSS"
+    ],
+    [
+      "Widgets/workspace_persona_default.py",
+      "WorkspacePersonaPicker",
+      "DEFAULT_CSS"
+    ]
+  ],
+  "baseline_failure": "26 class-level CSS declaration(s) outside the allowlist:\n  UI/LLM_Management/vllm_setup_view.py::VllmSetupView.DEFAULT_CSS\n  UI/Library_Modules/library_character_repair_controller.py::LibraryCharacterRepairDialog.DEFAULT_CSS\n  UI/Library_Modules/skill_import_choice_modal.py::SkillImportChoiceModal.DEFAULT_CSS\n  UI/Navigation/character_conversation_navigation.py::RoleplayDraftNavigationDialog.DEFAULT_CSS\n  UI/Navigation/character_conversation_navigation.py::RoleplayDraftRecoveryDialog.DEFAULT_CSS\n  UI/Screens/artifact_share_dialog.py::ArtifactShareDialog.DEFAULT_CSS\n  UI/Screens/backup_restore_screen.py::BackupRestoreScreen.DEFAULT_CSS\n  UI/Screens/scheduling/forms/automation_definition_form.py::AutomationDefinitionForm.DEFAULT_CSS\n  UI/Screens/scheduling/forms/new_task_choice_modal.py::NewTaskChoiceModal.DEFAULT_CSS\n  UI/Screens/skills_screen.py::SkillRecoveryReviewModal.DEFAULT_CSS\n  Widgets/Console/console_appearance_picker_modal.py::ConsoleAppearancePickerModal.DEFAULT_CSS\n  Widgets/Console/console_edit_message_modal.py::ConsoleEditThinkingModal.DEFAULT_CSS\n  Widgets/Console/console_endpoint_template_modal.py::ConsoleEndpointTemplateModal.DEFAULT_CSS\n  Widgets/Console/console_provider_picker.py::ConsoleProviderPicker.DEFAULT_CSS\n  Widgets/Console/console_save_markdown_modal.py::ConsoleSaveMarkdownModal.DEFAULT_CSS\n  Widgets/Console/console_terminal_session_modal.py::ConsoleTerminalSessionModal.DEFAULT_CSS\n  Widgets/Console/console_workspace_switcher_modal.py::WorkspaceArchiveReceiptModal.DEFAULT_CSS\n  Widgets/Library/notes_recovery_dialog.py::NotesRecoveryDialog.DEFAULT_CSS\n  Widgets/Persona_Widgets/buddy_conversation_modal.py::BuddyConversationModal.DEFAULT_CSS\n  Widgets/Persona_Widgets/buddy_management_modal.py::BuddyManagementModal.DEFAULT_CSS\n  Widgets/Persona_Widgets/buddy_speech_controls.py::BuddySpeechControls.DEFAULT_CSS\n  Widgets/Persona_Widgets/buddy_workspace_modal.py::BuddyWorkspaceModal.DEFAULT_CSS\n  Widgets/Settings_Widgets/tool_profiles_panel.py::ToolProfilesPanel.DEFAULT_CSS\n  Widgets/Settings_Widgets/workspace_change_review.py::WorkspaceChangeReviewPanel.DEFAULT_CSS\n  Widgets/workspace_persona_default.py::WorkspacePersonaDefaultModal.DEFAULT_CSS\n  Widgets/workspace_persona_default.py::WorkspacePersonaPicker.DEFAULT_CSS\n\nEvery class-level DEFAULT_CSS/CSS registers one more stylesheet source at first mount, and Textual's parse cache holds 64 -- past the cliff every first-mount of an unseen class re-pays a full cold parse (~150-450 ms) for the rest of the session. Two sanctioned options:\n  1. (default) Ride the bundle: rename DEFAULT_CSS -> BUNDLED_CSS (widget-defaults tier), or a Screen's CSS -> BUNDLED_SCREEN_CSS (app-CSS tier), keep the block a plain string literal, then run `python tldw_chatbook/css/build_css.py` and commit the regenerated sheets in css/ together with your source change.\n  2. (reviewed exception only) add the (module, class, attr) triple to _UNCONSOLIDATED_CSS_ALLOWLIST in this file, with the reason in your PR -- e.g. the CSS genuinely cannot be a plain string literal, or the widget belongs to a standalone app that never loads this app's bundle.",
+  "unchanged_file_hashes": {
+    "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": "d032ed112bbfb80aaf89d324388979865016e48eadd449ff5939daaf868da990",
+    "tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py": "446c1471f9edc1cb3ec4b8d491cc56bafef6d4aefa315c755dea29125b2e9594",
+    "tldw_chatbook/UI/Library_Modules/skill_import_choice_modal.py": "c0f7d8e2ea0b6727f87dfe20973598d098d23eedf12653361c8e802b6c9b40d7",
+    "tldw_chatbook/Widgets/Console/console_terminal_session_modal.py": "026047fe68bb1da7384465a9b7ddf8a19fd4741865bd0c9cc3bb94f5d24b0673",
+    "tldw_chatbook/Widgets/Console/console_appearance_picker_modal.py": "b273aef3f418552489e377bc76d791cb332e2968966897ca9205bc0d60fd723e",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_speech_controls.py": "25b295302e1381b0be18b2323953587f8959eb44f5d155ce4bd9bbd49def91a9",
+    "tldw_chatbook/UI/Screens/scheduling/forms/new_task_choice_modal.py": "1ecda3d5e6722bb84440b02ee46abc4b4517a2661d60f64592ee55f5dc55bd59",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_management_modal.py": "0459bdc1afe8d59e50f3b552909f15d9271f5ddce1f8d9337209509b04809ac8",
+    "tldw_chatbook/Widgets/Console/console_endpoint_template_modal.py": "6e6a36f9fc9f1090488ec9bb857c0f94161436c5b14c1100b5c5951b4c36e98f",
+    "tldw_chatbook/UI/Navigation/character_conversation_navigation.py": "a572946c3824e07eb62984c503f5ae8caf840295b653cfc214bc80b6508f94b7",
+    "Tests/UI/test_widget_css_consolidation.py": "c5f2a3bd998c6118f2bd30c162bc70a2162f07471ee99ec5972beb8debc5304c",
+    "tldw_chatbook/Widgets/workspace_persona_default.py": "5d2eab749cd73da2d1a459358ff67c910108eeab41a17d7848e5a3b40a573e7c",
+    "tldw_chatbook/UI/Screens/backup_restore_screen.py": "f1b7e8c3febeba9f5535c0164c720ef463c2e949313cf66979845a9f65b180b0",
+    "tldw_chatbook/Widgets/Console/console_provider_picker.py": "1e604f17d9980fc14cee97236ca2e6ea9d54ad007746af23d3428bd72e6e7624",
+    "tldw_chatbook/UI/Screens/artifact_share_dialog.py": "d5666566a13401517c2086d8e6f4f8e19152a08debe81e7b9bd0fe4b7031dcb1",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_workspace_modal.py": "2dbec1640de2b8600f7a403bd6ccc0e6b01625ef4ba0aa6ebd43618297299cf2",
+    "tldw_chatbook/Widgets/Console/console_workspace_switcher_modal.py": "8805ab876a8ecdd9b8fc0d1ddf40a8f8b8f5e64f14a6727bde7ecfa568ef0687",
+    "tldw_chatbook/Widgets/Console/console_save_markdown_modal.py": "cf494efa8d5d13d544d6da47eafb562bd0cb589e9e838472f99c1c4f93c0d30f",
+    "tldw_chatbook/UI/LLM_Management/vllm_setup_view.py": "610e9255cdeb07f6a807080f4cf57e33bdf8ed44b8093976e46e00ba16931b51",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "9c8ee520a270f8e423c429bdd466beafd55664137919429efdfc39d61df0ead0",
+    "tldw_chatbook/Widgets/Settings_Widgets/workspace_change_review.py": "a009812e546bdc9daca62fa99724d5af3ba0169a61ed793f48ffe9a9a50b82ec",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py": "1072ffd0f72cae818b1519ae4ee63584ac3c9f9f22d2de2baed180320493c413",
+    "tldw_chatbook/Widgets/Console/console_edit_message_modal.py": "d53bc9f4ec71afad7871b9d366b08c9f1242f372b41935e748d35d07a6ef86e4",
+    "tldw_chatbook/UI/Screens/skills_screen.py": "8dc0a9d06a00f25ac277bf1bacef13dfaadc44de4105a306788d4cf2d0c69912",
+    "tldw_chatbook/Widgets/Library/notes_recovery_dialog.py": "0a96c78b4e1d4e9d621fe60514bc1e0ca4d0dd219167ae9cd93460ea36fd9096"
+  }
+}

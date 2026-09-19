@@ -1,0 +1,78 @@
+{
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok"
+    }
+  ],
+  "fixture": {
+    "conversations": 1,
+    "messages": 1,
+    "body_unchanged": true,
+    "not_deleted": true
+  },
+  "workspaces": {
+    "only_beta_membership_remains": true,
+    "active_workspace": "Receipt Alpha"
+  },
+  "default_profile_files": [
+    {
+      "path": "/Users/macbook-dev/.config/tldw_cli/config.toml",
+      "sha256": "6dd194bc854274874e0b433f6539a840b1894411e0e317d3c5dadbd904c4c3dd",
+      "unchanged": true
+    },
+    {
+      "path": "/Users/macbook-dev/.config/tldw_cli/ui_state.toml",
+      "sha256": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42",
+      "unchanged": true
+    },
+    {
+      "path": "/Users/macbook-dev/.config/tldw_cli/runtime_policy.json",
+      "sha256": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3",
+      "unchanged": true
+    }
+  ],
+  "diagnostics": {
+    "ERROR": 0,
+    "Traceback": 0,
+    "unhandled_exception": 0,
+    "event=app_stopping": 1
+  },
+  "faulthandler_empty": true
+}

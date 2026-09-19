@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
-from textual.css.query import NoMatches
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Static, TextArea
+from textual.widgets._collapsible import CollapsibleTitle
 
 from ...Library.library_prompts_state import (
     PromptHistoryState,
@@ -101,6 +104,19 @@ class LibraryPromptHistoryRegion(Vertical):
         current_compatible: bool,
     ) -> None:
         """Apply one immutable view model and recompose this region only."""
+        previous = self.view_model[0]
+        next_view = (state, dirty, current_compatible)
+        if self.view_model == next_view:
+            return
+        if (
+            previous is not None
+            and state is not None
+            and (previous.prompt_uuid, previous.scope_token)
+            == (state.prompt_uuid, state.scope_token)
+        ):
+            self._preserve_history_focus()
+        else:
+            self._pending_focus_restore = None
         if state is not None:
             try:
                 self.query_one(
@@ -108,11 +124,112 @@ class LibraryPromptHistoryRegion(Vertical):
                 ).title = prompt_history_count_label(state)
             except NoMatches:
                 pass
-        self.view_model = (state, dirty, current_compatible)
+        self.view_model = next_view
+
+    # Follow the canvas post-recompose ordering locally. Importing the canvas
+    # mixin here would initialize Widgets.Library, which imports this region.
+    _pending_focus_restore: Callable[[], None] | None = None
+
+    @property
+    def has_pending_focus_restore(self) -> bool:
+        """Whether the outgoing disclosure still owns a keyboard handoff."""
+        return self._pending_focus_restore is not None
+
+    async def recompose(self) -> None:
+        """Restore focus only after this region's final children are mounted."""
+        await super().recompose()
+        if not self.is_attached or self._pruning:
+            self._pending_focus_restore = None
+            return
+        if self._recompose_required:
+            return
+        callback = self._pending_focus_restore
+        self._pending_focus_restore = None
+        if callback is not None:
+            callback()
 
     def on_mount(self) -> None:
         """Request a live sync after an outer canvas recompose mounts this region."""
         self.post_message(self.Ready())
+
+    def _preserve_history_focus(self) -> None:
+        """Carry keyboard position through loading and replacement controls."""
+        focused = self.screen.focused
+        if focused is None or self not in focused.ancestors:
+            return
+        if isinstance(focused, CollapsibleTitle):
+            selector = "CollapsibleTitle"
+        elif focused.id:
+            selector = f"#{focused.id}"
+        else:
+            return
+        previous = self.view_model[0]
+        previous_rows = {row.change_id for row in previous.rows} if previous else set()
+        self.screen.set_focus(None)
+
+        def restore() -> None:
+            if self.screen.focused is not None:
+                return
+            state = self.view_model[0]
+            if state is None:
+                return
+            target_selector = selector
+            if selector in {
+                "#library-prompt-history-load-older",
+                "#library-prompt-history-retry-page",
+                "#library-prompt-history-reload",
+            }:
+                if state.page_status == "loading":
+                    self._pending_focus_restore = restore
+                    return
+                if state.page_status == "error":
+                    target_selector = "#library-prompt-history-retry-page"
+                else:
+                    first_new = next(
+                        (
+                            row
+                            for row in state.rows
+                            if row.change_id not in previous_rows
+                        ),
+                        None,
+                    )
+                    target_selector = (
+                        f"#library-prompt-history-row-{first_new.change_id}"
+                        if first_new is not None
+                        else "CollapsibleTitle"
+                    )
+            elif (
+                selector == "#library-prompt-history-retry-count"
+                and state.count_status != "error"
+            ):
+                target_selector = "CollapsibleTitle"
+            elif (
+                selector == "#library-prompt-history-restore"
+                and state.restore_request is not None
+            ):
+                self._pending_focus_restore = restore
+                return
+            try:
+                target = self.query_one(target_selector)
+            except NoMatches:
+                return
+            if not target.focusable:
+                target = self.query_one("CollapsibleTitle")
+            self.screen.set_focus(target)
+            target.call_after_refresh(self._reveal_focused_control, target)
+
+        self._pending_focus_restore = restore
+
+    def focus_disclosure(self) -> None:
+        """Return a refreshed editor to its retained-history entry point."""
+        target = self.query_one("CollapsibleTitle")
+        self.screen.set_focus(target)
+        target.call_after_refresh(self._reveal_focused_control, target)
+
+    def _reveal_focused_control(self, target: Widget) -> None:
+        """Scroll after replacement children have their final layout geometry."""
+        if target.is_attached and self.app.focused is target:
+            target.scroll_visible(animate=False)
 
     @staticmethod
     def _bind_action_scope(

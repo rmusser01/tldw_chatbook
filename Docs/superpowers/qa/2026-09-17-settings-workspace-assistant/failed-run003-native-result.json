@@ -1,0 +1,32 @@
+{
+  "pid": 99788,
+  "cells": [],
+  "runner_sha256": "4fd4da9f78b292ebb22f86977b7ab7d1efe6db6e2a5ca0748a2858af8ed1a598",
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": "9d112a7a1cbc662370ae8651fb8cc3ba2e30a2566eb2b8c76c77bdf0c22db770",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "6fa772fe15dc43d3977ae7f6c6547389cf8ca85c4b6550a9c23edb268017c452",
+    "tldw_chatbook/css/features/_settings.tcss": "352be084e19440d7940f492028b35eb408507b95e5c39ee09a5e152b46682fd5",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "3a77bf24728f6e67009b2e04e917910cfb881de1ca1022fcd655464e998a9bb3",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Applied pane settled",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Real local Persona service, permission store, registry and Tool Profile guard",
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/Docs/superpowers/qa/2026-09-17-settings-workspace-assistant/native_check.py\", line 316, in journey\n    assert app.focused.is_attached and app.focused.id == \"nav-home\"\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "focused_id": "settings-impact-pane-body",
+  "focused_region": "Region(x=140, y=18, width=28, height=26)",
+  "app_run_returned": true
+}

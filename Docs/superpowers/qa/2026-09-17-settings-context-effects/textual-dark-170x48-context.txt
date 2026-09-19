@@ -1,0 +1,48 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Res  More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────┐
+│                              │  │  │                                                                                              │  │  │                              │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.            │  │  │  Scope Inspector             │
+│  No filter | / focus         │  │  │ │ │  Conversation context and memory                                                    │ │  │  │  │                              │
+│  category search             │  │  │ │ │  Global defaults for new and inherited conversations. Current-conversation          │ │  │  │  │ Selected category: Console   │
+│                              │  │  │ │ │  overrides remain in the Console's Context & memory view.                           │ │  │  │  │ Behavior                     │
+│  Core                        │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │ No unsaved changes           │
+│     Overview (view)          │  │  │ │ │ Budget strategy         │ Custom                                                ▼ │ │ │  │  │  │  Guided edits: change a      │
+│     Providers & Models       │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │  field first.                │
+│     Web Search               │  │  │ │ │ Conversation max tokens │ 64000                                                     │ │  │  │  │  Save (s) — no changes       │
+│     Speech & TTS             │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │  Revert (r) — no changes     │
+│  Interface                   │  │  │ │ │ When limit nears        │ Automatic                                             ▼ │ │ │  │  │  │ Local-only: saves write your │
+│     Appearance               │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │ config file.                 │
+│     Theme                    │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │  Purpose: Focus a Console    │
+│     Splash Screen            │  │  │ │ │ Representation          │ Hybrid                                                ▼ │ │ │  │  │  │  Behavior field for          │
+│   > Console Behavior         │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │  setting-specific            │
+│  Data & Privacy              │  │  │ │ │  Visual and Hybrid apply only to vision-capable sessions; unsupported models        │ │  │  │  │  guidance.                   │
+│     Storage                  │  │  │ │ │  safely use Text summary without overwriting this default.                          │ │  │  │  │                              │
+│     Workspaces               │  │  │ │ │ Compact at (%)          │ 85                                                        │ │  │  │  │  Consequences: No            │
+│     Tool Profiles            │  │  │ │ │ Reduce context to (%)   █ 55                                                        │ │  │  │  │  field-specific guidance     │
+│     Privacy & Security       │  │  │ │ │ Summary response max    │ 1536                                                      │ │  │  │  │  is active right now.        │
+│     Network                  │  │  │ │ │  Summary response max applies only to Text summary and Hybrid.                      │ │  │  │  │                              │
+│     My Profile               │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │  Saved as: varies by field   │
+│  Troubleshooting             │  │  │ │ │ If compaction fails     │ Omit older context                                    ▼ │ │ │  │  │  │                              │
+│     Diagnostics (view)       │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │▃ │  │  │  Applies: varies by field    │
+│     About (view)             │  │  │ │ │                         ┌─────────────────────────────────────────────────────────┐ │ │  │  │  │                              │
+│     Agents                   │  │  │ │ │ Keep after compaction   │ Memory + latest exchange                              ▼ │ │ │  │  │  │ Override rules               │
+│  Expert                      │  │  │ │ │                         └─────────────────────────────────────────────────────────┘ │ │  │  │  │  Priority: active Console  ▆ │
+│     Internal Prompts         │  │  │ │ │  Edit summary prompt…                                                               │ │  │  │  │  session, then               │
+│     Advanced Config          │  │  │ │ │  Text summary and Hybrid make one extra model call and store generated memory with  │ │  │  │  │  provider+model profile,     │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  provenance. Visual pages are rendered on-device for one request and never          │ │▆ │  │  │  then these global           │
+│                              │  │  │ │ │  persisted. Original transcript messages remain stored. Off disables optional       │ │  │  │  │  fallbacks                   │
+│                              │  │  │ │ │  compaction only—mandatory provider safety trimming still applies.                  │ │  │  │  │                              │
+│                              │  │  │ │ │                                                                                     │ │  │  │  │  Scope:  response            │
+│                              │  │  │ │ │  Global fallback defaults                                                           │ │  │  │  │  fallbacks and  paste        │
+│                              │  │  │ │ │  Used when no provider+model profile or active Console session overrides them.      │ │  │  │  │  display settings            │
+│                              │  │  │ │ │ Default chat display    │ User                                                      │ │  │  │  │                              │
+│                              │  │  │ │ │  Used for your speaker label. Character chats also use it for trusted {{user}}      │ │  │  │  │  Save: staged - press s to ▆ │
+│                              │  │  │ │ │  templates.                                                                         │ │  │  │  │ ▼ more — scroll the          │
+│                              │  │  │                                                                                              │  │  │                              │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────┘
+
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

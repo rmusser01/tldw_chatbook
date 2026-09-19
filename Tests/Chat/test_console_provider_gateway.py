@@ -2704,6 +2704,7 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
     assert seen_urls == [
         "http://127.0.0.1:9099/v1/models",
         "http://127.0.0.1:9099/props",
+        "http://127.0.0.1:9099/props?model=server-model&autoload=false",
     ]
 
 
@@ -12057,3 +12058,132 @@ async def test_send_resolution_keeps_hyphenated_registry_entry_identity() -> Non
     assert resolved.ready is True
     assert resolved.execution_key == "llama_cpp"
     assert resolved.base_url == "http://192.168.1.9:9090"
+
+
+# qodo PR-2651 High (raw identity vs execution key): a resolved custom-ep
+# resolution keeps the raw ``custom-ep:<slug>`` id in ``selected_provider``
+# alongside the flattened execution family, so spawn routing and the
+# streaming adapter's same-target decision never conflate the endpoint with
+# the built-in family it executes through. Plain selections carry no raw
+# identity and behave exactly as before.
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_resolution_carries_raw_selected_provider() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.selected_provider == "custom-ep:paid"
+    assert resolved.execution_key == "custom-openai-api"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_llama_family_resolution_carries_raw_selected_provider() -> None:
+    """The llama-family path flattens provider/execution_key to the family
+    but still keeps the raw slug in selected_provider."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: {
+                "custom_endpoints": {
+                    "gpu": {
+                        "display_name": "GPU llama",
+                        "family": "llama_cpp",
+                        "base_url": "http://192.168.1.9:9090",
+                    }
+                }
+            },
+            environ={},
+        )
+
+        resolved = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="custom-ep:gpu",
+                explicit_model="m",
+                base_url="http://192.168.1.9:9090",
+            )
+        )
+
+    assert resolved.ready is True
+    assert resolved.provider == "llama_cpp"
+    assert resolved.execution_key == "llama_cpp"
+    assert resolved.selected_provider == "custom-ep:gpu"
+
+
+@pytest.mark.asyncio
+async def test_plain_provider_resolution_carries_no_raw_selected_provider() -> None:
+    """Plain built-in selections keep ``selected_provider`` empty: spawn
+    inheritance and the adapter's same-target decision fall back to the
+    execution/display keys, unchanged from before."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: {
+                "api_settings": {"llama_cpp": {"model": "m"}},
+            },
+            environ={},
+        )
+
+        resolved = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="llama_cpp",
+                explicit_model="m",
+                base_url="http://192.168.1.9:9090",
+            )
+        )
+
+    assert resolved.ready is True
+    assert resolved.provider == "llama_cpp"
+    assert resolved.selected_provider == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
+@pytest.mark.parametrize("pinned", [False, True])
+async def test_routed_snapshot_url_pin_preserves_ordinary_registry_edits(family, pinned):
+    requests = []
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(200, json={"data": [{"id": "model"}]})
+    config = {"custom_endpoints": {"gpu": {
+        "display_name": "GPU", "family": family,
+        "base_url": "http://new-server:9090", "models": ["model"],
+    }}}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(http_client=client, config_provider=lambda: config, environ={})
+        resolved = await gateway.resolve_for_send(ConsoleProviderSelection(
+            provider="custom-ep:gpu", explicit_model="model",
+            base_url="http://original-server:8080", base_url_is_pinned=pinned,
+        ))
+    assert resolved.ready
+    expected = "http://original-server:8080" if pinned else "http://new-server:9090"
+    suffix = "/v1/chat/completions" if family == "openai_compatible" else ""
+    assert resolved.base_url == expected + suffix
+    assert all(url.startswith(expected) for url in requests)

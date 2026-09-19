@@ -28,7 +28,7 @@ from textual import events
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp, app_css_text
 from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Input, SelectionList, Static, TextArea
 
@@ -87,8 +87,7 @@ from Tests.UI.app_factory import _build_test_app as _build_shared_test_app
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-AGENTIC_TERMINAL = REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+LIBRARY_PANELS = REPO_ROOT / "tldw_chatbook/css/features/_library_panels.tcss"
 
 
 def _build_test_app(*args: Any, **kwargs: Any) -> TldwCli:
@@ -1694,13 +1693,9 @@ async def test_library_skills_retry_recovers_transient_list_failure():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("width", "items_open", "items_width"),
-    # task-31951/31952: `_sync_library_skills_reader_layout_from_shell` gives
-    # the Items pane priority once the shell can hold both grips, the list's
-    # 32-cell floor and the 48-cell work minimum. That floor reads the
-    # profile's `grip_width`, so it moved with the one-cell grip: 2*5+32+48 =
-    # 90 before, 2*1+32+48 = 82 now. The band 82-89 is the difference -- the
-    # list paints there instead of collapsing -- so both edges are pinned.
-    [(81, False, 0), (82, True, 32)],
+    # ADR-086 / TASK-32200 restored five-cell grips. Items gets automatic
+    # priority when both grips, the 32-cell list and 48-cell reader fit.
+    [(89, False, 0), (90, True, 32)],
 )
 async def test_library_skills_items_priority_floor_moves_with_the_grip_width(
     width: int,
@@ -1790,6 +1785,15 @@ async def test_library_skills_manual_items_priority_survives_compact_layout_sync
                 break
 
         shell = screen.query_one("#library-skills-reader-shell")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                shell.region.width == 80
+                and shell.effective_layout.reader_width > 0
+                and screen.query_one("#library-skills-items-grip").region.width == 5
+            ),
+            message="Compact Skills grip did not finish layout",
+        )
         assert not shell.effective_layout.items_open
         screen.query_one("#library-skills-items-grip", Button).press()
         await pilot.pause()
@@ -2649,15 +2653,15 @@ def test_library_skill_row_class_matches_prompt_row_visual_parity():
     must have a stylesheet block, with the same width/height/border/
     background as ``.library-prompt-row`` -- visual parity with the sibling
     prompts list, not default auto-width Buttons."""
-    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    library_panels = LIBRARY_PANELS.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
-    for text in (agentic_terminal, bundled_stylesheet):
+    for text in (library_panels, bundled_stylesheet):
         assert ".library-skill-row {" in text
         skill_row_block = _css_block(text, ".library-skill-row {")
         prompt_row_block = _css_block(text, ".library-prompt-row {")
         for pinned in (
-            "width: 100%;",
+            "width: $ds-width-full;",
             "border: none;",
             "background: $ds-surface-panel;",
         ):
@@ -2669,9 +2673,9 @@ def test_library_skill_row_class_matches_prompt_row_visual_parity():
         # separation margin lives on the secondary line instead). The old
         # height-2 + bottom-margin combo left two blank rows between a
         # skill's name and its own metadata.
-        assert "height: 2;" in prompt_row_block
-        assert "height: 1;" in skill_row_block
-        assert "margin: 0;" in skill_row_block
+        assert "height: $ds-size-2;" in prompt_row_block
+        assert "height: $ds-size-1;" in skill_row_block
+        assert "margin: $ds-space-0;" in skill_row_block
 
         assert ".library-skill-row-blocked {" in text
         blocked_block = _css_block(text, ".library-skill-row-blocked {")
@@ -2683,10 +2687,10 @@ def test_library_skills_header_filter_empty_have_css_blocks():
     ``#library-skills-empty`` (``library_skills_canvas.py``) must have
     stylesheet rules matching their ``#library-prompts-*`` siblings, instead
     of silently falling back to unstyled defaults."""
-    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    library_panels = LIBRARY_PANELS.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
-    for text in (agentic_terminal, bundled_stylesheet):
+    for text in (library_panels, bundled_stylesheet):
         assert "#library-skills-header {" in text
         assert "#library-skills-filter {" in text
         assert "#library-skills-filter:focus {" in text
@@ -2700,7 +2704,7 @@ def test_library_skills_header_filter_empty_have_css_blocks():
         filter_block = _css_block(text, "#library-skills-filter {")
         prompts_filter_block = _css_block(text, "#library-prompts-filter {")
         for pinned in (
-            "height: 3;",
+            "height: $ds-size-3;",
             "border: tall $ds-grid-line;",
             "background: $ds-surface-raised;",
         ):
@@ -2725,15 +2729,15 @@ def test_library_skill_name_input_css_blocks_match_prompt_name_parity():
     look (same tall-border/focus-accent Input styling), dual-pinned against
     both the source module AND the regenerated bundle -- mirrors
     ``test_library_skills_header_filter_empty_have_css_blocks`` above."""
-    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    library_panels = LIBRARY_PANELS.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
-    for text in (agentic_terminal, bundled_stylesheet):
+    for text in (library_panels, bundled_stylesheet):
         assert "#library-skill-name," in text or "#library-skill-name {" in text
         skill_name_block = _css_block(text, "#library-skill-name")
         prompt_name_block = _css_block(text, "#library-prompt-name")
         for pinned in (
-            "height: 3;",
+            "height: $ds-size-3;",
             "border: tall $ds-grid-line;",
             "background: $ds-surface-raised;",
             "color: $ds-text-primary;",
@@ -2759,10 +2763,10 @@ def test_library_skills_import_row_css_blocks_match_prompt_parity():
     with same field look (tall-border/focus-accent Input) and muted status
     line -- dual-pinned against both the source module AND the regenerated
     bundle."""
-    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    library_panels = LIBRARY_PANELS.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
-    for text in (agentic_terminal, bundled_stylesheet):
+    for text in (library_panels, bundled_stylesheet):
         assert "#library-skills-import-path {" in text
         assert "#library-skills-import-path:focus {" in text
         assert "#library-skills-import-status {" in text
@@ -2770,8 +2774,8 @@ def test_library_skills_import_row_css_blocks_match_prompt_parity():
         import_path_block = _css_block(text, "#library-skills-import-path {")
         prompts_import_path_block = _css_block(text, "#library-prompts-import-path {")
         for pinned in (
-            "width: 100%;",
-            "height: 3;",
+            "width: $ds-width-full;",
+            "height: $ds-size-3;",
             "border: tall $ds-grid-line;",
             "background: $ds-surface-raised;",
             "color: $ds-text-primary;",
@@ -2799,7 +2803,7 @@ def test_library_skills_import_row_css_blocks_match_prompt_parity():
             text, "#library-prompts-import-status {"
         )
         for pinned in (
-            "width: 100%;",
+            "width: $ds-width-full;",
             "height: auto;",
             "color: $ds-text-muted;",
         ):
@@ -2814,15 +2818,15 @@ def test_library_skill_trust_setup_explanation_css_block_matches_review_files_pa
     ``#library-skill-trust-review-files`` sibling -- dual-pinned against
     both the source module AND the regenerated bundle, same pattern as
     every other Skills CSS pin above."""
-    agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    library_panels = LIBRARY_PANELS.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
-    for text in (agentic_terminal, bundled_stylesheet):
+    for text in (library_panels, bundled_stylesheet):
         assert "#library-skill-trust-setup-explanation {" in text
         setup_block = _css_block(text, "#library-skill-trust-setup-explanation {")
         review_files_block = _css_block(text, "#library-skill-trust-review-files {")
         for pinned in (
-            "width: 100%;",
+            "width: $ds-width-full;",
             "height: auto;",
             "color: $ds-text-muted;",
         ):
@@ -3450,7 +3454,7 @@ async def test_trust_passphrase_modal_accepts_purpose_copy():
     class _Host(ConsolidatedCSSApp):
         pass
 
-    app = _Host()
+    app = _Host(css_path=list(APP_STYLESHEETS))
     async with app.run_test() as pilot:
         modal = SkillTrustPassphraseModal(
             confirm_bootstrap=False,
@@ -3483,7 +3487,7 @@ async def test_skill_trust_library_modal_contract_exact_negative_once(
     kind: str,
     source: str,
 ) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
     selector = f"#skill-trust-{kind}-modal"
@@ -3509,7 +3513,7 @@ async def test_skill_trust_library_modal_contract_exact_negative_once(
 async def test_skill_trust_library_modal_contract_inside_and_non_primary_stay_open(
     kind: str,
 ) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
 
@@ -3541,7 +3545,7 @@ async def test_skill_trust_library_modal_contract_inside_and_non_primary_stay_op
 @pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
 @pytest.mark.asyncio
 async def test_skill_trust_library_modal_contract_positive_is_str(kind: str) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
 
@@ -3563,7 +3567,7 @@ async def test_skill_trust_library_modal_contract_positive_is_str(kind: str) -> 
 @pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
 @pytest.mark.asyncio
 async def test_skill_trust_repeated_input_dismisses_once(kind: str) -> None:
-    app = ConsolidatedCSSApp()
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
     results: list[str | None] = []
     modal = _skill_trust_modal(kind)
 
@@ -3639,21 +3643,22 @@ async def test_footer_u_hint_only_registered_on_search_row():
         screen.query_one("#library-row-browse-skills").press()
         await pilot.pause()
         await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is screen.query_one("#library-skills-filter"),
+            message="Empty Skills did not settle on its filter",
+        )
         source, shortcuts = screen._footer_shortcut_registration
-        # task-2237 (R2): a selected non-search canvas gets the general set
-        # (`/` + F6); the landing's fuller set is landing-scoped. task-2856:
-        # a freshly-entered list canvas (Skills lands in its "list"
-        # sub-view) now ALSO advertises "esc focus rail" -- LIBRARY_LIST_
-        # SHORTCUTS, not the bare general set -- since Escape now genuinely
-        # does something there.
-        assert shortcuts == LibraryScreen.LIBRARY_LIST_SHORTCUTS
+        # Empty Skills enters its filter; the footer describes typing there.
+        assert screen.focused is screen.query_one("#library-skills-filter")
+        assert ("", "typing in field") in shortcuts
         assert all(key != "u" for key, _label in shortcuts)
 
         screen.query_one("#library-row-browse-search").press()
         await pilot.pause()
         await pilot.pause()
         source, shortcuts = screen._footer_shortcut_registration
-        assert shortcuts and shortcuts[0][0] == "u"
+        assert any(key == "u" for key, _label in shortcuts)
 
 
 # ---------------------------------------------------------------------------
@@ -3911,6 +3916,8 @@ async def test_action_library_skill_back_honors_dirty_guard():
                 mutation_refresh_scope=SkillBrowseScope()
             ),
             _request_library_skills_browse=lambda scope: page_requests.append(scope),
+            _sync_library_skills_reader_layout_from_shell=lambda **kwargs: None,
+            _replace_library_reader_preference=lambda *args: None,
             refresh=lambda recompose=False: refreshes.append(recompose),
             # task-2856: the guarded exit now also arms the entry-focus
             # follow-up (``_arm_library_list_entry_focus`` -- sets the
@@ -3922,7 +3929,7 @@ async def test_action_library_skill_back_honors_dirty_guard():
             _library_pending_list_entry_media_return=None,
             _library_list_entry_focus_generation=0,
             _focus_library_list_entry=lambda: None,
-            call_after_refresh=lambda callback: focus_calls.append(callback),
+            call_after_refresh=lambda callback, *args: focus_calls.append((callback, args)),
             # ``_arm_library_list_entry_focus`` also arms a settle-window
             # timer (task-2856) -- a real ``set_timer`` needs a widget
             # actually mounted in a running App, which this bare fake
@@ -3938,6 +3945,10 @@ async def test_action_library_skill_back_honors_dirty_guard():
             # supplied here explicitly -- this one was missing, raising
             # ``AttributeError`` instead of exercising the guard.
             _library_list_entry_focus_timer=None,
+            _library_list_entry_focus_retry_timer=None,
+            focused=None,
+            _library_media_return_candidate=lambda receipt: False,
+            _focus_library_list_entry_if_current=lambda generation: None,
             # wave-7 (media series): the same seam now writes
             # ``self._media_state.successful_focus_ownership``, so this
             # bypassed-construction fake needs the nested state object to

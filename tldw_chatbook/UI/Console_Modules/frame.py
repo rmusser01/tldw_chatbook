@@ -12,7 +12,6 @@ left divider, and the transcript owns no frame edge.
 
 from typing import Any
 
-from textual.color import Color
 from textual.css.query import QueryError
 from textual.widgets import Button
 
@@ -53,12 +52,20 @@ def frame_console_region(
     Returns:
         The same `widget`, mutated in place with frame styling applied.
     """
+    widget.remove_class(
+        "console-frame-solid",
+        "console-frame-quiet",
+        "border-none",
+        "console-frame-top",
+        "console-frame-right",
+        "console-frame-bottom",
+        "console-frame-left",
+    )
+    widget.add_class(
+        "console-frame-quiet" if variant == "quiet" else "console-frame-solid"
+    )
     if variant == "quiet":
-        widget.add_class("console-frame-quiet")
-        widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
         return widget
-    widget.add_class("console-frame-solid")
-    widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
     if edges is None:
         edges = tuple(
             edge
@@ -71,7 +78,7 @@ def frame_console_region(
             if enabled
         )
     for edge in edges:
-        setattr(widget.styles, f"border_{edge}", CONSOLE_FRAME_BORDER)
+        widget.add_class(f"console-frame-{edge}")
     return widget
 
 
@@ -107,8 +114,3 @@ def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
             focus_control.styles.text_style = (
                 "bold underline" if focused_within else "none"
             )
-        border = CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
-        current_kind, current_color = getattr(framed.styles, f"border_{accent_edge}")
-        if current_kind == border[0] and current_color == Color.parse(border[1]):
-            continue
-        setattr(framed.styles, f"border_{accent_edge}", border)

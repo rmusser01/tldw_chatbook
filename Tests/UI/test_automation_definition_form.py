@@ -16,9 +16,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.app import App
 from textual.widgets import Checkbox, Input, Select, Static, TextArea
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
@@ -101,7 +102,8 @@ async def _fill_minimal_valid_form(screen) -> None:
 
 
 @pytest.mark.asyncio
-async def test_form_renders_expected_fields(local_service):
+@private_profile_test
+async def test_form_renders_expected_fields(request, local_service):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -132,7 +134,10 @@ async def test_form_renders_expected_fields(local_service):
 
 
 @pytest.mark.asyncio
-async def test_scope_sources_checkboxes_hidden_until_sources_mode(local_service):
+@private_profile_test
+async def test_scope_sources_checkboxes_hidden_until_sources_mode(
+    request, local_service
+):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -152,7 +157,10 @@ async def test_scope_sources_checkboxes_hidden_until_sources_mode(local_service)
 
 
 @pytest.mark.asyncio
-async def test_runs_on_select_offers_constructor_owners_and_defaults(local_service):
+@private_profile_test
+async def test_runs_on_select_offers_constructor_owners_and_defaults(
+    request, local_service
+):
     app = _FormHost(
         local_service,
         available_owners=[("This device", "local"), ("Server (example.com)", "server:example.com")],
@@ -170,7 +178,8 @@ async def test_runs_on_select_offers_constructor_owners_and_defaults(local_servi
 
 
 @pytest.mark.asyncio
-async def test_build_payload_is_create_only_recurring_question(local_service):
+@private_profile_test
+async def test_build_payload_is_create_only_recurring_question(request, local_service):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -193,7 +202,10 @@ async def test_build_payload_is_create_only_recurring_question(local_service):
 
 
 @pytest.mark.asyncio
-async def test_build_payload_sources_scope_only_includes_checked_boxes(local_service):
+@private_profile_test
+async def test_build_payload_sources_scope_only_includes_checked_boxes(
+    request, local_service
+):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -212,7 +224,8 @@ async def test_build_payload_sources_scope_only_includes_checked_boxes(local_ser
 
 
 @pytest.mark.asyncio
-async def test_build_payload_optional_provider_model_pin(local_service):
+@private_profile_test
+async def test_build_payload_optional_provider_model_pin(request, local_service):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -228,7 +241,10 @@ async def test_build_payload_optional_provider_model_pin(local_service):
 
 
 @pytest.mark.asyncio
-async def test_build_payload_emits_blank_provider_model_as_explicit_null(local_service):
+@private_profile_test
+async def test_build_payload_emits_blank_provider_model_as_explicit_null(
+    request, local_service
+):
     """Final review I4: `save_definition` merges an edit payload onto the
     stored row, where an OMITTED key keeps its stored value -- so the two
     fields this form DOES expose must always be emitted, or clearing them
@@ -249,7 +265,10 @@ async def test_build_payload_emits_blank_provider_model_as_explicit_null(local_s
 
 
 @pytest.mark.asyncio
-async def test_blank_run_at_blocks_preview_without_calling_the_service(local_service):
+@private_profile_test
+async def test_blank_run_at_blocks_preview_without_calling_the_service(
+    request, local_service
+):
     local_service.preview_definition = AsyncMock()
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
@@ -277,7 +296,8 @@ async def test_blank_run_at_blocks_preview_without_calling_the_service(local_ser
 
 
 @pytest.mark.asyncio
-async def test_preview_maps_validation_errors_onto_their_fields(local_service):
+@private_profile_test
+async def test_preview_maps_validation_errors_onto_their_fields(request, local_service):
     """A real local preview: blank name + blank question -> both field
     errors render under their own widgets, not merged into one blob."""
     app = _FormHost(local_service)
@@ -304,7 +324,8 @@ async def test_preview_maps_validation_errors_onto_their_fields(local_service):
 
 
 @pytest.mark.asyncio
-async def test_preview_shows_next_occurrences_when_valid(local_service):
+@private_profile_test
+async def test_preview_shows_next_occurrences_when_valid(request, local_service):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -323,7 +344,9 @@ async def test_preview_shows_next_occurrences_when_valid(local_service):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_set_validation_errors_puts_unrecognized_fields_in_form_level_area(
+    request,
     local_service,
 ):
     """Unit-level pin: an error whose `field` this form does not map
@@ -357,7 +380,10 @@ async def test_set_validation_errors_puts_unrecognized_fields_in_form_level_area
 
 
 @pytest.mark.asyncio
-async def test_save_local_writes_the_definition_and_dismisses(local_service, db):
+@private_profile_test
+async def test_save_local_writes_the_definition_and_dismisses(
+    request, local_service, db
+):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -380,7 +406,8 @@ async def test_save_local_writes_the_definition_and_dismisses(local_service, db)
 
 
 @pytest.mark.asyncio
-async def test_save_invalid_shows_errors_and_stays_open(local_service):
+@private_profile_test
+async def test_save_invalid_shows_errors_and_stays_open(request, local_service):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -400,7 +427,8 @@ async def test_save_invalid_shows_errors_and_stays_open(local_service):
 
 
 @pytest.mark.asyncio
-async def test_save_server_owner_offline_queues_and_reports_queued(db):
+@private_profile_test
+async def test_save_server_owner_offline_queues_and_reports_queued(request, db):
     """A server owner whose seam is unreachable still writes the local row
     and reports "queued" honestly (Task 4's save_definition contract) --
     same offline-fallback shape `create_reminder` uses."""
@@ -441,7 +469,8 @@ async def test_save_server_owner_offline_queues_and_reports_queued(db):
 
 
 @pytest.mark.asyncio
-async def test_cancel_without_edits_dismisses_immediately(local_service):
+@private_profile_test
+async def test_cancel_without_edits_dismisses_immediately(request, local_service):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -452,7 +481,8 @@ async def test_cancel_without_edits_dismisses_immediately(local_service):
 
 
 @pytest.mark.asyncio
-async def test_cancel_with_edits_asks_for_confirmation(local_service):
+@private_profile_test
+async def test_cancel_with_edits_asks_for_confirmation(request, local_service):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -470,8 +500,9 @@ async def test_cancel_with_edits_asks_for_confirmation(local_service):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_mode_prefills_all_major_fields_and_disables_runs_on(
-    local_service, db
+    request, local_service, db
 ):
     """Create a real local definition via the facade, then reopen it in
     edit mode and confirm every field reverse-maps correctly -- including
@@ -544,8 +575,9 @@ async def test_edit_mode_prefills_all_major_fields_and_disables_runs_on(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_mode_unrecognized_schedule_falls_back_to_create_defaults(
-    local_service, db
+    request, local_service, db
 ):
     """A schedule shape this form cannot itself produce (e.g. `interval`)
     must never crash prefill -- it is left at the one-time/blank default."""
@@ -572,8 +604,9 @@ async def test_edit_mode_unrecognized_schedule_falls_back_to_create_defaults(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_mode_save_updates_the_existing_row_via_definition_id(
-    local_service, db
+    request, local_service, db
 ):
     outcome = await local_service.save_definition(
         {
@@ -611,8 +644,9 @@ async def test_edit_mode_save_updates_the_existing_row_via_definition_id(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_mode_payload_targets_server_definition_id_when_mirrored(
-    local_service, db
+    request, local_service, db
 ):
     """A server-mirrored row's preview payload must reference the SERVER's
     definition id -- the local id means nothing to the server preview seam.
@@ -647,8 +681,9 @@ async def test_edit_mode_payload_targets_server_definition_id_when_mirrored(
 
 @pytest.mark.parametrize("stored_zone", ["Pacific/Apia", "Mars/Olympus_Mons"])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_mode_prefills_a_non_curated_stored_timezone(
-    local_service, db, stored_zone
+    request, local_service, db, stored_zone
 ):
     """Qodo HIGH: a definition saved with a valid-but-non-curated zone
     (`Pacific/Apia`) assigned a Select value outside its own options and
@@ -687,7 +722,10 @@ async def test_edit_mode_prefills_a_non_curated_stored_timezone(
 
 
 @pytest.mark.asyncio
-async def test_preview_renders_junk_occurrences_instead_of_crashing(local_service):
+@private_profile_test
+async def test_preview_renders_junk_occurrences_instead_of_crashing(
+    request, local_service
+):
     """Qodo MEDIUM: `next_occurrences` crosses the network boundary from the
     server preview, so entries are not guaranteed to be ISO-8601 strings --
     or strings at all. `datetime.fromisoformat` raises `TypeError` (not
@@ -741,7 +779,8 @@ async def test_preview_renders_junk_occurrences_instead_of_crashing(local_servic
 
 
 @pytest.mark.asyncio
-async def test_edit_mode_prefills_a_server_shaped_cron_schedule(local_service):
+@private_profile_test
+async def test_edit_mode_prefills_a_server_shaped_cron_schedule(request, local_service):
     """Final review F1 carry-forward: the wire's `schedule.expression`.
 
     `_prefill_from_row` read `schedule["cron"]` only -- the key THIS

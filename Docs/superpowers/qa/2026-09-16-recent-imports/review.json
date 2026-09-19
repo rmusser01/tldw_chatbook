@@ -1,0 +1,11 @@
+{
+  "reviewer": "recent_imports_review",
+  "result": "No actionable findings.",
+  "scope": "Task, diff, queue updater and callback lifecycle; no edits or real imports.",
+  "key_checks": [
+    "Capture before await",
+    "Current attached focus wins",
+    "Coalesced callback waits for final mounted tree",
+    "Draft and ledger ownership unchanged"
+  ]
+}

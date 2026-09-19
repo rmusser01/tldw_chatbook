@@ -1,0 +1,39 @@
+...........F............................................................ [ 63%]
+..........................................                               [100%]
+=================================== FAILURES ===================================
+_ test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-light-size1] _
+Tests/UI/test_library_rag_result_focus.py:88: in test_result_arrival_keeps_current_keyboard_control_painted
+    _assert_painted(screen, target)
+Tests/UI/test_library_rag_result_focus.py:25: in _assert_painted
+    assert geometry is not None, (widget.id, widget.region)
+E   AssertionError: ('library-rag-mode-toggle', Region(x=29, y=-6, width=31, height=2))
+E   assert None is not None
+============================= slowest 25 durations =============================
+1.90s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-dark-size1]
+1.85s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-light-size0]
+1.85s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_mode_toggle_mid_answer_discards_stale_answer
+1.84s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_tab_reaches_and_focuses_evidence_card
+1.84s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-dark-size0]
+1.80s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_new_search_mid_answer_leaves_no_dangling_status
+1.77s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-dark-size1]
+1.75s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_o_on_focused_card_opens_like_button
+1.74s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-dark-size0]
+1.64s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-light-size0]
+1.63s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_disabled_answer_seam_generates_nothing
+1.60s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-1]
+1.56s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyboard_enter_runs_query_and_handoff_button
+1.56s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-True-textual-light-size1]
+1.52s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyword_mode_never_calls_the_answer_seam
+1.51s call     Tests/UI/test_library_rag_scope_recovery.py::test_rebuilt_search_scope_does_not_reuse_previous_visit_recovery[navigate-0]
+1.40s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[None-False-textual-dark-size0]
+1.37s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_starting_a_new_search_drops_the_previous_answer
+1.33s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence
+1.25s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-False-textual-light-size0]
+1.22s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_use_in_console_configured_console_no_locked_notice_task_2852
+1.22s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_u_on_focused_card_selects_then_stages
+1.22s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-False-textual-dark-size1]
+1.20s call     Tests/UI/test_product_maturity_gate16_library_search_rag.py::test_library_search_rag_enter_on_focused_card_selects_evidence
+1.20s call     Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-light-size1]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_rag_result_focus.py::test_result_arrival_keeps_current_keyboard_control_painted[library-rag-mode-toggle-True-textual-light-size1]
+1 failed, 113 passed in 117.25s (0:01:57)

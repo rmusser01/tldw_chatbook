@@ -1,0 +1,95 @@
+{
+  "pid": 77291,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "cold": true,
+      "workspace_id": "workspace-local-1",
+      "persona_id": "local-persona-f1c66db7f0a648d5aded06a1d1d62350",
+      "profile_id": "ws-workspace-local-1",
+      "real_guard_active": true,
+      "reopened_database_verified": true,
+      "cancel_preserves_defaults": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "cold": false,
+      "workspace_id": "workspace-local-2",
+      "persona_id": "local-persona-4946c52bec424264bee2eb12057202c5",
+      "profile_id": "ws-workspace-local-2",
+      "real_guard_active": true,
+      "reopened_database_verified": true,
+      "cancel_preserves_defaults": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "cold": false,
+      "workspace_id": "workspace-local-3",
+      "persona_id": "local-persona-a1528ec4d3d34c8aa479f9b51bb60332",
+      "profile_id": "ws-workspace-local-3",
+      "real_guard_active": true,
+      "reopened_database_verified": true,
+      "cancel_preserves_defaults": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "cold": false,
+      "workspace_id": "workspace-local-4",
+      "persona_id": "local-persona-d666c8524cc9412db64fd43dfc52b919",
+      "profile_id": "ws-workspace-local-4",
+      "real_guard_active": true,
+      "reopened_database_verified": true,
+      "cancel_preserves_defaults": true
+    }
+  ],
+  "runner_sha256": "350c501df67ed14a0c9d57465234465330509f11bc11ea1757f78add8fcc0266",
+  "source_hashes": {
+    "tldw_chatbook/app.py": "4f70fab5b82f4f27507dcbf168aaa61c2d4c646ed3705d50e60aff716be3b0c2",
+    "tldw_chatbook/Workspaces/agent_provisioning.py": "7a94790e019370b9ae74c33d6ccba35a563f97a72d1bfc626f85751c48e562d0",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "1558f51f4d1ff71563bcf9cc14a35a14f1e3373257f4748cf4d4688a824b57bc",
+    "tldw_chatbook/Widgets/workspace_persona_default.py": "5d2eab749cd73da2d1a459358ff67c910108eeab41a17d7848e5a3b40a573e7c",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "c2407576849caddad58e38b7f408c2842e710c2876fa3e35795092ad0aba9675",
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": "d81263d1dc5e7ef0f9796dd2034ae5ec5273b547fa9e27ca86e8d28de40d157c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "a8a6cb6f6899c774eb9844a06d81ab227ec5e1af5ab33feb5f3b656f06b0b6fa",
+    "tldw_chatbook/css/features/_settings.tcss": "60aa5ed477b868d548a68ed199a620b09a5b1e8ae791bc22ce1e9136e1445a99",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "4a790234fa12836d4dd4121f685cca7fbd9edec0c759ca38afa3a5c39cf3e43d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "5c33e3ccdfa2458257347bb2cbd95653c2e29b90a14e423114753b5ef544029f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "d83fc0a40e6b23c8481a9e0ee687746fefa9a6001977363428d24a836d0166d2",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "1889f679e60b75e715493ec7ff5084bcb97298c068bf11f51b478a62e743bd6e",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "891c539457c87bfc38b83c96a17b83a30aac412529ba3dca21f594ff0c7acb84"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Details closed",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Cold Settings creation without opening Tool Profiles. First cell is cold; remaining cells verify the initialized path across size/theme changes. Real app-owned composition, real Persona/permission stores and reopened SQLite. No provider requests.",
+  "passed": true,
+  "app_run_returned": true
+}

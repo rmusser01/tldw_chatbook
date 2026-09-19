@@ -1,0 +1,70 @@
+{
+  "skills": [
+    {
+      "path": "data/default_user/skills/skills/native-edit-81320-170/SKILL.md",
+      "name": "native-edit-81320-170",
+      "description": "Edited caf\u00e9 [bold]",
+      "allowed_tools": [
+        "fs_read",
+        "fs_read",
+        "unknown_tool"
+      ],
+      "sha256": "39e2ab57de7f535924eaa5d80f020daa5d6f321337b4d1a529fe8482f2350be0"
+    },
+    {
+      "path": "data/default_user/skills/skills/native-edit-81320-80/SKILL.md",
+      "name": "native-edit-81320-80",
+      "description": "Edited caf\u00e9 [bold]",
+      "allowed_tools": [
+        "fs_read",
+        "fs_read",
+        "unknown_tool"
+      ],
+      "sha256": "0de187d86a976fa831bd98422fccd32950c2cbd0b4885c6960684def52899475"
+    }
+  ],
+  "cancelled_draft_absent": true,
+  "databases": [
+    {
+      "path": "data/db/agent_runs.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/chachanotes.db",
+      "integrity": "ok",
+      "messages": 0
+    },
+    {
+      "path": "data/db/evals.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/library_collections.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/media.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/prompts.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/subscriptions.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/db/workspaces.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity": "ok"
+    },
+    {
+      "path": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity": "ok"
+    }
+  ]
+}

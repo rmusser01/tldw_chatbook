@@ -1460,7 +1460,9 @@ class PromptScopeService:
             result = service.count_prompts()
             return asyncio.run(result) if inspect.isawaitable(result) else result
 
-        return int(await asyncio.to_thread(count_local_prompts))
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        return int(await asyncio.to_thread(run_finite_local_worker, count_local_prompts))
 
     async def get_library_user_content_evidence(
         self, *, mode: PromptBackend | str = "local"

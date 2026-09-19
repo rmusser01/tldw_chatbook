@@ -1,10 +1,10 @@
 /* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * settings-owned rules split out of components/_agentic_terminal.tcss
+ * settings-owned rules split out of features/_settings.tcss
  * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
  * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit components/_agentic_terminal.tcss and re-run build_css.py.
+ * first paint. Edit features/_settings.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -62,6 +62,12 @@ $ds-chat-rp-strong-dark: #fff0a6;
 $ds-chat-rp-strong-light: #665000;
 $ds-destination-header-height: 1;
 $ds-destination-compact-strip-height: 1;
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
 $ds-home-dashboard-grid-height: 18;
 $ds-home-control-button-height: 1;
 $ds-home-compact-row-height: 1;
@@ -70,6 +76,8 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
+$ds-library-note-task-actions-min-width: 61;
+$ds-workflow-navigator-width: 27;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -87,6 +95,115 @@ $ds-space-inset: $ds-space-1;
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
+$ds-width-full: 100%;
+$ds-width-fill: 1fr;
+$ds-width-auto: auto;
+$ds-height-auto: auto;
+
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-22: 22;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-25: 25;
+$ds-size-26: 26;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-35: 35;
+$ds-size-36: 36;
+$ds-size-38: 38;
+$ds-size-40: 40;
+$ds-size-42: 42;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-46: 46;
+$ds-size-48: 48;
+$ds-size-50: 50;
+$ds-size-52: 52;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-80: 80;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-splash-progress-cap: 100;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-percent-34: 34%;
+$ds-percent-25: 25%;
+$ds-percent-30: 30%;
+$ds-percent-40: 40%;
+$ds-percent-42: 42%;
+$ds-percent-45: 45%;
+$ds-percent-50: 50%;
+$ds-percent-70: 70%;
+$ds-percent-75: 75%;
+$ds-percent-80: 80%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-92: 92%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-3: 3fr;
+$ds-fr-13: 13fr;
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-research-chat-pane-floor: 58;
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+$ds-new-ingest-scrollbar-gutter: 6px;
+$ds-conversations-ai-generate-share: 12%;
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
+$ds-widgets-skeleton-title-share: 60%;
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
+$ds-console-frame: #6f7782;
 
 $ds-duration-fast: 0.2s;
 $ds-duration-medium: 0.3s;
@@ -106,26 +223,82 @@ $ds-sidebar-width: 25%;
 $ds-sidebar-min-width: 35;
 $ds-sidebar-max-width: 80;
 
+$ds-theme-preset-blues-0: #0099FF;
+$ds-theme-preset-blues-1: #006FB3;
+$ds-theme-preset-blues-2: #004D80;
+$ds-theme-preset-blues-3: #003366;
+$ds-theme-preset-blues-4: #002244;
+$ds-theme-preset-greens-0: #00CC66;
+$ds-theme-preset-greens-1: #009944;
+$ds-theme-preset-greens-2: #006633;
+$ds-theme-preset-greens-3: #004422;
+$ds-theme-preset-greens-4: #002211;
+$ds-theme-preset-reds-0: #FF3333;
+$ds-theme-preset-reds-1: #CC0000;
+$ds-theme-preset-reds-2: #990000;
+$ds-theme-preset-reds-3: #660000;
+$ds-theme-preset-reds-4: #330000;
+$ds-theme-preset-purples-0: #9966FF;
+$ds-theme-preset-purples-1: #7744DD;
+$ds-theme-preset-purples-2: #5522BB;
+$ds-theme-preset-purples-3: #330099;
+$ds-theme-preset-purples-4: #220066;
+$ds-theme-preset-grays-0: #FFFFFF;
+$ds-theme-preset-grays-1: #CCCCCC;
+$ds-theme-preset-grays-2: #999999;
+$ds-theme-preset-grays-3: #666666;
+$ds-theme-preset-grays-4: #333333;
+$ds-theme-preset-material-0: #2196F3;
+$ds-theme-preset-material-1: #4CAF50;
+$ds-theme-preset-material-2: #FF9800;
+$ds-theme-preset-material-3: #F44336;
+$ds-theme-preset-material-4: #9C27B0;
+$ds-theme-preset-pastels-0: #FFB3BA;
+$ds-theme-preset-pastels-1: #BAFFC9;
+$ds-theme-preset-pastels-2: #BAE1FF;
+$ds-theme-preset-pastels-3: #FFFFBA;
+$ds-theme-preset-pastels-4: #FFDFBA;
+$ds-theme-preset-dark-0: #1A1A1A;
+$ds-theme-preset-dark-1: #2D2D2D;
+$ds-theme-preset-dark-2: #404040;
+$ds-theme-preset-dark-3: #525252;
+$ds-theme-preset-dark-4: #656565;
+$ds-theme-preview-dark-ink: #000000;
+$ds-theme-preview-light-ink: #FFFFFF;
+$ds-theme-preview-invalid: #808080;
+
+$ds-console-settings-wide-max-width: 196;
+
+$ds-inspector-modal-width: 120;
+$ds-inspector-modal-height: 42;
+$ds-inspector-section-width: 28;
+$ds-inspector-recovery-max-height: 6;
+$ds-conversation-action-width: 4;
+$ds-conversation-action-ascii-width: 9;
+$ds-inspector-usage-list-width: 60;
+$ds-conversation-menu-width: 30;
+
 
 .tldw-agentic-split-preamble-end { }
 
 
+
 #settings-category-pane {
-    width: 30;
-    max-width: 34;
+    width: $ds-size-30;
+    max-width: $ds-size-34;
     /* min-width (task-1342): worst label is "> Privacy & Security *" (22
        cells) plus Button line-pad (2), border (2), padding (2), list
        scrollbar (1) and pane border (2) -- 31; width:30 alone clips the
        dirty "*" marker off edited categories. */
-    min-width: 32;
+    min-width: $ds-size-32;
     overflow-y: hidden;
     overflow-x: hidden;
 }
 
 #settings-category-list {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
@@ -144,7 +317,7 @@ $ds-sidebar-max-width: 80;
    scroll, or the real scroll containers render stock scrollbars. The
    outer panes keep only their column width and clip. */
 #settings-detail-pane {
-    width: 6fr;
+    width: $ds-fr-6;
     overflow-y: hidden;
     overflow-x: hidden;
 }
@@ -153,8 +326,8 @@ $ds-sidebar-max-width: 80;
     /* min-width: longest inspector word is "Read-only/WIP;" (14 cells) plus
        border (2), padding (2), scrollbar (1) and row padding (2), so words
        wrap on whitespace instead of folding mid-word (task-1342). */
-    width: 2fr;
-    min-width: 21;
+    width: $ds-fr-2;
+    min-width: $ds-size-21;
     overflow-y: hidden;
     overflow-x: hidden;
 }
@@ -162,7 +335,7 @@ $ds-sidebar-max-width: 80;
 /* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {
-    width: 100%;
+    width: $ds-width-full;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-size: 1 1;
@@ -179,19 +352,19 @@ $ds-sidebar-max-width: 80;
    rest. The search help/status rows hide so category rows stay visible at
    24-row heights. */
 #settings-workbench.settings-workbench-compact {
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 #settings-category-pane.settings-workbench-compact-pane {
-    width: 32;
-    min-width: 32;
-    padding: 0 1;
+    width: $ds-size-32;
+    min-width: $ds-size-32;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #settings-detail-pane.settings-workbench-compact-pane {
-    width: 1fr;
-    min-width: 0;
-    padding: 0 1;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #settings-impact-pane.settings-workbench-compact-pane,
@@ -204,10 +377,47 @@ $ds-sidebar-max-width: 80;
     display: none;
 }
 
+/* TASK-32593: a 24-column label leaves only seven editable cells in the
+   default 80-column workbench. Keep the sidebar and complete labels, and
+   spend vertical space on the Connect/Network field rows instead.
+   TASK-32748 includes the nested Generation defaults rows, where the same
+   fixed label otherwise leaves only the final digit of Temperature visible.
+   Console Behavior and Storage use the same stacked field contract.
+   Existing controls retain their compact border and focus contracts. */
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row,
+.settings-workbench-compact #settings-network-card > .settings-input-row,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row,
+.settings-workbench-compact #settings-storage-card .settings-input-row {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-2;
+    margin-bottom: $ds-space-stack;
+}
+
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Input,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Select,
+.settings-workbench-compact #settings-network-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-network-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > Input,
+.settings-workbench-compact #settings-console-behavior-card .settings-input-row > Select,
+.settings-workbench-compact #settings-storage-card .settings-input-row > Input {
+    width: $ds-width-full;
+}
+
+/* The narrow card can have 34 columns once its scrollbar appears. Its
+   longest policy is 29 columns; one padding cell plus the existing border
+   and arrow fits it without changing the value or removing focus chrome. */
+.settings-workbench-compact #settings-network-ssl-mode > SelectCurrent {
+    padding-right: $ds-space-0;
+}
+
 /* Settings density: the workbench panes themselves carry borders and
    padding, so the frame would only double them up. */
 #settings-workbench {
-    padding: 0;
+    padding: $ds-space-0;
     border: none;
 }
 
@@ -218,12 +428,12 @@ $ds-sidebar-max-width: 80;
 }
 
 Button.settings-category-button {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     /* Textual 8 Buttons default to line-pad: 1, reserving one cell on each
        side of the label (line-pad: 0 is not expressible in CSS). The
        #settings-category-pane min-width absorbs those 2 cells so labels
@@ -269,12 +479,12 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 #settings-category-search {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     /* No border: at height 1 a border would clip the content row. The
        raised background carries the "this is a field" affordance, and
        focus/active below swap background+weight only, so the strip never
@@ -299,27 +509,27 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .settings-category-search-help {
-    width: 100%;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
 .settings-category-search-status {
-    width: 100%;
-    min-height: 2;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-height: $ds-size-2;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-primary;
     background: $ds-surface-panel;
 }
 
 .settings-search-empty {
-    width: 100%;
-    min-height: 3;
-    padding: 1;
-    margin: 1 0 0 0;
+    width: $ds-width-full;
+    min-height: $ds-size-3;
+    padding: $ds-space-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $ds-text-muted;
@@ -334,11 +544,11 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .settings-category-group-title {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     background: $ds-surface-inspector;
     color: $ds-text-primary;
     text-style: bold;
@@ -347,12 +557,12 @@ Button.settings-category-button.settings-secondary-search-match {
 /* Collapsible rail-group toggle (Domain Defaults): renders like a group
    heading but behaves like the compact category buttons. */
 Button.settings-category-group-toggle {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     content-align: left middle;
     text-align: left;
@@ -369,10 +579,10 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-state-banner {
-    width: 100%;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     /* task-1625: the State strip reads as a raised status surface (the
        task-345 focus steel at low alpha), not another flat prose row --
        it now leads with the persistence badge (task-1717), so it earns
@@ -382,78 +592,115 @@ Button.settings-category-group-toggle:focus {
     text-style: bold;
 }
 
-.settings-detail-row {
-    width: 100%;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-}
+/* ADR-161 task 9: the bare .settings-detail-row definition moved to
+   components/_forms.tcss (documented variant of form-row; consumed on TWO
+   production surfaces -- the Settings workbench and the STTS speech
+   settings pane -- so it rides the boot bundle instead of the lazy
+   settings screen sheet). The scoped override below stays with its
+   surface. */
 
 /* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
    ~30 columns, so the blank line between rows earns its keep there (and
    the F6 fold-geometry contract measures against it). */
 #settings-impact-pane .settings-detail-row {
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-input-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    margin: 0;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+}
+
+/* Interface subviews must grow with their forms so the detail pane owns
+   scrolling, including stacked Theme actions and the Splash gallery. */
+#settings-theme-editor,
+#settings-splash-screen-viewer {
+    height: auto;
+}
+
+/* Compact toggles retain the full label and glyph without three-row
+   chrome, including the rail-label control in the narrow Settings pane. */
+#settings-console-stack-collapsed-rail-labels,
+#settings-appearance-animations-enabled,
+#settings-splash-enabled,
+#settings-splash-show-progress,
+#settings-splash-skip-on-keypress {
+    width: auto;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+
+/* Appearance has the same 24-column label constraint as Connect. Stack
+   compact fields so the toggle buttons and editable values fit the card. */
+.settings-workbench-compact #settings-appearance-card > .settings-input-row,
+.settings-workbench-compact #settings-splash-card > .settings-select-row {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-2;
+    margin-bottom: $ds-space-stack;
+}
+
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-appearance-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-splash-default-select {
+    width: $ds-width-full;
+}
+
+.settings-workbench-compact #settings-theme-tree {
+    height: $ds-size-8;
+}
+
+/* A stacked gallery gives compact terminals a useful card list and preview
+   width; the list fits completely inside the detail pane when focused. */
+.settings-workbench-compact #settings-splash-gallery {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-space-0;
+}
+
+.settings-workbench-compact #settings-splash-card-list {
+    width: $ds-width-full;
+    height: $ds-size-8;
+}
+
+.settings-workbench-compact #settings-splash-preview-scroll {
+    width: $ds-width-full;
+    height: $ds-size-12;
 }
 
 /* The provider search is content-sized, while its OptionList owns a bounded
    scrolling viewport. Explicit sizing keeps following fields in document
    order at both the standard and compact Settings workbench widths. */
 #settings-provider-picker-block {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 9;
+    min-height: $ds-size-9;
 }
 
 #settings-provider-picker {
-    width: 100%;
-    height: 6;
-    min-height: 6;
-    max-height: 6;
+    width: $ds-width-full;
+    height: $ds-size-6;
+    min-height: $ds-size-6;
+    max-height: $ds-size-6;
 }
 
 .settings-select-row {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
 }
 
-.settings-compact-input {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
-    /* task-1586 control convention: the one-column left edge marks "this
-       row is editable" at rest; full borders stay off because they cost
-       a row above and below on these one-row fields. */
-    border: none;
-    border-left: solid $ds-control-edge;
-    background: $ds-surface-inspector;
-    color: $ds-text-primary;
-}
-
-.settings-compact-input:focus {
-    border: none;
-    border-left: thick $ds-action-focus;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    /* No underline: it made placeholder copy read as a link (task-185). */
-    text-style: bold;
-    outline: none;
-}
-
-.settings-compact-input.settings-invalid-input,
+/* ADR-161 task 9: the .settings-compact-input definitions (base, :focus,
+   and its halves of the two .settings-invalid-input rules below) moved to
+   components/_forms.tcss as the documented compact variant of form-input
+   -- also composed by the pattern gallery, so it rides the boot bundle.
+   The compact-SELECT stays here (Settings-only). */
 .settings-compact-select.settings-invalid-input {
     background: $ds-status-error 18%;
     color: $ds-text-primary;
@@ -461,7 +708,6 @@ Button.settings-category-group-toggle:focus {
     outline: none;
 }
 
-.settings-compact-input.settings-invalid-input:focus,
 .settings-compact-select.settings-invalid-input:focus {
     /* task-1369: keep the error tint while focused so the invalid marker is
        not lost; slightly stronger than the unfocused 18% to still read as
@@ -474,22 +720,22 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-compact-select {
-    width: 1fr;
-    height: 3;
-    min-height: 3;
-    margin: 0;
-    padding: 0;
+    width: $ds-width-fill;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
     border: solid $ds-grid-line;
     background: $ds-surface-inspector;
     color: $ds-text-primary;
 }
 
 .settings-compact-select > SelectCurrent {
-    width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    padding: 0 1;
+    width: $ds-width-fill;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     border: none;
     background: $ds-surface-inspector;
     color: $ds-text-primary;
@@ -511,16 +757,16 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-compact-select > SelectOverlay {
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     color: $ds-text-primary;
-    min-width: 30;
+    min-width: $ds-size-30;
 }
 
 .settings-compact-select > SelectOverlay Option {
-    padding: 0 2;
-    min-height: 3;
+    padding: $ds-space-0 $ds-space-2;
+    min-height: $ds-size-3;
     background: $ds-surface-inspector;
     color: $ds-text-primary;
 }
@@ -542,10 +788,10 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-status-row {
-    width: 100%;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0;
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
     background: $ds-surface-inspector;
     color: $ds-text-muted;
 }
@@ -558,17 +804,40 @@ Button.settings-category-group-toggle:focus {
     height: auto;
     border: solid $ds-column-line;
     background: $ds-surface-panel;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+/* Keep refresh controls inside the scrolled group at compact widths. */
+#settings-model-catalog-group .settings-input-row {
+    height: auto;
+}
+
+#settings-model-catalog-group Checkbox {
+    width: auto;
+    max-width: $ds-width-full;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+
+#settings-model-catalog-group Input {
+    width: $ds-width-fill;
+}
+
+.settings-workbench-compact #settings-model-catalog-group .settings-input-row {
+    layout: vertical;
 }
 
 .settings-instant-apply-hint {
     color: $ds-text-muted;
     text-style: italic;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 .settings-storage-check-result {
-    min-height: 7;
+    min-height: $ds-size-7;
 }
 
 .settings-dirty-category {
@@ -602,18 +871,18 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-rag-profile-modal {
-    width: 60;
+    width: $ds-size-60;
     height: auto;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     border: thick $ds-action-focus;
     background: $ds-surface-panel;
 }
 
 .settings-speech-credential-modal {
-    width: 70;
-    max-width: 90%;
+    width: $ds-size-70;
+    max-width: $ds-percent-90;
     height: auto;
-    padding: 1 2;
+    padding: $ds-space-1 $ds-space-2;
     border: thick $ds-action-focus;
     background: $ds-surface-panel;
 }
@@ -621,27 +890,59 @@ Button.settings-category-group-toggle:focus {
 /* task-2835: keyboard-reachable mirror of the focused control's tooltip,
    one muted line pinned under the Settings workbench. */
 #settings-focus-help {
-    height: 1;
-    padding: 0 1;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
     background: $ds-surface-panel;
 }
 
 .settings-focus-card {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
 
+/* Overview shares the detail pane scroll owner; its primary rows must
+   grow with wrapped status copy instead of shrinking as a 1fr child. */
+#settings-overview-primary {
+    height: auto;
+}
+
+/* Workspace rows share the detail pane scroll owner; keep every row inside
+   the list's bounds so keyboard focus can reveal it beside a tall card. */
+#settings-workspaces-list {
+    height: auto;
+}
+
+#settings-workspaces-list .settings-workspace-row {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
+/* Keep the selected option and its adjacent staging receipt together even
+   when the user's Persona/profile catalog is long. */
+#settings-workspace-persona-picker,
+#settings-workspace-profile-picker {
+    max-height: $ds-size-5;
+    /* The generic focus outline paints over compact option text. */
+    outline: none;
+}
+
+.settings-workbench-compact #settings-overview-primary .settings-action-row {
+    layout: vertical;
+    height: auto;
+}
+
 /* RAW CLI DANGER GATE START */
 .settings-raw-cli-danger {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    padding: 1;
+    padding: $ds-space-1;
     border: solid $surface-lighten-2;
     background: $surface;
 }
@@ -655,10 +956,10 @@ Button.settings-category-group-toggle:focus {
 #settings-raw-cli-state,
 .settings-raw-cli-disclosure,
 #settings-raw-cli-immediate {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     text-wrap: wrap;
 }
 
@@ -670,22 +971,22 @@ Button.settings-category-group-toggle:focus {
 
 .settings-raw-cli-disclosure {
     color: $text;
-    margin: 0 0 1 0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 #settings-raw-cli-permitted {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-raw-cli-action-row {
-    width: 100%;
-    min-width: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
     height: auto;
-    min-height: 0;
+    min-height: $ds-size-0;
 }
 
 #settings-raw-cli-immediate {
@@ -693,11 +994,11 @@ Button.settings-category-group-toggle:focus {
 }
 
 #settings-shell Button#settings-raw-cli-arm {
-    width: 100%;
-    min-width: 0;
-    height: 3;
-    min-height: 3;
-    margin: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
     border: none;
     outline: none;
     background: $error 20%;
@@ -708,10 +1009,10 @@ Button.settings-category-group-toggle:focus {
 #settings-shell Button#settings-raw-cli-arm:focus,
 #settings-shell Button#settings-raw-cli-arm:hover,
 #settings-shell Button#settings-raw-cli-arm:hover:focus {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0;
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0;
     border: none;
     outline: none;
     background: $error 20%;
@@ -734,51 +1035,50 @@ Button.settings-category-group-toggle:focus {
     border: none;
     outline: none;
 }
-/* RAW CLI DANGER GATE END */
 
 #settings-advanced-config-card {
-    height: 1fr;
-    min-height: 0;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
     border: none;
-    padding: 0;
-    margin: 0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
 }
 
 #settings-advanced-config-actions {
     grid-size: 2;
     grid-rows: 1;
     grid-gutter: 0 1;
-    height: 2;
+    height: $ds-size-2;
 }
 
 #settings-advanced-config-actions Button {
-    width: 1fr;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 #settings-advanced-guide {
     height: auto;
-    max-height: 8;
+    max-height: $ds-size-8;
     overflow-y: auto;
-    padding: 0;
-    margin: 0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
     border: none;
 }
 
 #settings-advanced-guide Button {
-    height: 1;
-    min-height: 1;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
 }
 
 #settings-advanced-config-validation-status,
 #settings-advanced-config-result {
     height: auto;
-    max-height: 3;
+    max-height: $ds-size-3;
     overflow-y: auto;
 }
 
@@ -787,10 +1087,10 @@ Button.settings-category-group-toggle:focus {
        line -- near-invisible in the critique captures. */
     border-title-color: $ds-text-primary;
     border-title-style: bold;
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
@@ -807,20 +1107,47 @@ Button.settings-category-group-toggle:focus {
 }
 
 #settings-console-behavior-card {
-    min-height: 12;
+    min-height: $ds-size-12;
+}
+
+/* Textual checkboxes measure one row. Compact borders and concise labels
+   keep both the checkbox glyph and complete label inside the pane. */
+#settings-console-behavior-card Checkbox {
+    width: auto;
+    max-width: $ds-width-full;
+    height: auto;
+    min-height: $ds-control-height-compact;
+    border: none;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+#settings-console-context-memory-jump {
+    max-width: $ds-width-full;
+    height: auto;
+    text-wrap: wrap;
+}
+
+
+/* The outer focus card already supplies the compact pane inset. A second
+   inset leaves too few columns for the full rail-label checkbox. */
+.settings-workbench-compact #settings-console-behavior-card {
+    padding: $ds-space-0;
 }
 
 .settings-action-row {
-    width: 100%;
-    height: 1;
-    min-height: 1;
-    margin: 0;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
 }
 
 .settings-action-row Button {
-    height: 1;
-    min-height: 1;
-    margin: 0 1 0 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 .settings-action-row Button:focus,
@@ -837,12 +1164,12 @@ Button.settings-category-group-toggle:focus {
    (settings_screen.py) gives it distinct color, but it still read as just
    another button in the row without the extra gap. */
 .settings-library-rag-profile-delete-button {
-    margin-left: 2;
+    margin-left: $ds-space-2;
 }
 
 .settings-sync-safety-row {
-    width: 100%;
-    padding: 0 1;
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-raised;
 }
 
@@ -853,8 +1180,8 @@ Button.settings-category-group-toggle:focus {
 }
 
 #settings-advanced-config-editor {
-    height: 1fr;
-    min-height: 5;
+    height: $ds-height-fill;
+    min-height: $ds-size-5;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
@@ -883,33 +1210,33 @@ Button.settings-category-group-toggle:focus {
 /* Web Search shares the Settings detail pane's scrolling document. */
 #settings-web-search-panel,
 #settings-web-search-fields {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 #settings-web-search-panel Select {
-    width: 100%;
-    margin: 0;
+    width: $ds-width-full;
+    margin: $ds-space-0;
 }
 
 #settings-web-search-panel Button {
     width: auto;
-    max-width: 100%;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
+    max-width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
     border: none;
-    margin: 0 1;
-    padding: 0 1;
+    margin: $ds-space-0 $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 #settings-web-search-panel Link {
-    margin: 0 1;
+    margin: $ds-space-0 $ds-space-1;
     height: auto;
 }
 
 #settings-web-search-panel .settings-compact-input {
-    width: 100%;
+    width: $ds-width-full;
 }
 
 #settings-web-search-compact-actions {
@@ -931,7 +1258,7 @@ Button.settings-category-group-toggle:focus {
 .settings-speech-provider-form,
 .settings-speech-credential,
 .settings-speech-control-stack {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
@@ -947,29 +1274,29 @@ Button.settings-category-group-toggle:focus {
 #settings-speech-audio-cpp-guided-advanced-fields,
 .settings-speech-audio-cpp-packages,
 .settings-speech-audio-cpp-package-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 .settings-speech-audio-cpp-package-row {
-    min-height: 1;
-    margin: 1 0;
-    padding: 0 1;
+    min-height: $ds-size-1;
+    margin: $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
     background: $ds-surface-panel;
 }
 
 .settings-speech-audio-cpp-package-copy {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
 }
 
 .settings-speech-audio-cpp-package-remove {
     width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    margin: 1 0 0 0;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
 }
 
 /* Field errors live below their control. As a third child of a Horizontal,
@@ -977,19 +1304,25 @@ Button.settings-category-group-toggle:focus {
    cells even while empty. */
 .settings-speech-input-row {
     height: auto;
-    min-height: 1;
+    min-height: $ds-size-1;
     align: left top;
 }
 
+/* Leave room for the sibling label in horizontal forms. */
+.settings-speech-input-row > .settings-speech-control-stack {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
 .settings-speech-input-row.settings-select-row {
-    min-height: 3;
+    min-height: $ds-size-3;
 }
 
 .settings-speech-field-error {
     display: none;
-    width: 100%;
-    min-height: 1;
-    margin: 0;
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    margin: $ds-space-0;
     color: $ds-status-error;
 }
 
@@ -998,71 +1331,92 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-speech-path-control {
-    width: 100%;
-    height: 1;
-    min-height: 1;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
 }
 
 .settings-speech-path-control .settings-compact-input {
-    width: 1fr;
+    width: $ds-width-fill;
 }
 
 .settings-speech-path-picker {
     width: auto;
-    min-width: 9;
-    height: 1;
-    min-height: 1;
-    margin: 0 0 0 1;
+    min-width: $ds-size-9;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 .settings-speech-stacked .settings-speech-input-row {
     layout: vertical;
     height: auto;
-    min-height: 3;
-    margin-bottom: 1;
+    min-height: $ds-size-3;
+    margin-bottom: $ds-space-1;
 }
 
 .settings-speech-stacked #settings-speech-actions {
     layout: vertical;
-    height: 4;
+    height: $ds-size-4;
 }
 
 .settings-speech-stacked #settings-speech-actions Button {
-    width: 100%;
-    min-width: 0;
-    margin-right: 0;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin-right: $ds-space-0;
+}
+
+/* This row includes a Select, so it cannot use an action row's single line. */
+.settings-speech-voice-picker {
+    height: auto;
+}
+
+.settings-speech-voice-picker > Select {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
+.settings-speech-stacked .settings-speech-voice-picker {
+    layout: vertical;
+}
+
+.settings-speech-stacked .settings-speech-voice-picker > Select,
+.settings-speech-stacked .settings-speech-voice-picker > Button {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    margin-right: $ds-space-0;
 }
 
 #settings-speech-details,
 #settings-speech-scope-inspector {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 3;
-    margin: 1 0 0 0;
-    padding: 0;
+    min-height: $ds-size-3;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0;
     border: none;
     background: transparent;
 }
 
 #settings-speech-inspector {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
 }
 
 #settings-speech-details > CollapsibleTitle,
 #settings-speech-scope-inspector > CollapsibleTitle {
-    width: 100%;
-    min-width: 0;
-    height: 3;
-    min-height: 3;
-    padding: 1;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    padding: $ds-space-1;
 }
 
 #settings-speech-details > Contents,
 #settings-speech-scope-inspector > Contents {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
     background: transparent;
 }
 
@@ -1071,10 +1425,10 @@ Button.settings-category-group-toggle:focus {
    base .settings-input-row's fixed height:1) so the row never clips a
    wrapped Checkbox/Button. */
 .settings-imagegen-backend-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 3;
-    margin: 0 0 1 0;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     align: left middle;
 }
 
@@ -1085,10 +1439,10 @@ Button.settings-category-group-toggle:focus {
    without this, the DEFAULT backend's row -- the one carrying "★
    Default" -- clipped Test entirely off the visible/clickable area). */
 .settings-imagegen-backend-row Button {
-    height: 1;
-    min-height: 1;
-    min-width: 6;
-    margin: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    min-width: $ds-size-6;
+    margin: $ds-space-0;
 }
 
 /* _conversations.tcss's bare `Checkbox { width: 100%; height: 2; }` is an
@@ -1104,22 +1458,22 @@ Button.settings-category-group-toggle:focus {
    Button rule above. */
 .settings-imagegen-backend-row Checkbox {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-bottom: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-0;
     border: none;
-    padding: 0;
+    padding: $ds-space-0;
 }
 
 
 
 #settings-imagegen-context_llm_enabled {
     width: auto;
-    height: 1;
-    min-height: 1;
-    margin-bottom: 0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin-bottom: $ds-space-0;
     border: none;
-    padding: 0 1;
+    padding: $ds-space-0 $ds-space-1;
 }
 
 /* No horizontal padding (final review): "Not configured" (14 chars) is
@@ -1127,7 +1481,7 @@ Button.settings-category-group-toggle:focus {
    contested columns in the narrow-terminal row budget above. */
 .settings-imagegen-badge {
     width: auto;
-    min-width: 14;
+    min-width: $ds-size-14;
     color: $ds-text-muted;
 }
 
@@ -1142,10 +1496,10 @@ Button.settings-category-group-toggle:focus {
 }
 
 .settings-imagegen-hint {
-    width: 100%;
-    min-height: 1;
-    padding: 0 1;
-    margin: 0 0 1 0;
+    width: $ds-width-full;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
     color: $ds-text-muted;
 }
 
@@ -1159,18 +1513,18 @@ Button.settings-category-group-toggle:focus {
    height:1 (no wrap headroom), so this row gets its own auto-height class
    and the Clear button gets a narrower min-width. */
 .settings-imagegen-secret-row {
-    width: 100%;
+    width: $ds-width-full;
     height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .settings-imagegen-secret-row Button.settings-imagegen-clear-button {
     width: auto;
-    min-width: 8;
-    height: 1;
-    min-height: 1;
-    margin: 0 0 0 1;
+    min-width: $ds-size-8;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
 /* SwarmUI's swarm_token is optional for local installs -- its "missing"

@@ -1,0 +1,26 @@
+....................................................                     [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-9b549396-fc93-4fed-947b-9397dc7296c1/test_kokoro_constructor_direct3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-9b549396-fc93-4fed-947b-9397dc7296c1/test_kokoro_constructor_direct3'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-9b549396-fc93-4fed-947b-9397dc7296c1
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-9b549396-fc93-4fed-947b-9397dc7296c1'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+14.14s call     Tests/UI/test_nav_overflow_layout.py::test_all_overflow_destinations_paint_and_activate_at_80_columns[textual-light]
+14.04s call     Tests/UI/test_nav_overflow_layout.py::test_all_overflow_destinations_paint_and_activate_at_80_columns[textual-dark]
+3.37s call     Tests/UI/test_master_shell_navigation.py::test_tab_cycling_never_focuses_a_ghosted_nav_button
+2.25s call     Tests/UI/test_master_shell_navigation.py::test_periodic_interval_does_not_drag_the_focused_button_out_of_view
+2.20s call     Tests/UI/test_master_shell_navigation.py::test_resize_does_not_strand_the_focused_button
+1.78s call     Tests/UI/test_master_shell_navigation.py::test_restore_active_does_not_strand_the_focused_button
+1.53s call     Tests/UI/test_master_shell_navigation.py::test_nav_overflow_menu_reaches_hidden_destinations_at_100_cols
+1.22s call     Tests/UI/test_master_shell_navigation.py::test_master_shell_navigation_reveals_active_destination_when_it_changes
+1.04s call     Tests/UI/test_master_shell_navigation.py::test_more_hint_never_scrolls_the_strip_so_it_cannot_overscroll
+
+(16 durations < 1s hidden.)
+52 passed, 2 warnings in 63.45s (0:01:03)

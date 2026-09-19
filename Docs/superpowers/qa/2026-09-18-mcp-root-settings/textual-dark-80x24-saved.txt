@@ -1,0 +1,24 @@
+                  ╭────────╮
+ ‹   ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││        Local workspace, web, and         ││                  │
+│ Source       ││         Watchlists tools: on ▸           ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▔▔▎ ││  Available by default. Calls still       ││  ◦ Off (opt-in)  │
+│ ▊ Local  ▼ ▎ ││  follow Ask, Allow, or Off               ││  tldw_chatbook   │
+│ ▊▁▁▁▁▁▁▁▁▁▁▎ ││  permissions.                            ││  (built-in)      │
+│              ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││  Why · Off —     │
+│ Servers      ││  ▊  ark-80x24-root   ▎                 ▇ ││  enable it to    │
+│  ◦ off · ⌂   ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││  let MCP         │
+│  built-in    ││                                          ││  clients use     │
+│     All      ││  Saved local MCP / Hub test root.        ││  chatbook's      │
+│   ◦ ⌂ tld... ││  Root: local MCP serving and Hub         ││  tools.          │
+│              ││  tests. Blank uses the serving           ││  Add server      │
+│              ││  process's current folder. Console       ││    Advanced…     │
+│              ││  uses Chat scratch and admitted          ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -1,0 +1,24 @@
+                             ╭─────────────╮
+ ‹   ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings   More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │    Set active                      │  │
+│     Privacy & Security       │  │  │ │     Archive                        │▃ │
+│     Network                  │  │  │ │                                    │  │
+│     My Profile               │  │  │ │  Folders (agent file-tool access)  │▇ │
+│  Troubleshooting           ▇ │  │  │ │ │ ~/path/to/folde    Add folder    │  │
+│     Diagnostics (view)       │  │  │ │  Folder removed.                   │  │
+│     About (view)             │  │  │ │                                    │  │
+│     Agents                   │  │  │ │  Change review (post-run diffs)    │  │
+│  Expert                      │  │  │ │  Change Review stores shadow Git   │  │
+│     Internal Prompts         │  │  │ │  history in application data,      │  │
+│     Advanced Config          │  │  │ │  including file contents, for 30   │  │
+│   Domain Defaults ▸ (11)     │  │  │ │  days by default. Disabling stops  │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

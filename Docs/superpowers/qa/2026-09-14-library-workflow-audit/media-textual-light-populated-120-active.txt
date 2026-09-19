@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────┐  I       ‹ Back                                        │
+│   a  │ Media (1)      Sets                                  │  t  Interview transcript — design review               │
+│   v  │ Media · 1 of 1 · all types · sort: Newest            │  e  Audit fixture                                      │
+│      │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m    Find  Read later  Use in Console  More           │
+│      │  ▊  Title/keyword…                  ▎                │  s    Read (selected)  Analysis  Highlights  Info      │
+│      │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     ┌────────────────────────────────────────────────┐ │
+│      │    type: All types    sort: Newest                   │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │    Export…     Trash     Select                      │     │ Speaker: Source evidence remains available     │ │
+│      │    Review these                                      │     │ after filtering.                               │ │
+│      │ █▸ Interview transcript — design review              │     │ Speaker: Source evidence remains available     │ │
+│      │ █    article · updated 16h · loaded                  │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│ ---> │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │<--- │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│ ---> │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available  ▄▄ │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                                                      │     │ Speaker: Source evidence remains available     │ │
+│      │                                                      │     │ after filtering.                               │ │
+│      │                       1-1 of 1                       │     └────────────────────────────────────────────────┘ │
+│      └──────────────────────────────────────────────────────┘                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ctrl+f find | l read later | c use in Console | t trash | F1 · Ctrl+P · Ctrl+Q

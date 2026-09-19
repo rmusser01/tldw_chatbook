@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌─────────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█─────────┐
+│  Filter █                                                          █hanges   │
+│  Core   █             Switch the Trace viewer to Full?             █s after  │
+│     Over█                                                          █         │
+│     Prov█         Full may reveal persisted prompts, tool          █;   │ │  │
+│     Web █     arguments/results, automatic instructions, local     █    │ │▄ │
+│     Spee█  paths, and sensitive prose that PII detectors missed.   █s   │ │▄ │
+│  Interfa█       Credentials and frozen masks remain blocked.       █    │ │  │
+│     Appe█                                                          █    │ │  │
+│     Them█                                                          █    │ │  │
+│     Spla█                 Keep Safe    View Full                   █    │ │  │
+│   > Cons█                                                          █    │ │  │
+│  Data & █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█    │ │  │
+│     Storage                  │  │  │ │ │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │  │
+│     Workspaces               │  │  │ │ │▊  Global                   ▼  ▎│ │  │
+│     Tool Profiles            │  │  │ │ │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 · F6 · Ctrl+P · Ctrl+Q

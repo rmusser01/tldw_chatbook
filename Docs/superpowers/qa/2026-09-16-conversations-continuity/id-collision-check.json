@@ -1,0 +1,13 @@
+{
+  "task_id": "TASK-32701",
+  "refs_checked": 267,
+  "worktrees_checked": 27,
+  "matches": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "matches": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/backlog/tasks/task-32701 - Review-Library-Conversations-filter-and-reader-continuity.md"
+      ]
+    }
+  ]
+}

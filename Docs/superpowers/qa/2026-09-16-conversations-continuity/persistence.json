@@ -1,0 +1,52 @@
+{
+  "databases": [
+    {
+      "database": "data/db/agent_runs.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/db/chachanotes.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/db/evals.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/db/library_collections.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/db/media.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/db/prompts.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/db/subscriptions.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/db/workspaces.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/default_user/tldw_chatbook_library_ingest_jobs.db",
+      "integrity_check": "ok"
+    },
+    {
+      "database": "data/default_user/tldw_chatbook_scheduled_tasks.db",
+      "integrity_check": "ok"
+    }
+  ],
+  "fixture_conversations_exact": 2,
+  "fixture_messages_exact": 26,
+  "database_conversation_count": 2,
+  "database_message_count": 26,
+  "default_profile_hashes_unchanged": true,
+  "default_profile_file_count": 3,
+  "unhandled_exception_count": 0,
+  "normal_stopping_events": 1
+}

@@ -1,0 +1,177 @@
+commit 13916d8abebc9c3dfd3e16733d918b43db6b3e46
+Author: Robert <contact@rmusser.net>
+Date:   Fri Aug 7 15:00:36 2026 -0700
+
+    fix(library): UAT P3 polish batch — 9 fixed, 1 declined, 1 already-fixed (task-2859)
+
+    Conversations canvas gets a "Conversations (n)" title + filter reordered
+    above the empty state; rail gloss/prompt "legacy" label reworded to plain
+    language; export quality caption matches the selected option; ingest
+    queue tally drops its self-contradicting "— in queue" suffix; the
+    Details header's label (not just its chip) is now clickable; DB sizes
+    include -wal/-shm sidecars and no longer wrap mid-unit; the vendored file
+    picker shows human-readable sizes and minute-precision timestamps;
+    canvas titles agree on the "Name (n)" pattern and rail spacing; skill
+    editor copy drops internal-version talk; Search/RAG evidence gets a
+    results-count headline and the snippet regains its left padding.
+    Declined: Skills' alphabetical sort default (no timestamp field to sort
+    by). Already fixed at HEAD: the ingest-queue toast overlap (task-2130).
+
+    Two Textual/Rich traps documented in backlog/docs/lessons-testing-evidence.md:
+    Button.press() called from an ancestor's own click handler misattributes
+    message sender via the active_message_pump contextvar and silently stops
+    the bubble one hop early; a non-breaking space does NOT stop Rich Static
+    word-wrap (rich._wrap's tokenizer regex treats U+00A0 as ordinary \s).
+
+    Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+diff --git a/tldw_chatbook/Widgets/Library/library_search_rag_panel.py b/tldw_chatbook/Widgets/Library/library_search_rag_panel.py
+index 33355f7efa..39fe581d75 100644
+--- a/tldw_chatbook/Widgets/Library/library_search_rag_panel.py
++++ b/tldw_chatbook/Widgets/Library/library_search_rag_panel.py
+@@ -45,10 +45,19 @@ class LibrarySearchRagPanel(VerticalScroll):
+         self.state = state
+
+     def compose(self) -> ComposeResult:
++        # task-2859 item 7: drop the "Library " prefix (this canvas already
++        # lives inside the Library destination) and match the rail row's
++        # own spaced "Search / RAG" (library_shell_state.py) -- the canvas
++        # used to say "Library Search/RAG", disagreeing with the rail on
++        # both the prefix and the slash spacing. NOT the same string as
++        # the cross-app "Library Search/RAG" evidence-provenance label
++        # (``OWNER_LIBRARY_RAG``/``source=`` on staged Console evidence) --
++        # that vocabulary is deliberately unchanged here.
+         yield Static(
+-            "Library Search/RAG",
++            "Search / RAG",
+             id="library-rag-panel-title",
+             classes="destination-section",
++            markup=False,
+         )
+         with Vertical(
+             id="library-rag-query-controls",
+@@ -829,7 +838,29 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
+     # prepend an empty list, i.e. are unchanged.
+     note_children: list[Widget] = list(library_rag_coverage_note_children(state))
+     if state.results:
+-        children: list[Widget] = list(note_children)
++        # task-2859 item 10: "N results for 'query'" headline -- the
++        # Evidence region used to jump straight from the mode/top-k
++        # heading into the row cards with no line naming how many actually
++        # landed or what query produced them.
++        children: list[Widget] = []
++        if state.results_count_line:
++            # NOT markup=False: `results_count_line` is already
++            # `escape_markup`-escaped (matching `coverage_note`/the empty-
++            # state quiet copy below) -- disabling markup parsing here
++            # would show the escape backslashes verbatim instead of
++            # un-escaping them back to literal brackets.
++            children.append(
++                Static(
++                    state.results_count_line,
++                    id="library-rag-results-count-line",
++                    classes="library-rag-quiet-line",
++                )
++            )
++        # (rebase note) Reuse the already-computed `note_children` rather
++        # than recomputing `library_rag_coverage_note_children(state)` --
++        # dev's variable and the branch's headline are both real; only the
++        # redundant recomputation was dropped.
++        children.extend(note_children)
+         for index, result in enumerate(state.results):
+             children.extend(
+                 library_rag_result_row_children(result, index, state.selected_result_id)
+commit 67c667d063809376b9431bd8e2da4a55e05825ac
+Author: Robert <contact@rmusser.net>
+Date:   Tue Aug 11 08:38:32 2026 -0700
+
+    feat(library): scoped hybrid runs fused hybrid; scoped-semantic disclosures retire (B1b + TASK-14752)
+
+    Refs TASK-15020. Refs TASK-14752.
+
+    Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+diff --git a/Tests/UI/test_product_maturity_gate16_library_search_rag.py b/Tests/UI/test_product_maturity_gate16_library_search_rag.py
+index 8f4391fdfe..3506fa3e9b 100644
+--- a/Tests/UI/test_product_maturity_gate16_library_search_rag.py
++++ b/Tests/UI/test_product_maturity_gate16_library_search_rag.py
+@@ -271,8 +271,20 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() ->
+         str(coverage_statics[0].renderable)
+         == "Semantic search found nothing from: Notes."
+     )
+-    # It renders directly under the heading -- the first body child.
+-    assert rag_children[0] is coverage_statics[0]
++    # It renders above the evidence cards, directly under the "N results
++    # for 'query'." headline task-2859 item 10 added between it and the
++    # Evidence heading (this assertion read `rag_children[0]` until that
++    # headline landed, and has been failing on dev ever since -- the
++    # ordering it was written to pin is "ahead of every row card", which is
++    # what it now says).
++    count_lines = [
++        child
++        for child in rag_children
++        if getattr(child, "id", None) == "library-rag-results-count-line"
++    ]
++    assert len(count_lines) == 1
++    assert rag_children[0] is count_lines[0]
++    assert rag_children[1] is coverage_statics[0]
+
+     # Keyword mode's diagnostics never carry `semantic_scope_coverage` (no
+     # coverage claim to make) -> no widget mounted at all.
+commit f875d8225fd3f6247afd0eac38616d97b0d0b4d9
+Author: Robert <contact@rmusser.net>
+Date:   Tue Aug 11 12:16:50 2026 -0700
+
+    feat(library): rag depth honors the active profile default (B3) + live evidence
+
+    Refs TASK-15020.
+
+    Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+diff --git a/Tests/UI/test_product_maturity_gate16_library_search_rag.py b/Tests/UI/test_product_maturity_gate16_library_search_rag.py
+index 3506fa3e9b..3510d6c1bb 100644
+--- a/Tests/UI/test_product_maturity_gate16_library_search_rag.py
++++ b/Tests/UI/test_product_maturity_gate16_library_search_rag.py
+@@ -256,8 +256,11 @@ def test_evidence_heading_and_coverage_note_are_mode_aware_and_conditional() ->
+
+     # A3's "top_k" claim is only accurate for keyword mode's per-source
+     # fan-out; rag mode drops the "per source" suffix outright.
+-    assert results_heading_text(rag_state) == "Evidence · top 5"
+-    assert results_heading_text(search_state) == "Evidence · top 5 per source"
++    # TASK-15020/B3: the depth itself is the active RAG profile's
++    # `search.default_top_k` (15 on the shipped default profile), not the
++    # old hardcoded 5.
++    assert results_heading_text(rag_state) == "Evidence · top 15"
++    assert results_heading_text(search_state) == "Evidence · top 15 per source"
+
+     rag_children = library_rag_results_body_children(rag_state)
+     coverage_statics = [
+@@ -1961,7 +1964,11 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
+                 "query": query,
+                 "scope": ("notes", "media", "conversations"),
+                 "mode": "search",
+-                "top_k": 5,
++                # TASK-15020/B3: the run's depth is the active RAG profile's
++                # `default_top_k` (15 on the shipped default profile) --
++                # the window used to ask for 5 no matter what the profile
++                # said, which is what this pins end to end.
++                "top_k": 15,
+                 "include_citations": True,
+             }
+         ]
+@@ -2029,7 +2036,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
+         visible_text = _visible_text(screen)
+         # Scout item 3: the semantic leg is one merged query, not a
+         # per-source fan-out -- the heading must not claim "per source".
+-        assert "Evidence · top 5" in visible_text
++        assert "Evidence · top 15" in visible_text
+         assert "per source" not in visible_text
+         assert (
+             "Semantic search found nothing from: Notes, Conversations."
+@@ -2074,7 +2081,7 @@ async def test_library_search_rag_keyword_mode_never_renders_coverage_note() ->
+         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+         visible_text = _visible_text(screen)
+-        assert "Evidence · top 5 per source" in visible_text
++        assert "Evidence · top 15 per source" in visible_text
+         assert not screen.query("#library-rag-coverage-note")

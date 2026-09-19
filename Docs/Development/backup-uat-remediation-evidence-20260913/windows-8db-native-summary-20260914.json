@@ -1,0 +1,192 @@
+{
+  "revision": "8db7465e6110726307f2d5ef745646e00f939a9f",
+  "artifact": "/private/tmp/uat-windows-8db746-native-close/backup-platform-windows-2022-py3.12-native-close-diagnostic-8db7465e6110726307f2d5ef745646e00f939a9f",
+  "product_selection": "native-close-diagnostic",
+  "verified_artifact_files": 18,
+  "summary_effective_returncode": 0,
+  "phases": {
+    "native": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 1.821,
+      "failures": [],
+      "skips": []
+    },
+    "product": {
+      "collected": 42,
+      "counts": {
+        "passed": 42
+      },
+      "seconds": 584.992,
+      "failures": [],
+      "skips": []
+    }
+  },
+  "installed_receipts": [
+    {
+      "fixture": "product-pytest/f9-native-package0/native-package.json",
+      "files": 2867,
+      "wheel_sha256": "83469e4e8f015cdb6d55a1d1103895c3725a869b3581af88272af4f54eed950f",
+      "source_comparable_python_files": 2475,
+      "source_python_mismatches": []
+    }
+  ],
+  "run_id": 34923109876,
+  "git_blob_verification": {
+    "revision": "8db7465e6110726307f2d5ef745646e00f939a9f",
+    "source_clean": true,
+    "python_git_blobs": 2475,
+    "installed_receipts": 1,
+    "matching_modes": {
+      "windows_crlf": 2443,
+      "exact": 32
+    },
+    "mismatches": []
+  },
+  "case_groups": {
+    "Tests.Utils.test_windows_files": 42,
+    "Tests.TTS.test_profile_native_close_contract": 4,
+    "Tests.Backup_Recovery.test_db_status_maintenance": 8,
+    "Tests.Backup_Recovery.test_canvas_policy_maintenance": 12,
+    "Tests.Backup_Recovery.test_canvas_policy_worker": 6,
+    "Tests.Backup_Recovery.test_canvas_view_binding_lifetime": 11,
+    "Tests.Backup_Recovery.test_mounted_console_backup": 1
+  },
+  "new_policy_reader_cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_canvas_policy_worker::test_native_policy_poll_does_not_block_ui_while_config_writer_is_active",
+      "status": "passed",
+      "seconds": 6.546
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_canvas_policy_worker::test_backup_and_disposal_retain_accepted_native_policy_read[maintenance]",
+      "status": "passed",
+      "seconds": 6.874
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_canvas_policy_worker::test_backup_and_disposal_retain_accepted_native_policy_read[watcher_cancel]",
+      "status": "passed",
+      "seconds": 6.492
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_canvas_policy_worker::test_backup_and_disposal_retain_accepted_native_policy_read[drain_cancel]",
+      "status": "passed",
+      "seconds": 6.84
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_canvas_policy_worker::test_backup_and_disposal_retain_accepted_native_policy_read[dispose_cancel]",
+      "status": "passed",
+      "seconds": 6.553
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_canvas_policy_worker::test_cancelled_watcher_reuses_pending_native_read_when_restarted",
+      "status": "passed",
+      "seconds": 6.783
+    }
+  ],
+  "library_case": {
+    "id": "Tests.Backup_Recovery.test_mounted_console_backup::test_mounted_console_complete_capture_and_resumed_writes[library]",
+    "status": "passed",
+    "seconds": 259.962
+  },
+  "source_test_hashes": {
+    "Tests/Backup_Recovery/test_mounted_console_backup.py": "1be300313cd0a211ca58e7829ee9f1f0c16b7bbefc063e00e914eced624fc8c7",
+    "Tests/Backup_Recovery/test_home_citation_retirement.py": "e78005a249bd9f891d5f29f8178a6aad515a28b3950be88ff9705c88e101dd41",
+    "Tests/Backup_Recovery/native_package.py": "de0063a04616b3c97806efd4daaebb81254fd954e03f899d245123b6f09da0af",
+    "Tests/Backup_Recovery/test_canvas_policy_worker.py": "4a293747b1ebc5896891445503dfd5639753cd7486db5f55ad09b7a6d9b88b7d",
+    "Tests/Backup_Recovery/run_platform_product.py": "17a5faf831806f17f919961f873bf6bb0d7a27b2ef153d0180c3c44c22f7a99f"
+  },
+  "artifact_manifest_sha256": "894cbe236304c79ea5c679faebb7893ba6363cd532759969560bc6f89ed1f981",
+  "source_receipt_sha256": "28772013dad1fc771a3fba9e588261ea4f1ca07551b42728ac8d2194ede975d1",
+  "installed_receipt_sha256": "bbb24eaee0d95e41d70b801c0e6a92fdf6087959df7a3ab83b352ba34ce1a587",
+  "library_entry_phases": [
+    {
+      "phase": "construct_begin",
+      "elapsed": 0.016
+    },
+    {
+      "phase": "construct_complete",
+      "elapsed": 39.875
+    },
+    {
+      "phase": "mount_begin",
+      "elapsed": 39.875
+    },
+    {
+      "phase": "mount_yield",
+      "elapsed": 76.25
+    },
+    {
+      "phase": "service_close_begin",
+      "elapsed": 209.813
+    },
+    {
+      "phase": "service_close_complete",
+      "elapsed": 209.813
+    }
+  ],
+  "capture_inventory_observations": 5,
+  "capture_scope_changes": 0,
+  "capture_unavailable_dependencies": 0,
+  "runtime_events": [
+    {
+      "event": "settle_stage_begin",
+      "live_leases": 8,
+      "pending": 1,
+      "operations": 1,
+      "raw_operations": 0
+    },
+    {
+      "event": "settle_stage_begin",
+      "live_leases": 8,
+      "pending": 1,
+      "operations": 1,
+      "raw_operations": 0
+    },
+    {
+      "event": "settle_stage_begin",
+      "live_leases": 8,
+      "pending": 1,
+      "operations": 1,
+      "raw_operations": 0
+    },
+    {
+      "event": "settle_stage_begin",
+      "live_leases": 8,
+      "pending": 1,
+      "operations": 1,
+      "raw_operations": 0
+    },
+    {
+      "event": "settle_stage_begin",
+      "live_leases": 8,
+      "pending": 1,
+      "operations": 1,
+      "raw_operations": 0
+    },
+    {
+      "event": "retire_caches_before",
+      "live_leases": 8,
+      "pending": 1,
+      "operations": 1,
+      "raw_operations": 0
+    },
+    {
+      "event": "retire_caches_after",
+      "live_leases": 1,
+      "pending": 0,
+      "operations": 0,
+      "raw_operations": 0
+    },
+    {
+      "event": "runtime_resume",
+      "live_leases": 0,
+      "pending": 0,
+      "operations": 0,
+      "raw_operations": 0
+    }
+  ],
+  "limits": "Exact native-close selection only. Separate Windows startup retains four 60-second failures; no whole-PR passing or causal claim for previous failures."
+}

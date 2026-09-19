@@ -397,7 +397,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         # `set_view_all_busy` updates both this and the live widget.
         self._view_all_busy = False
         self.suppress_summary_when_open = bool(suppress_summary_when_open)
-        self.styles.height = "auto"
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         self.styles.min_height = 0
         self.add_class("console-inspector-section")
         self.recompose_count = 0
@@ -452,7 +454,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             row widgets, and the optional "View all" ``Button``.
         """
         header = Horizontal(id=self._header_id, classes="console-inspector-section-header")
-        header.styles.height = 1
+        header.remove_class(*(name for name in header.classes if name.startswith("h-")))
+        header.set_styles(height=None)
+        header.add_class("h-1")
         header.styles.min_height = 1
         with header:
             title = Static(
@@ -461,7 +465,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 classes="console-inspector-section-title",
                 markup=False,
             )
-            title.styles.width = "1fr"
+            title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+            title.set_styles(width=None)
+            title.add_class("w-fill")
             title.styles.min_width = 0
             yield title
             if self.summary:
@@ -475,9 +481,13 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 # for any host, including a bare test harness that never
                 # loads the app's CSS bundle (the CSS class carries the
                 # cosmetic color/dim styling only).
-                summary.styles.width = "auto"
+                summary.remove_class(*(name for name in summary.classes if name.startswith("w-")))
+                summary.set_styles(width=None)
+                summary.add_class("w-auto")
                 summary.styles.min_width = 0
-                summary.styles.height = 1
+                summary.remove_class(*(name for name in summary.classes if name.startswith("h-")))
+                summary.set_styles(height=None)
+                summary.add_class("h-1")
                 if self._summary_is_suppressed():
                     summary.styles.display = "none"
                 yield summary
@@ -497,14 +507,20 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                     compact=True,
                 )
                 toggle.tooltip = self._toggle_tooltip()
-                toggle.styles.width = SECTION_TOGGLE_WIDTH
+                toggle.remove_class(*(name for name in toggle.classes if name.startswith("w-")))
+                toggle.set_styles(width=None)
+                toggle.add_class("w-3")
                 toggle.styles.min_width = SECTION_TOGGLE_WIDTH
                 toggle.styles.max_width = SECTION_TOGGLE_WIDTH
-                toggle.styles.height = 1
+                toggle.remove_class(*(name for name in toggle.classes if name.startswith("h-")))
+                toggle.set_styles(height=None)
+                toggle.add_class("h-1")
                 yield toggle
 
         body = Vertical(id=self._body_id, classes="console-inspector-section-body")
-        body.styles.height = "auto"
+        body.remove_class(*(name for name in body.classes if name.startswith("h-")))
+        body.set_styles(height=None)
+        body.add_class("h-auto")
         body.styles.min_height = 0
         if not self.open:
             body.styles.display = "none"
@@ -513,7 +529,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 yield self._build_row_widget(row, index)
             if self.notice:
                 notice = Static(self.notice, id=self._notice_id, markup=False)
-                notice.styles.height = "auto"
+                notice.remove_class(*(name for name in notice.classes if name.startswith("h-")))
+                notice.set_styles(height=None)
+                notice.add_class("h-auto")
                 notice.styles.text_wrap = "wrap"
                 yield notice
 
@@ -945,7 +963,9 @@ class ConsoleInspectorSectionRow(Vertical):
             self._secondary_text,
             indent=self.indent * ROW_INDENT_COLUMNS,
         )
-        self.styles.height = "auto"
+        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        self.set_styles(height=None)
+        self.add_class("h-auto")
         # Inline as well as in the CSS: a bare test harness loads neither
         # the app bundle nor the console-owned split sheet, and geometry
         # has to be right for any host (the same reason the header's
@@ -960,7 +980,8 @@ class ConsoleInspectorSectionRow(Vertical):
             # whatever padding the host supplies, so the indent is exactly
             # `ROW_INDENT_COLUMNS` per level in BOTH hosts. Inline because
             # the depth is per-row DATA, not a class.
-            self.styles.margin = (0, 0, 0, self.indent * ROW_INDENT_COLUMNS)
+            # ds-runtime: Per-row data nesting depth determines the left indent in terminal columns.
+            self.set_styles(margin=(0, 0, 0, self.indent * ROW_INDENT_COLUMNS))
             # Deliberately unstyled today (round-1 review M2): the class is
             # the styling hook containment theming would need -- a guide
             # rule, a muted child colour -- and stamping it here is what
@@ -1004,7 +1025,9 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-primary",
             markup=False,
         )
-        primary.styles.height = 1
+        primary.remove_class(*(name for name in primary.classes if name.startswith("h-")))
+        primary.set_styles(height=None)
+        primary.add_class("h-1")
         return primary
 
     def _make_secondary(self) -> Static:
@@ -1014,7 +1037,9 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-secondary",
             markup=False,
         )
-        secondary.styles.height = "auto" if self._wrap_secondary else 1
+        secondary.remove_class(*(name for name in secondary.classes if name.startswith("h-")))
+        secondary.set_styles(height=None)
+        secondary.add_class("h-auto" if self._wrap_secondary else "h-1")
         if self._wrap_secondary:
             secondary.styles.text_wrap = "wrap"
         return secondary
@@ -1036,18 +1061,26 @@ class ConsoleInspectorSectionRow(Vertical):
         """
         if self._one_line:
             line = Horizontal(classes="console-inspector-section-row-line")
-            line.styles.height = 1
-            line.styles.width = "100%"
+            line.remove_class(*(name for name in line.classes if name.startswith("h-")))
+            line.set_styles(height=None)
+            line.add_class("h-1")
+            line.remove_class(*(name for name in line.classes if name.startswith("w-")))
+            line.set_styles(width=None)
+            line.add_class("w-full")
             with line:
                 primary = self._make_primary()
                 # `1fr` + `auto` is the header's own title/summary split:
                 # the primary takes everything the secondary does not, which
                 # is what puts the secondary flush against the right edge.
-                primary.styles.width = "1fr"
+                primary.remove_class(*(name for name in primary.classes if name.startswith("w-")))
+                primary.set_styles(width=None)
+                primary.add_class("w-fill")
                 primary.styles.min_width = 0
                 yield primary
                 secondary = self._make_secondary()
-                secondary.styles.width = "auto"
+                secondary.remove_class(*(name for name in secondary.classes if name.startswith("w-")))
+                secondary.set_styles(width=None)
+                secondary.add_class("w-auto")
                 secondary.styles.min_width = 0
                 yield secondary
             return

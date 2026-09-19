@@ -729,3 +729,22 @@ def test_local_character_persona_service_wraps_chat_execution_adjuncts(tmp_path)
         item["preset_id"] != "local-tight"
         for item in reloaded.list_chat_presets()["presets"]
     )
+
+
+def test_persona_catalog_only_materializes_requested_page(tmp_path, monkeypatch):
+    service = LocalCharacterPersonaService(
+        None, persona_store_path=tmp_path / "personas.json"
+    )
+    for i in range(12):
+        service.create_persona_profile({"id": f"persona-{i}", "name": f"Persona {i}"})
+    original = service._persona_profile_view
+    viewed = []
+
+    def observe(record):
+        viewed.append(record["id"])
+        return original(record)
+
+    monkeypatch.setattr(service, "_persona_profile_view", observe)
+    page = service.list_persona_profiles(limit=3, offset=4)
+    assert len(viewed) == 3
+    assert [item["id"] for item in page] == ["persona-7", "persona-6", "persona-5"]

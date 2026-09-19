@@ -375,14 +375,10 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "poll does not repaint or lay out; changed auto-height status/path copy "
         "keeps the required default layout pass."
     ),
-    (
-        "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
-        "LibraryFileNotesWorkspace._apply_opened_document",
-        "self.query_one('#file-notes-breadcrumb', Static)",
-    ): (
-        "NEEDS-LAYOUT: the breadcrumb wraps, so its row count tracks the "
-        "path."
-    ),
+    # task-32614 removed this row's call: the breadcrumb no longer wraps (it
+    # is one row, `text-wrap: nowrap`, middle-elided by
+    # `_fit_path_surfaces`), and every writer now goes through
+    # `_update_static_content`, whose own NOT-PER-TICK row above covers it.
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._dismiss_reload_confirmation",
@@ -437,48 +433,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-A-WIDGET: ProgressBar.update(progress=...) has no layout "
         "kwarg."
     ),
-    # -- tldw_chatbook/Widgets/detailed_progress.py
-    (
-        "tldw_chatbook/Widgets/detailed_progress.py",
-        "DetailedProgressBar._update_metrics",
-        "self.query_one('#elapsed-time', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
-    (
-        "tldw_chatbook/Widgets/detailed_progress.py",
-        "DetailedProgressBar._update_metrics",
-        "self.query_one('#memory-usage', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
-    (
-        "tldw_chatbook/Widgets/detailed_progress.py",
-        "DetailedProgressBar._update_metrics",
-        "self.query_one('#remaining-time', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
-    (
-        "tldw_chatbook/Widgets/detailed_progress.py",
-        "DetailedProgressBar._update_metrics",
-        "self.query_one('#speed-metric', Static)",
-    ): (
-        "UNREACHABLE: Widgets/detailed_progress.py has no importer (prod or "
-        "tests)."
-    ),
-    # -- tldw_chatbook/Widgets/loading_states.py
-    (
-        "tldw_chatbook/Widgets/loading_states.py",
-        "InlineLoader._update_dots",
-        "self",
-    ): (
-        "UNREACHABLE: Widgets/loading_states.py has no importer (prod or "
-        "tests)."
-    ),
+    # -- tldw_chatbook/Widgets/detailed_progress.py and
+    # -- tldw_chatbook/Widgets/loading_states.py: their CLASSIFIED_SITES rows
+    # (formerly "UNREACHABLE: no importer (prod or tests)") and
+    # EXPECTED_CLOCK_ROOTS pins were removed when both modules were deleted
+    # together with their dedicated tests (ADR-161 task 2). The files no
+    # longer exist, so they contribute no clock roots or update sites.
     # -- tldw_chatbook/Widgets/splash_screen.py
     (
         "tldw_chatbook/Widgets/splash_screen.py",
@@ -724,18 +684,6 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "tldw_chatbook/Widgets/audio_troubleshooting_dialog.py",
             "AudioTroubleshootingDialog",
             "_update_level_meter",
-        ),
-        (
-            "set_interval",
-            "tldw_chatbook/Widgets/detailed_progress.py",
-            "DetailedProgressBar",
-            "_update_metrics",
-        ),
-        (
-            "set_interval",
-            "tldw_chatbook/Widgets/loading_states.py",
-            "InlineLoader",
-            "_update_dots",
         ),
         (
             "set_interval",

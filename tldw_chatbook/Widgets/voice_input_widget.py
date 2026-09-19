@@ -482,7 +482,8 @@ class VoiceInputWidget(Widget):
             level_bar = self.query_one("#audio-level-bar", Static)
             # Update width based on level (0.0 to 1.0)
             width_percent = int(coerced_level * 100)
-            level_bar.styles.width = f"{width_percent}%"
+            # ds-runtime: scale the meter to the current microphone level.
+            level_bar.set_styles(width=f"{width_percent}%")
         except Exception:
             # Widget may be exercised before Textual composes its children.
             pass

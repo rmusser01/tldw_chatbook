@@ -1,0 +1,638 @@
+[
+  {
+    "size": [
+      120,
+      40
+    ],
+    "rest": {
+      "background": "Color(0, 101, 190)",
+      "color": "Color(255, 255, 255, a=0.87)",
+      "text_style": "bold",
+      "border": "Edges(top=('round', Color(1, 120, 212)), right=('round', Color(1, 120, 212)), bottom=('round', Color(1, 120, 212)), left=('round', Color(1, 120, 212)))",
+      "region": [
+        9,
+        0,
+        16,
+        3
+      ]
+    },
+    "focused": {
+      "background": "Color(1, 120, 212, a=0.2980392156862745)",
+      "color": "Color(255, 255, 255, a=0.87)",
+      "text_style": "bold underline",
+      "border": "Edges(top=('round', Color(1, 120, 212)), right=('round', Color(1, 120, 212)), bottom=('round', Color(1, 120, 212)), left=('round', Color(1, 120, 212)))",
+      "region": [
+        9,
+        0,
+        16,
+        3
+      ]
+    },
+    "menu_region": [
+      38,
+      9,
+      44,
+      21
+    ],
+    "painted": "         \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                               \n \u23031 Home \u2502 \u23032 Console   \u2502 \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 Artifacts  \u23037 Schedules  \u23038 Workflows  \u23039  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                      \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a  All destinations                        \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a                 \u23031 Home                  \u258e                                      \n                                      \u258a          \u23032 Console   (current)          \u258e                                      \n                                      \u258a                \u23033 Library                \u258e                                      \n                                      \u258a               \u23034 Roleplay                \u258e                                      \n                                      \u258a              \u23035 Watchlists               \u258e                                      \n                                      \u258a               \u23036 Artifacts               \u258e                                      \n                                      \u258a               \u23037 Schedules               \u258e                                      \n                                      \u258a               \u23038 Workflows               \u258e                                      \n                                      \u258a                  \u23039 MCP                  \u258e                                      \n                                      \u258a                  \u23030 ACP                  \u258e                                      \n                                      \u258a                  F2 Lab                  \u258e                                      \n                                      \u258a                 F3 Logs                  \u258e                                      \n                                      \u258a               F4 Settings                \u258e                                      \n                                      \u258a               F5 Research                \u258e                                      \n                                      \u258a               F7 Meetings                \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e                                      \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        ",
+    "destinations": [
+      {
+        "id": "nav-overflow-home",
+        "region": [
+          41,
+          13,
+          38,
+          1
+        ],
+        "label": "\u23031 Home",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-console",
+        "region": [
+          41,
+          14,
+          38,
+          1
+        ],
+        "label": "\u23032 Console   (current)",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-library",
+        "region": [
+          41,
+          15,
+          38,
+          1
+        ],
+        "label": "\u23033 Library",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-personas",
+        "region": [
+          41,
+          16,
+          38,
+          1
+        ],
+        "label": "\u23034 Roleplay",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-watchlists_collections",
+        "region": [
+          41,
+          17,
+          38,
+          1
+        ],
+        "label": "\u23035 Watchlists",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-artifacts",
+        "region": [
+          41,
+          18,
+          38,
+          1
+        ],
+        "label": "\u23036 Artifacts",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-schedules",
+        "region": [
+          41,
+          19,
+          38,
+          1
+        ],
+        "label": "\u23037 Schedules",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-workflows",
+        "region": [
+          41,
+          20,
+          38,
+          1
+        ],
+        "label": "\u23038 Workflows",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-mcp",
+        "region": [
+          41,
+          21,
+          38,
+          1
+        ],
+        "label": "\u23039 MCP",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-acp",
+        "region": [
+          41,
+          22,
+          38,
+          1
+        ],
+        "label": "\u23030 ACP",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-lab",
+        "region": [
+          41,
+          23,
+          38,
+          1
+        ],
+        "label": "F2 Lab",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-logs",
+        "region": [
+          41,
+          24,
+          38,
+          1
+        ],
+        "label": "F3 Logs",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-settings",
+        "region": [
+          41,
+          25,
+          38,
+          1
+        ],
+        "label": "F4 Settings",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-research",
+        "region": [
+          41,
+          26,
+          38,
+          1
+        ],
+        "label": "F5 Research",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-meetings",
+        "region": [
+          41,
+          27,
+          38,
+          1
+        ],
+        "label": "F7 Meetings",
+        "visible": true
+      }
+    ],
+    "last_focused": true,
+    "after_focus_painted": "         \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                               \n \u23031 Home \u2502 \u23032 Console   \u2502 \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 Artifacts  \u23037 Schedules  \u23038 Workflows  \u23039  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                      \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a  All destinations                        \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a                 \u23031 Home                  \u258e                                      \n                                      \u258a          \u23032 Console   (current)          \u258e                                      \n                                      \u258a                \u23033 Library                \u258e                                      \n                                      \u258a               \u23034 Roleplay                \u258e                                      \n                                      \u258a              \u23035 Watchlists               \u258e                                      \n                                      \u258a               \u23036 Artifacts               \u258e                                      \n                                      \u258a               \u23037 Schedules               \u258e                                      \n                                      \u258a               \u23038 Workflows               \u258e                                      \n                                      \u258a                  \u23039 MCP                  \u258e                                      \n                                      \u258a                  \u23030 ACP                  \u258e                                      \n                                      \u258a                  F2 Lab                  \u258e                                      \n                                      \u258a                 F3 Logs                  \u258e                                      \n                                      \u258a               F4 Settings                \u258e                                      \n                                      \u258a               F5 Research                \u258e                                      \n                                      \u258a               F7 Meetings                \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e                                      \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        ",
+    "last_after_region": [
+      41,
+      27,
+      38,
+      1
+    ]
+  },
+  {
+    "size": [
+      80,
+      24
+    ],
+    "rest": {
+      "background": "Color(0, 101, 190)",
+      "color": "Color(255, 255, 255, a=0.87)",
+      "text_style": "bold",
+      "border": "Edges(top=('round', Color(1, 120, 212)), right=('round', Color(1, 120, 212)), bottom=('round', Color(1, 120, 212)), left=('round', Color(1, 120, 212)))",
+      "region": [
+        9,
+        0,
+        16,
+        3
+      ]
+    },
+    "focused": {
+      "background": "Color(1, 120, 212, a=0.2980392156862745)",
+      "color": "Color(255, 255, 255, a=0.87)",
+      "text_style": "bold underline",
+      "border": "Edges(top=('round', Color(1, 120, 212)), right=('round', Color(1, 120, 212)), bottom=('round', Color(1, 120, 212)), left=('round', Color(1, 120, 212)))",
+      "region": [
+        9,
+        0,
+        16,
+        3
+      ]
+    },
+    "menu_region": [
+      18,
+      2,
+      44,
+      19
+    ],
+    "painted": "         \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                       \n \u23031 Home \u2502 \u23032 Console   \u2502 \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 A  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n                  \u258a                                          \u258e                  \n                  \u258a  All destinations                        \u258e                  \n                  \u258a                                          \u258e                  \n                  \u258a                 \u23031 Home                  \u258e                  \n                  \u258a          \u23032 Console   (current)          \u258e                  \n                  \u258a                \u23033 Library                \u258e                  \n                  \u258a               \u23034 Roleplay                \u258e                  \n                  \u258a              \u23035 Watchlists               \u258e                  \n                  \u258a               \u23036 Artifacts               \u258e                  \n                  \u258a               \u23037 Schedules               \u258e                  \n                  \u258a               \u23038 Workflows               \u258e                  \n                  \u258a                  \u23039 MCP                  \u258e                  \n                  \u258a                  \u23030 ACP                  \u258e                  \n                  \u258a                  F2 Lab                  \u258e                  \n                  \u258a                 F3 Logs                  \u258e                  \n                  \u258a               F4 Settings                \u258e                  \n                  \u258a                                          \u258e                  \n                  \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e                  \n                                                                                \n                                                                                \n                                                                                ",
+    "destinations": [
+      {
+        "id": "nav-overflow-home",
+        "region": [
+          21,
+          6,
+          38,
+          1
+        ],
+        "label": "\u23031 Home",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-console",
+        "region": [
+          21,
+          7,
+          38,
+          1
+        ],
+        "label": "\u23032 Console   (current)",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-library",
+        "region": [
+          21,
+          8,
+          38,
+          1
+        ],
+        "label": "\u23033 Library",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-personas",
+        "region": [
+          21,
+          9,
+          38,
+          1
+        ],
+        "label": "\u23034 Roleplay",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-watchlists_collections",
+        "region": [
+          21,
+          10,
+          38,
+          1
+        ],
+        "label": "\u23035 Watchlists",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-artifacts",
+        "region": [
+          21,
+          11,
+          38,
+          1
+        ],
+        "label": "\u23036 Artifacts",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-schedules",
+        "region": [
+          21,
+          12,
+          38,
+          1
+        ],
+        "label": "\u23037 Schedules",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-workflows",
+        "region": [
+          21,
+          13,
+          38,
+          1
+        ],
+        "label": "\u23038 Workflows",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-mcp",
+        "region": [
+          21,
+          14,
+          38,
+          1
+        ],
+        "label": "\u23039 MCP",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-acp",
+        "region": [
+          21,
+          15,
+          38,
+          1
+        ],
+        "label": "\u23030 ACP",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-lab",
+        "region": [
+          21,
+          16,
+          38,
+          1
+        ],
+        "label": "F2 Lab",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-logs",
+        "region": [
+          21,
+          17,
+          38,
+          1
+        ],
+        "label": "F3 Logs",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-settings",
+        "region": [
+          21,
+          18,
+          38,
+          1
+        ],
+        "label": "F4 Settings",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-research",
+        "region": [
+          21,
+          19,
+          38,
+          1
+        ],
+        "label": "F5 Research",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-meetings",
+        "region": [
+          21,
+          20,
+          38,
+          1
+        ],
+        "label": "F7 Meetings",
+        "visible": true
+      }
+    ],
+    "last_focused": true,
+    "after_focus_painted": "         \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                       \n \u23031 Home \u2502 \u23032 Console   \u2502 \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 A  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n                  \u258a                                          \u258e                  \n                  \u258a  All destinations                        \u258e                  \n                  \u258a                                          \u258e                  \n                  \u258a                 \u23031 Home                  \u258e                  \n                  \u258a          \u23032 Console   (current)          \u258e                  \n                  \u258a                \u23033 Library                \u258e                  \n                  \u258a               \u23034 Roleplay                \u258e                  \n                  \u258a              \u23035 Watchlists               \u258e                  \n                  \u258a               \u23036 Artifacts               \u258e                  \n                  \u258a               \u23037 Schedules               \u258e                  \n                  \u258a               \u23038 Workflows               \u258e                  \n                  \u258a                  \u23039 MCP                  \u258e                  \n                  \u258a                  \u23030 ACP                  \u258e                  \n                  \u258a                  F2 Lab                  \u258e                  \n                  \u258a                 F3 Logs                  \u258e                  \n                  \u258a               F4 Settings                \u258e                  \n                  \u258a                                          \u258e                  \n                  \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e                  \n                                                                                \n                                                                                \n                                                                                ",
+    "last_after_region": [
+      21,
+      20,
+      38,
+      1
+    ]
+  },
+  {
+    "size": [
+      120,
+      40
+    ],
+    "rest": {
+      "background": "Color(0, 101, 190)",
+      "color": "Color(255, 255, 255, a=0.87)",
+      "text_style": "bold",
+      "border": "Edges(top=('round', Color(1, 120, 212)), right=('round', Color(1, 120, 212)), bottom=('round', Color(1, 120, 212)), left=('round', Color(1, 120, 212)))",
+      "region": [
+        9,
+        0,
+        16,
+        3
+      ]
+    },
+    "focused": {
+      "background": "Color(1, 120, 212, a=0.2980392156862745)",
+      "color": "Color(255, 255, 255, a=0.87)",
+      "text_style": "bold underline",
+      "border": "Edges(top=('round', Color(1, 120, 212)), right=('round', Color(1, 120, 212)), bottom=('round', Color(1, 120, 212)), left=('round', Color(1, 120, 212)))",
+      "region": [
+        9,
+        0,
+        16,
+        3
+      ]
+    },
+    "menu_region": [
+      38,
+      9,
+      44,
+      21
+    ],
+    "painted": "         \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                               \n \u23031 Home \u2502 \u23032 Console   \u2502 \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 Artifacts  \u23037 Schedules  \u23038 Workflows  \u23039  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                      \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a  All destinations                        \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a                 \u23031 Home                  \u258e                                      \n                                      \u258a          \u23032 Console   (current)          \u258e                                      \n                                      \u258a                \u23033 Library                \u258e                                      \n                                      \u258a               \u23034 Roleplay                \u258e                                      \n                                      \u258a              \u23035 Watchlists               \u258e                                      \n                                      \u258a               \u23036 Artifacts               \u258e                                      \n                                      \u258a               \u23037 Schedules               \u258e                                      \n                                      \u258a               \u23038 Workflows               \u258e                                      \n                                      \u258a                  \u23039 MCP                  \u258e                                      \n                                      \u258a                  \u23030 ACP                  \u258e                                      \n                                      \u258a                  F2 Lab                  \u258e                                      \n                                      \u258a                 F3 Logs                  \u258e                                      \n                                      \u258a               F4 Settings                \u258e                                      \n                                      \u258a               F5 Research                \u258e                                      \n                                      \u258a               F7 Meetings                \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e                                      \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        ",
+    "destinations": [
+      {
+        "id": "nav-overflow-home",
+        "region": [
+          41,
+          13,
+          38,
+          1
+        ],
+        "label": "\u23031 Home",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-console",
+        "region": [
+          41,
+          14,
+          38,
+          1
+        ],
+        "label": "\u23032 Console   (current)",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-library",
+        "region": [
+          41,
+          15,
+          38,
+          1
+        ],
+        "label": "\u23033 Library",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-personas",
+        "region": [
+          41,
+          16,
+          38,
+          1
+        ],
+        "label": "\u23034 Roleplay",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-watchlists_collections",
+        "region": [
+          41,
+          17,
+          38,
+          1
+        ],
+        "label": "\u23035 Watchlists",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-artifacts",
+        "region": [
+          41,
+          18,
+          38,
+          1
+        ],
+        "label": "\u23036 Artifacts",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-schedules",
+        "region": [
+          41,
+          19,
+          38,
+          1
+        ],
+        "label": "\u23037 Schedules",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-workflows",
+        "region": [
+          41,
+          20,
+          38,
+          1
+        ],
+        "label": "\u23038 Workflows",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-mcp",
+        "region": [
+          41,
+          21,
+          38,
+          1
+        ],
+        "label": "\u23039 MCP",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-acp",
+        "region": [
+          41,
+          22,
+          38,
+          1
+        ],
+        "label": "\u23030 ACP",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-lab",
+        "region": [
+          41,
+          23,
+          38,
+          1
+        ],
+        "label": "F2 Lab",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-logs",
+        "region": [
+          41,
+          24,
+          38,
+          1
+        ],
+        "label": "F3 Logs",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-settings",
+        "region": [
+          41,
+          25,
+          38,
+          1
+        ],
+        "label": "F4 Settings",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-research",
+        "region": [
+          41,
+          26,
+          38,
+          1
+        ],
+        "label": "F5 Research",
+        "visible": true
+      },
+      {
+        "id": "nav-overflow-meetings",
+        "region": [
+          41,
+          27,
+          38,
+          1
+        ],
+        "label": "F7 Meetings",
+        "visible": true
+      }
+    ],
+    "last_focused": true,
+    "after_focus_painted": "         \u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e                                                                                               \n \u23031 Home \u2502 \u23032 Console   \u2502 \u23033 Library  \u23034 Roleplay  \u23035 Watchlists  \u23036 Artifacts  \u23037 Schedules  \u23038 Workflows  \u23039  More \u25be  \n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                      \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a  All destinations                        \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a                 \u23031 Home                  \u258e                                      \n                                      \u258a          \u23032 Console   (current)          \u258e                                      \n                                      \u258a                \u23033 Library                \u258e                                      \n                                      \u258a               \u23034 Roleplay                \u258e                                      \n                                      \u258a              \u23035 Watchlists               \u258e                                      \n                                      \u258a               \u23036 Artifacts               \u258e                                      \n                                      \u258a               \u23037 Schedules               \u258e                                      \n                                      \u258a               \u23038 Workflows               \u258e                                      \n                                      \u258a                  \u23039 MCP                  \u258e                                      \n                                      \u258a                  \u23030 ACP                  \u258e                                      \n                                      \u258a                  F2 Lab                  \u258e                                      \n                                      \u258a                 F3 Logs                  \u258e                                      \n                                      \u258a               F4 Settings                \u258e                                      \n                                      \u258a               F5 Research                \u258e                                      \n                                      \u258a               F7 Meetings                \u258e                                      \n                                      \u258a                                          \u258e                                      \n                                      \u258a\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u2581\u258e                                      \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        ",
+    "last_after_region": [
+      41,
+      27,
+      38,
+      1
+    ]
+  }
+]

@@ -1,0 +1,5 @@
+Scoped Ruff: app.py 491 baseline -> 491 current; Settings 114 -> 114. No introduced diagnostic code/message pairs.
+New coordinator, new/changed tests and native runner pass Ruff and formatting. Changed production methods formatted without whole-file churn.
+Backlog IDs: 4138 task files, no duplicate IDs, all Windows-compatible paths.
+Persistent diagnostic inventory: 607 owners; 1407 TASK-492, 55 TASK-31551 and 7763 TASK-494 calls; 14 sink files.
+ID allocation: 227 distinct local/remote refs plus 30 worktrees; prior maxima TASK32786 and ADR166.

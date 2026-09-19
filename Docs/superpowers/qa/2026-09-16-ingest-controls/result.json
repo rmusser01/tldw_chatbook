@@ -1,0 +1,41 @@
+{
+  "pid": 19351,
+  "steps": [
+    {
+      "size": [
+        170,
+        48
+      ],
+      "theme": "textual-dark",
+      "checkbox_select_reset_preserve_editors": true,
+      "dependency_and_error_state_current": true,
+      "optional_action_visibility_current": true,
+      "wrapped_availability_reason_visible": true,
+      "keyboard_reentry_uses_normal_select_all": true,
+      "jobs_queued": 0
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "theme": "textual-light",
+      "checkbox_select_reset_preserve_editors": true,
+      "dependency_and_error_state_current": true,
+      "optional_action_visibility_current": true,
+      "wrapped_availability_reason_visible": true,
+      "keyboard_reentry_uses_normal_select_all": true,
+      "jobs_queued": 0
+    }
+  ],
+  "exclusive_profile": true,
+  "driver": "LinuxDriver",
+  "real_availability": {
+    "pdf_processing": false,
+    "audio_processing": false,
+    "parakeet_onnx": false
+  },
+  "ui_availability_simulated": true,
+  "passed": true,
+  "app_run_returned": true
+}

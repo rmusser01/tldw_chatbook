@@ -1,0 +1,280 @@
+.........................F..                                             [100%]
+=================================== FAILURES ===================================
+___ test_imported_profile_first_bind_requires_current_review_and_exact_token ___
+
+self = <Coroutine test_imported_profile_first_bind_requires_current_review_and_exact_token>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_imported_profile_first_bind_requires_current_review_and_exact_token>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1755/test_imported_profile_first_bi0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ___ test_imported_profile_first_bind_requires_current_review_and_exact_token ___
+E
+E           request = <FixtureRequest for <Coroutine test_imported_profile_first_bind_requires_current_review_and_exact_token>>
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_imported_profile_first_bind_requires_current_review_and_exact_token(
+E                   request,
+E               ) -> None:
+E                   app = _build_test_app()
+E                   registry = app.workspace_registry_service
+E                   registry.create_workspace(workspace_id="ws-bind", name="Bind WS")
+E                   guard = _FirstBindGuard()
+E                   registry.attach_tool_profile_guard(guard)
+E                   service = _FirstBindService()
+E                   app.tool_pack_service = service
+E                   _stub_assistant_services(
+E                       app,
+E                       personas=[_persona("persona-1", "Helper")],
+E                       tool_names=["search_notes"],
+E                       profiles=["default", "research"],
+E                   )
+E                   host = DestinationHarness(app, "settings")
+E
+E                   async with host.run_test(size=(180, 50)) as pilot:
+E                       screen = await _open_workspace_card(pilot, host, "ws-bind")
+E                       persona_picker = screen.query_one(
+E                           "#settings-workspace-persona-picker", OptionList
+E                       )
+E                       screen.handle_workspace_persona_selected(
+E                           _FakeOptionSelected(persona_picker.get_option_at_index(0))
+E                       )
+E                       profile_picker = screen.query_one(
+E                           "#settings-workspace-profile-picker", OptionList
+E                       )
+E                       profile = next(
+E                           profile_picker.get_option_at_index(index)
+E                           for index in range(profile_picker.option_count)
+E                           if getattr(profile_picker.get_option_at_index(index), "profile_id", None)
+E                           == "research"
+E                       )
+E                       screen.handle_workspace_profile_selected(_FakeOptionSelected(profile))
+E                       await pilot.pause()
+E
+E           >           screen.query_one("#settings-workspace-memory-toggle", Button).press()
+E                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E
+E           Tests/UI/test_settings_workspace_assistant_defaults.py:666:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           self = SettingsScreen(classes='shell-header-normal')
+E           selector = '#settings-workspace-memory-toggle'
+E           expect_type = <class 'textual.widgets._button.Button'>
+E
+E               def query_one(
+E                   self,
+E                   selector: str | type[QueryType],
+E                   expect_type: type[QueryType] | None = None,
+E               ) -> QueryType | Widget:
+E                   """Get a widget from this widget's children that matches a selector or widget type.
+E
+E                   Args:
+E                       selector: A selector or widget type.
+E                       expect_type: Require the object be of the supplied type, or None for any type.
+E
+E                   Raises:
+E                       WrongType: If the wrong type was found.
+E                       NoMatches: If no node matches the query.
+E
+E                   Returns:
+E                       A widget matching the selector.
+E                   """
+E                   _rich_traceback_omit = True
+E
+E                   base_node = self._get_dom_base()
+E
+E                   if isinstance(selector, str):
+E                       query_selector = selector
+E                   else:
+E                       query_selector = selector.__name__
+E
+E                   if is_id_selector(query_selector):
+E                       cache_key = (base_node._nodes._updates, query_selector, expect_type)
+E                       cached_result = base_node._query_one_cache.get(cache_key)
+E                       if cached_result is not None:
+E                           return cached_result
+E                       if (
+E                           node := walk_breadth_search_id(
+E                               base_node, query_selector[1:], with_root=False
+E                           )
+E                       ) is not None:
+E                           if expect_type is not None and not isinstance(node, expect_type):
+E                               raise WrongType(
+E                                   f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+E                               )
+E                           base_node._query_one_cache[cache_key] = node
+E                           return node
+E           >           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           E           textual.css.query.NoMatches: No nodes match '#settings-workspace-memory-toggle' on SettingsScreen(classes='shell-header-normal')
+E
+E           .venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 00:09:41.387 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 00:09:41.395 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 00:09:41.396 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 00:09:41.396 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 00:09:41.877 | INFO     | tldw_chatbook.app:__init__:8061 - Loaded app_config - strip_thinking_tags: True
+E           2026-09-18 00:09:41.974 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-09-18 00:09:41.974 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-09-18 00:09:41.975 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-09-18 00:09:41.976 | INFO     | tldw_chatbook.app:__init__:8169 - Parallel init task 'media_db' completed in 0.000s
+E           2026-09-18 00:09:42.238 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1755/test_imported_profile_first_bi0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 00:09:42.470 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hym_f0r7/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 00:09:43.034 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hym_f0r7/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 00:09:43.058 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 00:09:43.059 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hym_f0r7/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 00:09:43.060 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hym_f0r7/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-09-18 00:09:43.673 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-09-18 00:09:43.793 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-09-18 00:09:43.895 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-09-18 00:09:43.996 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-09-18 00:09:44.100 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-09-18 00:09:44.227 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-09-18 00:09:44.228 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-hym_f0r7/scheduled_tasks.sqlite [Client: default]
+E           2026-09-18 00:09:44.336 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-09-18 00:09:44.337 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-09-18 00:09:44.349 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-09-18 00:09:44.868 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E           2026-09-18 00:09:44.870 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-1755/test_imported_profile_first_bi0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-09-18 00:09:44.871 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-09-18 00:09:45.118 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-09-18 00:09:45.119 | INFO     | tldw_chatbook.app:_init_worker_handlers:12064 - Worker handler registry initialized with all handlers
+E           2026-09-18 00:09:45.120 | INFO     | tldw_chatbook.app:__init__:8422 - === STARTUP TIMING SUMMARY ===
+E           2026-09-18 00:09:45.120 | INFO     | tldw_chatbook.app:__init__:8423 - Total initialization time: 3.636 seconds
+E           2026-09-18 00:09:45.120 | INFO     | tldw_chatbook.app:__init__:8429 -   basic_init: 0.485s (13.4%)
+E           2026-09-18 00:09:45.121 | INFO     | tldw_chatbook.app:__init__:8429 -   attribute_init: 0.000s (0.0%)
+E           2026-09-18 00:09:45.122 | INFO     | tldw_chatbook.app:__init__:8429 -   parallel_init: 0.005s (0.1%)
+E           2026-09-18 00:09:45.122 | INFO     | tldw_chatbook.app:__init__:8442 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-09-18 00:09:45.123 | INFO     | tldw_chatbook.app:__init__:8442 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-09-18 00:09:45.124 | INFO     | tldw_chatbook.app:__init__:8442 -     - providers_models: 0.000s (0.0% of parallel_init)
+E           2026-09-18 00:09:45.124 | INFO     | tldw_chatbook.app:__init__:8442 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-09-18 00:09:45.125 | INFO     | tldw_chatbook.app:__init__:8446 - ==============================
+E           2026-09-18 00:09:45.351 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing SettingsScreen screen: settings
+E           2026-09-18 00:09:46.242 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen settings mounted
+E           2026-09-18 00:09:49.559 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen settings unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:8299 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:8320 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           ============================= slowest 25 durations =============================
+E           8.21s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+E           1 failed in 17.04s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+42.35s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[category_return]
+40.75s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]
+37.51s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[workspace_return]
+35.29s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]
+34.83s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]
+33.06s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]
+32.13s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]
+31.08s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]
+30.38s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]
+28.47s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[modal_return]
+27.00s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[False]
+26.68s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog
+26.33s call     Tests/UI/test_settings_workspace_profile_review_journeys.py::test_delayed_first_bind_review_does_not_reopen_an_old_intent[new_draft]
+25.96s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only
+24.36s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]
+24.35s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default
+23.80s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses
+22.72s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review[True]
+22.62s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy
+22.17s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]
+21.98s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default
+19.76s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+19.57s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers
+18.29s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker
+
+(1 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+1 failed, 27 passed in 685.10s (0:11:25)

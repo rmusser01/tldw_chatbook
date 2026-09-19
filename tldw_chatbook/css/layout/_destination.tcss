@@ -1,0 +1,58 @@
+/* ========================================
+ * LAYOUT: Destination workbench
+ * ========================================
+ * ADR-161 task 10: the destination-* workbench wrappers (308+ uses)
+ * consolidated to one home: layout/_panes.tcss's rules (that sheet was
+ * destination-only and is deleted; this sheet takes its manifest slot so
+ * cascade order is unchanged) plus the two destination-only rules from
+ * components/_agentic_terminal.tcss, tokenized on arrival. Scoped
+ * .destination-section overrides stay with their surfaces (features/
+ * _settings.tcss, features/_library*.tcss); the ds-destination-header
+ * primitive lives in components/_ds_primitives.tcss.
+ * ======================================== */
+
+.destination-workbench {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    width: $ds-width-full;
+}
+
+.destination-workbench-pane {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.destination-pane-title {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.destination-mode-strip,
+.destination-filter-strip,
+.destination-footer-row {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+
+.destination-action-button {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+.destination-pane-divider {
+    width: $ds-size-1;
+    min-width: $ds-size-1;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    background: $ds-grid-line;
+}

@@ -1,0 +1,39 @@
+........................................................................ [ 22%]
+........................................................................ [ 45%]
+........................................................................ [ 67%]
+...........................F............................................ [ 90%]
+..............................                                           [100%]
+=================================== FAILURES ===================================
+_ test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_credential_missing _
+Tests/UI/test_library_shell.py:8314: in test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_credential_missing
+    assert "OPENAI_API_KEY" in visible
+E   AssertionError: assert 'OPENAI_API_KEY' in '‹ Library | Local  Navigation Browse Create Study Import / Export Details Status Source · Local Notes 0 · Media 0 · C...er Open Settings ▸ Providers Run ☐ Notes (0) ☐ Media (0) ☑ Conversations (2) ☐ Prompts (0) Re-chunk older-engine items'
+============================= slowest 25 durations =============================
+8.29s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-light]
+7.87s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start0-textual-dark]
+7.12s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-False]
+6.89s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-False]
+6.53s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-dark]
+6.04s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size1-True]
+6.02s call     Tests/UI/test_library_rag_query_return.py::test_deferred_resize_respects_newer_focus[size0-True]
+6.01s call     Tests/UI/test_library_rag_query_return.py::test_resize_retains_visible_focus_and_reverse_tab_returns_to_query[evidence-start1-textual-light]
+3.83s call     Tests/UI/test_library_rag_history_keyboard.py::test_answer_reveal_respects_newer_focus[False]
+3.61s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size1-textual-dark]
+3.53s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size1-textual-light]
+3.45s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size1-textual-dark]
+3.41s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-light]
+3.29s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[rag-size0-textual-dark]
+3.28s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size0-textual-dark]
+3.28s call     Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[True-size0-textual-light]
+3.24s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size0-textual-light]
+3.23s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_replay_uses_current_mode_scope_and_visible_focus[search-size0-textual-light]
+3.23s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[search-size0-textual-dark]
+3.18s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[rag-size1-textual-light]
+3.16s call     Tests/UI/test_library_rag_history_keyboard.py::test_answer_reveal_respects_newer_focus[True]
+3.12s call     Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[False-size0-textual-light]
+3.06s call     Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[True-size0-textual-dark]
+3.05s call     Tests/UI/test_library_rag_history_keyboard.py::test_keyboard_clear_retains_results_and_visible_history_focus[search-size0-textual-light]
+3.01s call     Tests/UI/test_library_rag_recovery_navigation.py::test_provider_recovery_routes_and_restores_draft_with_current_readiness[True-size1-textual-dark]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_shell.py::test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_credential_missing
+1 failed, 317 passed in 290.04s (0:04:50)

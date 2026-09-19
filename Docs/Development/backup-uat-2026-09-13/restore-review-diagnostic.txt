@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/private/tmp/chatbook-backup-uat-20260913-xtbqee8d/diagnose_restore_review.py", line 14, in <module>
+    plan=plan_restore(archive,mode='isolated',destinations=destinations,target=None,profile_names={'8da6048f8999247ca9652103':'UAT-Restored-Novice'})
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/chatbook-backup-uat-20260913-xtbqee8d/installed/tldw_chatbook/Backup_Recovery/restore_plan.py", line 621, in plan_restore
+    raise ValueError("shared_target_split")
+ValueError: shared_target_split

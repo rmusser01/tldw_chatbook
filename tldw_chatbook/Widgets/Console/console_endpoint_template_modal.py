@@ -23,7 +23,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
@@ -45,11 +45,13 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     validate_entry,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
 from tldw_chatbook.config import (
     AtomicConfigSnapshot,
     apply_settings_mutation_to_cli_config,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.settings_agents_panel import parse_params_text
 
 MODAL_ID = "console-endpoint-template-modal"
 TEMPLATE_PICKER_ID = "endpoint-template-picker"
@@ -57,6 +59,7 @@ NAME_INPUT_ID = "endpoint-template-name"
 FAMILY_SELECT_ID = "endpoint-template-family"
 URL_INPUT_ID = "endpoint-template-url"
 MODELS_INPUT_ID = "endpoint-template-models"
+PARAMS_TEXTAREA_ID = "endpoint-template-params"
 CREATE_BUTTON_ID = "endpoint-template-create"
 CANCEL_BUTTON_ID = "endpoint-template-cancel"
 ERROR_STATIC_ID = "endpoint-template-error"
@@ -78,9 +81,7 @@ DEFAULT_URL_PLACEHOLDER = "http://127.0.0.1:8080"
 _LLAMA_URL_PLACEHOLDER = "llama-server default :8080 · Chatbook default :9099"
 #: Display names for registry families, reused by the same-family starter
 #: label (H5) so the picker names the family exactly like the Family select.
-_FAMILY_DISPLAY_NAMES = {
-    family: label for label, family in FAMILY_SELECT_OPTIONS
-}
+_FAMILY_DISPLAY_NAMES = {family: label for label, family in FAMILY_SELECT_OPTIONS}
 SAVE_FAILED_COPY = "Could not write the endpoint to the config file."
 INVALID_SLUG_COPY = (
     "Enter a display name containing letters or numbers to derive an id."
@@ -169,9 +170,8 @@ def _provider_settings(
     if not isinstance(api_settings, Mapping):
         return {}
     for configured_provider, configured_settings in api_settings.items():
-        if (
-            provider_config_key(str(configured_provider)) == provider_key
-            and isinstance(configured_settings, Mapping)
+        if provider_config_key(str(configured_provider)) == provider_key and isinstance(
+            configured_settings, Mapping
         ):
             return configured_settings
     return {}
@@ -264,21 +264,19 @@ def _create_entry_only_if_absent(
     return "saved" if result.fully_applied else "failed"
 
 
-class ConsoleEndpointTemplateModal(
-    SafeModalDismissMixin, ModalScreen[str | None]
-):
+class ConsoleEndpointTemplateModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Create a custom endpoint entry; dismisses with the new 'custom-ep:<slug>'
     provider id (or None on cancel)."""
 
     SAFE_MODAL_CONTENT = f"#{MODAL_ID}"
     BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Cancel")]
 
-    DEFAULT_CSS = f"""
-    ConsoleEndpointTemplateModal {{
+    BUNDLED_CSS = """
+    ConsoleEndpointTemplateModal {
         align: center middle;
-    }}
+    }
 
-    ConsoleEndpointTemplateModal #{MODAL_ID} {{
+    ConsoleEndpointTemplateModal #console-endpoint-template-modal {
         width: 76;
         max-width: 95%;
         height: auto;
@@ -286,9 +284,9 @@ class ConsoleEndpointTemplateModal(
         border: round $panel;
         background: $surface;
         padding: 1 2;
-    }}
+    }
 
-    ConsoleEndpointTemplateModal .console-settings-error {{
+    ConsoleEndpointTemplateModal .console-settings-error {
         background: $error 25%;
         color: $text-error;
         text-style: bold;
@@ -297,45 +295,55 @@ class ConsoleEndpointTemplateModal(
         min-height: 1;
         margin: 1 0;
         padding: 0 1;
-    }}
+    }
 
-    ConsoleEndpointTemplateModal #{TEMPLATE_PICKER_ID} {{
+    ConsoleEndpointTemplateModal #endpoint-template-picker {
         height: auto;
         max-height: 8;
         margin: 0 0 1 0;
-    }}
+    }
 
-    ConsoleEndpointTemplateModal .console-endpoint-template-label {{
+    ConsoleEndpointTemplateModal .console-endpoint-template-label {
         width: 16;
         min-width: 16;
         max-width: 16;
         height: 1;
         min-height: 1;
         content-align: left middle;
-    }}
+    }
 
-    ConsoleEndpointTemplateModal .console-settings-modal-row {{
+    ConsoleEndpointTemplateModal .console-settings-modal-row {
         height: auto;
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
+        min-height: 3;
+    }
 
-    ConsoleEndpointTemplateModal .console-settings-control {{
+    ConsoleEndpointTemplateModal .console-settings-control {
         width: 1fr;
         min-width: 0;
-    }}
+    }
 
-    ConsoleEndpointTemplateModal Input,
-    ConsoleEndpointTemplateModal Select,
-    ConsoleEndpointTemplateModal Button {{
-        height: {MODAL_CONTROL_HEIGHT};
-        min-height: {MODAL_CONTROL_HEIGHT};
-    }}
+    ConsoleEndpointTemplateModal Input.console-endpoint-template-modal-input,
+    ConsoleEndpointTemplateModal Select.console-endpoint-template-modal-select,
+    ConsoleEndpointTemplateModal Button.console-endpoint-template-modal-button {
+        height: 3;
+        min-height: 3;
+    }
 
-    ConsoleEndpointTemplateModal .console-endpoint-template-actions {{
+    ConsoleEndpointTemplateModal #endpoint-template-params {
+        height: 5;
+        min-height: 3;
+    }
+
+    ConsoleEndpointTemplateModal .console-endpoint-template-hint {
+        color: $text-muted;
+        height: 1;
+    }
+
+    ConsoleEndpointTemplateModal .console-endpoint-template-actions {
         height: auto;
-        min-height: {MODAL_CONTROL_HEIGHT};
+        min-height: 3;
         align-horizontal: right;
-    }}
+    }
     """
 
     def __init__(
@@ -460,9 +468,7 @@ class ConsoleEndpointTemplateModal(
                     provider_id=option.value,
                     family=family,
                     base_url=base_url,
-                    models=_configured_models_for(
-                        self._providers_models, option.value
-                    ),
+                    models=_configured_models_for(self._providers_models, option.value),
                 )
             )
         return templates
@@ -479,9 +485,7 @@ class ConsoleEndpointTemplateModal(
 
         template = self._templates[self._active_template_index]
         with Vertical(id=MODAL_ID):
-            yield Static(
-                "New endpoint from template", classes="console-modal-header"
-            )
+            yield Static("New endpoint from template", classes="console-modal-header")
             yield Static("Template", classes="console-endpoint-template-label")
             # User-authored registry display names reach the prompt text, so
             # escape Rich markup the way the model options list does.
@@ -502,7 +506,7 @@ class ConsoleEndpointTemplateModal(
                     value=template.duplicate_name or "",
                     placeholder="Endpoint name",
                     id=NAME_INPUT_ID,
-                    classes="console-settings-control",
+                    classes="console-settings-control console-endpoint-template-modal-input",
                 )
             with Horizontal(classes="console-settings-modal-row"):
                 yield Static("Family", classes="console-endpoint-template-label")
@@ -511,7 +515,7 @@ class ConsoleEndpointTemplateModal(
                     value=template.family,
                     allow_blank=False,
                     id=FAMILY_SELECT_ID,
-                    classes="console-settings-control",
+                    classes="console-settings-control console-endpoint-template-modal-select",
                 )
             with Horizontal(classes="console-settings-modal-row"):
                 yield Static("Base URL", classes="console-endpoint-template-label")
@@ -519,7 +523,7 @@ class ConsoleEndpointTemplateModal(
                     value=template.base_url,
                     placeholder=self._url_placeholder_for_family(template.family),
                     id=URL_INPUT_ID,
-                    classes="console-settings-control",
+                    classes="console-settings-control console-endpoint-template-modal-input",
                 )
             with Horizontal(classes="console-settings-modal-row"):
                 yield Static("Models", classes="console-endpoint-template-label")
@@ -527,8 +531,19 @@ class ConsoleEndpointTemplateModal(
                     value=", ".join(template.models),
                     placeholder=MODELS_INPUT_PLACEHOLDER,
                     id=MODELS_INPUT_ID,
+                    classes="console-settings-control console-endpoint-template-modal-input",
+                )
+            with Horizontal(classes="console-settings-modal-row"):
+                yield Static("Params", classes="console-endpoint-template-label")
+                yield TextArea(
+                    id=PARAMS_TEXTAREA_ID,
                     classes="console-settings-control",
                 )
+            yield Static(
+                "Optional sampling params, one key = value per line "
+                "(e.g. temperature = 0.2); empty = none.",
+                classes="console-endpoint-template-hint",
+            )
             yield Static(
                 "",
                 id=ERROR_STATIC_ID,
@@ -536,8 +551,17 @@ class ConsoleEndpointTemplateModal(
                 markup=False,
             )
             with Horizontal(classes="console-endpoint-template-actions"):
-                yield Button("Cancel", id=CANCEL_BUTTON_ID)
-                yield Button("Create", id=CREATE_BUTTON_ID, variant="primary")
+                yield Button(
+                    "Cancel",
+                    id=CANCEL_BUTTON_ID,
+                    classes="console-endpoint-template-modal-button",
+                )
+                yield Button(
+                    "Create",
+                    id=CREATE_BUTTON_ID,
+                    variant="primary",
+                    classes="console-endpoint-template-modal-button",
+                )
 
     def on_mount(self) -> None:
         """Validate the prefilled form so Create starts in a truthful state."""
@@ -572,13 +596,12 @@ class ConsoleEndpointTemplateModal(
             self.query_one(f"#{NAME_INPUT_ID}", Input).value = template.duplicate_name
         self.query_one(f"#{FAMILY_SELECT_ID}", Select).value = template.family
         self.query_one(f"#{URL_INPUT_ID}", Input).value = template.base_url
-        self.query_one(f"#{MODELS_INPUT_ID}", Input).value = ", ".join(
-            template.models
-        )
+        self.query_one(f"#{MODELS_INPUT_ID}", Input).value = ", ".join(template.models)
         self._sync_validation()
 
     @on(Input.Changed)
     @on(Select.Changed)
+    @on(TextArea.Changed)
     def _form_field_changed(self, _event) -> None:
         """Re-validate on every edit so Create reflects the current draft."""
         if (
@@ -649,7 +672,9 @@ class ConsoleEndpointTemplateModal(
         name = self.query_one(f"#{NAME_INPUT_ID}", Input).value.strip()
         family = self._family_value()
         base_url = self.query_one(f"#{URL_INPUT_ID}", Input).value
-        errors = validate_entry(name, family, base_url)
+        params, param_errors = self._parsed_params()
+        errors = validate_entry(name, family, base_url, params=params)
+        errors.extend(param_errors)
         if errors:
             self._show_errors(errors)
             return
@@ -691,7 +716,10 @@ class ConsoleEndpointTemplateModal(
                         self._active_template_index
                     ].api_key_env,
                     models=self._parsed_models(),
-                    created_from=self._templates[self._active_template_index].provider_id,
+                    created_from=self._templates[
+                        self._active_template_index
+                    ].provider_id,
+                    params=params_to_tuple(params),
                 )
                 try:
                     outcome = await asyncio.to_thread(
@@ -758,13 +786,27 @@ class ConsoleEndpointTemplateModal(
         raw = self.query_one(f"#{MODELS_INPUT_ID}", Input).value
         return _filtered_models(raw.split(","))
 
+    def _parsed_params(self) -> tuple[dict[str, object], list[str]]:
+        """Parse the params TextArea draft (``key = value`` per line).
+
+        Returns the parsed mapping plus grammar errors; sampling-key/type
+        validation runs through ``validate_entry(..., params=...)`` so the
+        entry validator stays the single choke point.
+        """
+        return parse_params_text(
+            self.query_one(f"#{PARAMS_TEXTAREA_ID}", TextArea).text
+        )
+
     def _sync_validation(self) -> None:
         """Show inline errors and gate Create on ``validate_entry``."""
+        params, param_errors = self._parsed_params()
         errors = validate_entry(
             self.query_one(f"#{NAME_INPUT_ID}", Input).value.strip(),
             self._family_value(),
             self.query_one(f"#{URL_INPUT_ID}", Input).value,
+            params=params,
         )
+        errors.extend(param_errors)
         self._show_errors(errors)
         try:
             create = self.query_one(f"#{CREATE_BUTTON_ID}", Button)
@@ -809,6 +851,8 @@ class ConsoleEndpointTemplateModal(
             values["api_key_env"] = entry.api_key_env
         if entry.created_from is not None:
             values["created_from"] = entry.created_from
+        if entry.params:
+            values["params"] = params_to_dict(entry.params)
         section[entry.slug] = values
         if not isinstance(raw_section, dict):
             self._app_config["custom_endpoints"] = section

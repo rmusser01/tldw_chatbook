@@ -1,0 +1,28 @@
+...........................                                              [100%]
+============================= slowest 25 durations =============================
+20.57s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-light]
+20.06s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size1-textual-dark]
+19.08s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-light]
+18.75s call     Tests/UI/test_settings_workspace_assistant_journeys.py::test_single_field_edits_preserve_saved_defaults[size0-textual-dark]
+10.26s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[category]
+7.80s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[workspace]
+7.54s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_navigation_requires_fresh_memory_acknowledgement[modal]
+7.53s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[profile]
+7.46s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[persona]
+6.89s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[clear]
+6.88s call     Tests/UI/test_settings_workspace_memory_confirmation.py::test_changed_saved_defaults_reject_stale_memory_acknowledgement[memory]
+5.88s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_imported_profile_first_bind_requires_current_review_and_exact_token
+5.75s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_acknowledgement_remains_separate_from_first_bind_review
+5.41s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_profile_selection_is_applied_with_default
+5.30s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-new]
+5.12s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_selecting_persona_then_press_applies_read_only
+5.06s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_slow_apply_does_not_clear_newer_staging[ws-slow]
+4.89s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_read_write_requires_two_presses
+4.80s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_clear_removes_default
+4.67s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_posture_preview_degrades_without_tool_catalog
+4.67s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_default_workspace_renders_locked_note_not_picker
+4.57s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_degraded_persona_shows_reason_copy
+4.49s call     Tests/UI/test_settings_workspace_assistant_defaults.py::test_section_renders_effective_status_and_pickers
+
+(2 durations < 1s hidden.)
+27 passed in 197.06s (0:03:17)

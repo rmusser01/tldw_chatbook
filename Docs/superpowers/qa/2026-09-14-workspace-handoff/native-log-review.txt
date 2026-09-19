@@ -1,0 +1,9 @@
+Final private native run: 2026-09-14 20:49 local.
+Startup diagnostics outside this Library repair (the missing log widget was also present in the earlier audit; the sidebar timer error appeared on this restart):
+2026-09-14 20:49:09 [ERROR   ] root:11981 - !!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup.
+2026-09-14 20:49:10 [ERROR   ] tldw_chatbook.UI.Screens.chat_screen:463 - Failed to load sidebar state: 'ChatScreen' object has no attribute '_sidebar_state_save_timer'
+2026-09-14 20:49:11 [WARNING ] tldw_chatbook.TTS.audio_stitch:463 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-09-14 20:49:11 [WARNING ] __main__:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 20:49:11 [WARNING ] __main__:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+2026-09-14 20:49:11 [WARNING ] __main__:463 - No handler found for worker '_discover_project_skills_for_startup' (Group: project-skills-discovery)
+No Workspace traceback was logged. Startup/exit ANSI retains optional tokenizers/frontmatter warnings.

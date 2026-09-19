@@ -172,6 +172,7 @@ class ConsoleContextCapacity:
     response_reservation_tokens: int = 0
     safety_margin_tokens: int = 0
     mandatory_input_tokens: int = 0
+    model_window_verified: bool = True
 
     def __post_init__(self) -> None:
         for name in (
@@ -320,7 +321,7 @@ def resolve_context_policy(
         available_capacity = 0
 
     effective_budget: int | None
-    safety_verified = model_window is not None and safe_input_ceiling is not None
+    safety_verified = capacity.model_window_verified and model_window is not None and safe_input_ceiling is not None
     if policy.budget_mode is ContextBudgetMode.AUTOMATIC:
         if model_window is None:
             errors.append(

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import math
 import time
 from enum import Enum
 from pathlib import Path
-from typing import BinaryIO, cast
+from typing import Any, BinaryIO, cast
 
 import portalocker
 
@@ -15,6 +16,8 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 
 _CLEANUP_FAILURE_NOTE = "TTS profile store lease cleanup failed"
 _PATH_TYPE = type(Path())
+_ORIGINAL_PATH_OPEN = Path.open
+_ORIGINAL_IO_OPEN = io.open
 
 
 class ProfileStoreLockMode(str, Enum):
@@ -75,10 +78,51 @@ def _transition_handle_requires_cleanup(handle: BinaryIO) -> bool:
     return not handle_closed
 
 
+class _ProfileLockNativeOutcome:
+    """One lock-file allocation, independent of compatibility state slots."""
+
+    def __init__(self, owner: ProfileStoreLease) -> None:
+        self.owner = owner
+        self.handle: BinaryIO | None = None
+        self.pending = True
+        self.uncertain = False
+        self.close_returned = False
+        self.errors: list[BaseException] = []
+        self.leases: list[Any] = []
+
+    def admit(self) -> None:
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        # Independent outer hold survives an uncertain per-allocation release.
+        for _ in range(2):
+            lease = storage.acquire_storage(self.owner._database_path)
+            lease.native_owner = self
+            self.leases.append(lease)
+
+    def finish(self) -> None:
+        if (
+            self.pending
+            or self.uncertain
+            or (self.handle is not None and not self.close_returned)
+        ):
+            return
+        while self.leases:
+            try:
+                self.leases[-1].close()
+            except BaseException as error:
+                self.uncertain = True
+                self.errors.append(error)
+                raise
+            self.leases.pop()
+        if self in self.owner._native_outcomes:
+            self.owner._native_outcomes.remove(self)
+
+
 def _unlock_and_close(
     handle: BinaryIO,
     *,
     may_be_locked: bool,
+    _outcome: _ProfileLockNativeOutcome | None = None,
 ) -> BaseException | None:
     """Best-effort clean one handle and return its first cleanup failure."""
 
@@ -91,9 +135,24 @@ def _unlock_and_close(
     finally:
         try:
             handle.close()
+            if _outcome is not None:
+                _outcome.close_returned = True
         except BaseException as error:
+            if _outcome is not None:
+                _outcome.uncertain = True
+                _outcome.errors.append(error)
             # Control-flow cleanup errors outrank ordinary cleanup failures.
             # If both are control-flow exceptions, the first one remains primary.
+            if first_error is None or (
+                isinstance(first_error, Exception) and not isinstance(error, Exception)
+            ):
+                first_error = error
+    if _outcome is not None:
+        if first_error is not None:
+            _outcome.errors.append(first_error)
+        try:
+            _outcome.finish()
+        except BaseException as error:
             if first_error is None or (
                 isinstance(first_error, Exception) and not isinstance(error, Exception)
             ):
@@ -176,6 +235,7 @@ class ProfileStoreLease:
         self.check_interval_seconds = normalized_check_interval
         self._handle: BinaryIO | None = None
         self._residual_handle: BinaryIO | None = None
+        self._native_outcomes: list[_ProfileLockNativeOutcome] = []
 
     @property
     def lock_path(self) -> Path:
@@ -227,6 +287,14 @@ class ProfileStoreLease:
         if timing_failed:
             raise ProfileRepositoryError("operation_failed")
 
+        native_outcome = _ProfileLockNativeOutcome(self)
+        self._native_outcomes.append(native_outcome)
+        try:
+            native_outcome.admit()
+        except BaseException:
+            native_outcome.pending = False
+            native_outcome.finish()
+            raise
         handle: BinaryIO | None = None
         may_be_locked = False
         primary_error: BaseException | None = None
@@ -236,7 +304,12 @@ class ProfileStoreLease:
                 open_failed = False
                 try:
                     handle = cast(BinaryIO, self.lock_path.open("a+b"))
+                    native_outcome.handle = handle
+                    native_outcome.pending = False
                 except Exception:
+                    if Path.open is _ORIGINAL_PATH_OPEN and io.open is _ORIGINAL_IO_OPEN:
+                        native_outcome.pending = False
+                        native_outcome.finish()
                     open_failed = True
                 if open_failed or handle is None:
                     raise ProfileRepositoryError("operation_failed")
@@ -298,6 +371,7 @@ class ProfileStoreLease:
                         raise ProfileRepositoryError("operation_failed")
             except BaseException as error:
                 primary_error = error
+                native_outcome.errors.append(error)
 
             if handle is not None:
                 self._recover_acquisition_with_replay(
@@ -352,7 +426,9 @@ class ProfileStoreLease:
     ) -> None:
         """Clean and reconcile one acquisition handle as a complete operation."""
 
-        cleanup_error = _unlock_and_close(handle, may_be_locked=may_be_locked)
+        cleanup_error = _unlock_and_close(
+            handle, may_be_locked=may_be_locked, _outcome=self._native_outcome(handle)
+        )
         if cleanup_error is not None:
             errors.append(cleanup_error)
 
@@ -370,6 +446,12 @@ class ProfileStoreLease:
         forced_state_error = self._force_recovery_state(handle)
         if forced_state_error is not None:
             errors.append(forced_state_error)
+
+    def _native_outcome(self, handle: BinaryIO) -> _ProfileLockNativeOutcome | None:
+        return next(
+            (outcome for outcome in self._native_outcomes if outcome.handle is handle),
+            None,
+        )
 
     def _clear_handle_state(self, expected_handle: BinaryIO) -> BaseException | None:
         """Identity-normalize a matching closed handle."""
@@ -499,7 +581,9 @@ class ProfileStoreLease:
             self._force_clear_represented_handle(handle)
             return
 
-        cleanup_error = _unlock_and_close(handle, may_be_locked=True)
+        cleanup_error = _unlock_and_close(
+            handle, may_be_locked=True, _outcome=self._native_outcome(handle)
+        )
         if cleanup_error is not None:
             errors.append(cleanup_error)
 

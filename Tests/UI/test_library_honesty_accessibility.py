@@ -29,7 +29,7 @@ import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Widgets.Library.library_emergency_return import (
     LibraryEmergencyReturn,
 )
@@ -579,6 +579,12 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     fake._library_focus_enter_label = MethodType(
         LibraryScreen._library_focus_enter_label, fake
     )
+    # task-32537/32539: the editor, Preview and Notes-list tiers append the
+    # focused control's own Enter action through one shared helper, so the
+    # fake needs it exactly as it needs the two above.
+    fake._with_library_notes_focus_chip = MethodType(
+        LibraryScreen._with_library_notes_focus_chip, fake
+    )
     for name in vars(LibraryScreen):
         if name.startswith("LIBRARY_NOTES_"):
             setattr(fake, name, getattr(LibraryScreen, name))
@@ -604,6 +610,12 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     )
     fake._notes_state.compact = True
     fake._library_notes_focus_region = lambda: "editor"
+    # task-32623: `ctrl+end` is now dropped from this tier unless the note
+    # body itself holds focus (the key is a TextArea-class binding, dead
+    # from any other control) -- this section is about compact/full KEY
+    # parity, not that filter, so give the fake the focus state under
+    # which both tiers keep their full key set.
+    fake.focused = SimpleNamespace(id="library-note-body")
     compact = LibraryScreen._library_notes_footer_shortcuts(fake)
     assert compact == LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT
     assert [key for key, _ in compact] == [
@@ -649,6 +661,8 @@ def test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it(
 
 class _DatabaseNoteEditorApp(ConsolidatedCSSApp):
     """Mount one Database Note editor without the Library service layer."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
         baseline = NormalizedDatabaseNote(

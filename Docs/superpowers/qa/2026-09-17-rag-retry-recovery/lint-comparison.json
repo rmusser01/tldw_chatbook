@@ -1,0 +1,30 @@
+{
+  "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": {
+    "baseline_diagnostics": 2,
+    "current_diagnostics": 2,
+    "added": [],
+    "changed_range_format_checks": [
+      "371-371",
+      "1648-1654",
+      "1688-1691"
+    ]
+  },
+  "tldw_chatbook/Widgets/Library/__init__.py": {
+    "baseline_diagnostics": 2,
+    "current_diagnostics": 2,
+    "added": [],
+    "changed_range_format_checks": [
+      "79-79",
+      "201-201"
+    ]
+  },
+  "tldw_chatbook/Widgets/Library/library_search_rag_panel.py": {
+    "baseline_diagnostics": 5,
+    "current_diagnostics": 5,
+    "added": [],
+    "changed_range_format_checks": [
+      "953-963",
+      "1005-1016"
+    ]
+  }
+}

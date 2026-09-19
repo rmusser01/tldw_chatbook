@@ -488,6 +488,7 @@ class ConsoleMessageActionService:
         available_save_destinations: set[str] | None = None,
         unavailable_save_reasons: dict[str, str] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
+        canvas_disabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         self.available_save_destinations = set(available_save_destinations or ())
         self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
@@ -496,7 +497,9 @@ class ConsoleMessageActionService:
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
-        self._canvas_disabled_latched = not self._read_canvas_enabled()
+        self._canvas_disabled_reader = canvas_disabled_reader
+        self._canvas_disabled_latched = False
+        self._canvas_enabled()
 
     def _read_canvas_enabled(self) -> bool:
         """Read the configured switch without changing the restart latch."""
@@ -512,7 +515,15 @@ class ConsoleMessageActionService:
         if self._canvas_disabled_latched:
             return False
         if not self._read_canvas_enabled():
-            self._canvas_disabled_latched = True
+            # An app-owned predicate only controls whether denial is permanent;
+            # it never grants availability after the actual reader refuses.
+            try:
+                self._canvas_disabled_latched = (
+                    self._canvas_disabled_reader is None
+                    or self._canvas_disabled_reader() is not False
+                )
+            except Exception:  # noqa: BLE001 - unavailable policy fails closed
+                self._canvas_disabled_latched = True
             return False
         return True
 

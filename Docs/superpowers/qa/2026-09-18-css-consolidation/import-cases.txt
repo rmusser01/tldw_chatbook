@@ -1,0 +1,2 @@
+Tests/UI/test_library_notes_w5_kbd_focus.py::test_info_delete_reads_as_destructive_rather_than_disabled
+Tests/UI/test_consolidated_css_harness.py::test_no_harness_composes_split_sheet_widgets_with_the_bundle_alone

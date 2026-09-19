@@ -1,0 +1,62 @@
+{
+  "pid": 80099,
+  "runner_sha256": "cd9c7e3e417f99edf556433d08ab7a2680149147698859823a8e81a9c7932231",
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-1",
+      "saved_endpoint": "http://127.0.0.1:9100",
+      "saved_return_clean": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-2",
+      "saved_endpoint": "http://127.0.0.1:9101",
+      "saved_return_clean": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-3",
+      "saved_endpoint": "http://127.0.0.1:9102",
+      "saved_return_clean": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "draft_retained": true,
+      "cancel_retained": true,
+      "revert_restored": true,
+      "saved_model": "review-4",
+      "saved_endpoint": "http://127.0.0.1:9103",
+      "saved_return_clean": true
+    }
+  ],
+  "waiting_for": "Providers & Models card",
+  "passed": true,
+  "endpoint_test_calls": 0,
+  "app_run_returned": true
+}

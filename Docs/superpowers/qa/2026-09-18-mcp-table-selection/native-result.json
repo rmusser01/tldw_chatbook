@@ -1,0 +1,121 @@
+{
+  "pid": 84687,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "rail_button_fully_visible": false,
+      "rail_region": "Region(x=2, y=17, width=16, height=1)",
+      "rail_clip": "Region(x=2, y=8, width=12, height=14)",
+      "selected_tool": "builtin:tldw_chatbook::chat_with_llm",
+      "focused_refresh_retains_detail_node": true,
+      "rail_clear_survives_focused_refresh": true,
+      "next_arrow_selects": true,
+      "permission_profiles_unchanged": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "rail_button_fully_visible": true,
+      "rail_region": "Region(x=2, y=15, width=42, height=1)",
+      "rail_clip": "Region(x=2, y=7, width=42, height=39)",
+      "selected_tool": "builtin:tldw_chatbook::export_conversation",
+      "focused_refresh_retains_detail_node": true,
+      "rail_clear_survives_focused_refresh": true,
+      "next_arrow_selects": true,
+      "permission_profiles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "rail_button_fully_visible": false,
+      "rail_region": "Region(x=2, y=17, width=16, height=1)",
+      "rail_clip": "Region(x=2, y=8, width=12, height=14)",
+      "selected_tool": "builtin:tldw_chatbook::library_get_conversation",
+      "focused_refresh_retains_detail_node": true,
+      "rail_clear_survives_focused_refresh": true,
+      "next_arrow_selects": true,
+      "permission_profiles_unchanged": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "rail_button_fully_visible": true,
+      "rail_region": "Region(x=2, y=15, width=42, height=1)",
+      "rail_clip": "Region(x=2, y=7, width=42, height=39)",
+      "selected_tool": "builtin:tldw_chatbook::library_get_media_chunk",
+      "focused_refresh_retains_detail_node": true,
+      "rail_clear_survives_focused_refresh": true,
+      "next_arrow_selects": true,
+      "permission_profiles_unchanged": true
+    }
+  ],
+  "runner_sha256": "c0a9e822e651ef70dfcea466a0e879192be4e87366a402f18e92aee4b77438dc",
+  "source_hashes": {
+    "tldw_chatbook/app.py": "21e0aec9b64be4c934e707ae5d72b1539be33240906bbfb2ccfdb60c0fd60eaa",
+    "tldw_chatbook/UI/Widgets/table_click_select.py": "1e532339d71b8626a97ada016692354d183f15d1add52dc73e6abc3d0cb77c35",
+    "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "6d0e78e415b3c660ac67693fc95d9b8063166fd39673d9f75f65ac9dfd2478d9",
+    "tldw_chatbook/UI/Voice_Cloning_Window.py": "92c214f22b704394ca557bd982705ff6e90d49109665a2aa3a1d988347a6be14",
+    "tldw_chatbook/UI/Screens/mcp_screen.py": "e9875923942329da6cea8045ad0f92efe0adac354e27e111cd364578305996a8",
+    "tldw_chatbook/UI/MCP_Modules/mcp_rail.py": "08986b8970f986d3e9c23a3105d0cf0fb1e49f7dcef97ab7adfbf0a14432b0b8",
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "4127c071e1c8b0d0c871a3c5aceba4d0c162420982662587596d4d31ad5e7e20",
+    "tldw_chatbook/MCP/local_config_saves.py": "cb8a579bb8e0bfd888b7e4b84e8c9f194d8b2c90183dedc980f9cff54e7bccbb",
+    "tldw_chatbook/UI/MCP_Modules/mcp_local_master_button.py": "5fc3d11e59b15bc6e0258d097958fa7a8384bc3cf6a51a98eb0e9fc3621cfed4",
+    "tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py": "5a4e1588d91445087e36858e6680733846873e87e5d9998b1b5ece817731a21c",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c623a8bd25550d7a454aa06e98365656bd399673158f05e16cbc2304ef030711",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "8f0667c0e5ce342834e8645ef633d686bcb4c995eb48dea69e78ccdaee2c7ce4",
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": "e1afe44c58be9c354114fa58c8e3b61b181908ad05bfe3d6b02f510f05f27761",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "6e6a717a72eb52d6d3c7cfa3d75c1561df426813610f5380049453aa54710149",
+    "tldw_chatbook/Tool_Packs/service.py": "805b66d6e2f15082f794b5318219729d695b1859bcaf2c200b9e2bc9c6bb7d17",
+    "tldw_chatbook/Tool_Packs/export.py": "dd43ad4e11c9303bf9c12b73972eaec0258ea3cf8df5c3a2875fff120050c05a",
+    "tldw_chatbook/Tool_Packs/publication.py": "25a655551ca47d4c8c169a6fa272b27b675ffdb55c422d98d602bf30e52fc3bc",
+    "tldw_chatbook/Tool_Packs/activation.py": "aeccfd4004550c3b0b4f506802de561fd8c8509cf4fc329febf393f7b3335bbd",
+    "tldw_chatbook/Tool_Packs/importer.py": "43843f4c15277e1ed7be49ea4414c3085c90c6ef118eed2db52d1c9468f3fc23",
+    "tldw_chatbook/Tool_Packs/removal.py": "570de3908eec9b31b3ef0164b26074cbb184d8ae352e9918de7e838855c919a4",
+    "tldw_chatbook/Widgets/enhanced_file_picker.py": "26b74a35ca16725dce92e128d8fd147440c9ad8f18118434af4f92de0d3d0421",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_pack_import_review.py": "30843d15759e26b9d45ea7d8fd887524f97841e2d6228d111fbcbaed3bbb1858",
+    "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py": "9c8ee520a270f8e423c429bdd466beafd55664137919429efdfc39d61df0ead0",
+    "tldw_chatbook/Workspaces/agent_provisioning.py": "7a94790e019370b9ae74c33d6ccba35a563f97a72d1bfc626f85751c48e562d0",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "36bc24fbf678edf7846f2c4ed1af93698a768177c2dfe082d65b750bf2260512",
+    "tldw_chatbook/Widgets/workspace_persona_default.py": "5d2eab749cd73da2d1a459358ff67c910108eeab41a17d7848e5a3b40a573e7c",
+    "tldw_chatbook/Widgets/workspace_create_modal.py": "c2407576849caddad58e38b7f408c2842e710c2876fa3e35795092ad0aba9675",
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": "d81263d1dc5e7ef0f9796dd2034ae5ec5273b547fa9e27ca86e8d28de40d157c",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "bc58e765b139403f571b42ec695cff15cd7eb8b39543c547f4df830f4e17fe62",
+    "tldw_chatbook/css/features/_settings.tcss": "4d7359558e0ee21c398bca401d6cdd68eff6c811e91574e4f11df92e2e436214",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_dialogs.tcss": "4a790234fa12836d4dd4121f685cca7fbd9edec0c759ca38afa3a5c39cf3e43d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "5c33e3ccdfa2458257347bb2cbd95653c2e29b90a14e423114753b5ef544029f",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "43983e38293543b9fdac643a20a53ad09c4a410268378107223e6148a384fd50",
+    "tldw_chatbook/css/screen_agentic_settings.tcss": "527cfc7921838381e7d83e59d13230a66353c7af5ef13e8b8f230298fec41507",
+    "tldw_chatbook/Workspaces/registry_service.py": "0974a8e979b17ca4c3ed6ad603245c0202958b49c61150bd529ab3be0aca1507",
+    "tldw_chatbook/config.py": "53ed1070293859594e65d5099e1aa7a8d67551f6b18ff6153ea50859855a3159"
+  },
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "Next arrow selects",
+  "live_database_attributes": [
+    "chachanotes_db",
+    "client_notifications_db",
+    "local_library_collections_db",
+    "local_workspace_db",
+    "media_db",
+    "prompts_db",
+    "subscriptions_db"
+  ],
+  "fixture_setup": "Fresh private profile; real app, catalog and keyboard. Select a tool, refresh with its table focused, navigate via the All servers rail button, then refresh the focused table after clearing. No external server or tool execution.",
+  "passed": true,
+  "app_run_returned": true
+}

@@ -17,28 +17,20 @@ from unittest.mock import patch
 from tldw_chatbook.UI.Library_Modules import library_export_controller as lec
 
 
-def _controller(form: dict) -> tuple[lec.LibraryExportController, list]:
+def _controller(form: dict) -> lec.LibraryExportController:
     """A bare controller whose only live wiring is what this method reads."""
-    notifications: list = []
-    screen = SimpleNamespace(
-        app_instance=SimpleNamespace(
-            notify=lambda msg, severity="information": notifications.append(
-                (msg, severity)
-            )
-        ),
-        refresh=lambda **kwargs: None,
-    )
+    screen = SimpleNamespace(refresh=lambda **kwargs: None)
     controller = lec.LibraryExportController.__new__(lec.LibraryExportController)
     controller._screen = screen
     controller._export_state_accessor = lambda: SimpleNamespace(form=form)
-    return controller, notifications
+    return controller
 
 
 def test_normalized_destination_flows_through_the_validation_seam():
     """The ``.zip``-normalized path (the one actually written) is validated,
     not only the raw dialog pick."""
     form: dict = {}
-    controller, _notifications = _controller(form)
+    controller = _controller(form)
 
     with patch.object(
         lec, "validate_path_simple", side_effect=lambda p, **kw: p
@@ -53,11 +45,15 @@ def test_normalized_destination_flows_through_the_validation_seam():
     assert form["destination"] == "/tmp/notes.zip"
 
 
-def test_rejecting_the_normalized_path_leaves_the_form_untouched():
+def test_rejecting_the_normalized_path_clears_destination_with_inline_reason():
     """If validation rejects the normalized path, the destination is NOT
-    stored and the user is told why."""
-    form: dict = {}
-    controller, notifications = _controller(form)
+    retained and the form carries the reason without losing its other fields."""
+    form = {
+        "destination": "/tmp/previous.zip",
+        "destination_exists": True,
+        "name": "Keep this title",
+    }
+    controller = _controller(form)
 
     def _validate(path, **kwargs):
         if path.name == "notes.zip":
@@ -67,9 +63,12 @@ def test_rejecting_the_normalized_path_leaves_the_form_untouched():
     with patch.object(lec, "validate_path_simple", side_effect=_validate):
         controller._apply_library_export_destination(Path("/tmp/notes.txt"))
 
-    assert "destination" not in form
-    assert "destination_exists" not in form
-    assert notifications and notifications[0][1] == "warning"
+    assert form == {
+        "destination": "",
+        "destination_exists": False,
+        "name": "Keep this title",
+        "destination_error": "Can't save there: hostile normalized component",
+    }
 
 
 def test_hostile_raw_pick_is_rejected_with_a_reason():
@@ -79,13 +78,14 @@ def test_hostile_raw_pick_is_rejected_with_a_reason():
     traversal-shaped input exercises path_validation.py's actual checks.
     """
     form: dict = {}
-    controller, notifications = _controller(form)
+    controller = _controller(form)
 
     controller._apply_library_export_destination(Path("/tmp/../../..evil.txt"))
 
-    assert form == {}
-    assert notifications and notifications[0][1] == "warning"
-    assert "Rejected export destination" in notifications[0][0]
+    assert form["destination"] == ""
+    assert form["destination_exists"] is False
+    assert form["destination_error"].startswith("Can't save there:")
+    assert "dangerous pattern" in form["destination_error"]
 
 
 def test_uppercase_zip_pick_normalizes_to_the_writers_path(tmp_path):
@@ -93,7 +93,7 @@ def test_uppercase_zip_pick_normalizes_to_the_writers_path(tmp_path):
     ``foo.zip`` the writer actually replaces, so the overwrite line names
     the real file."""
     form: dict = {}
-    controller, _notifications = _controller(form)
+    controller = _controller(form)
 
     with patch.object(lec, "validate_path_simple", side_effect=lambda p, **kw: p):
         controller._apply_library_export_destination(tmp_path / "notes.ZIP")

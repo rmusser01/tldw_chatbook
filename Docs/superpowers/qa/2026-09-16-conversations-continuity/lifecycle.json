@@ -1,0 +1,13 @@
+{
+  "native_run": "run-004",
+  "pid": 35447,
+  "app_run_returned": true,
+  "shell_exit_code": 0,
+  "pid_absent_after_exit": true,
+  "pid_probe": "ps -p35447 -o pid=,ppid=,stat=,command= returned1/no rows",
+  "owned_tmux_socket": "codex32701",
+  "owned_tmux_session": "conversations",
+  "session_closed_after_exit_verification": true,
+  "normal_app_stopping_events": 1,
+  "unhandled_exception_events": 0
+}

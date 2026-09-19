@@ -1,0 +1,10 @@
+{
+  "run": "run-004",
+  "pid": 60938,
+  "app_run_returned": true,
+  "exit_code": 0,
+  "process_absent_after_exit": true,
+  "owned_tmux_socket": "codex32698",
+  "owned_session": "ingest",
+  "owned_session_closed": true
+}

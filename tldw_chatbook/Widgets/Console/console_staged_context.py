@@ -212,7 +212,9 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
 
     def compose(self) -> ComposeResult:
         header = Horizontal(classes="console-staged-context-header")
-        header.styles.height = 1
+        header.remove_class(*(name for name in header.classes if name.startswith("h-")))
+        header.set_styles(height=None)
+        header.add_class("h-1")
         header.styles.min_height = 1
         header.styles.max_height = 1
         with header:

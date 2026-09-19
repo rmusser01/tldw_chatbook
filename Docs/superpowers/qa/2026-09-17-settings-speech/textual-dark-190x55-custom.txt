@@ -1,0 +1,55 @@
+                                                                                                                                          ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Speech & TTS
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌───────────────────────────────────┐
+│                              │  │  │                                                                                                             │  │  │                                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Application-wide defaults; Studio preferences remain separate.                │  │  │  Scope Inspector                  │
+│  No filter | / focus         │  │  │                                                                                                             │  │  │                                   │
+│  category search             │  │  │  Speech & TTS                                                                                               │  │  │ Selected category: Speech & TTS   │
+│                              │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                │
+│  Core                        │  │  │ │  Editing application-wide Speech & TTS defaults — Speech Studio preferences stay separate.             │  │  │  │  Guided edits: change a field     │
+│     Overview (view)          │  │  │ │  Voice profiles: Speech Lab (open it from the actions below). Per-character voices: the Roleplay       │  │  │  │  first.                           │
+│     Providers & Models       │  │  │ │  character editor.                                                                                     │  │  │  │  Save (s) — no changes            │
+│     Web Search               │  │  │ └────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  Revert (r) — no changes          │
+│   > Speech & TTS             │  │  │                                                                                                             │  │  │ Local-only: saves write your      │
+│  Interface                   │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ config file.                      │
+│     Appearance               │  │  │ │                                                                                                        │  │  │  │ Impact and boundaries             │
+│     Theme                    │  │  │ │  Global defaults                                                                                       │  │  │  │ Application-wide speech, TTS,     │
+│     Splash Screen            │  │  │ │  Default voice setup: Saved.                                                                           │  │  │  │ voice, audio.cpp, OpenAI,         │
+│     Console Behavior         │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │ ElevenLabs, Kokoro, Chatterbox,   │
+│  Data & Privacy              │  │  │ │ Default voice profi█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█          ▼ │ │  │  │  │ Higgs, and AllTalk defaults and   │
+│     Storage                  │  │  │ │                    █                                                                    █────────────┘ │▄ │  │  │ setup.                            │
+│     Workspaces               │  │  │ │                    █  Set a custom voice ID                                             █────────────┐ │  │  │  │  Runtime owner: Settings          │
+│     Tool Profiles            │  │  │ │ Default TTS provide█   Enter the exact identifier your provider expects. Known          █          ▼ │ │  │  │  │  persisted global defaults;       │
+│     Privacy & Security       │  │  │ │                    █   choices are already offered in the dropdown; this is for IDs     █────────────┘ │  │  │  │  Speech Lab runtime operations    │
+│     Network                  │  │  │ │                    █   the list does not carry (for example a voice discovered in       █────────────┐ │  │  │  │                                   │
+│     My Profile               │  │  │ │ Model policy       █   Speech Lab).                                                     █          ▼ │ │  │  │  │  Writes allowed: Yes              │
+│  Troubleshooting             │  │  │ │                    █  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  █────────────┘ │  │  │  │                                   │
+│     Diagnostics (view)       │  │  │ │                    █  ▊  review-textual-dark-190x55                                  ▎  █────────────┐ │  │  │  │  Owns: app_tts global defaults    │
+│     About (view)             │  │  │ │ Model value        █  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  █          ▼ │ │  │  │  │  app_tts provider connection and  │
+│     Agents                   │  │  │ │                    █       Cancel        Use this ID                                    █────────────┘ │  │  │  │  initialization                   │
+│  Expert                      │  │  │ │                    █                                                                    █────────────┐ │  │  │  │  API OpenAI and ElevenLabs        │
+│     Internal Prompts         │  │  │ │ Voice policy       █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█          ▼ │ │  │  │  │  credentials                      │
+│     Advanced Config          │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │  HiggsSettings initialization     │
+│   Domain Defaults ▸ (11)     │  │  │ │                         ┌─────────────────────────────────────────────────────┐ Browse in Speech Lab   │  │  │  │                                   │
+│                              │  │  │ │ Voice value             │ Alloy                                             ▼ │                        │  │  │  │  Affected config:                 │
+│                              │  │  │ │                         └─────────────────────────────────────────────────────┘                        │  │  │  │  application-wide Speech & TTS    │
+│                              │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  defaults and selected provider   │
+│                              │  │  │ │ Output format           │ MP3                                                                      ▼ │ │  │  │  │  setup                            │
+│                              │  │  │ │                         └────────────────────────────────────────────────────────────────────────────┘ │  │  │  │                                   │
+│                              │  │  │ │ Speed (0.25-4.0)        │ 1.0                                                                          │  │  │  │  Recovery: revert the local       │
+│                              │  │  │ │  Provider capability constraints are validated before Save.                                            │  │  │  │  draft or open Speech Lab for     │
+│                              │  │  │ └────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  explicit runtime checks          │
+│                              │  │  │                                                                                                             │  │  │                                   │
+│                              │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Boundary: Studio preferences     │
+│                              │  │  │ │                                                                                                        │  │  │  │  and runtime test, discovery,     │
+│                              │  │  │ │  Provider setup                                                                                        │  │  │  │  generation, and playback stay    │
+│                              │  │  │ │  Current status: not_tested.                                                                           │  │  │  │  in Speech Lab                    │
+│                              │  │  │ │                         ┌────────────────────────────────────────────────────────────────────────────┐ │  │  │  │                                   │
+│                              │  │  │ │ Configure provider      │ OpenAI                                                                   ▼ │ │  │  │  │                                   │
+│                              │  │  │                                                                                                             │  │  │                                   │
+└──────────────────────────────┘  │  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └───────────────────────────────────┘
+ Known voices for this provider; pick Custom… to enter an exact ID
+  Esc, s save category | Esc, r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

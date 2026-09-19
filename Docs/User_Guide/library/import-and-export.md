@@ -21,8 +21,9 @@ then either:
   **"Export"**.
 
 Scoped exports also arrive here on their own: use **"Export…"** in the Media,
-Notes, Conversations, or Prompts panels (or **"Export selected"** where a list
-offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
+Conversations, or Prompts panels — or **"Export"**, bare, in Notes, which is
+the one canvas spelled without the ellipsis — (or **"Export selected"** where
+a list offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
 content (see [Media & Conversations](media-and-conversations.md)).
 
 In server mode the **Export** rail row is disabled, with the tooltip
@@ -74,7 +75,12 @@ In server mode the **Export** rail row is disabled, with the tooltip
   Word/Office
   documents (.doc/.docx/.odt/.rtf) get their own fold; the Plain text &
   HTML fold's Analyze/Chunk/Encoding options still apply to them as the
-  always-present base. Each fold ends with "Reset to defaults".
+  always-present base. Each fold ends with "Reset to defaults", which resets
+  only that type's options. Changing a choice, toggling an option or resetting
+  one fold preserves the text and selection in your other editors, including
+  metadata and the custom analysis prompt. Dependent fields and their reasons
+  update in place; long checkbox explanations wrap in compact terminals.
+  Option edits also clear any pending Start or "replace form" confirmation.
 - **Metadata** — three persistently labeled fields: "Title (optional)",
   "Author (optional)", and "Keywords (optional)". Example/default guidance
   remains in the placeholders while the labels survive entered values.
@@ -82,6 +88,8 @@ In server mode the **Export** rail row is disabled, with the tooltip
 - **Start** — a forecast line, a quiet gate line ("Enter a file path or
   URL to start.") and the "Start import" button, kept together in a pinned
   review bar so a long pre-check cannot push the decision below the fold.
+  Recovery and confirmation text wraps at narrow widths so the full reason
+  stays readable above Start. The empty explanation keeps one reserved row.
   After submission the blank review bar hides so Queue activity gets the
   viewport. The forecast is one
   sentence of counts for the staged selection — "2 will import · 1 will
@@ -129,10 +137,15 @@ In server mode the **Export** rail row is disabled, with the tooltip
   the counts rather than just flagging them: "Last import: 4 files
   failed, 2 skipped." with a **Review** button back to the queue.
   Pressing "Start import" scrolls the Queue heading into view, so the
-  freshly queued rows are the first thing you see after a submit.
+  freshly queued rows are the first thing you see after a submit. Queue
+  updates keep keyboard focus on the current action. If that action disappears
+  or becomes unavailable, focus returns to the source field; a newer focus
+  choice takes precedence.
 - **Fold indicator** — while the form is taller than the pane, a pinned
   "▼ more — scroll for the rest" row holds the bottom edge; it disappears
-  once everything fits.
+  once everything fits. Tab and Shift+Tab reveal focused controls above both
+  this hint and the pinned Start area. **Retry this batch** shows the complete
+  "Press again to replace form" confirmation before replacing an edited draft.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
 header, a scope line ("Everything: 128 media · 542 conversations · 87 notes · 34
@@ -227,8 +240,8 @@ checkpoint before any tool is allowed to run, as required by
 
 | Import control | What it does |
 |---|---|
-| "Browse…" | Opens the "Import media" file picker (remembers your last folder). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. That input is also the path field: type or paste an absolute path (or one starting with "~") into it and the listing jumps there as you type, and Ctrl+A selects what is in it. Folders and URLs are typed or pasted into the canvas's own path field instead. |
-| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (audio)", "Copy install command (video)"). |
+| "Browse…" | Opens the "Import media" file picker (remembers your last folder). Large folders [load progressively with progress and sorting controls](../file-picker.md). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. That input is also the path field: type or paste an absolute path (or one starting with "~") into it and the listing jumps there as you type, and Ctrl+A selects what is in it. Folders and URLs are typed or pasted into the canvas's own path field instead. |
+| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. Audio/video warnings follow the selected transcription provider; alternative backends and retired MLX providers are not requirements. Auto uses faster-whisper; choose Parakeet (ONNX) or transcribe.cpp explicitly to use that installed backend. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (audio)", "Copy install command (video)"). Copy checks native clipboard delivery where available. If delivery cannot be confirmed, the warning details open so you can select the literal command manually. |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
 | Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" (the full faster-whisper catalog — Tiny through Large v3 including the English-only ".en" variants, the distilled "Distil" family, and the community "Large v3 Turbo" / "CrisperWhisper" builds), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter", "Start at" / "Stop at" (trim bounds, HH:MM:SS or seconds — blank means unbounded; "Stop at" is an absolute position in the recording, not a length measured from "Start at", and means the same thing for audio and video files), "Cookies file for gated URLs" (a Netscape cookies.txt path for yt-dlp; video URLs only — the file must exist when the job runs, otherwise the import proceeds without cookies and the queue row says "cookies ignored: …"), "Recursive summary (map-reduce)" (with Analyze after import + chunking: summarizes each chunk, then combines the summaries). E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Images (.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif): "Extract text (OCR)" (on by default — the extracted text is what gets imported), "OCR language", "OCR backend" ("Auto (best installed backend)" / "Docext (vision model)" / Docling / Tesseract / EasyOCR / PaddleOCR). Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
 | PDF / document OCR | The OCR checkbox is inert under engines that cannot OCR — the label names the capable ones. "OCR language" rides the OCR toggle; the PDF "OCR backend" applies to the docext engine only. |
@@ -248,8 +261,35 @@ checkpoint before any tool is allowed to run, as required by
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error — offered on **every** failed row that has one, including failures with no structured reason; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. A skipped row is never offered Retry: the file would be skipped again. |
 | "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure whose text actually named a remedy says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); when nothing on screen named one, the advice states the determinism without inventing a remedy ("Retrying now will fail the same way — this file's content, or the tooling for it, has to change first."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); and a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. When a failure carries no structured reason at all, the expansion shows the underlying text verbatim — that is where an errno, a spawn error, or a tool's own output lives, out of the row line but one press away. Pressing it keeps the keyboard on the button you pressed — it toggles to "Hide details" under your finger and Tab from there walks on into the queue, never back up to the "Keywords (optional)" field of the next import. The same holds for a grouped row's "Show the N files". |
 | Grouped failures | When several files in a row settle the same way for the same reason — a whole folder stopped by one cause — they collapse into a single line: "✗ failed · 4 files · The import worker couldn't start on this machine (system resource limit) · Restart the app, then Retry". Three actions sit under it: **"Show the 4 files"** reveals the members' own rows (with their own Show details / Retry / Dismiss) and turns into "Hide the 4 files"; **"Retry all"** re-queues every member, and is offered only when a plain retry is right for every one of them — a group of transcription failures shows no "Retry all", because those rows offer "Choose another GGUF…" / "Retry with faster-whisper" instead and a bare retry would fail the same way; open the group to reach them; **"Dismiss all"** clears the whole group in one press. Only settled outcomes group — failed, skipped and cancelled. Rows still working (queued, parsing, writing) never do, because their per-file progress is the point, and a reason that names its own file (a missing path) is per-file too, so those keep their own rows. A group of one is exactly the row it always was, filename and all, and grouping never reorders the queue: only a run of neighbours from the same batch collapses (files imported one at a time count as one batch), so a batch's own header always sits above rows counting that batch alone. |
+| "Recent imports" | Starts collapsed and lists recent results, including cleared and dismissed rows. Opening or closing it survives background queue updates; keyboard focus stays on its title while you read the history. |
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
 | "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
+
+Resizing the terminal keeps the current Import control focused and visible,
+including metadata fields, options, queue Details and Recent imports. Your draft,
+text selection and open Recent imports history stay in place.
+
+Choosing a replacement GGUF keeps your next import draft in place. From a failed
+row, an accepted model selection retries that job; cancelling the picker or
+choosing an unusable model leaves it failed. If the retry removes the focused
+row action, focus returns to the source field. A newer focus move or navigation
+away from Import is respected when model validation finishes.
+
+**Parakeet setup:** Installing the Python package adds the transcription runtime;
+it does not download the model files. In the Audio & video options, select
+"Parakeet (ONNX)", then press "Install verified Parakeet v2 INT8 (630.6 MiB)…"
+and confirm the displayed download plan. This installs the English v2 INT8 model
+and selects it for the batch. Leave "Local Parakeet model folder" blank to use
+the model installed through Chatbook; that field is an optional override for
+model files you already have. The install button downloads v2 INT8 specifically,
+so use English and INT8 with that bundle.
+
+For native clipboard copying on Fedora Wayland, install
+[`wl-clipboard`](https://packages.fedoraproject.org/pkgs/wl-clipboard/wl-clipboard/)
+(`sudo dnf install wl-clipboard`). X11 sessions can use `xclip` or `xsel`.
+SSH and browser sessions use the client-facing clipboard route; terminal or
+browser permissions can prevent delivery. An unconfirmed-copy warning leaves
+the command visible for manual selection.
 
 **Consent for risky imports** — starting with "⚠" tooling warnings
 outstanding takes two presses, right at the Start button (task-3314
@@ -321,7 +361,9 @@ destination, or leaving the Import canvas cancels pending consent.
    same source and options come back staged, the pre-check re-runs against
    the fixed environment, and the warning is gone.
 5. **Export your notes as a bundle** — In the rail click Browse ▸ Notes,
-   press "Export…" above the list. On the "Export bundle (.zip)" form
+   press "Export" above the list — **no ellipsis on this one**; Notes is the
+   only browse canvas whose export action is spelled bare, where Media,
+   Conversations and Prompts all use "Export…". On the "Export bundle (.zip)" form
    confirm the scope line says "Notes · N items", adjust the name, press
    "Choose destination…", pick where the `.zip` goes, then press "Export
    bundle (.zip)".
@@ -1022,3 +1064,83 @@ button, "Can't save there: The folder /nonexistent/dir does not exist.", and
 accepts nothing; the ingest **Browse…** opens at the folder `[notes]
 sync_directory` names when nothing is remembered. Nothing on this page needed
 correcting.)*
+
+*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32663):
+Import media recovery and consent text stays complete at compact widths.
+Targeted checks cover both themes; native checks exercise local preflight,
+keyboard Clear/re-entry and metadata retention without submitting imports.*
+
+*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32664):
+The local Parakeet folder Browse action returns to a visible button after Select
+or Cancel. Selecting updates the staged folder without replacing other draft
+fields or resetting their cursor positions. Missing Parakeet tooling keeps the
+folder controls disabled and names the missing package. This qualifies the folder
+picker UI; it does not qualify model installation or transcription.*
+
+*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
+wave-4 guide sweep; corrected in fix round 2 after this stamp's first version
+certified a claim it had not checked).*
+
+***Two claims on this page were wrong, both about the Notes export control.***
+The "Scoped exports also arrive here on their own" paragraph near the top of
+this page, and step 5 of "Common tasks" ("Export your notes as a bundle"),
+both told you to press **"Export…"** in Notes. (Named, not numbered: a line
+citation inside the page it cites is wrong on the next edit — which is how
+this stamp's first version already went wrong once.) The Notes
+list toolbar ships it **bare** — `("Export", "library-notes-export")` at
+`Widgets/Library/library_notes_canvas.py:1842` — and six of this sweep's own
+captures paint `Add from files…     Export` (`docs-03`, `docs-04`, `docs-05`,
+`docs-06`, `docs-08`, `docs-09`). Notes is the **only** browse canvas spelled
+without the ellipsis: Media (`library_media_canvas.py:1178`), Conversations
+(`library_conversations_canvas.py:150`) and Prompts
+(`library_prompts_canvas.py:890`) all ship `Export…`, which is why step 6
+("Export all Prompts and Recipes") was right and the Notes step was not.
+(Source line numbers are kept — they point at another file, which a reader
+can check and which this page's edits cannot move.) Both sentences
+now name the bare label and say it is the odd one out; the label
+inconsistency itself is filed as task-32590.
+
+*Checked and correct, so left alone:* the export scope lines this page quotes
+are exact — `"Notes · N items"`, `"Selected notes · 1 item"`, the
+`"Everything: …"` form and `"Prompts · N items"` all come from
+`Library/library_export_scope.py:395-417` — and the rail ▸ Browse ▸ Notes
+route, the `"Export bundle (.zip)"` form name and `"Choose destination…"` are
+as written. *Caveat carried over from* [Library notes](notes.md): on a
+brand-new profile there is no Browse section to click, which that page's
+"Getting there" now explains.
+
+*How the first version of this stamp went wrong, since it is the whole
+subject of this sweep:* it asserted "none needed correcting" for a page whose
+Notes claims had been read but not grepped.
+`scripts/check_guide_claim_strings.py` did not catch it either, and this
+stamp has now given the reason wrongly **twice** — first "the string lives
+only in comments" (it does not; `Export…` is a live **Button** label on six
+other surfaces), then "the checker probes the whole tree" (true, but only
+half the cause). Measured, with every figure labelled by the probe that
+produced it — "scoped" being the twelve `library_notes*` modules, "AST"
+being non-docstring string literals — and by its **match semantics**, which
+here are **containment** (a literal counts when it *contains* the fragment,
+the `grep -F` the script runs):
+
+| probe (containment match) | `"Export…"` | `"Export"` |
+|---|---|---|
+| repo-wide + raw | 35 | 1431 |
+| repo-wide + AST | 9 | 373 |
+| scoped + raw | 1 | 31 |
+| **scoped + AST** | **0** | **13** |
+
+**A figure without its match semantics is not reproducible.** An independent
+re-derivation of the `"Export"` column matching **exact equality** (the
+literal *is* `Export`) read **21** repo-wide + AST and **4** scoped + AST,
+not 373 and 13 — two readers, two answers, neither wrong, because the
+question differed. Quote both halves of the label, always. What decides this
+incident is the same under either: 0 for the false spelling, non-zero for the
+true one.
+
+**Both conditions are necessary and neither alone is sufficient.** Literals
+alone still find 9. Scoping alone still finds 1 — a stale docstring on
+`handle_library_notes_export`, the handler for the very button that ships
+bare, so prose *about* the Notes export action, inside a Notes module,
+satisfies it. Only the pair reaches 0 for the false spelling while leaving
+13 for the true one, which is what lets the corrected sentence above still
+pass its own check. Recorded on the script and as task-32589 AC#7-8.)*

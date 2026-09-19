@@ -1463,3 +1463,55 @@ def test_candidate_binding_ids_orders_by_binding_id_and_never_leaks_a_root(
     assert store.candidate_binding_ids("root-1") == tuple(
         sorted(binding.binding_id for binding in store.list_bindings("root-1"))
     )
+
+
+def test_list_completed_operations_returns_newest_first_bounded(tmp_path: Path) -> None:
+    """task-32534 AC#3: the receipts projection reads completed journal rows."""
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(_root(logical_folder_id="folder-1", state=NotesSyncRootState.ACTIVE))
+    store.create_binding(_binding())
+    for index in range(3):
+        operation_id = f"operation-{index}"
+        store.create_operation(
+            NotesSyncOperationRecord(
+                operation_id=operation_id,
+                root_id="root-1",
+                binding_id="binding-1",
+                kind="update_file",
+                state=NotesSyncOperationState.PENDING,
+                reason_code=None,
+                observation_token="t" * 64,
+                expected_note_version=None,
+                expected_file_digest=None,
+            )
+        )
+        with store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE notes_sync_operations SET state = 'completed', updated_at = ? "
+                "WHERE operation_id = ?",
+                (1_000 + index, operation_id),
+            )
+    # A pending row never appears as a receipt.
+    store.create_operation(
+        NotesSyncOperationRecord(
+            operation_id="operation-pending",
+            root_id="root-1",
+            binding_id="binding-1",
+            kind="update_note",
+            state=NotesSyncOperationState.PENDING,
+            reason_code=None,
+            observation_token="t" * 64,
+            expected_note_version=None,
+            expected_file_digest=None,
+        )
+    )
+
+    rows = store.list_completed_operations("root-1", limit=2)
+
+    assert [(row.operation_id, row.kind, row.completed_at) for row in rows] == [
+        ("operation-2", "update_file", 1_002),
+        ("operation-1", "update_file", 1_001),
+    ]
+    assert rows[0].binding_id == "binding-1"
+    with pytest.raises(ValueError):
+        store.list_completed_operations("root-1", limit=0)

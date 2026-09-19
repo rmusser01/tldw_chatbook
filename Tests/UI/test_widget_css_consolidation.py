@@ -19,7 +19,6 @@ three things that make that safe:
 from __future__ import annotations
 
 import ast
-import asyncio
 import importlib
 import os
 import re
@@ -32,6 +31,7 @@ from textual.css.parse import parse
 from textual.css.stylesheet import Stylesheet, StylesheetParseError
 from textual.css.tokenize import tokenize_values
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.css import build_css, widget_css
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +91,9 @@ def _class_css_blocks(
     root = _PACKAGE_ROOT if root is None else root
     wanted = {"DEFAULT_CSS", "CSS", widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR}
     blocks: list[tuple[str, str, str]] = []
+    central_tokens = widget_css.resolve_variable_definitions(
+        build_css.design_token_preamble(_CSS_ROOT)
+    )
     for path in sorted(root.rglob("*.py")):
         relative = path.relative_to(root)
         if any(part in excluded_dirs for part in relative.parts):
@@ -109,7 +112,16 @@ def _class_css_blocks(
                     continue
                 value = stmt.value
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                    blocks.append((relative.as_posix(), node.name, value.value))
+                    css = value.value
+                    if widget_css.WIDGET_ATTR in names:
+                        # BUNDLED_CSS receives central tokens at build time;
+                        # DEFAULT_CSS/CSS must still parse independently.
+                        css = widget_css.isolate_local_variables(
+                            css,
+                            scope=node.name,
+                            variables=central_tokens,
+                        )
+                    blocks.append((relative.as_posix(), node.name, css))
     return blocks
 
 
@@ -372,6 +384,46 @@ def test_local_variable_definitions_do_not_leak_across_blocks():
     assert exercised, (
         "neither stream carried the fixture blocks -- the guard is vacuous"
     )
+
+
+@private_profile_test
+def test_widget_build_resolves_central_tokens_without_leaking_local_overrides(
+    request, tmp_path, monkeypatch
+):
+    """Central aliases stay theme-aware and each widget keeps its own scope."""
+    css_dir = tmp_path / "css"
+    core = css_dir / "core"
+    core.mkdir(parents=True)
+    tokens = core / "_variables.tcss"
+    blocks = [
+        widget_css.BundledBlock(
+            "a.py",
+            "Alpha",
+            1,
+            "$ds-height: 7; Alpha { height: $ds-height; background: $ds-panel; }",
+        ),
+        widget_css.BundledBlock(
+            "b.py", "Bravo", 1, "Bravo { height: $ds-height; background: $ds-panel; }"
+        ),
+    ]
+    monkeypatch.setattr(widget_css, "iter_blocks", lambda *args: blocks)
+    own, scoped = css_dir / "self.tcss", css_dir / "scoped.tcss"
+    for height in (3, 5):
+        tokens.write_text(
+            f"$ds-base: {height};\n$ds-height: $ds-base;\n$ds-panel: $panel;\n"
+        )
+        build_css.build_widget_defaults(css_dir, own, scoped)
+        output = own.read_text() + scoped.read_text()
+        assert "$ds-" not in output
+        assert f"Bravo {{ height: {height}; background: $panel; }}" in output
+        assert "Alpha { height: 7; background: $panel; }" in output
+        for theme in ("textual-dark", "textual-light"):
+            app = App()
+            app.theme = theme
+            sheet = Stylesheet(variables=app.get_css_variables())
+            sheet.add_source(output, read_from=("central-token-fixture", ""))
+            sheet.parse()
+            assert len(sheet.rules) == 2
 
 
 _BANNER_RE = re.compile(r"/\* ===== WIDGET: (\S+) \(\S+\) ===== \*/")
@@ -697,24 +749,24 @@ def _declares(module: str, class_name: str, names: set[str]) -> bool:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_full_destination_tour_stays_under_the_parse_cache_cliff():
-    """A full 13-destination tour must leave the source count under the cliff.
+@private_profile_test
+async def test_full_destination_tour_stays_under_the_parse_cache_cliff(request):
+    """A full 15-destination tour must leave the source count under the cliff.
 
     This is the measurement the whole task exists for: before consolidation the
     same tour ended at 94 sources with ``stylesheet.parse()`` costing 127-378 ms
     per call; it must now finish well under Textual's ``LRUCache(64)`` with the
     cache warm.
     """
-    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.css_destination_tour import (
+        build_css_tour_app,
+        visit_all_shell_destinations,
+    )
 
-    app = _build_test_app()
+    app = build_css_tour_app()
     async with app.run_test(size=(235, 52)) as pilot:
-        await pilot.pause()
-        await asyncio.sleep(2)
-        for key in [f"ctrl+{digit}" for digit in "1234567890"] + ["f2", "f3", "f4", "f5", "f7"]:
-            await pilot.press(key)
-            await pilot.pause()
-            await asyncio.sleep(0.75)
+        visited = await visit_all_shell_destinations(app, pilot)
+        print(f"CSS destination tour: {visited}")
         sources = len(app.stylesheet.source)
         # Headroom, not just "under": a handful of unconsolidated widget classes
         # still register their own source when first mounted.
@@ -1088,8 +1140,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("UI/Navigation/nav_overflow_menu.py", "NavOverflowMenu", "DEFAULT_CSS"),
     ("UI/Outputs_Panel.py", "OutputsPanel", "DEFAULT_CSS"),
     ("UI/Screens/scheduling/forms/reminder_form.py", "ReminderForm", "DEFAULT_CSS"),
-    ("UI/Screens/skills_screen.py", "SkillTrustBootstrapModal", "DEFAULT_CSS"),
-    ("UI/Screens/skills_screen.py", "SkillTrustPassphraseModal", "DEFAULT_CSS"),
     ("UI/Sharing_Panel.py", "SharingPanel", "DEFAULT_CSS"),
     ("UI/Speech/speech_clone_setup.py", "SpeechCloneSetup", "DEFAULT_CSS"),
     ("UI/stts_profile_library.py", "STTSProfileLibrary", "DEFAULT_CSS"),
@@ -1117,15 +1167,9 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("UI/Workbench/help.py", "WorkbenchHelpPanel", "DEFAULT_CSS"),
     ("Utils/widget_helpers.py", "FeatureNotAvailableDialog", "DEFAULT_CSS"),
     ("Widgets/audio_troubleshooting_dialog.py", "AudioTroubleshootingDialog", "DEFAULT_CSS"),
-    ("Widgets/base_components.py", "ActionButtonRow", "DEFAULT_CSS"),
-    ("Widgets/base_components.py", "ConfigurationForm", "DEFAULT_CSS"),
-    ("Widgets/base_components.py", "NavigationButton", "DEFAULT_CSS"),
-    ("Widgets/base_components.py", "SectionContainer", "DEFAULT_CSS"),
-    ("Widgets/base_components.py", "StatusDisplay", "DEFAULT_CSS"),
     ("Widgets/cancel_confirmation_dialog.py", "CancelConfirmationDialog", "DEFAULT_CSS"),
     ("Widgets/Chat_Widgets/chat_handoff_card.py", "ChatHandoffCard", "DEFAULT_CSS"),
     ("Widgets/Chat_Widgets/chat_message_enhanced.py", "ChatMessageEnhanced", "DEFAULT_CSS"),
-    ("Widgets/Chat_Widgets/chat_message.py", "ChatMessage", "DEFAULT_CSS"),
     ("Widgets/Chat_Widgets/chat_shell_bar.py", "ChatShellBar", "DEFAULT_CSS"),
     ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeNode", "DEFAULT_CSS"),
     ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeView", "DEFAULT_CSS"),
@@ -1200,7 +1244,9 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
 ])
 
 
-def test_class_level_css_stays_within_the_allowlist():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_class_level_css_stays_within_the_allowlist(request):
     """No new ``DEFAULT_CSS``/``CSS`` outside the allowlist; no stale entries.
 
     TASK-21115. Static and boot-free on purpose: the integration tour above is

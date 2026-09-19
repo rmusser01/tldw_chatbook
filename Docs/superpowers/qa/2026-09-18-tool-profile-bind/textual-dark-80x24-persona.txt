@@ -1,0 +1,24 @@
+                                ╭─────────────╮
+ ‹ MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetin  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Workspaces
+┌──────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│  Filter categories (/)       │  │  │  State: Applies immediately | Each      │
+│     Storage                  │  │  │  action reversible: unarchive, rename   │
+│   > Workspaces               │  │  │  again, or set active.                  │
+│     Tool Profiles            │  │  │ │  workspace: runs record no diffs   │  │
+│     Privacy & Security       │  │  │ │  and offer no review.              │  │
+│     Network                  │  │  │ │  Enable change review              │  │
+│     My Profile               │  │  │ │                                    │  │
+│  Troubleshooting           ▇ │  │  │ │                                    │  │
+│     Diagnostics (view)       │  │  │ │  Default assistant                 │▅ │
+│     About (view)             │  │  │ │  No default assistant set — pick   │  │
+│     Agents                   │  │  │ │  a persona to apply.               │  │
+│  Expert                      │  │  │ │ Native helper                      │  │
+│     Internal Prompts         │  │  │ │  Tool Profile staged — choose a    │  │
+│     Advanced Config          │  │  │ │  persona and apply.                │  │
+│   Domain Defaults ▸ (11)     │  │  │ │  Apply (memory: read_only)         │  │
+└──────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

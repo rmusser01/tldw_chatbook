@@ -1,0 +1,111 @@
+FFFFFFFFFFFF                                                             [100%]
+=================================== FAILURES ===================================
+_ test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-dark] _
+Tests/UI/test_settings_model_discovery_journeys.py:113: in test_discovery_keyboard_selection_survives_rebuild_and_save
+    assert _list(screen).selected == [MODELS[1]]
+E   AssertionError: assert [] == ['model-beta']
+E
+E     Right contains one more item: 'model-beta'
+E     Use -v to get more diff
+_ test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-light] _
+Tests/UI/test_settings_model_discovery_journeys.py:113: in test_discovery_keyboard_selection_survives_rebuild_and_save
+    assert _list(screen).selected == [MODELS[1]]
+E   AssertionError: assert [] == ['model-beta']
+E
+E     Right contains one more item: 'model-beta'
+E     Use -v to get more diff
+_ test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-dark] _
+Tests/UI/test_settings_model_discovery_journeys.py:113: in test_discovery_keyboard_selection_survives_rebuild_and_save
+    assert _list(screen).selected == [MODELS[1]]
+E   AssertionError: assert [] == ['model-beta']
+E
+E     Right contains one more item: 'model-beta'
+E     Use -v to get more diff
+_ test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-light] _
+Tests/UI/test_settings_model_discovery_journeys.py:113: in test_discovery_keyboard_selection_survives_rebuild_and_save
+    assert _list(screen).selected == [MODELS[1]]
+E   AssertionError: assert [] == ['model-beta']
+E
+E     Right contains one more item: 'model-beta'
+E     Use -v to get more diff
+____ test_late_discovery_cannot_publish_into_a_changed_form[False-provider] ____
+Tests/UI/test_settings_model_discovery_journeys.py:155: in test_late_discovery_cannot_publish_into_a_changed_form
+    assert _list(screen).option_count == 0
+E   AssertionError: assert 2 == 0
+E    +  where 2 = SelectionList(id='settings-discovered-models-list', classes='settings-discovered-models-list').option_count
+E    +    where SelectionList(id='settings-discovered-models-list', classes='settings-discovered-models-list') = _list(SettingsScreen(classes='shell-header-normal'))
+____ test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint] ____
+Tests/UI/test_settings_model_discovery_journeys.py:155: in test_late_discovery_cannot_publish_into_a_changed_form
+    assert _list(screen).option_count == 0
+E   AssertionError: assert 2 == 0
+E    +  where 2 = SelectionList(id='settings-discovered-models-list', classes='settings-discovered-models-list').option_count
+E    +    where SelectionList(id='settings-discovered-models-list', classes='settings-discovered-models-list') = _list(SettingsScreen(classes='shell-header-normal'))
+_ test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip] _
+Tests/UI/test_settings_model_discovery_journeys.py:155: in test_late_discovery_cannot_publish_into_a_changed_form
+    assert _list(screen).option_count == 0
+E   AssertionError: assert 2 == 0
+E    +  where 2 = SelectionList(id='settings-discovered-models-list', classes='settings-discovered-models-list').option_count
+E    +    where SelectionList(id='settings-discovered-models-list', classes='settings-discovered-models-list') = _list(SettingsScreen(classes='shell-header-normal'))
+____ test_late_discovery_cannot_publish_into_a_changed_form[True-provider] _____
+Tests/UI/test_settings_model_discovery_journeys.py:156: in test_late_discovery_cannot_publish_into_a_changed_form
+    assert _status(screen) == expected_status
+E   AssertionError: assert 'Model discov...in Logs (F3).' == 'Discover mod...ured endpoint'
+E
+E     - Discover models from configured endpoint
+E     + Model discovery failed (OSError). Check the provider endpoint and API key, then run Discover again. Details are in Logs (F3).
+____ test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint] _____
+Tests/UI/test_settings_model_discovery_journeys.py:156: in test_late_discovery_cannot_publish_into_a_changed_form
+    assert _status(screen) == expected_status
+E   AssertionError: assert 'Model discov...in Logs (F3).' == 'Discover mod...ured endpoint'
+E
+E     - Discover models from configured endpoint
+E     + Model discovery failed (OSError). Check the provider endpoint and API key, then run Discover again. Details are in Logs (F3).
+_ test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint_roundtrip] _
+Tests/UI/test_settings_model_discovery_journeys.py:156: in test_late_discovery_cannot_publish_into_a_changed_form
+    assert _status(screen) == expected_status
+E   AssertionError: assert 'Model discov...in Logs (F3).' == 'Discover mod...ured endpoint'
+E
+E     - Discover models from configured endpoint
+E     + Model discovery failed (OSError). Check the provider endpoint and API key, then run Discover again. Details are in Logs (F3).
+__ test_late_save_keeps_receipt_and_activation_out_of_another_provider[False] __
+Tests/UI/test_settings_model_discovery_journeys.py:182: in test_late_save_keeps_receipt_and_activation_out_of_another_provider
+    assert screen.query_one("#settings-model-value", Input).value == expected_model
+E   AssertionError: assert 'model-beta' == ''
+E
+E     + model-beta
+__ test_late_save_keeps_receipt_and_activation_out_of_another_provider[True] ___
+Tests/UI/test_settings_model_discovery_journeys.py:183: in test_late_save_keeps_receipt_and_activation_out_of_another_provider
+    assert _status(screen) == expected_status
+E   AssertionError: assert 'Could not sa...in Logs (F3).' == 'Discover mod...ured endpoint'
+E
+E     - Discover models from configured endpoint
+E     + Could not save the discovered models (OSError). Try Save again; if it keeps failing, check that your config file is writable. Details are in Logs (F3).
+============================= slowest 25 durations =============================
+14.38s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-dark]
+11.61s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-light]
+9.21s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-light]
+9.10s call     Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-dark]
+1.86s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_another_provider[True]
+1.85s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint_roundtrip]
+1.84s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_another_provider[False]
+1.83s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint]
+1.76s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip]
+1.72s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-provider]
+1.69s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-provider]
+1.66s call     Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint]
+
+(13 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-dark]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-light]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-dark]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-light]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-provider]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-provider]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_discovery_cannot_publish_into_a_changed_form[True-endpoint_roundtrip]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_another_provider[False]
+FAILED Tests/UI/test_settings_model_discovery_journeys.py::test_late_save_keeps_receipt_and_activation_out_of_another_provider[True]
+12 failed in 65.02s (0:01:05)
