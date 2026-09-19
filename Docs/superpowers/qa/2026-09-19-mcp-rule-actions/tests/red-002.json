@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[description]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[schema]",
+      "status": "failure"
+    }
+  ]
+}

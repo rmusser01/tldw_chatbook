@@ -79,6 +79,7 @@ from tldw_chatbook.MCP.permission_store import (
     EffectiveToolState,
     GatedToolRef,
     PermissionStoreSnapshotError,
+    definition_hash,
     profile_lifecycle_disposition,
     profile_policy_digest,
     resolve_builtin_state,
@@ -5016,6 +5017,14 @@ class MCPWorkbench(Container):
                 severity="warning",
             )
             return
+        if event.reviewed_definition_hash != definition_hash(
+            tool.description, tool.input_schema
+        ):
+            self.app.notify(
+                _toast("Tool definition changed. Select the tool again before re-allowing."),
+                severity="warning",
+            )
+            return
         service = self._service()
         set_tool_state = getattr(service, "set_tool_state", None)
         if not callable(set_tool_state):
@@ -5044,24 +5053,16 @@ class MCPWorkbench(Container):
                 )
             else:
                 self.app.notify(_toast("Re-allow failed."), severity="error")
+            await self.query_one(MCPInspector).retry_permission_action(
+                event.permission_view
+            )
             return
         # Task 3: re-allow always sets "allow" -- reuses the tool-cycle
         # mutation-echo shape (`_cycled_ui_label("allow")` == "Allow").
         echo = f"{event.tool_name} → {_cycled_ui_label('allow')} · "
         async with self._sync_children_lock:
             await self._sync_permissions_mode(echo=echo)
-        successor = self._successor_profile_context(context)
-        if successor is None:
-            await self.query_one(MCPInspector).show_tool(None)
-            return
-        await self.query_one(MCPInspector).show_permission(
-            tool,
-            self._effective_for_display(tool),
-            cascade=self._cascade_for_tool(tool),
-            profile_context=successor,
-            arg_rules=self._arg_rules_for_row(tool, successor.profile_id),
-            session_approvals=self._session_approvals_for_row(successor.profile_id),
-        )
+        await self._refresh_permission_action(event, context)
 
     async def on_mcp_inspector_remove_arg_rule_requested(
         self, event: MCPInspector.RemoveArgRuleRequested
@@ -5112,24 +5113,35 @@ class MCPWorkbench(Container):
             self.app.notify(
                 _toast("Removing the rule failed."), severity="error"
             )
+            await self.query_one(MCPInspector).retry_permission_action(
+                event.permission_view
+            )
             return
         async with self._sync_children_lock:
             await self._sync_permissions_mode()
-        tool = self._tool_for(event.server_key, event.tool_name)
-        if tool is None:
-            await self.query_one(MCPInspector).show_tool(None)
-            return
+        await self._refresh_permission_action(event, context)
+
+    async def _refresh_permission_action(
+        self,
+        event: MCPInspector.ReallowRequested | MCPInspector.RemoveArgRuleRequested,
+        context: PermissionProfileContext,
+    ) -> None:
+        """Refresh a completed write only while its originating panel still owns it."""
         successor = self._successor_profile_context(context)
-        if successor is None:
-            await self.query_one(MCPInspector).show_tool(None)
+        if successor is None or event.permission_view is None:
             return
+        tool = self._tool_for(event.server_key, event.tool_name)
         await self.query_one(MCPInspector).show_permission(
             tool,
-            self._effective_for_display(tool),
-            cascade=self._cascade_for_tool(tool),
+            self._effective_for_display(tool) if tool is not None else None,
+            cascade=self._cascade_for_tool(tool) if tool is not None else None,
             profile_context=successor,
-            arg_rules=self._arg_rules_for_row(tool, successor.profile_id),
+            arg_rules=(
+                self._arg_rules_for_row(tool, successor.profile_id)
+                if tool is not None else ()
+            ),
             session_approvals=self._session_approvals_for_row(successor.profile_id),
+            expected_view=event.permission_view,
         )
 
     async def on_mcp_inspector_revoke_session_approval_requested(

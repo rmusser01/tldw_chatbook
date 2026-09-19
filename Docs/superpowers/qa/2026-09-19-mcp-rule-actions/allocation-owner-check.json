@@ -1,0 +1,11 @@
+{
+  "worktrees": 36,
+  "owners": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+      "path": "backlog/tasks/task-32866 - Bind-exact-input-removal-and-Re-allow-to-the-reviewed-permission-view.md"
+    }
+  ],
+  "history": [],
+  "unique": true
+}

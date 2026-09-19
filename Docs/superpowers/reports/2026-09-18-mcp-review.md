@@ -3,6 +3,17 @@
 This ledger separates qualified repairs from remaining destination behavior.
 Token migration alone does not qualify a complete workflow.
 
+## Current closeout checkpoint
+
+PR2707 is merged and its heartbeat remains paused. The owner approved the
+PR2731/PR2734 continuation and visual evidence. Both follow-ups are ready, with
+Qodo's accumulated findings resolved; runner validation and documentation fixes
+preserve the approved application behavior. Both now target dev for required CI,
+with PR2731 explicitly required to merge before PR2734. Historical draft/pending
+approval statements below describe earlier checkpoints, not current status.
+The next bounded review is remaining permission/Audit navigation ownership,
+followed by connected-runtime journeys; neither is part of these PRs.
+
 ## Post-merge continuation: session-grant revocation
 
 PR2707 is merged; its open-PR statements below are historical. The continuation
@@ -73,3 +84,21 @@ its merge is confirmed.
 The [component completion ledger](2026-09-17-design-system-completion-audit.md)
 retains other destinations. Draft PR2707 remains open and subject to its own
 visual review and merge approval.
+
+## Post-merge continuation: exact-input Remove and Re-allow
+
+TASK-32866 follows PR2731 on a separate stacked branch, `codex/mcp-rule-action-review`.
+Both controls now capture their mounted target and submit once; obsolete controls
+are rejected. Re-allow retains the reviewed definition fingerprint across cached
+refreshes, retry and successful completion. Late completion preserves newer
+selections, and failed writes remain retryable. Existing permission policy and
+layout are preserved.
+
+[56 passing targeted checks and twelve inspected native captures](../qa/2026-09-19-mcp-rule-actions/README.md)
+qualify this bounded repair in both themes at 120×40 and 170×48. Real private
+store/service writes remove only the selected rule and persist the reviewed
+definition; another profile's rule survives. No connection or tool execution.
+Seven preflight guards, unchanged static-analysis baseline, independent review,
+normal shutdown, lock release, database health and source hashes pass.
+Current-head CI/review and owner visual approval remain merge gates. Other
+permission controls, connected runtime journeys and the wider review remain open.

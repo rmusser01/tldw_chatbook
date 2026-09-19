@@ -10,9 +10,13 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-RUNNER = REPO / "Docs/superpowers/qa/2026-09-19-mcp-session-revocation/native_check.py"
+RUNNERS = [
+    REPO / "Docs/superpowers/qa/2026-09-19-mcp-session-revocation/native_check.py",
+    REPO / "Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py",
+]
 
 
+@pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -25,7 +29,9 @@ RUNNER = REPO / "Docs/superpowers/qa/2026-09-19-mcp-session-revocation/native_ch
         ["ROOT", "socket", "x" * 65],
     ],
 )
-def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments):
+def test_invalid_cli_exits_with_usage_without_touching_profile(
+    tmp_path, arguments, runner
+):
     root = tmp_path / "profile"
     root.mkdir()
     sentinel = root / "config.toml"
@@ -33,7 +39,7 @@ def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, argumen
     arguments = [str(root) if value == "ROOT" else value for value in arguments]
     env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
     result = subprocess.run(
-        [sys.executable, str(RUNNER), *arguments],
+        [sys.executable, str(runner), *arguments],
         env=env,
         capture_output=True,
         text=True,
