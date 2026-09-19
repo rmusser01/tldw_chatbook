@@ -4077,6 +4077,27 @@ App.-wide-viewport #speech-voice-profile-picker {
     max-width: $ds-size-170;
 }
 
+App.-wide-viewport #notes-recovery-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #skills-recovery-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport ChatbookCreationWindow > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport ChatbookExportManagementWindow > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport ChatbookTemplatesWindow > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+
 
 App.-wide-viewport #personal-context-review-modal {
     width: $ds-percent-85;
@@ -4144,6 +4165,11 @@ App.-wide-viewport #tool-pack-import-review {
     max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-profile-bind-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+
+App.-wide-viewport #prompt-collection-manager {
     width: $ds-percent-85;
     max-width: $ds-size-150;
 }
@@ -4355,6 +4381,11 @@ App.-wide-viewport #console-composer-menu {
     max-width: $ds-size-120;
 }
 App.-wide-viewport #prompt-variables-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+
+App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
     width: $ds-percent-85;
     max-width: $ds-size-120;
 }

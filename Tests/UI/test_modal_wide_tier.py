@@ -35,6 +35,7 @@ from Tests.UI.modal_wide_tier_registry import (
     WIDE_TIER_WIDTH_PERCENT,
     WIDE_VIEWPORT_COLUMNS,
 )
+from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
@@ -42,6 +43,7 @@ from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
 )
+from tldw_chatbook.Widgets.Library.notes_recovery_dialog import NotesRecoveryDialog
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
     BuddyManagementModal,
 )
@@ -356,22 +358,41 @@ def _build_buddy_management_modal() -> BuddyManagementModal:
     return BuddyManagementModal()
 
 
+def _build_notes_recovery_modal() -> NotesRecoveryDialog:
+    async def approve(_review: object) -> None:
+        return None
+
+    review = NotesRecoveryReview(
+        "notes.sync_bindings",
+        "fixture",
+        Path("/tmp"),
+        (("note.md", "retained"),),
+        (),
+        (),
+    )
+    return NotesRecoveryDialog(review, current=lambda: True, approve=approve)
+
+
 #: One representative per cap tier: anchor -> (cap, base width rule).
 #: Base geometry is pinned here so the tier provably leaves it untouched:
 #: prompts ``90% / 104``, system prompt ``84 / 95%``, reaction ``76 / 100%``.
 #: ``#buddy-management`` (PR #2742 review addition) additionally pins one of
 #: the newly registered surfaces: ``78 / 96%`` base, 120 cap.
+#: ``#notes-recovery-dialog`` (wave 2) pins one of the skip-list follow-up
+#: surfaces: ``85% / 100`` base, 170 cap.
 SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     WIDE_TIER_CAPS[170]: (170, (104, 90)),  # base max-width, base percent
     WIDE_TIER_CAPS[150]: (150, (84, 95)),
     WIDE_TIER_CAPS[120]: (120, (76, 100)),
     "#buddy-management": (120, (78, 96)),
+    "#notes-recovery-dialog": (170, (100, 85)),
 }
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
     WIDE_TIER_CAPS[150]: _build_system_prompt_modal,
     WIDE_TIER_CAPS[120]: _build_reaction_picker_modal,
     "#buddy-management": _build_buddy_management_modal,
+    "#notes-recovery-dialog": _build_notes_recovery_modal,
 }
 
 

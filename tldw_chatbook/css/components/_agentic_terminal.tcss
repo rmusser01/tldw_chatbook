@@ -2062,6 +2062,12 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
  * Coverage contract: Tests/UI/test_modal_wide_tier.py pins this
  * block 1:1 against Tests/UI/modal_wide_tier_registry.py --
  * edit both together, then rebuild with build_css.py.
+ *
+ * Wave 2 (2026-09-19): the triage-named skip-list follow-ups joined
+ * the tier (recovery dialogs, prompt-collection manager, the three
+ * Chatbook work windows) plus the TemplateSelectorDialog base-rule
+ * gap; the skills passphrase dialogs moved to per-class skips
+ * (PasswordDialog family, base width 64).
  * ============================================================ */
 
 /* --- cap 196 -- the shipped Conversation settings cap (PR #2670), unchanged --- */
@@ -2125,6 +2131,28 @@ App.-wide-viewport #internal-prompt-editor-modal {
 }
 /* PR #2742 review: persona voice-profile picker missed by the inventory (base 140) */
 App.-wide-viewport #speech-voice-profile-picker {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+/* Wave 2 (2026-09-19): skip-list follow-ups named by the PR #2742 triage
+ * (recovery dialogs + Chatbook work windows, base caps 100-120) */
+App.-wide-viewport #notes-recovery-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #skills-recovery-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport ChatbookCreationWindow > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport ChatbookExportManagementWindow > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport ChatbookTemplatesWindow > Container {
     width: $ds-percent-85;
     max-width: $ds-size-170;
 }
@@ -2197,6 +2225,11 @@ App.-wide-viewport #tool-pack-import-review {
     max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-profile-bind-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+/* Wave 2 (2026-09-19): skip-list follow-up (base width 96) */
+App.-wide-viewport #prompt-collection-manager {
     width: $ds-percent-85;
     max-width: $ds-size-150;
 }
@@ -2408,6 +2441,13 @@ App.-wide-viewport #console-composer-menu {
     max-width: $ds-size-120;
 }
 App.-wide-viewport #prompt-variables-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+/* Wave 2 (2026-09-19): base-width-rule gap closed -- the dialog had no
+ * width rule at all; its base geometry (76 / 95%) ships in the widget's
+ * BUNDLED_CSS with this wave */
+App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
     width: $ds-percent-85;
     max-width: $ds-size-120;
 }
