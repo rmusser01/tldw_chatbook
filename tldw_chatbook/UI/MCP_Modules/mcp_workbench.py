@@ -4862,7 +4862,13 @@ class MCPWorkbench(Container):
         # the same exclusive "mcp-tool-clear" group, so it must not be
         # relied upon here.
         await inspector.show_audit_entry(None)
-        await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id)
+        if not await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id):
+            await inspector.show_tool(None)
+            self.app.notify(
+                _toast(f"{tool.server_key}::{tool.name}: tool no longer available."),
+                severity="warning",
+            )
+            return
         context = self._validate_profile_context(context)
         if context is None:
             await inspector.show_tool(None)
@@ -4976,7 +4982,14 @@ class MCPWorkbench(Container):
         # Permissions-mode block. Harmless no-op for the audit-drill
         # caller, where `#mcp-inspector-tool` is already hidden.
         await inspector.show_tool(None)
-        self.query_one(MCPPermissionsMode).select_tool_row(tool.server_key, tool.name)
+        if not self.query_one(MCPPermissionsMode).select_tool_row(
+            tool.server_key, tool.name
+        ):
+            self.app.notify(
+                _toast(f"{tool.server_key}::{tool.name}: tool no longer available."),
+                severity="warning",
+            )
+            return
         context = self._validate_profile_context(context)
         if context is None:
             return

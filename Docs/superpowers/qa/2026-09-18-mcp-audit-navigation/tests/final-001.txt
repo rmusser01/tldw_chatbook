@@ -1,0 +1,40 @@
+................................................................         [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-07eeb2f0-b192-4ee4-8059-1b2a524ff95c/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-07eeb2f0-b192-4ee4-8059-1b2a524ff95c/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-07eeb2f0-b192-4ee4-8059-1b2a524ff95c
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-07eeb2f0-b192-4ee4-8059-1b2a524ff95c'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+20.20s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+19.02s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+8.58s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]
+8.47s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]
+8.03s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]
+7.74s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]
+5.10s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.10s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[tool]
+3.00s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]
+3.00s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[permission]
+2.87s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.83s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.81s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.74s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]
+2.70s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]
+2.67s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.66s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]
+2.42s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+2.29s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_moves_cursor_to_matching_tool_row
+2.13s call     Tests/UI/test_component_pattern_governance.py::test_canonical_owning_sheets_are_bundled
+2.04s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+1.96s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.95s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.91s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target
+1.82s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_returns_false_for_tool_not_in_matrix
+64 passed, 2 warnings in 172.56s (0:02:52)
