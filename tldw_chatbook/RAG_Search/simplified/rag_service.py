@@ -1588,8 +1588,14 @@ class RAGService:
         query_embedding = query_embedding[0]
 
         # Search vector store
+        # TASK-32804.9: run the synchronous ChromaDB query off the event
+        # loop, like every sibling on this path (service construction,
+        # get_stats, the embedding half). Cold it takes ~212 ms (HNSW index
+        # load) and froze the whole UI; this is the single choke point every
+        # semantic caller routes through.
         if include_citations:
-            results = self.vector_store.search_with_citations(
+            results = await asyncio.to_thread(
+                self.vector_store.search_with_citations,
                 query_embedding,
                 query,
                 top_k * SEARCH_RESULT_MULTIPLIER,
@@ -1597,7 +1603,8 @@ class RAGService:
                 metadata_allowlist=metadata_allowlist,
             )
         else:
-            results = self.vector_store.search(
+            results = await asyncio.to_thread(
+                self.vector_store.search,
                 query_embedding,
                 top_k * SEARCH_RESULT_MULTIPLIER,
                 metadata_allowlist=metadata_allowlist,
