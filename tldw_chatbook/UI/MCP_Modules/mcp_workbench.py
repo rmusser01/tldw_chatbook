@@ -5177,11 +5177,16 @@ class MCPWorkbench(Container):
             self.app.notify(
                 _toast("Revoking the session approval failed."), severity="error"
             )
+            await self.query_one(MCPInspector).refresh_permission_session_approvals(
+                self._session_approvals_for_row(context.profile_id),
+                profile_context=context,
+            )
             return
         async with self._sync_children_lock:
             await self._sync_permissions_mode()
         await self.query_one(MCPInspector).refresh_permission_session_approvals(
-            self._session_approvals_for_row(context.profile_id)
+            self._session_approvals_for_row(context.profile_id),
+            profile_context=context,
         )
 
     async def open_test_for_selected_tool(self) -> None:

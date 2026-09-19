@@ -1,0 +1,1047 @@
+FFF.FFFF                                                                 [100%]
+=================================== FAILURES ===================================
+_________ test_queued_revoke_cannot_target_a_replacement_view[reorder] _________
+
+self = <Coroutine test_queued_revoke_cannot_target_a_replacement_view[reorder]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[reorder]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a142ae0>, 'transition': 'reorder'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3165/test_queued_revoke_cannot_targ0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________ test_queued_revoke_cannot_target_a_replacement_view[reorder] _________
+E
+E           request = <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[reorder]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c40e300>
+E           transition = 'reorder'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("transition", ["reorder", "replace", "profile", "clear", "roundtrip", "same"])
+E               @private_profile_test
+E               async def test_queued_revoke_cannot_target_a_replacement_view(request, monkeypatch, transition):
+E                   app = InspectorApp()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await show(inspector)
+E                       await pilot.pause()
+E                       button = app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+E                       event = held_press(button, monkeypatch)
+E
+E                       if transition == "clear":
+E                           await inspector.show_tool(None)
+E                       elif transition == "profile":
+E                           await show(inspector, context=PermissionProfileContext("other", 8, "c" * 64, 4))
+E                       elif transition == "reorder":
+E                           await show(inspector, list(reversed(GRANTS)))
+E                       elif transition == "replace":
+E                           await show(inspector, [("local:files", "read")])
+E                       elif transition == "roundtrip":
+E                           await show(inspector, [("local:files", "read")])
+E                           await show(inspector)
+E                       else:
+E                           await show(inspector)
+E                       await pilot.pause()
+E                       inspector.post_message(event)
+E                       await pilot.pause()
+E           >           assert revocations(app) == []
+E           E           assert [RevokeSessio...alRequested()] == []
+E           E
+E           E             Left contains one more item: RevokeSessionApprovalRequested()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:82: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:31:17.150 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-19 08:31:17.158 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:31:17.224 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:31:17.275 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:31:17.275 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:31:17.275 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:31:17.415 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:31:17.677 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[reorder]
+E           1 failed in 1.48s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-19 08:31:16.154 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-19 08:31:16.162 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+2026-09-19 08:31:16.223 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-19 08:31:16.291 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-19 08:31:16.291 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-19 08:31:16.292 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_________ test_queued_revoke_cannot_target_a_replacement_view[replace] _________
+
+self = <Coroutine test_queued_revoke_cannot_target_a_replacement_view[replace]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[replace]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a7a1b20>, 'transition': 'replace'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3165/test_queued_revoke_cannot_targ1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________ test_queued_revoke_cannot_target_a_replacement_view[replace] _________
+E
+E           request = <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[replace]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ba721e0>
+E           transition = 'replace'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("transition", ["reorder", "replace", "profile", "clear", "roundtrip", "same"])
+E               @private_profile_test
+E               async def test_queued_revoke_cannot_target_a_replacement_view(request, monkeypatch, transition):
+E                   app = InspectorApp()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await show(inspector)
+E                       await pilot.pause()
+E                       button = app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+E                       event = held_press(button, monkeypatch)
+E
+E                       if transition == "clear":
+E                           await inspector.show_tool(None)
+E                       elif transition == "profile":
+E                           await show(inspector, context=PermissionProfileContext("other", 8, "c" * 64, 4))
+E                       elif transition == "reorder":
+E                           await show(inspector, list(reversed(GRANTS)))
+E                       elif transition == "replace":
+E                           await show(inspector, [("local:files", "read")])
+E                       elif transition == "roundtrip":
+E                           await show(inspector, [("local:files", "read")])
+E                           await show(inspector)
+E                       else:
+E                           await show(inspector)
+E                       await pilot.pause()
+E                       inspector.post_message(event)
+E                       await pilot.pause()
+E           >           assert revocations(app) == []
+E           E           assert [RevokeSessio...alRequested()] == []
+E           E
+E           E             Left contains one more item: RevokeSessionApprovalRequested()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:82: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:31:19.076 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-19 08:31:19.084 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:31:19.148 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:31:19.220 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:31:19.221 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:31:19.221 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:31:19.332 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:31:19.591 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[replace]
+E           1 failed in 1.32s
+
+Tests/private_profile.py:84: Failed
+_________ test_queued_revoke_cannot_target_a_replacement_view[profile] _________
+
+self = <Coroutine test_queued_revoke_cannot_target_a_replacement_view[profile]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[profile]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a142ff0>, 'transition': 'profile'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3165/test_queued_revoke_cannot_targ2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _________ test_queued_revoke_cannot_target_a_replacement_view[profile] _________
+E
+E           request = <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[profile]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bf1de80>
+E           transition = 'profile'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("transition", ["reorder", "replace", "profile", "clear", "roundtrip", "same"])
+E               @private_profile_test
+E               async def test_queued_revoke_cannot_target_a_replacement_view(request, monkeypatch, transition):
+E                   app = InspectorApp()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await show(inspector)
+E                       await pilot.pause()
+E                       button = app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+E                       event = held_press(button, monkeypatch)
+E
+E                       if transition == "clear":
+E                           await inspector.show_tool(None)
+E                       elif transition == "profile":
+E                           await show(inspector, context=PermissionProfileContext("other", 8, "c" * 64, 4))
+E                       elif transition == "reorder":
+E                           await show(inspector, list(reversed(GRANTS)))
+E                       elif transition == "replace":
+E                           await show(inspector, [("local:files", "read")])
+E                       elif transition == "roundtrip":
+E                           await show(inspector, [("local:files", "read")])
+E                           await show(inspector)
+E                       else:
+E                           await show(inspector)
+E                       await pilot.pause()
+E                       inspector.post_message(event)
+E                       await pilot.pause()
+E           >           assert revocations(app) == []
+E           E           assert [RevokeSessio...alRequested()] == []
+E           E
+E           E             Left contains one more item: RevokeSessionApprovalRequested()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:82: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:31:20.973 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-19 08:31:20.982 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:31:21.049 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:31:21.126 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:31:21.127 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:31:21.127 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:31:21.241 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:31:21.499 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[profile]
+E           1 failed in 1.37s
+
+Tests/private_profile.py:84: Failed
+________ test_queued_revoke_cannot_target_a_replacement_view[roundtrip] ________
+
+self = <Coroutine test_queued_revoke_cannot_target_a_replacement_view[roundtrip]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[roundtrip]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a7a2900>, 'transition': 'roundtrip'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3165/test_queued_revoke_cannot_targ4/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ________ test_queued_revoke_cannot_target_a_replacement_view[roundtrip] ________
+E
+E           request = <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[roundtrip]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e04e060>
+E           transition = 'roundtrip'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("transition", ["reorder", "replace", "profile", "clear", "roundtrip", "same"])
+E               @private_profile_test
+E               async def test_queued_revoke_cannot_target_a_replacement_view(request, monkeypatch, transition):
+E                   app = InspectorApp()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await show(inspector)
+E                       await pilot.pause()
+E                       button = app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+E                       event = held_press(button, monkeypatch)
+E
+E                       if transition == "clear":
+E                           await inspector.show_tool(None)
+E                       elif transition == "profile":
+E                           await show(inspector, context=PermissionProfileContext("other", 8, "c" * 64, 4))
+E                       elif transition == "reorder":
+E                           await show(inspector, list(reversed(GRANTS)))
+E                       elif transition == "replace":
+E                           await show(inspector, [("local:files", "read")])
+E                       elif transition == "roundtrip":
+E                           await show(inspector, [("local:files", "read")])
+E                           await show(inspector)
+E                       else:
+E                           await show(inspector)
+E                       await pilot.pause()
+E                       inspector.post_message(event)
+E                       await pilot.pause()
+E           >           assert revocations(app) == []
+E           E           assert [RevokeSessio...alRequested()] == []
+E           E
+E           E             Left contains one more item: RevokeSessionApprovalRequested()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:82: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:31:24.662 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-19 08:31:24.671 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:31:24.739 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:31:24.816 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:31:24.816 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:31:24.816 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:31:24.934 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:31:25.177 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]
+E           1 failed in 1.37s
+
+Tests/private_profile.py:84: Failed
+__________ test_queued_revoke_cannot_target_a_replacement_view[same] ___________
+
+self = <Coroutine test_queued_revoke_cannot_target_a_replacement_view[same]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[same]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10ad60cb0>, 'transition': 'same'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3165/test_queued_revoke_cannot_targ5/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __________ test_queued_revoke_cannot_target_a_replacement_view[same] ___________
+E
+E           request = <FixtureRequest for <Coroutine test_queued_revoke_cannot_target_a_replacement_view[same]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e221df0>
+E           transition = 'same'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("transition", ["reorder", "replace", "profile", "clear", "roundtrip", "same"])
+E               @private_profile_test
+E               async def test_queued_revoke_cannot_target_a_replacement_view(request, monkeypatch, transition):
+E                   app = InspectorApp()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await show(inspector)
+E                       await pilot.pause()
+E                       button = app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+E                       event = held_press(button, monkeypatch)
+E
+E                       if transition == "clear":
+E                           await inspector.show_tool(None)
+E                       elif transition == "profile":
+E                           await show(inspector, context=PermissionProfileContext("other", 8, "c" * 64, 4))
+E                       elif transition == "reorder":
+E                           await show(inspector, list(reversed(GRANTS)))
+E                       elif transition == "replace":
+E                           await show(inspector, [("local:files", "read")])
+E                       elif transition == "roundtrip":
+E                           await show(inspector, [("local:files", "read")])
+E                           await show(inspector)
+E                       else:
+E                           await show(inspector)
+E                       await pilot.pause()
+E                       inspector.post_message(event)
+E                       await pilot.pause()
+E           >           assert revocations(app) == []
+E           E           assert [RevokeSessio...alRequested()] == []
+E           E
+E           E             Left contains one more item: RevokeSessionApprovalRequested()
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:82: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:31:26.550 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-19 08:31:26.559 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:31:26.627 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:31:26.704 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:31:26.705 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:31:26.705 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:31:26.817 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:31:27.068 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[same]
+E           1 failed in 1.35s
+
+Tests/private_profile.py:84: Failed
+____ test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant ____
+
+self = <Coroutine test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant>>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3165/test_revoke_is_consumed_once_a0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant ____
+E
+E           request = <FixtureRequest for <Coroutine test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant>>
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant(request):
+E                   app = InspectorApp()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await show(inspector)
+E                       await pilot.pause()
+E                       button = app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+E                       button.press()
+E                       button.press()
+E                       await pilot.pause()
+E           >           assert len(revocations(app)) == 1
+E           E           AssertionError: assert 2 == 1
+E           E            +  where 2 = len([RevokeSessionApprovalRequested(), RevokeSessionApprovalRequested()])
+E           E            +    where [RevokeSessionApprovalRequested(), RevokeSessionApprovalRequested()] = revocations(InspectorApp(title='InspectorApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark', 'nocolor'}))
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:97: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:31:28.503 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-19 08:31:28.511 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:31:28.577 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:31:28.651 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:31:28.651 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:31:28.651 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:31:28.760 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:31:29.009 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant
+E           1 failed in 1.29s
+
+Tests/private_profile.py:84: Failed
+_______ test_revoke_is_invalid_as_soon_as_permission_replacement_starts ________
+
+self = <Coroutine test_revoke_is_invalid_as_soon_as_permission_replacement_starts>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_revoke_is_invalid_as_soon_as_permission_replacement_starts>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x107b22b10>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3165/test_revoke_is_invalid_as_soon0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _______ test_revoke_is_invalid_as_soon_as_permission_replacement_starts ________
+E
+E           request = <FixtureRequest for <Coroutine test_revoke_is_invalid_as_soon_as_permission_replacement_starts>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10dfc5f70>
+E
+E               @pytest.mark.asyncio
+E               @private_profile_test
+E               async def test_revoke_is_invalid_as_soon_as_permission_replacement_starts(request, monkeypatch):
+E                   app = InspectorApp()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await show(inspector)
+E                       await pilot.pause()
+E                       button = app.query_one("#mcp-inspector-session-approval-revoke-0", Button)
+E                       event = held_press(button, monkeypatch)
+E                       container = app.query_one("#mcp-inspector-permission")
+E                       original = container.remove_children
+E                       entered, release = asyncio.Event(), asyncio.Event()
+E
+E                       async def hold_removal():
+E                           entered.set()
+E                           await release.wait()
+E                           await original()
+E
+E                       monkeypatch.setattr(container, "remove_children", hold_removal)
+E                       refresh = asyncio.create_task(show(inspector, [("local:files", "read")]))
+E                       try:
+E                           await asyncio.wait_for(entered.wait(), 2)
+E                           inspector.post_message(event)
+E                           await pilot.pause()
+E           >               assert revocations(app) == []
+E           E               assert [RevokeSessio...alRequested()] == []
+E           E
+E           E                 Left contains one more item: RevokeSessionApprovalRequested()
+E           E                 Use -v to get more diff
+E
+E           Tests/UI/test_mcp_session_revoke_ownership.py:138: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:31:30.885 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-19 08:31:30.898 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-19 08:31:31.008 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-19 08:31:31.122 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:31:31.122 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-19 08:31:31.123 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-19 08:31:31.271 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:31:31.665 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_invalid_as_soon_as_permission_replacement_starts
+E           1 failed in 1.99s
+
+Tests/private_profile.py:84: Failed
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4426334f-b9f1-4a06-895d-649ae92173a2/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4426334f-b9f1-4a06-895d-649ae92173a2/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4426334f-b9f1-4a06-895d-649ae92173a2
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4426334f-b9f1-4a06-895d-649ae92173a2'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+2.91s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_invalid_as_soon_as_permission_replacement_starts
+2.02s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[reorder]
+1.91s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[same]
+1.87s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]
+1.86s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[profile]
+1.86s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant
+1.83s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[replace]
+1.74s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[clear]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[reorder]
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[replace]
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[profile]
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[same]
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant
+FAILED Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_invalid_as_soon_as_permission_replacement_starts
+7 failed, 1 passed, 2 warnings in 17.07s

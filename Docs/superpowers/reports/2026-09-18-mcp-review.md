@@ -3,6 +3,25 @@
 This ledger separates qualified repairs from remaining destination behavior.
 Token migration alone does not qualify a complete workflow.
 
+## Post-merge continuation: session-grant revocation
+
+PR2707 is merged; its open-PR statements below are historical. The continuation
+heartbeat remains paused. TASK-32865 is an independent bounded follow-up from
+dev, separate from drafts PR2727/2728/2730.
+
+Revoke binds to its mounted button's grant and profile, invalidates replaced
+controls before removal, and admits each control once. Failed revocation can be
+retried; late completion preserves a newer profile's listing.
+[26 passing targeted checks and eight inspected native captures](../qa/2026-09-19-mcp-session-revocation/README.md)
+cover the repair. All seven derived guards pass. Native keyboard revocation uses
+the real service and runtime gate: only the selected grant clears, another tool
+and profile retain their grants, and calculator asks again. No tool executes.
+
+The follow-up remains draft pending current-head CI/review and owner visual
+approval. Exact-input rule removal, Re-allow and other permission actions remain
+next; connected external runtime journeys and the wider destination review stay
+open.
+
 ## Qualified
 
 | Surface | Evidence | Bounds |

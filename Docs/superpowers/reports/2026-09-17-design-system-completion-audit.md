@@ -301,3 +301,20 @@ The initial compact failures and harness-only native selection failure remain
 in the receipt. This closes the label clipping retained by TASK-32793; broader
 MCP server lifecycles, execution and remaining destination review stay open.
 PR2707 remains draft/unmerged, subject to its own visual approval.
+
+## Post-merge continuation: session-grant revocation
+
+PR2707 has merged; earlier open-PR statements are historical checkpoints and the
+continuation heartbeat is paused. TASK-32865 is an independent follow-up from dev,
+separate from drafts PR2727/2728/2730. A queued Revoke now retains the displayed
+grant/profile, replaced controls are rejected, duplicate delivery is suppressed,
+failed revocation can be retried, and old completion cannot replace a newer list.
+
+[26 passing targeted checks and eight inspected native captures](../qa/2026-09-19-mcp-session-revocation/README.md)
+qualify this repair. All seven derived guards pass. Native uses the real in-memory
+service and runtime gate; the selected grant clears, other tool/profile grants
+survive and the next calculator gate check asks again. No tool is executed.
+Shutdown, released lock, private database health, unchanged defaults and source
+hashes are verified. The draft still requires current-head CI/review and final
+visual approval. Exact-input rule removal, Re-allow and connected-runtime review
+remain; the wider work stream is not complete.
