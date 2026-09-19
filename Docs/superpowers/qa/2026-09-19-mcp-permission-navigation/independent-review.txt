@@ -1,0 +1,3 @@
+Read-only review by /root/mcp_server_action_review, 2026-09-19.
+Initial findings: reject hidden/disabled ancestors and inactive screens; use canonical deny state in the native fixture. Both addressed. Six new held-message tests reproduced the first issue before repair.
+Final re-review: No remaining concrete blockers. The guard now rejects hidden ancestors, inherited disabling, and inactive screens before navigation. The six new regressions cover both controls, and the native fixture corrections are sound. Reviewer did not run tests or apps.

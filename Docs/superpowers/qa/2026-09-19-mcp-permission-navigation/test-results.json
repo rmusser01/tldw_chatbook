@@ -1,0 +1,420 @@
+{
+  "red-001": {
+    "passed": 2,
+    "failed": 15,
+    "cases": [
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[hidden]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[disabled]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[closed]",
+        "passed": false
+      }
+    ],
+    "harness_correction": "Two failures attempted to mutate frozen HubTool.name; removed that invalid fixture step. Thirteen other failures reproduced retired/hidden/disabled control navigation."
+  },
+  "red-002": {
+    "passed": 0,
+    "failed": 6,
+    "cases": [
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission-test]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission]",
+        "passed": false
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission-test]",
+        "passed": false
+      }
+    ],
+    "finding": "Six held-message failures reproduced navigation from hidden/disabled ancestors and covered screens."
+  },
+  "green-003": {
+    "passed": 60,
+    "failed": 0,
+    "cases": [
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[hidden]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[disabled]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[closed]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission-test]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[same-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[same-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[reorder-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[reorder-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[tool-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[tool-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[profile-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[profile-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[clear-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[clear-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[roundtrip-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[roundtrip-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_live_permission_controls_are_consumed_once_with_the_displayed_target[remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_live_permission_controls_are_consumed_once_with_the_displayed_target[reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[description]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[schema]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_failed_permission_action_is_retryable[remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_failed_permission_action_is_retryable[reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[tool-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[tool-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[clear-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[clear-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[roundtrip-remove]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[roundtrip-reallow]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[retry]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[session]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[reorder]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[replace]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[profile]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[clear]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[same]",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_invalid_as_soon_as_permission_replacement_starts",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_failed_revoke_can_be_retried_without_reselecting_the_tool",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_session_revoke_ownership::test_older_revoke_refresh_preserves_a_newer_profiles_listing",
+        "passed": true
+      }
+    ]
+  },
+  "routing-001": {
+    "passed": 15,
+    "failed": 0,
+    "cases": [
+      {
+        "name": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_jumps_to_permissions_row",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_workbench::test_test_tool_blocked_change_button_jumps_to_permissions_row",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_workbench::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_clears_stale_tool_detail",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_raw_mode_tool_test_panel_shows_raw_textarea",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_show_tool_result_blocked_heading_uses_the_shared_constant",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_close_button_removes_test_panel_and_reenables_test_tool_button",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_test_panel_open_moves_focus_inside_and_escape_closes",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_test_panel_mounts_for_an_all_boolean_schema_and_focuses_the_checkbox",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_test_panel_mounts_for_a_zero_control_schema_and_focuses_close",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_tools_mode_permission_block_renders_change_in_permissions_button",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_standalone_show_permission_never_renders_change_in_permissions_button",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_show_tool_result_blocked_shows_test_panel_change_in_permissions_button",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_show_tool_result_non_blocked_hides_test_panel_change_in_permissions_button",
+        "passed": true
+      },
+      {
+        "name": "Tests.UI.test_mcp_inspector::test_show_tool_result_blocked_renders_not_run_status_line",
+        "passed": true
+      }
+    ]
+  }
+}
