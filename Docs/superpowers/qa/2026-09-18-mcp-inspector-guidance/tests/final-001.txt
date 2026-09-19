@@ -1,0 +1,40 @@
+..............................................................           [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0bcf7437-9790-4d82-99d4-54f947bf845c'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+19.39s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+19.00s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+10.35s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size1-textual-light]
+9.00s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size0-textual-light]
+8.39s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size0-textual-dark]
+8.24s call     Tests/UI/test_mcp_inspector_guidance.py::test_real_workbench_detail_owns_guidance_visibility[size1-textual-dark]
+4.54s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+2.39s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[audit]
+2.38s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[permission]
+2.37s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[finding]
+2.34s call     Tests/UI/test_mcp_inspector_guidance.py::test_all_guidance_stays_hidden_through_refresh_then_restores[tool]
+2.27s call     Tests/UI/test_mcp_inspector_guidance.py::test_guidance_returns_only_after_last_detail_clears
+1.83s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.81s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.69s call     Tests/UI/test_component_pattern_governance.py::test_canonical_owning_sheets_are_bundled
+1.68s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.62s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]
+1.61s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.61s call     Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
+1.60s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+1.59s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.58s call     Tests/UI/test_component_pattern_governance.py::test_ratchet_regexes_match_pin_script
+1.58s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+1.57s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.57s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+62 passed, 2 warnings in 144.92s (0:02:24)
