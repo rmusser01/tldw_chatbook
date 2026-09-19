@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+──────────────────────────────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█──────────────────────────────
+ MCP                          █                                                          █
+ MCP (Model Context Protocol) █  a/Local/mcp-recovery-b6fa1c2ab44f4f4e950a26b40fde717    █ change anything here.
+   Servers    Tools     Permis█                 b/local_mcp_store.json                   █
+╭─────────────────────────────█                    mcp.permissions:                      █─────────────────────────────╮
+│                             █  /private/tmp/tldw-32839-native-003/home/restored/dat    █                             │
+│ Source                      █             a/Local/mcp_permissions.json →               █nspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎█  /private/tmp/tldw-32839-native-003/home/restored/dat    █◦ Off (opt-in)               │
+│ ▊  Local                ▼  ▎█  a/Local/mcp-recovery-b6fa1c2ab44f4f4e950a26b40fde717    █tldw_chatbook (built-in)     │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎█                 b/mcp_permissions.json                   █Why · Off — enable it to     │
+│                             █                        history:                          █let MCP clients use          │
+│ Servers                     █  /private/tmp/tldw-32839-native-003/home/restored/dat    █chatbook's tools.            │
+│  ◦ off · ⌂ built-in         █           a/Local/mcp_permissions.json.bak →         ▃▃  █Add server                   │
+│    All servers              █  /private/tmp/tldw-32839-native-003/home/restored/dat    █  Advanced…                  │
+│  ◦ ⌂ tldw_chatbook (bu…     █            a/Local/mcp_permissions.json.bak              █                             │
+│                             █                      mcp.targets:                        █                             │
+│                             █  /private/tmp/tldw-32839-native-003/home/restored/dat    █                             │
+│                             █           a/Local/mcp_server_targets.json →              █                             │
+│                             █  /private/tmp/tldw-32839-native-003/home/restored/dat    █                             │
+│                             █            a/Local/mcp_server_targets.json               █                             │
+│                             █                      mcp.context:                        █                             │
+│                             █  /private/tmp/tldw-32839-native-003/home/restored/dat    █                             │
+│                             █           a/Local/unified_mcp_context.json →             █                             │
+│                             █  /private/tmp/tldw-32839-native-003/home/restored/dat    █                             │
+│                             █  a/Local/mcp-recovery-b6fa1c2ab44f4f4e950a26b40fde717    █                             │
+│                             █               b/unified_mcp_context.json                 █                             │
+│                             █                                                          █                             │
+│                             █   Create fresh Ask/local permission state for these      █                             │
+│                             █    MCP roots? Historical rules, grants and context       █                             │
+│                             █  remain retained and inactive. No server will connect    █                             │
+│                             █        and no tool permission will be granted.           █                             │
+│                             █                                                          █                             │
+│                             █                                                          █                             │
+│                             █            Cancel     Use fresh MCP defaults             █                             │
+│                             █                                                          █                             │
+│                             █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█                             │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

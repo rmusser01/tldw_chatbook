@@ -1,0 +1,19 @@
+..                                                                       [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7402c230-6997-4e9f-a56e-8b40df7b4537/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7402c230-6997-4e9f-a56e-8b40df7b4537/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7402c230-6997-4e9f-a56e-8b40df7b4537
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-7402c230-6997-4e9f-a56e-8b40df7b4537'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+4.54s call     Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_follow_mode
+4.37s call     Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume
+
+(4 durations < 1s hidden.)
+2 passed, 2 warnings in 11.24s
