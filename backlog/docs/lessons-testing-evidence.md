@@ -16096,3 +16096,16 @@ older callback, verifies unchanged focus/scroll, and types invalid input through
 the pilot before hit-testing again. It never re-scrolls after the failure point.
 Guard stale deferred restoration at its existing callback; adding a corrective
 scroll to the test would have hidden the interaction bug.
+
+## Fresh table rendering can disagree with the composed screen (TASK-32868)
+
+The first native Tools-header regression called `table.render_line()` and
+reported compact headers aligned. Both saved terminal text and SVG still showed
+the stale header; only the fresh method result was correct. Reading
+`screen._compositor.render_strips()` at the table's content region reproduced
+all four native cases and made all four automated cases fail on merged dev.
+The same product repair passed them, with every before/after capture differing
+only in the header row. For cache/rendering defects, assert the composed screen,
+then compare it with terminal capture; a new render can skip the stale layer
+that the user still sees. The receipts and initial fixture correction are in
+`Docs/superpowers/qa/2026-09-19-mcp-tools-header/README.md`.
