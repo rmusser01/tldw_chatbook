@@ -156,6 +156,25 @@ guidance follow-ups. Refresh of an already-open inspector, 80×24 reachability
 and connected-runtime qualification remain separate. Current-head CI and final
 visual approval still gate merging. Next: Permissions restored-roots review.
 
+## Post-merge restored MCP review completion — TASK-32839
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`.
+Its unmerged closeout checkpoint below is historical; component review resumed
+on bounded follow-up branches and the resume heartbeat remains paused.
+
+[45 targeted cases, seven preflight guards and 16 inspected native captures](../qa/2026-09-18-mcp-restored-roots/README.md)
+qualify accepted-review receipt ownership through native completion/rendering,
+mode and screen round trips, service replacement, fresh Ask/local defaults and
+clearing old passive catalog displays. Real owner approval, cancellation and
+changed-root rejection remain intact. The private app exited cleanly with user
+defaults unchanged. One unrelated restored Evals enrollment diagnostic is recorded.
+
+This fresh-dev branch is independent of Audit PRs #2724/#2726 and earlier
+inspector/lifecycle follow-ups. It does not reload discovery or qualify connected
+runtime use. Next review: post-review catalog repopulation/status guidance,
+then bulk permission actions and approval workflows. Current-head CI and final
+visual approval still gate merging this draft.
+
 ## Qualified
 
 | Surface | Evidence | Bounds |

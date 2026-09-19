@@ -1,0 +1,11 @@
+{
+  "worktrees": 35,
+  "history": [],
+  "owners": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "path": "backlog/tasks/task-32839 - Keep-restored-MCP-review-completion-scoped-and-refresh-passive-views.md"
+    }
+  ],
+  "unique": true
+}

@@ -296,6 +296,11 @@ class MCPScreen(BaseAppScreen):
     def on_screen_suspend(self) -> None:
         """Called when another screen is pushed on top of this one."""
         self._clear_footer_shortcuts()
+        # The review's own confirmation opens before busy is set. Once accepted,
+        # leaving this screen invalidates its UI receipt even if the user returns
+        # before the retained native write finishes.
+        if self.workbench is not None and self.workbench._mcp_recovery_busy:
+            self.workbench._mcp_recovery_token = None
         # Note: BaseAppScreen doesn't have on_screen_suspend, so no super() call
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
