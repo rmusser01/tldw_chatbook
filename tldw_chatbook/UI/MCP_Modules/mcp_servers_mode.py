@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding

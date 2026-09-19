@@ -8,7 +8,7 @@ HOME_PRIMARY_ACTION_ID = "home-primary-action"
 from dataclasses import dataclass, replace  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 
-from tldw_chatbook.Utils.markup import escape_markup  # noqa: E402
+from tldw_chatbook.Utils.input_validation import escape_markup  # noqa: E402
 
 from tldw_chatbook.Constants import (  # noqa: E402
     TAB_CHAT,

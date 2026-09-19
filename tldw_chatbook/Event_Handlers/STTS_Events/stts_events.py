@@ -15,7 +15,7 @@ from typing import Any, Dict, NamedTuple, Optional
 from uuid import UUID
 
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup as escape
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
 # The narrow rich escape is kept for the call sites below whose value
 # reaches a markup-OFF sink, where any escape shows the reader a literal
 # backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;

@@ -4,7 +4,7 @@ import random
 import time
 from typing import Optional, Any, List
 
-from tldw_chatbook.Utils.markup import escape_markup as escape
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
 from ..base_effect import BaseEffect, register_effect
 

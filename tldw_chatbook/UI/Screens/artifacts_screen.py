@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from rich.console import Group
 from rich.markdown import Markdown
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.css.query import NoMatches, QueryError
@@ -3284,7 +3284,7 @@ class MCPWorkbench(Container):
         )
         dialog = ConfirmationDialog(
             title="Review restored MCP roots",
-            message=escape_markup(message),
+            message=message,
             confirm_label="Use fresh MCP defaults",
         )
         await self.app.push_screen(

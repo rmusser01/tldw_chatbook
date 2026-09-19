@@ -30,7 +30,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.css.query import NoMatches
 
 from tldw_chatbook.DB.base_db import operation_owned_connection

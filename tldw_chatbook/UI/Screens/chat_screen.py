@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import toml
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 # The narrow rich escape is kept for the call sites below whose value
 # reaches a markup-OFF sink, where any escape shows the reader a literal
 # backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;

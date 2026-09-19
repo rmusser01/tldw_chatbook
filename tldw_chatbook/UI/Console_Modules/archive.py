@@ -201,12 +201,10 @@ async def request_conversation_resume(
             app.run_worker(proceed(), group="resume-saved-conversation", exclusive=True)
 
     if workspace and workspace.archived:
-        from tldw_chatbook.Utils.markup import escape_markup as escape
-
         app.push_screen(
             ConfirmationDialog(
                 title="Restore workspace and resume?",
-                message=f"This restores the whole workspace ‘{escape(workspace.name)}’ and makes its other conversations available again. This conversation will then open in Console.",
+                message=f"This restores the whole workspace ‘{workspace.name}’ and makes its other conversations available again. This conversation will then open in Console.",
                 confirm_label="Restore & resume",
             ),
             callback=confirmed,

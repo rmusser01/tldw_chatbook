@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult

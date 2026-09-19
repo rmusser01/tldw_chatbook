@@ -33,7 +33,7 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.events import Key

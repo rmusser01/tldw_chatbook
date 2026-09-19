@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 from textual import on
 from textual.app import ComposeResult

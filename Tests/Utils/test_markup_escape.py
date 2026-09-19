@@ -15,7 +15,7 @@ from rich.markup import escape as rich_escape
 from rich.text import Text
 from textual.content import Content
 
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 
 # The tokens users actually type into titles, and what the narrow escape

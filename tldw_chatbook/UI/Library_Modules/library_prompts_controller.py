@@ -343,7 +343,7 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget

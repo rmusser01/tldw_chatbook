@@ -68,7 +68,7 @@ from .unified_rows import (
 )
 from .workbench_host_screen import WorkbenchHostScreen
 
-from tldw_chatbook.Utils.markup import escape_markup as _escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 
 _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
 
@@ -76,7 +76,7 @@ _KIND_GLYPHS = {"finding": "●", "failure": "✕"}  # ● / ✕
 RESULTS_HEADING = "Automation results"
 
 
-# TASK-32802.1 moved this function to ``tldw_chatbook/Utils/markup.py``
+# TASK-32802.1 moved this function to ``tldw_chatbook/Utils/input_validation.py``
 # and adopted it repo-wide; it is re-exported here because this module's
 # own tests and siblings import it by this name. The rationale, and the
 # `[PR-6]` incident that produced it, live with the function.

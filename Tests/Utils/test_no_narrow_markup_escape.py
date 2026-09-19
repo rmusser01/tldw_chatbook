@@ -71,7 +71,7 @@ def test_only_markup_off_sinks_still_use_the_narrow_escape():
     assert not unexpected, (
         "these modules import rich.markup.escape, which Textual 8 does not "
         "honour for an uppercase bracket -- use "
-        "tldw_chatbook.Utils.markup.escape_markup instead, or add the module "
+        "tldw_chatbook.Utils.input_validation.escape_markup instead, or add the module "
         f"here with the markup-off sink that justifies it: {unexpected}"
     )
 

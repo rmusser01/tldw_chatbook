@@ -34,7 +34,6 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional
 
 from loguru import logger
-from tldw_chatbook.Utils.markup import escape_markup
 # The narrow rich escape is kept for the call sites below whose value
 # reaches a markup-OFF sink, where any escape shows the reader a literal
 # backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
@@ -1968,7 +1967,7 @@ class EvalsScreen(LabScreen):
         confirmed = await self.app.push_screen_wait(
             ConfirmationDialog(
                 title="Delete bench?",
-                message=f'Delete "{escape_markup(name)}"? This can\'t be undone.',
+                message=f'Delete "{name}"? This can\'t be undone.',
                 confirm_label="Delete bench",
                 cancel_label="Cancel",
             )

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tldw_chatbook.Utils.markup import escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, OptionList, Static
