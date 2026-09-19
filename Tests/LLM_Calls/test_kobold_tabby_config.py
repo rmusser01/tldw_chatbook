@@ -1,14 +1,13 @@
 """Kobold and TabbyAPI summarizer configuration resolution (task-17383).
 
-NOTE ON SHAPE: both functions are GENERATOR functions -- a top-level `yield` in
-their streaming branches makes the whole function one -- so calling them returns
-a generator and the body runs only when it is iterated. That is a separate,
-larger defect (a non-streaming caller receives a generator where a summary
-belongs, and the deep-search pipeline would store it as evidence); it is filed
-on its own because fixing it re-attributes ~20 diagnostics to nested functions
-and rewrites a security-reviewed ledger. These tests therefore drive the
-functions the way they currently behave, and still prove the configuration
-resolution.
+NOTE ON SHAPE: these two summarizers used to be GENERATOR functions -- a
+top-level `yield` in their streaming branches made the whole function one, so a
+non-streaming call returned a generator the caller surfaced as
+"Error: Unexpected result type" (task-17387). Fixed in task-32805.3: the
+streaming yields now live in a nested generator the function RETURNS, so the
+non-streaming path returns the summary string. The `drain()` helper below still
+accepts either shape (the streaming path returns a generator); the return-type
+is pinned explicitly in test_non_streaming_summarizer_returns_a_string.
 
 Both indexed sections the loader has never built -- `api_keys`,
 `local_api_ip`, `models` -- so like llama.cpp before task-17382 they raised
@@ -294,11 +293,52 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
     # The configuration resolution is what this asserts: the request went to
     # the endpoint the modern table names, through the public seam.
     assert seen["url"] == "http://tabby.invalid/v1/chat/completions", seen
-    # The VALUE a caller gets back is still unusable, and deliberately so: these
-    # functions are generators (task-17387), so `analyze` hands back something
-    # a non-streaming caller cannot treat as a summary. Pinned here rather than
-    # asserted away, so this test starts telling the truth about the return
-    # value the moment task-17387 lands.
-    assert result.strip() == "", (
-        "task-17387 fixed? then assert the summary here instead: " + repr(result)
-    )
+    # task-17387 / task-32805.3 landed: the summarizers are no longer generator
+    # functions, so `analyze` hands a non-streaming caller the summary string
+    # directly (not a generator surfaced as "Unexpected result type").
+    assert isinstance(result, str), result
+    assert "SUMMARY" in result, result
+
+@pytest.mark.parametrize(
+    "summarize",
+    [
+        lambda: lib.summarize_with_kobold("some text", None, "Summarize."),
+        lambda: lib.summarize_with_tabbyapi("some text", "Summarize."),
+    ],
+    ids=["kobold", "tabby"],
+)
+def test_non_streaming_summarizer_returns_a_string(
+    monkeypatch, captured_post, summarize
+):
+    """task-32805.3 / task-17387: the exact regression. A non-streaming call
+    must return the summary STRING, not a generator (which a caller surfaced as
+    "Error: Unexpected result type"). `drain()` masks this, so assert the type."""
+    monkeypatch.setattr(lib, "load_settings", lambda: settings())
+
+    result = summarize()
+
+    assert isinstance(result, str), f"expected a str, got {type(result)!r}"
+    assert result.strip() == "SUMMARY", result
+
+
+@pytest.mark.parametrize(
+    "summarize",
+    [
+        lambda: lib.summarize_with_kobold(
+            "some text", None, "Summarize.", streaming=True
+        ),
+        lambda: lib.summarize_with_tabbyapi("some text", "Summarize.", streaming=True),
+    ],
+    ids=["kobold", "tabby"],
+)
+def test_streaming_summarizer_returns_an_iterator(
+    monkeypatch, captured_post, summarize
+):
+    """The other half: a streaming call must still return a non-string iterator
+    whose chunks join into the summary."""
+    monkeypatch.setattr(lib, "load_settings", lambda: settings())
+
+    result = summarize()
+
+    assert not isinstance(result, str), "streaming must return a generator/iterator"
+    assert iter(result) is not None
