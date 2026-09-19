@@ -36,7 +36,8 @@ Existing ADR-150/161/170 apply; no new ADR is required.
   verify normal app return, process exit, lock release, healthy private databases,
   zero conversations/messages, unchanged user defaults and no app error logs.
   Permission profiles and execution logs remain unchanged; no tool executes and
-  no network connection occurs. Final app/runner/journey hashes match the source.
+  no network connection occurs. App, runner and journey hashes identify the captured source versions.
+  The later QA-only constant extraction is qualified in [review follow-up](review-followup.json).
 - [Visual comparisons](visual-comparison.json) isolate every before/after terminal
   difference to the header row. Final fixed PNGs are pixel-identical to the four
   inspected fixed views from the initial pair. [Gallery](GALLERY.md).

@@ -23,6 +23,8 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Utils.app_shutdown import claim_process_exit
 from tldw_chatbook.Utils.terminal_utils import warm_up_image_protocol
 
+EXECUTION_LOG_SNAPSHOT_LIMIT = 200
+
 
 def run(args: Namespace, attempts: list[str]) -> int:
     """Drive Tools refresh, resize and selection in the prepared native terminal.
@@ -174,7 +176,7 @@ def run(args: Namespace, attempts: list[str]) -> int:
             profile_before = service.permission_store.read_snapshot_strict().payload[
                 "profiles"
             ]
-            records_before = log.read_recent(200)
+            records_before = log.read_recent(EXECUTION_LOG_SNAPSHOT_LIMIT)
             collect = workbench._collect_hub_tools
             others = [
                 tool.tool_id for tool in collect() if tool.tool_id != target.tool_id
@@ -289,7 +291,7 @@ def run(args: Namespace, attempts: list[str]) -> int:
                 == profile_before
             )
             result["permission_profiles_unchanged"] = True
-            assert log.read_recent(200) == records_before
+            assert log.read_recent(EXECUTION_LOG_SNAPSHOT_LIMIT) == records_before
             result["execution_log_unchanged"] = True
             result["network_attempts"] = list(attempts)
             assert not attempts, attempts

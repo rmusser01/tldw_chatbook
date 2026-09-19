@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 21:37'
-updated_date: '2026-09-19 21:59'
+updated_date: '2026-09-19 22:09'
 labels: []
 dependencies: []
 ---
@@ -35,6 +35,7 @@ Reason: restore existing table rendering and interaction behavior; no new archit
 3. Make the smallest Tools-owned repair; retain auto-width sizing, wrapped names, focus, row identity and gesture suppression.
 4. Run targeted table/selection and token guards, plus private native dark/light compact/wide journeys and lifecycle checks.
 5. Record PR2726 merge proof, new evidence and remaining scope; self-review, obtain independent review and save a bounded PR against dev for visual approval.
+6. Address PR2749 review feedback: share the native execution-log snapshot limit, verify equivalent behavior, retain truthful evidence provenance and recheck current-head CI/review.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -47,4 +48,6 @@ Reproduced stale Tools headers on merged dev ad0f76e23b with four composed-scree
 Evidence: Docs/superpowers/qa/2026-09-19-mcp-tools-header/README.md and GALLERY.md. Production file: tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py; tests: test_mcp_tools_header_alignment.py and test_mcp_native_qa_args.py. The reports record PR2726's verified merge and keep remaining MCP reviews separate. Added the observed composed-screen-vs-fresh-render trap to lessons-testing-evidence.md.
 
 ADR required: no. Existing backlog/decisions/150-design-token-system-and-design-language.md, 161-component-pattern-library.md and 170-table-repopulation-selection-boundary.md apply. Final owner visual approval and PR current-head CI/review remain merge gates, not claims made by these local checks.
+
+PR2749 Qodo follow-up: extracted EXECUTION_LOG_SNAPSHOT_LIMIT = 200 for both native log snapshots. The normalized syntax tree is identical after inlining the constant; seven targeted native CLI cases, Ruff and formatting pass. Independent delta review found no blockers. Original native captures and 152-test receipts remain unchanged with explicit historical source provenance in review-followup.json. No new ADR or product behavior change.
 <!-- SECTION:NOTES:END -->
