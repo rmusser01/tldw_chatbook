@@ -1,0 +1,5 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+2 passed, 7 deselected in 2.56s
