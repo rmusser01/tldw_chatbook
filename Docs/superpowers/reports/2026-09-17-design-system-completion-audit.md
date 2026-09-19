@@ -401,3 +401,20 @@ review finds no blockers. The fresh native replay matches all 24 approved termin
 captures except fixture timestamps. PR2724 is ready for review and awaits
 current-head CI/review before its authorized merge. Same-ID definition freshness
 remains in PR2726.
+
+## Post-merge Audit catalog freshness — TASK-32838
+
+PR #2707 merged at `149acda36be8939fe8cd5e589bf77d13462257e7`; its earlier
+unmerged checkpoints above are historical. Component reviews have resumed in
+separate PRs and the resume heartbeat is paused.
+
+TASK-32838 re-resolves Audit destinations after pending catalog publication,
+then selects/renders under the existing synchronization lock. [62 targeted
+cases, seven preflight guards, independent review and eight native captures](../qa/2026-09-18-mcp-audit-catalog-freshness/README.md)
+qualify this bounded repair. Native catalog replacement is controlled; it does
+not qualify a connected server or tool execution. PR #2724's control-identity/
+missing-row repair and the earlier inspector refresh/layout/guidance changes
+remain separate. Current-head CI and final visual approval gate merging.
+
+Next: Permissions restored-roots review, with remaining scope retained in the
+[MCP ledger](2026-09-18-mcp-review.md). The wider component workstream stays open.

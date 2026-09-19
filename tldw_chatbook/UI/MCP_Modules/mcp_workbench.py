@@ -4866,11 +4866,24 @@ class MCPWorkbench(Container):
         # Catalog identities are published before their destination rows.
         # Wait for the complete publication before deciding a row is missing.
         async with self._sync_children_lock:
-            if not await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id):
+            context = self._validate_profile_context(context)
+            if context is None:
+                await inspector.show_tool(None)
+                return
+            # Clearing and lock acquisition may outlive the captured definition.
+            current = self._tool_for(tool.server_key, tool.name)
+            if current is None:
+                await inspector.show_tool(None)
+                self.app.notify(
+                    _toast(f"{tool.server_key}::{tool.name}: tool no longer available."),
+                    severity="warning",
+                )
+                return
+            if not await self.query_one(MCPToolsMode).select_tool_row(current.tool_id):
                 await inspector.show_tool(None)
                 self.app.notify(
                     _toast(
-                        f"{tool.server_key}::{tool.name}: tool no longer available."
+                        f"{current.server_key}::{current.name}: tool no longer available."
                     ),
                     severity="warning",
                 )
@@ -4880,10 +4893,10 @@ class MCPWorkbench(Container):
                 await inspector.show_tool(None)
                 return
             await inspector.show_tool(
-                tool,
-                effective=self._effective_for_display(tool),
+                current,
+                effective=self._effective_for_display(current),
                 profile_context=context,
-                arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+                arg_rules=self._arg_rules_for_row(current, context.profile_id),
                 session_approvals=self._session_approvals_for_row(context.profile_id),
             )
 
@@ -4991,12 +5004,23 @@ class MCPWorkbench(Container):
         # Catalog identities are published before their destination rows.
         # Wait for the complete publication before deciding a row is missing.
         async with self._sync_children_lock:
+            context = self._validate_profile_context(context)
+            if context is None:
+                return
+            # Clearing and lock acquisition may outlive the captured definition.
+            current = self._tool_for(tool.server_key, tool.name)
+            if current is None:
+                self.app.notify(
+                    _toast(f"{tool.server_key}::{tool.name}: tool no longer available."),
+                    severity="warning",
+                )
+                return
             if not self.query_one(MCPPermissionsMode).select_tool_row(
-                tool.server_key, tool.name
+                current.server_key, current.name
             ):
                 self.app.notify(
                     _toast(
-                        f"{tool.server_key}::{tool.name}: tool no longer available."
+                        f"{current.server_key}::{current.name}: tool no longer available."
                     ),
                     severity="warning",
                 )
@@ -5005,11 +5029,11 @@ class MCPWorkbench(Container):
             if context is None:
                 return
             await inspector.show_permission(
-                tool,
-                self._effective_for_display(tool),
-                cascade=self._cascade_for_tool(tool),
+                current,
+                self._effective_for_display(current),
+                cascade=self._cascade_for_tool(current),
                 profile_context=context,
-                arg_rules=self._arg_rules_for_row(tool, context.profile_id),
+                arg_rules=self._arg_rules_for_row(current, context.profile_id),
                 session_approvals=self._session_approvals_for_row(context.profile_id),
             )
 
