@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:59'
-updated_date: '2026-09-19 19:57'
+updated_date: '2026-09-19 20:16'
 labels:
   - workflows
 dependencies:
@@ -53,4 +53,6 @@ Verification: initial final affected run159 passed/1liveSkip; final fix covering
 ADR required: no new ADR; existing backlog/decisions/138-portable-workflow-definitions-and-local-execution.md and ADR-125 govern these boundaries. All six task reviews, one whole-branch review and its single fix-wave scoped review are reconciled. Reviewed source head: bcc8290dd2d883893c781a83a3e5cd0f13f27eb5. Evidence: Docs/Developer/Workflows/2026-09-16-first-run-uat.md. Acceptance, rulings and review record: Docs/Developer/Workflows/2026-09-16-first-run-review-record.md. User guide and testing lessons updated. No push, PR or merge performed.
 
 PR #2743 follow-up: rebase onto latest dev and evaluate all nine Qodo findings. Preserve ADR-138 session-only/non-streaming and failed-drain fences. Verify upstream fixes survived, add safe Note-error correlation and public control docstrings, then run targeted rebase/review checks and publish exact-head review dispositions. No merge or full-suite authorization.
+
+PR #2743 follow-up: rebased all 20 patches onto dev cccf0acdad8e939a55cb003588ff1406cef5d1f4; final source head 12fb82b13dd3a3f8769d4257f9da41383d1b37eb. Qodo findings 1/2/3/8/9 resolved by retaining dev; 6/7 fixed safe correlation and API documentation; 4/5 preserve explicit ADR-138 and approved non-streaming boundaries with evidence. Fresh post-rebase UI58, lifecycle11, joined HTTP2 passed (one opt-in live skip). Earlier targeted core/style107, local77 and adjacent6 passed; counts overlap. Reused existing private-profile test helpers; no new production infrastructure. Scoped review has no findings. ADR-138/ADR-029 unchanged. Record: Docs/Developer/Workflows/2026-09-19-pr-2743-review.md. Awaiting exact-head Qodo follow-up; no merge.
 <!-- SECTION:NOTES:END -->
