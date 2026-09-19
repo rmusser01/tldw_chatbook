@@ -55,6 +55,27 @@ belong to the Character section below (or to their workspace in the Tree,
 when they were created inside one). Starred entries sort first inside their
 one owner; starring is a property and action, not a duplicate Starred group.
 
+Conversation rows use the same compact rhythm as workspace rows. Their right-hand
+icon opens the action menu; focus a row and press `m` for the same menu. Escape
+returns focus to that row. **Icon and colour…** lives in this menu beside
+Favourite, status, rename, and other existing actions.
+
+Choose **Mark as unread** on a saved chat to keep a local reminder. It remains
+unread while you stay in the chat, reopen its menu, or click its current row.
+Leaving and explicitly reopening the chat clears the reminder after the chat
+successfully appears. Automatic restoration and failed navigation do not clear
+it. **Mark as read** clears it directly. These reminders do not acknowledge
+background-run receipts and do not sync to another device.
+
+The right-hand icon temporarily replaces the custom chat icon when attention is
+needed: approval ✋, blocked ⛔, failed ✗, running ⟳, paused ⏸, stopped ⏹,
+unread ✉, or new result ready ✓. A bell 🔔 means background activity ended but its
+outcome is unavailable. Urgent states take precedence; the menu and tooltip
+explain simultaneous states. The custom icon returns when overrides clear.
+ASCII glyph mode uses explicit text such as `[approve]`, `[failed]`, and
+`[unread]`. Collapsed workspaces and capped lists retain a hidden-attention
+indicator. Unread labels in Ctrl+K do not change result membership or ordering.
+
 **Character section** (left rail). Shows up to four local character cards or
 unavailable-character groups, with up to five recent saved conversations in
 the one expanded group. Only global and Default-scope character

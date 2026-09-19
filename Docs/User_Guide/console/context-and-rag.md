@@ -21,15 +21,13 @@ composer.
 
 ## Layout tour
 
-![The Conversation Inspector's Next Send tab](../images/console/context-modal.svg)
+![The Conversation Inspector's Context view](../images/console/context-modal.svg)
 
 Where this page's controls live:
 
-- **The Conversation Inspector** — a window over the screen with three
-  tabs (**Costs**, **Exchange**, **Next Send**), opened from the token/cost
-  chip, **Ctrl+Shift+P**, or the command palette. The screenshot above
-  shows its **Next Send** tab, carried over from the former standalone
-  "Chat Context" viewer this modal replaced (the viewer is now the Conversation Inspector's Current tab).
+- **The Conversation Inspector** — a modal with **Context**, **Usage & cost**,
+  and **Exchange history**. The cost chip opens Usage & cost; **Ctrl+Shift+P**
+  and **Console: View chat context** open Context.
 - **The Inspector rail** (right edge), top to bottom — the Project
   Instructions status row, then the pinned "What happens if I send now?"
   summary (these two never scroll; on a short terminal the summary shrinks
@@ -362,79 +360,69 @@ them with a distorted image.
 
 ### The Conversation Inspector
 
-Click the status row's cost chip, press **Ctrl+Shift+P**, or run
-**Console: View chat context** from the command palette to open the
-**Conversation Inspector** — one modal, three tabs, replacing the older
-separate cost breakdown and Current Context viewer. The chip opens on
-**Costs**; Ctrl+Shift+P and the palette entry open on **Next Send**; once
-open you can switch tabs freely. `Escape` closes it from any tab.
+Click the cost chip for **Usage & cost**, or press **Ctrl+Shift+P** / choose
+**Console: View chat context** for **Context**. The title identifies the chat
+being inspected. The modal stays bound to that chat and profile. **Close** and
+`Escape` return to your previous control.
 
-#### Costs
+The section list and reader sit side by side in a wide terminal. At narrower
+widths, select an item and press `Enter` to open its reader; **Back to sections**
+returns to the same selection. Resizing preserves the selected item and reader
+scroll position.
 
-Today's per-message token/dollar rows and totals — unchanged ground
-truth. Each row expands into that turn's individually captured provider
-calls (one per agent tool-loop iteration, or one for a direct send), each
-shown with its status and its own cost. Where a turn's per-call costs and
-its message-level total disagree (rounding, or a call with no priced
-usage), both figures are shown rather than silently reconciled; a call
-with no usable usage reads **unpriced**.
+#### Context
 
-#### Exchange
+**Current** contains retained conversation messages. **Preview** sections contain
+fields in the prepared next-send request, such as model, system prompt, messages
+(including the unsent draft), tools, staged sources, and response prefill. Select
+one section to read it. **Raw JSON** applies only to that selected section.
 
-The per-turn, per-call detail behind those numbers. Expand a turn, then a
-call, to reach collapsible sections: **System prompt**, **Messages**,
-**Tools**, **Response**, **Tool calls** (only shown when the response made
-any), and **Sampling & routing** (temperature, max tokens, seed, and
-similar parameters). Each call's title carries a status badge —
-`[stopped]`, `[error]`, or the normal `[complete]` — and a call captured
-during an abandoned regenerate additionally reads `[abandoned
-regeneration]`: regenerating keeps the earlier answer's captures rather
-than discarding them (see the response-variants section of
-[Branching & rewind](branching-and-rewind.md)). A call whose request had a
-value that isn't on the capture allowlist — this is how credentials like
-API keys are kept out of storage; see **Kill-switch & privacy** below —
-shows a line naming exactly what was dropped: "Omitted by capture policy:
-api_key".
+The summary shows the model, estimated prepared-input tokens, input budget,
+output reservation, and preview freshness. Unknown values say **Unavailable**.
+**Refresh** (`r`) prepares another snapshot; it is disabled during a response.
+A failed refresh retains a visibly stale preview. Opening Usage or Exchange
+history does not prepare hidden live context.
 
-Per-piece token counts inside a call (e.g. "System prompt (~412 tokens
-est.)") are **estimates**, computed the same way the composer estimates
-your draft — they will never disagree with what the composer shows for
-the same text, but they are not what you were billed. Sitting alongside
-them, a **Reported usage** line (`in:… cache_r:… cache_w:… out:…`) carries
-the provider's own usage numbers where the provider sent any, with no `~`
-— that line is authoritative. Each call has its own **Copy JSON** and
-**Save to File** buttons (a temporary/ephemeral session blocks Save, same
-as elsewhere in Console).
+**Copy payload** and **Save payload** export the whole prepared request, regardless
+of the selected section. Automatic project-instruction bodies are omitted from
+these exports; their disposable preview is restricted to explicit Preview
+sections. Existing project-instruction recovery controls remain available for
+the captured chat. Temporary chats cannot save context to a file. Sections over
+1 MiB show export guidance instead of loading a giant reader.
 
-A turn with nothing captured — recorded before this feature existed, with
-capture disabled, or where capture itself failed — shows a plain row
-instead of a blank space: "No capture recorded for this turn (recorded
-before capture existed, capture disabled, or capture failed)."
+#### Usage & cost
 
-#### Next Send
+Totals and accounting coverage appear above the turn list. Each row shows input
+and output tokens, cost, and whether the figures are estimated or reported.
+Selecting a turn shows uncached input, cache read/write, output, audio, and
+transcription buckets. Audio input is a subset of input, not an extra addend.
+An unknown price keeps the aggregate cost unavailable; a known zero remains zero.
 
-The former Ctrl+Shift+P viewer (now the Conversation Inspector's
-**Current** tab, titled "Current Context"): a
-read-only snapshot of what the model has seen and is about to see. Two
-sub-tabs:
+Captured call summaries load only for the selected message. These costs are
+supporting detail, not additional spend to add to the transcript total.
+**Inspect calls in Exchange history** keeps the same message identity. Missing
+or ambiguous identity disables drill-in rather than guessing another turn.
+A capture load failure leaves usage figures available and can be retried by
+selecting the turn again.
 
-- **Current** — one collapsed section per transcript message, titled with
-  its role and status (e.g. "[User] complete"); expand any to read the
-  exact stored text. Empty state: "No conversation context."
+#### Exchange history
 
-- **Next Send** — the payload the next send will carry, as collapsible
-  folds: **Model**, **System**, **Messages** (one collapsed `Message N`
-  per entry), **Response Prefill** (only while armed, noting "The reply
-  will continue from this prefill; the agent loop (tools/MCP) is skipped
-  for this send."), **Tools**, and **Staged Sources**.
+Select a turn, then a captured call in the same list. Calls are ordered by their
+recorded time and sequence; stopped, failed, and abandoned calls keep explicit
+labels. The reader shows the captured request, response, reported usage, omitted
+fields, and provenance. Locally synthesized fallback text is labeled as such.
 
-The header carries an approximate token count (e.g. `(~1234 tokens)`) when
-a draft-based estimate exists; mid-stream a warning reads "A response is
-in progress; snapshot may change." Footer controls: a **Raw JSON**
-checkbox, **Refresh** (also the `r` key), **Copy JSON**, **Save to File**
-(writes the payload to disk and shows the path). Payloads over 1 MiB are
-not rendered inline — the viewer shows "Context exceeds 1 MiB. Use Save to
-File to view the full payload."
+Capture records the request at the provider-adapter boundary, generally before
+provider-internal framing and prompt-cache markers. The llama.cpp capture is the
+literal wire payload. Missing captures can reflect capture being off, a failed
+capture, or purged history; the modal does not reconstruct missing requests.
+
+**View: Safe/Full** controls local disclosure in both historical views. Changing
+it clears both readers and their cached bodies; switching to Full requires the
+existing confirmation. **Capture settings** applies to future capture and is a
+separate choice. **Export selected call…** opens the existing governed export
+dialog. If the conversation, profile, or capture authority changes, stale content
+cannot return through a delayed load or export.
 
 ### Thinking history replay
 
@@ -474,10 +462,10 @@ active or omitted outcomes, and deduplicated warning codes. Removed or
 retargeted bindings offer **Choose folder** and **Disable**; **Off** offers
 **Enable**. There is no automatic-file editor or second settings surface.
 
-The **Next Send** tab is the only automatic UI surface that may show the exact
-instruction body, and only as a disposable preview of the captured session's
-next request. Closing it discards the preview. **Copy JSON** and **Save to
-File** omit automatic instruction bodies. The transcript, rail, context
+The **Context** view's explicit **Preview** sections are the only automatic UI
+surface that may show the exact instruction body, as a disposable preview of
+the captured session's next request. Closing the modal discards the preview.
+**Copy payload** and **Save payload** omit automatic instruction bodies. The transcript, rail, context
 metadata, warnings, run logs, and saved conversation state carry only
 content-free metadata. If you explicitly ask a file tool to read an
 `AGENTS.md`, its result is ordinary user-requested tool output and follows the
@@ -827,11 +815,11 @@ Inspector shows what's in play:
 ## Common tasks
 
 1. **Check exactly what the next send contains** — type your draft, press
-   **Ctrl+Shift+P**, open **Next Send**, expand the folds; `r` refreshes.
+   **Ctrl+Shift+P**, open **Context**, select a Preview section; `r` refreshes.
 2. **See exactly what a past turn sent and received** — open the
-   Conversation Inspector (chip or Ctrl+Shift+P), switch to **Exchange**,
-   expand the turn, then a call, then the section you want (System prompt,
-   Messages, Tools, Response, Tool calls, Sampling & routing).
+   Conversation Inspector (chip or Ctrl+Shift+P), switch to **Exchange history**,
+   select a turn to load its calls, then select a call to read its request,
+   response, usage, and capture coverage.
 3. **Set a system prompt for this session** — type `/system`, write the
    prompt, press **Apply**; the rail's `System:` line now previews it.
    Name it and press **Save to Library** first to reuse it later.
@@ -852,8 +840,8 @@ Inspector shows what's in play:
 
 | Key / command | Action |
 |---|---|
-| Ctrl+Shift+P | Open the Conversation Inspector on **Next Send** |
-| r (on **Next Send**) / Escape | Refresh the snapshot / close the Inspector |
+| Ctrl+Shift+P | Open the Conversation Inspector on **Context** |
+| r (on **Context**) / Escape | Refresh the snapshot / close the Inspector |
 | Tab / Shift+Tab (in either rail) | Move through controls and any overflowing section in normal order |
 | Arrow keys / Page Up / Page Down / Home / End | Scroll within a focused overflowing section |
 | n / p (Inspector focused) | Move to the next / previous named section, without wrapping or taking over editable input |
@@ -920,10 +908,10 @@ exports, and snapshots can retain bytes. Full details are in
   `clear`) — those parse as subcommands. Rephrase, or pin then clear.
 - **"Scope: no sources" means zero-result retrieval.** The alert-styled
   state warns before you send into it — **Clear** or **Edit** the scope.
-- **The Next Send viewer's token count is a draft-derived estimate** — a
-  guide, not a billing meter. The same is true of every per-piece token
-  count inside the Exchange tab's calls; only that tab's **Reported
-  usage** line comes from the provider itself.
+- **Context's Prepared input count estimates the next request**, including
+  its system prompt, messages, tools, and staged evidence. It is not a billing
+  meter. Exchange history distinguishes estimates from provider-reported
+  usage.
 - **A capture is not a byte-for-byte wire log.** It's taken where Console
   hands the request to the provider adapter, so adapter-internal HTTP
   framing and any prompt-caching markers an adapter injects are not

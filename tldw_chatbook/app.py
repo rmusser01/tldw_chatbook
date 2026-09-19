@@ -14540,6 +14540,24 @@ class TldwCli(
                     # screen's -focus class (the next toggle would do the wrong
                     # visible action).
                     self._clear_focus_if_leaving_console(screen_name)
+                    # ADR-171: only successful top-level navigation is a departure;
+                    # modal suspension and automatic startup never set this token.
+                    if outgoing_key == TAB_CHAT and current_tab_value != TAB_CHAT:
+                        self._console_manual_read_departure = getattr(
+                            self, "conversation_local_marks_service", None
+                        )
+                    elif current_tab_value == TAB_CHAT:
+                        departed = getattr(self, "_console_manual_read_departure", None)
+                        self._console_manual_read_departure = None
+                        if departed is not None and departed is getattr(
+                            self, "conversation_local_marks_service", None
+                        ):
+                            new_screen.run_worker(
+                                new_screen._session.acknowledge_explicit_console_return(),
+                                group="console-manual-read-return",
+                                exclusive=True,
+                            )
+
                 except Exception as exc:
                     logger.warning(
                         "Post-switch bookkeeping failed after target ownership "

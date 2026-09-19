@@ -26,20 +26,22 @@ import json
 import sys
 import types
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import Mock
 
 import pytest
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Collapsible, Label, Static, TextArea
+from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ProjectInstructionPreview,
 )
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleProjectInstructionSourceRow,
     build_console_project_instruction_state,
@@ -48,22 +50,17 @@ from tldw_chatbook.Chat.console_project_instructions import (
     EPHEMERAL_ORIGIN_KEY,
     ProjectInstructionControlState,
 )
-from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.Console import console_conversation_inspector
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     CLOSE_BUTTON_ID,
     MODAL_ID,
-    SIZE_THRESHOLD_BYTES,
     TAB_NEXT_SEND,
     ConsoleConversationInspector,
 )
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
 )
-
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 
 SNAPSHOT = ConsoleContextSnapshot(
     current_messages=[
@@ -121,48 +118,29 @@ def _inspector(
     ``turns``/``exchanges_loader``) are filled with empty stand-ins since
     this file only exercises the Next Send pane.
     """
-    kwargs: dict[str, object] = dict(
-        rows=[],
-        totals=ConsoleCostRowTotals(0, 0.0, False, 0),
-        turns=[],
-        exchanges_loader=_empty_exchanges_loader,
-        snapshot_factory=snapshot_factory,
-        initial_tab=TAB_NEXT_SEND,
-    )
+    kwargs: dict[str, object] = {
+        "conversation_title": "Test chat",
+        "target_profile_key": "test-profile",
+        "target_is_current": lambda: True,
+        "rows": [],
+        "totals": ConsoleCostRowTotals(0, 0.0, False, 0),
+        "turns": [],
+        "exchanges_loader": _empty_exchanges_loader,
+        "snapshot_factory": snapshot_factory,
+        "initial_tab": TAB_NEXT_SEND,
+    }
     kwargs.update(overrides)
     return ConsoleConversationInspector(**kwargs)
 
 
 class ModalHarness(ConsolidatedCSSApp):
+    CSS_PATH: ClassVar[list[Path]] = list(APP_STYLESHEETS)
+
     def compose(self) -> ComposeResult:
         yield Static("background")
 
     def on_mount(self) -> None:
         self.push_screen(_inspector(token_estimate=42))
-
-
-@pytest.mark.asyncio
-async def test_context_modal_renders_tabs():
-    app = ModalHarness()
-
-    async with app.run_test(size=(120, 44)) as _pilot:
-        modal = app.screen
-        header = modal.query_one("#console-inspector-next-send-header", Static)
-        header_text = str(header.renderable)
-        assert "Current Context" in header_text
-        assert "42 tokens" in header_text
-
-        current_container = modal.query_one(
-            "#console-inspector-next-send-current-body", Vertical
-        )
-        text_areas = current_container.query(TextArea)
-        assert any("Hello" in ta.text for ta in text_areas)
-
-        next_container = modal.query_one(
-            "#console-inspector-next-send-payload-body", Vertical
-        )
-        labels = list(next_container.query(Label))
-        assert any("gpt-4" in str(label.renderable) for label in labels)
 
 
 @pytest.mark.asyncio
@@ -206,24 +184,6 @@ async def test_context_modal_shows_metadata_only_project_instruction_section():
 
 
 @pytest.mark.asyncio
-async def test_context_modal_empty_state():
-    app = ModalHarness()
-    app._push_empty = lambda: app.push_screen(_inspector(_empty_factory))
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        app._push_empty()
-        await pilot.pause()
-        modal = app.screen
-        current_container = modal.query_one(
-            "#console-inspector-next-send-current-body", Vertical
-        )
-        labels = list(current_container.query(Label))
-        assert any(
-            "No conversation context" in str(label.renderable) for label in labels
-        )
-
-
-@pytest.mark.asyncio
 async def test_context_modal_in_progress_warning():
     app = ModalHarness()
     app._push_in_progress = lambda: app.push_screen(
@@ -242,6 +202,8 @@ async def test_context_modal_in_progress_warning():
 
 
 class ActionHarness(ConsolidatedCSSApp):
+    CSS_PATH: ClassVar[list[Path]] = list(APP_STYLESHEETS)
+
     def compose(self) -> ComposeResult:
         yield Static("background")
 
@@ -392,26 +354,6 @@ async def test_project_recovery_uses_captured_session_and_replaces_panel_state()
         assert "State: Off" in " ".join(
             str(item.renderable) for item in panel.query(Static)
         )
-
-
-@pytest.mark.asyncio
-async def test_context_modal_toggle_raw_json():
-    app = ActionHarness()
-    expected_raw = json.dumps(SNAPSHOT.next_send_payload, indent=2, default=str)
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        app.push_screen(_inspector())
-        await pilot.pause()
-
-        await pilot.click("#console-inspector-next-send-raw")
-        await pilot.pause()
-
-        modal = app.screen
-        next_container = modal.query_one(
-            "#console-inspector-next-send-payload-body", Vertical
-        )
-        text_areas = list(next_container.query(TextArea))
-        assert any(ta.text == expected_raw for ta in text_areas)
 
 
 @pytest.mark.asyncio
@@ -667,7 +609,7 @@ async def test_context_modal_save_to_file(tmp_path, monkeypatch):
         def home(cls):
             return cls(tmp_path)
 
-        def __truediv__(self, other: str) -> "FakePath":
+        def __truediv__(self, other: str) -> FakePath:
             return FakePath(self._path, other)
 
         def __fspath__(self) -> str:
@@ -727,7 +669,7 @@ async def test_context_modal_save_omits_automatic_project_instruction_body(
         def home(cls):
             return cls(tmp_path)
 
-        def __truediv__(self, other: str) -> "FakePath":
+        def __truediv__(self, other: str) -> FakePath:
             return FakePath(self._path, other)
 
         def __fspath__(self) -> str:
@@ -774,7 +716,7 @@ async def test_context_modal_save_to_file_failure(monkeypatch):
         def home(cls):
             return cls()
 
-        def __truediv__(self, other: str) -> "FailingPath":
+        def __truediv__(self, other: str) -> FailingPath:
             return self
 
         def __str__(self) -> str:
@@ -898,11 +840,11 @@ async def test_save_json_failure_log_fingerprints_path_and_toast_names_destinati
         def home(cls):
             return cls()
 
-        def __truediv__(self, other: str) -> "FailingPath":
+        def __truediv__(self, other: str) -> FailingPath:
             return self
 
         @property
-        def parent(self) -> "FailingPath":
+        def parent(self) -> FailingPath:
             # ``_save_json`` calls ``path.parent.mkdir(...)`` before
             # ``write_text`` -- without this the fake would raise
             # ``AttributeError`` on ``.parent`` itself, landing in the
@@ -979,10 +921,10 @@ async def test_save_json_rejected_destination_does_not_write(monkeypatch):
             return "/guard/Downloads/rejected.json"
 
         @classmethod
-        def home(cls) -> "_RejectedSaveGuardPath":
+        def home(cls) -> _RejectedSaveGuardPath:
             return cls()
 
-        def __truediv__(self, other: str) -> "_RejectedSaveGuardPath":
+        def __truediv__(self, other: str) -> _RejectedSaveGuardPath:
             return self
 
         def mkdir(self, **kwargs: object) -> None:
@@ -1045,44 +987,13 @@ async def _prefill_factory() -> ConsoleContextSnapshot:
 
 
 class PrefillModalHarness(ConsolidatedCSSApp):
+    CSS_PATH: ClassVar[list[Path]] = list(APP_STYLESHEETS)
+
     def compose(self) -> ComposeResult:
         yield Static("background")
 
     def on_mount(self) -> None:
         self.push_screen(_inspector(_prefill_factory, token_estimate=7))
-
-
-@pytest.mark.asyncio
-async def test_context_modal_renders_response_prefill_section():
-    """task-401: an armed prefill renders as its own Next Send section with
-    the agent-loop-bypass note; absent entirely when the key is missing."""
-    app = PrefillModalHarness()
-
-    async with app.run_test(size=(120, 44)) as _pilot:
-        modal = app.screen
-        next_container = modal.query_one(
-            "#console-inspector-next-send-payload-body", Vertical
-        )
-        collapsibles = list(next_container.query(Collapsible))
-        titles = [c.title for c in collapsibles]
-        assert "Response Prefill" in titles
-        labels = [str(label.renderable) for label in next_container.query(Label)]
-        assert any("agent" in text and "skipped" in text for text in labels)
-        text_areas = [ta.text for ta in next_container.query(TextArea)]
-        assert any("one-shot" in text for text in text_areas)
-
-
-@pytest.mark.asyncio
-async def test_context_modal_no_prefill_section_without_key():
-    app = ModalHarness()
-
-    async with app.run_test(size=(120, 44)) as _pilot:
-        modal = app.screen
-        next_container = modal.query_one(
-            "#console-inspector-next-send-payload-body", Vertical
-        )
-        titles = [c.title for c in next_container.query(Collapsible)]
-        assert "Response Prefill" not in titles
 
 
 @pytest.mark.asyncio
@@ -1140,96 +1051,3 @@ async def test_save_json_direct_call_still_blocked_when_ephemeral(monkeypatch):
 
         app.screen._save_json(Button.Pressed(Button(id="ignored")))
         await pilot.pause()  # must not raise, must not write
-
-
-@pytest.mark.asyncio
-async def test_context_modal_empty_state_renders_full_guidance_copy():
-    """LY-13 (TASK-2154.23): the empty viewer guides rather than voids.
-
-    task-10 review finding 1: this test used to ALSO assert
-    ``pane.has_class("context-empty")`` (a pane-scoped port of the old
-    standalone modal's own top-level-frame compaction). A reviewer probe
-    at this same size measured the pane's rendered height IDENTICAL empty
-    vs. populated (``height=27`` both ways) -- inside a fixed-height
-    ``TabPane`` shared with the Costs/Exchange tabs, an ``auto``-height
-    pane is dominated by its own inner ``1fr`` TabbedContent regardless of
-    content, so the class toggled but compacted nothing. The class and its
-    CSS rule were removed outright (see ``ConsoleConversationInspector
-    .DEFAULT_CSS``'s Next Send comment); this test now only pins what
-    actually renders -- the full multi-sentence guidance copy, not just
-    the "No conversation context" prefix ``test_context_modal_empty_
-    state`` already covers."""
-    app = ModalHarness()
-    app._push_empty = lambda: app.push_screen(_inspector(_empty_factory))
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        app._push_empty()
-        await pilot.pause()
-        modal_screen = app.screen
-        current_container = modal_screen.query_one(
-            "#console-inspector-next-send-current-body", Vertical
-        )
-        labels = [str(label.renderable) for label in current_container.query(Label)]
-        guidance = next(
-            (text for text in labels if "No conversation context" in text), ""
-        )
-        assert "Next Send" in guidance
-
-
-@pytest.mark.asyncio
-async def test_context_modal_populated_state_renders_messages_not_guidance():
-    """The populated state renders actual message content, not the
-    empty-state guidance copy (task-10 review finding 1 renamed this from
-    a dead ``context-empty`` class check -- see the sibling empty-state
-    test's docstring for why that class was removed)."""
-    app = ModalHarness()  # pushes the populated snapshot on mount
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        await pilot.pause()
-        modal_screen = app.screen
-        current_container = modal_screen.query_one(
-            "#console-inspector-next-send-current-body", Vertical
-        )
-        text_areas = current_container.query(TextArea)
-        assert any("Hello" in ta.text for ta in text_areas)
-        labels = [str(label.renderable) for label in current_container.query(Label)]
-        assert not any("No conversation context" in text for text in labels)
-
-
-@pytest.mark.asyncio
-async def test_next_send_payload_over_size_threshold_offers_save_instead_of_render():
-    """task-10 review finding 3: the 1 MiB raw-JSON size guard
-    (``_build_next_send_widgets``) never had a test anywhere in this repo
-    -- not here, not in the retired standalone modal's own suite (the
-    class-name grep sweep is zero-hit, so nothing pre-task-10 exercised
-    it either). Past ``SIZE_THRESHOLD_BYTES``, the Next Send tab must
-    render the "Context exceeds 1 MiB" guidance instead of attempting to
-    render the payload as a giant ``TextArea`` (which would also defeat
-    the point of the raw-JSON checkbox, still checked here to be OFF)."""
-    oversized_payload = {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": "x" * (SIZE_THRESHOLD_BYTES + 1)}],
-    }
-    oversized_snapshot = ConsoleContextSnapshot(
-        current_messages=[
-            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hello"),
-        ],
-        next_send_payload=oversized_payload,
-    )
-
-    async def _oversized_factory() -> ConsoleContextSnapshot:
-        return oversized_snapshot
-
-    app = ActionHarness()
-
-    async with app.run_test(size=(120, 44)) as pilot:
-        app.push_screen(_inspector(_oversized_factory))
-        await pilot.pause()
-
-        modal = app.screen
-        next_container = modal.query_one(
-            "#console-inspector-next-send-payload-body", Vertical
-        )
-        labels = [str(label.renderable) for label in next_container.query(Label)]
-        assert any("Context exceeds 1 MiB" in text for text in labels)
-        assert not list(next_container.query(TextArea))

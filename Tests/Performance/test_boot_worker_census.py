@@ -90,6 +90,9 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ("run", "scheduling"),
         # -- ChatScreen / Console (initial-screen mount) --
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),
+        # TASK-32826: batch-read durable manual reminders off-loop so restored
+        # conversation rows display their saved unread state on first use.
+        ("_load_manual_unread_rows", "console-manual-unread-load"),
         ("_refresh_console_skill_candidates", "default"),
         ("_sync_console_legacy_workspace_context_aliases", "console-workspace-context-legacy-aliases"),
         # TASK-26042: this one off-loop snapshot is required to render truthful

@@ -1251,8 +1251,10 @@
     ConsoleConversationActionMenu {
         position: absolute;
         overlay: screen;
-        width: 26;
+        width: 30;
         height: auto;
+        max-height: 100%;
+        overflow-y: auto;
         border: round $primary;
         background: $surface;
         padding: 0 1;
