@@ -1,0 +1,57 @@
+{
+  "baseline_count": 4,
+  "current_count": 4,
+  "introduced": [],
+  "format_ranges": [
+    {
+      "range": "435-435",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "935-936",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1109-1109",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1117-1119",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1128-1150",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1739-1751",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1761-1761",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1778-1778",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1786-1786",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    },
+    {
+      "range": "1803-1803",
+      "passed": true,
+      "output": "1 file already formatted\n"
+    }
+  ]
+}

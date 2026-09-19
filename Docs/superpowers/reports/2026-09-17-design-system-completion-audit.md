@@ -18,21 +18,53 @@ ADR required: no. Existing ADR-150/161 define the language and migration;
 ADR-031 governs interaction and ADR-097 governs startup budgets. This document
 records evidence and remaining review work, without changing those boundaries.
 
+## Current checkpoint — PR #2707 merged
+
+PR #2707 merged into `dev` at `149acda36be8939fe8cd5e589bf77d13462257e7`
+on 2026-09-18 23:53:55 UTC after the owner's approval, current-dev rebase,
+all ten Qodo findings resolved and all eleven applicable current-head Actions
+checks passed. TASK-32824 is Done. Earlier draft/open/CI statements below are
+historical checkpoints, not the current PR state.
+
+Post-merge review resumed on `codex/mcp-inspector-refresh-review`, carrying the
+preserved TASK-32823 investigation onto merged dev. The backup heartbeat is
+paused. This follow-up is bounded to selected-tool refresh, pending preview
+retirement and inspector keyboard reachability. Broader MCP lifecycle/execution
+and the remaining destinations retain their separate gates.
+
+TASK-32823 now has 353 distinct targeted passing cases and four final native
+theme/size journeys with twelve inspected captures. Its [QA receipt](https://github.com/rmusser01/tldw_chatbook/blob/80b2495e222a90ae0aa4f7c9a4691c96c68d01c5/Docs/superpowers/qa/2026-09-18-mcp-inspector-refresh/README.md)
+records retained drafts, current details, retired previews, visible focus and
+clean private-profile shutdown. TASK-32823 is Done and saved in
+[draft PR #2711](https://github.com/rmusser01/tldw_chatbook/pull/2711). Follow-up PR
+CI now reports a selector-ratchet failure (275/274), with fast lane still running; visual approval remains open.
+
+
+TASK-32825 continues on the independent branch `codex/mcp-server-action-ownership`
+from merged dev. [109 distinct targeted checks and twelve inspected native captures](../qa/2026-09-18-mcp-server-actions/README.md)
+qualify retired/hidden server controls, immutable accepted deletion targets,
+safe Keep/Escape and complete compact/wide toolbar paint. The native journey
+removes only the confirmed Alpha profile while Beta stays selected and persisted.
+All private lifecycle checks pass. The compact CSS rule uses existing action
+classes to preserve the unchanged 274 selector ceiling. Broader server connection,
+execution, recovery and other destination reviews remain open. The bounded repair is saved as [draft PR #2712](https://github.com/rmusser01/tldw_chatbook/pull/2712);
+TASK-32825 is Done. Current-head CI, accumulated review and owner visual approval
+remain separate merge gates.
+
 ## PR #2707 scope boundary — 2026-09-18
 
 The owner approved closing the current PR before reviewing additional screens.
 The remaining eleven destinations, Settings categories and Console subflows below
 are follow-up work, not blockers for this PR. TASK-32824 records current-dev
-integration and the final visual/conflict packet; merge still requires the owner
-to approve that concrete result.
+integration and the final visual/conflict packet; the owner subsequently approved
+that result and PR #2707 merged as recorded above.
 
 TASK-32823 inspector refresh is preserved separately on
 `codex/mcp-inspector-refresh-followup` at `135f226888` and is excluded from PR #2707.
-It remains incomplete: delayed preview minting must be invalidated synchronously
-before retiring its panel, followed by a deterministic regression and native checks.
-After merge is confirmed, resume in this task on a fresh branch from merged `dev`,
-beginning with MCP server lifecycle/inspector work and reusing that investigation.
-The separately configured backup heartbeat must not duplicate active work.
+It was incomplete at that boundary. After PR #2707 merged, the investigation was
+resumed on the fresh branch above. Synchronous form invalidation, deterministic
+race regressions and native checks now qualify the bounded inspector repair.
+The backup heartbeat was paused once this continuation began.
 
 ## Original migration requirements
 

@@ -1,0 +1,8 @@
+{
+  "retired_alpha_connect_targets": [
+    "local:beta"
+  ],
+  "accepted_alpha_delete_targets": [
+    "local:beta"
+  ]
+}

@@ -432,6 +432,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         self.submit_local_master: Callable[[bool, Path | None], None] | None = None
         self._snapshots: list[ReadinessSnapshot] = []
         self._detail_snapshot: ReadinessSnapshot | None = None
+        self._detail_action_keys: dict[Button, str] = {}
         # Maps the (possibly `#N`-suffixed) DataTable row key back to the
         # canonical `ReadinessSnapshot.server_key` it represents -- see F3
         # in `update_overview()`/`on_data_table_row_selected()`.
@@ -931,6 +932,8 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         so a resync can never re-show detail (or overview) stacked
         underneath a still-open form and silently discard typed input.
         """
+        # Old controls may still be mounted while the replacement awaits layout.
+        self._detail_action_keys.clear()
         self._detail_snapshot = snapshot
         # Any new snapshot -- including re-showing the same server after a
         # lifecycle resync -- disarms a pending delete confirmation rather
@@ -1103,6 +1106,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         own removal/mount with this call's and produce DuplicateIds.
         """
         toolbar = self.query_one("#mcp-detail-toolbar", Horizontal)
+        self._detail_action_keys.clear()
         await toolbar.remove_children()
         widgets = self._detail_toolbar_widgets()
         # Built-in/server-source detail views (and no snapshot at all) get
@@ -1110,6 +1114,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         # padded `.ds-toolbar` band under the title.
         toolbar.display = bool(widgets)
         if widgets:
+            self._detail_action_keys = {
+                button: self._detail_snapshot.server_key for button in widgets
+            }
             await toolbar.mount_all(widgets)
             if self._delete_armed:
                 # F-056: arming the delete confirmation moves keyboard focus
@@ -1118,9 +1125,29 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 # Enter never confirms the delete. Only the arm pair gets
                 # this (the plain Edit/Disconnect/Delete toolbar never
                 # steals focus).
-                self.call_after_refresh(
-                    self.query_one("#mcp-detail-delete-cancel", Button).focus
-                )
+                self.call_after_refresh(self._focus_delete_keep)
+
+    def _focus_delete_keep(self) -> None:
+        """Focus the live safe choice only while its confirmation is visible."""
+        if self._delete_armed:
+            for button in self._detail_action_keys:
+                if (
+                    button.id == "mcp-detail-delete-cancel"
+                    and self._detail_action_target(button) is not None
+                ):
+                    button.focus()
+                    break
+
+    def _detail_action_target(self, button: Button) -> str | None:
+        """Return the displayed target only for a current, visible control."""
+        if (
+            not button.is_attached
+            or not button.visible
+            or self.app.screen is not self.screen
+            or any(not node.display for node in button.ancestors_with_self)
+        ):
+            return None
+        return self._detail_action_keys.get(button)
 
     def _focused_toggle_id(self) -> str | None:
         """Id of this pane's [mcp] Checkbox / gate Button that has focus.
@@ -1709,6 +1736,19 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 self.app.copy_to_clipboard(snippet)
                 self.app.notify("Client config copied to clipboard.")
             return
+        server_key = self._detail_action_target(event.button)
+        if button_id in {
+            "mcp-detail-edit",
+            "mcp-detail-connect",
+            "mcp-detail-refresh",
+            "mcp-detail-disconnect",
+            "mcp-detail-delete",
+            "mcp-detail-delete-cancel",
+            "mcp-detail-delete-confirm",
+        }:
+            event.stop()
+            if server_key is None:
+                return
         if button_id == "mcp-detail-edit":
             event.stop()
             if self._detail_snapshot is not None:
@@ -1718,7 +1758,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 # of duplicating the catalog record lookup here.
                 self.post_message(
                     MCPInspector.HubActionRequested(
-                        HubAction.EDIT_CONFIG, self._detail_snapshot.server_key
+                        HubAction.EDIT_CONFIG, server_key
                     )
                 )
             return
@@ -1735,7 +1775,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 )
                 self.post_message(
                     MCPInspector.HubActionRequested(
-                        action, self._detail_snapshot.server_key
+                        action, server_key
                     )
                 )
             return
@@ -1743,7 +1783,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             event.stop()
             if self._detail_snapshot is not None:
                 self.post_message(
-                    self.DisconnectRequested(self._detail_snapshot.server_key)
+                    self.DisconnectRequested(server_key)
                 )
             return
         if button_id == "mcp-detail-delete":
@@ -1760,8 +1800,5 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             event.stop()
             self._delete_armed = False
             await self._rebuild_detail_toolbar()
-            if self._detail_snapshot is not None:
-                self.post_message(
-                    self.DeleteConfirmed(self._detail_snapshot.server_key)
-                )
+            self.post_message(self.DeleteConfirmed(server_key))
             return

@@ -1,0 +1,11 @@
+..............                                                           [100%]
+============================= slowest 25 durations =============================
+1.47s call     Tests/UI/test_mcp_workbench.py::test_detail_disconnect_button_routes_through_start_lifecycle
+1.39s call     Tests/UI/test_mcp_workbench.py::test_connect_action_runs_lifecycle_and_notifies
+1.31s call     Tests/UI/test_mcp_workbench.py::test_validate_action_runs_test_lifecycle_and_notifies_int_tool_count
+1.22s call     Tests/UI/test_mcp_workbench.py::test_delete_confirmed_deletes_profile_clears_selection_and_notifies
+1.19s call     Tests/UI/test_mcp_workbench.py::test_selecting_different_profile_while_armed_disarms
+1.02s call     Tests/UI/test_mcp_workbench.py::test_mode_round_trip_disarms_pending_delete_confirmation
+
+(19 durations < 1s hidden.)
+14 passed in 15.68s
