@@ -6283,10 +6283,20 @@ def _warm_config_cache_hit() -> Optional[Dict[str, Any]]:
 def load_cli_config_and_ensure_existence(
     force_reload: bool = False,
 ) -> Dict[str, Any]:  # Renamed from load_cli_config
-    """
-    Loads settings for the CLI application from ~/.config/tldw_cli/config.toml.
-    If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
-    Uses programmatic defaults (from CONFIG_TOML_CONTENT) as a base.
+    """Load the merged CLI configuration, creating the file if absent.
+
+    Reads ~/.config/tldw_cli/config.toml, creating it from
+    CONFIG_TOML_CONTENT defaults on first run, and uses those programmatic
+    defaults as the base for the merge. A warm cache hit is served without
+    the ADR-126 admission handshake (TASK-32804.1).
+
+    Args:
+        force_reload: Rebuild from disk even on a warm cache hit, bypassing
+            the fast path and re-running the guarded bootstrap.
+
+    Returns:
+        The installed configuration mapping (programmatic defaults merged
+        with the on-disk config).
     """
     # TASK-32804.1: serve a warm read without entering the admission
     # handshake (see `_warm_config_cache_hit`). A miss or a forced reload
