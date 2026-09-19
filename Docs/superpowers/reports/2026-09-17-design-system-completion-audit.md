@@ -5,6 +5,10 @@ review each feature/component remains active. This ledger separates those two
 contracts so that another successful bounded review cannot accidentally close
 the whole workstream.
 
+Current checkpoint: PR2707 has merged. MCP review continues in separate drafts;
+see the post-merge TASK-32832 entry below and the
+[MCP review ledger](2026-09-18-mcp-review.md) for current scope and evidence.
+
 Saved work: [PR #2704](https://github.com/rmusser01/tldw_chatbook/pull/2704)
 merged into `dev` at `e89f28d751bc8a5b4f4545b8894b87437252c657`
 after the owner's visual/conflict approval and passing required checks.
@@ -18,7 +22,7 @@ ADR required: no. Existing ADR-150/161 define the language and migration;
 ADR-031 governs interaction and ADR-097 governs startup budgets. This document
 records evidence and remaining review work, without changing those boundaries.
 
-## PR #2707 scope boundary — 2026-09-18
+## Historical PR #2707 scope boundary — 2026-09-18
 
 The owner approved closing the current PR before reviewing additional screens.
 The remaining eleven destinations, Settings categories and Console subflows below
@@ -301,3 +305,29 @@ The initial compact failures and harness-only native selection failure remain
 in the receipt. This closes the label clipping retained by TASK-32793; broader
 MCP server lifecycles, execution and remaining destination review stay open.
 PR2707 remains draft/unmerged, subject to its own visual approval.
+
+
+## Post-merge MCP inspector reachability — TASK-32832
+
+PR2707 has merged at dev 149acda36be8939fe8cd5e589bf77d13462257e7; the older
+open/draft statements above describe historical checkpoints. Component reviews
+continue in independently based, bounded drafts 2711–2716, indexed by the
+[MCP ledger](2026-09-18-mcp-review.md). Final visual approval still applies to
+each follow-up before merging.
+
+The compact Test Tool inspector now scrolls, wraps approval/action labels and
+reveals the currently focused child after resize. [42 distinct passing targeted
+checks and 12 inspected native captures](../qa/2026-09-18-mcp-inspector-reachability/README.md)
+cover schema/raw draft retention and compact/wide dark/light geometry; a real
+private stdio tool validates then executes successfully in all four native cells.
+Sibling readiness/permission/Advanced button coverage includes actual Re-allow,
+Remove and Revoke controls. All seven preflight guards pass without budget raises.
+Clean shutdown, ten healthy private databases, released lock, unchanged defaults
+and source/runner hashes are retained. Six older inspector tests reproduce the
+same pre-UI profile-setup failure on unchanged source and are excluded from the
+passing count. The initial native mode-change duplicate-ID failure is retained.
+
+The compact Raw response disclosure title remains clipped and is next for a
+bounded result/schema recovery review. Audit, remaining permission/runtime
+journeys and other destinations stay open. This branch contains no changes from
+other post-merge drafts and does not authorize a merge.

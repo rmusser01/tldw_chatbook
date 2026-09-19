@@ -1,0 +1,321 @@
+{
+  "pid": 24980,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "validation_failed_without_execution": true,
+      "approval_label": "Approve & run once",
+      "executed": {
+        "ts": "2026-09-19T03:03:07.417075+00:00",
+        "server_key": "local:execution-review",
+        "tool_name": "review_echo",
+        "initiator": "test",
+        "decision": "approved",
+        "ok": true,
+        "status": "success",
+        "duration_ms": 37,
+        "error_category": null,
+        "exception_type": null,
+        "status_code": null,
+        "argument_names": [
+          "message"
+        ],
+        "unknown_argument_count": 0,
+        "result_type": "dict",
+        "result_size": 1
+      },
+      "same_connection": true,
+      "closed_and_reopened": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "validation_failed_without_execution": true,
+      "approval_label": "Approve & run once",
+      "executed": {
+        "ts": "2026-09-19T03:03:11.613481+00:00",
+        "server_key": "local:execution-review",
+        "tool_name": "review_echo",
+        "initiator": "test",
+        "decision": "approved",
+        "ok": true,
+        "status": "success",
+        "duration_ms": 40,
+        "error_category": null,
+        "exception_type": null,
+        "status_code": null,
+        "argument_names": [
+          "message"
+        ],
+        "unknown_argument_count": 0,
+        "result_type": "dict",
+        "result_size": 1
+      },
+      "same_connection": true,
+      "closed_and_reopened": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "validation_failed_without_execution": true,
+      "approval_label": "Approve & run once",
+      "executed": {
+        "ts": "2026-09-19T03:03:16.501587+00:00",
+        "server_key": "local:execution-review",
+        "tool_name": "review_echo",
+        "initiator": "test",
+        "decision": "approved",
+        "ok": true,
+        "status": "success",
+        "duration_ms": 34,
+        "error_category": null,
+        "exception_type": null,
+        "status_code": null,
+        "argument_names": [
+          "message"
+        ],
+        "unknown_argument_count": 0,
+        "result_type": "dict",
+        "result_size": 1
+      },
+      "same_connection": true,
+      "closed_and_reopened": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "validation_failed_without_execution": true,
+      "approval_label": "Approve & run once",
+      "executed": {
+        "ts": "2026-09-19T03:03:20.436143+00:00",
+        "server_key": "local:execution-review",
+        "tool_name": "review_echo",
+        "initiator": "test",
+        "decision": "approved",
+        "ok": true,
+        "status": "success",
+        "duration_ms": 34,
+        "error_category": null,
+        "exception_type": null,
+        "status_code": null,
+        "argument_names": [
+          "message"
+        ],
+        "unknown_argument_count": 0,
+        "result_type": "dict",
+        "result_size": 1
+      },
+      "same_connection": true,
+      "closed_and_reopened": true
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "2418773e8a5c0baccc86514b90beb76db569ec23a1748f0ba2e2413a119bb107",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "6e6a717a72eb52d6d3c7cfa3d75c1561df426813610f5380049453aa54710149",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "50f2410cf577b9a6056938865a70386e03bd7ac6e49ff62a189a224c43f12b0d",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "b4a57140ffae703c3bdc11e9919bd6a672b7dc47ecc65cee41238e807d7216eb",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "9092854d35877effc448e549e3a173052994aa3b674b355b0be1fbdc88fe1057",
+    "tldw_chatbook/MCP/client.py": "9fce5defe045f633a98244c2d4a0f757765c097305085f2fe04cee373e479d97",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c4292ad1da237a14e3fdab8ec7ab0372f39ab3b720983f72630d8752ab4d5e99",
+    "Docs/superpowers/qa/2026-09-18-mcp-inspector-reachability/stdio_server.py": "09bda60b8c32ed7ffb76bbad059a00cc271e433ad036c84e89d281b67822bfbf"
+  },
+  "runner_sha256": "5007b07cf69d5ac6deadcdd80a45761b2238a78cbfd37e82ed0411d920961743",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "fixture_pid": 25131,
+  "readiness_cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "labels": [
+        "Open tool catalog",
+        "Refresh tools",
+        "View details",
+        "Advanced\u2026"
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "labels": [
+        "Open tool catalog",
+        "Refresh tools",
+        "View details",
+        "Advanced\u2026"
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "labels": [
+        "Open tool catalog",
+        "Refresh tools",
+        "View details",
+        "Advanced\u2026"
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "labels": [
+        "Open tool catalog",
+        "Refresh tools",
+        "View details",
+        "Advanced\u2026"
+      ]
+    }
+  ],
+  "audit": [
+    {
+      "ts": "2026-09-19T03:03:20.436143+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 34,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:03:16.501587+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 34,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:03:11.613481+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 40,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:03:07.417075+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 37,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    }
+  ],
+  "wire_requests": [
+    {
+      "pid": 25131,
+      "method": "initialize"
+    },
+    {
+      "pid": 25131,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 25131,
+      "method": "tools/list"
+    },
+    {
+      "pid": 25131,
+      "method": "resources/list"
+    },
+    {
+      "pid": 25131,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 25131,
+      "method": "tools/call"
+    },
+    {
+      "pid": 25131,
+      "method": "tools/call"
+    },
+    {
+      "pid": 25131,
+      "method": "tools/call"
+    },
+    {
+      "pid": 25131,
+      "method": "tools/call"
+    }
+  ],
+  "fixture_returncode": -15,
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

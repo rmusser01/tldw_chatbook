@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+3.01s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]
+2.97s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]
+
+(4 durations < 1s hidden.)
+2 passed, 6 deselected in 6.70s

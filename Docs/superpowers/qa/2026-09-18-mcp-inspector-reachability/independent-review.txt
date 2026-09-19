@@ -1,0 +1,16 @@
+Reviewer: /root/mcp_server_action_review
+Scope: production geometry/resize diff and targeted coverage; read-only review.
+
+First finding: making the root scrollable also exposed the default button minimum
+on readiness/permission/Advanced actions. Reproduced with forced scrollbar and
+fixed by the scoped class on all 16 owned Button constructors.
+
+Second finding: the permission test fixture originally rendered no permission
+actions, so only Advanced was checked. It now renders config-change Re-allow,
+an exact-input Remove and a session Revoke, and requires all three IDs to be
+fully visible with complete paint. Readiness Connect and Advanced Run are also
+required. Six final sibling/theme cases pass.
+
+Final review: fixture finding resolved; no remaining concrete blockers found.
+Production was unchanged for the final fixture review. Reviewer ran no tests or
+apps. Native evidence and baseline harness comparison were assessed by the parent.

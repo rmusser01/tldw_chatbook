@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│ ▊▔▔▔▔▔▔▔▔▎   ││   ← All servers  ● Ready                 ││                  │
+│ ▊Local  ▼▎▂▂ ││        Edit         Disconnect    Refre  ││ Inspector        │
+│ ▊▁▁▁▁▁▁▁▁▎   ││  Connected — 1 tools available.          ││  ● Ready         │
+│              ││                                          ││  execution-revi  │
+│ Servers      ││  Command ·                               ││  ew              │
+│  ● ready     ││  /Users/macbook-dev/Documents/GitHub/t   ││  Why · Ready —   │
+│  · ◦ off     ││  ldw_chatbook/.worktrees/component-pat   ││  1 tools         │
+│  · ⌂         ││  tern-library/.venv/bin/python           ││  available       │
+│  built-in    ││  /Users/macbook-dev/Documents/GitHub/t   ││  Open tool       │
+│    All       ││  ldw_chatbook/.worktrees/component-pat ▃ ││  catalog         │
+│  servers     ││  tern-library/Docs/superpowers/qa/2026   ││  Refresh tools   │
+│  ◦ ⌂ t…        ││  -09-18-mcp-inspector-reachability/std   │ View details    │
+│  ● exe…      ││  io_server.py                            ││    Advanced…     │
+│  1           ││  /private/tmp/tldw-32832-native-002/fi   ││                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

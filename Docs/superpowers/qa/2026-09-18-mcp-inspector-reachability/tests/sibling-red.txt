@@ -1,0 +1,208 @@
+..F                                                                      [100%]
+=================================== FAILURES ===================================
+___ test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark] ___
+
+self = <Coroutine test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10d5112b0>, 'theme': 'textual-dark', 'panel': 'advanced'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2938/test_other_inspector_actions_f2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ___ test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark] ___
+E
+E           request = <FixtureRequest for <Coroutine test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e9a65d0>
+E           theme = 'textual-dark', panel = 'advanced'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+E               @pytest.mark.parametrize("panel", ["readiness", "permission", "advanced"])
+E               @private_profile_test
+E               async def test_other_inspector_actions_fit_beside_scrollbar(request, monkeypatch, theme, panel):
+E                   monkeypatch.setattr(
+E                       inspector_module, "get_cli_setting", lambda section, key=None, default=None: default
+E                   )
+E                   app = ReachabilityApp()
+E                   app.theme = theme
+E                   async with app.run_test(size=(80, 24)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       if panel == "readiness":
+E                           await inspector.update_readiness(_stale_snap())
+E                       elif panel == "permission":
+E                           from tldw_chatbook.MCP.permission_store import EffectiveToolState
+E                           await inspector.show_permission(_tool(), EffectiveToolState(
+E                               state="ask", origin="server_default"
+E                           ))
+E                       else:
+E                           opener = app.query_one("#mcp-inspector-advanced-reveal", Button)
+E                           opener.focus()
+E                           await pilot.press("enter")
+E                           await app.workers.wait_for_complete()
+E                       await pilot.pause()
+E                       for button in inspector.query(Button):
+E                           if not button.display:
+E                               continue
+E                           button.scroll_visible(animate=False, immediate=True)
+E                           await pilot.pause()
+E           >               assert_visible(app, button)
+E
+E           Tests/UI/test_mcp_inspector_reachability.py:169:
+E           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E           app = ReachabilityApp(title='ReachabilityApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})
+E           control = Button(id='mcp-inspector-advanced-reveal', classes='console-action-subdued -style-default -textual-compact')
+E
+E               def assert_visible(app, control):
+E                   visible = app.screen._compositor.visible_widgets
+E                   inspector = app.query_one(MCPInspector)
+E                   diagnostic = {
+E                       "control": control.id,
+E                       "region": control.region,
+E                       "inspector": inspector.region,
+E                       "overflow": inspector.styles.overflow_y,
+E                       "scroll": inspector.scroll_y,
+E                       "max_scroll": inspector.max_scroll_y,
+E                   }
+E                   assert control in visible, diagnostic
+E                   region, clip = visible[control]
+E           >       assert region.intersection(clip) == region, diagnostic
+E           E       AssertionError: {'control': 'mcp-inspector-advanced-reveal', 'region': Region(x=62, y=12, width=16, height=1), 'inspector': Region(x=60, y=0, width=20, height=16), 'overflow': 'auto', ...}
+E           E       assert Region(x=62, ...=14, height=1) == Region(x=62, ...=16, height=1)
+E           E
+E           E         Omitting 3 identical items, use -vv to show
+E           E         Differing attributes:
+E           E         ['width']
+E           E
+E           E         Drill down into differing attribute width:
+E           E           width: 14 != 16
+E           E         Use -v to get more diff
+E
+E           Tests/UI/test_mcp_inspector_reachability.py:46: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 19:56:22.607 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+E           2026-09-18 19:56:22.615 | WARNING  | tldw_chatbook.Utils.custom_tokenizers:<module>:31 - tokenizers library not available. Install with: pip install tokenizers
+E           2026-09-18 19:56:22.677 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 19:56:22.744 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 19:56:22.744 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 19:56:22.744 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           2026-09-18 19:56:22.848 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-18 19:56:23.082 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 19:56:23.343 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [mcp.hub_state].advanced_visible = True
+E           2026-09-18 19:56:23.358 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('mcp', 'hub_state')": ['advanced_visible']}, deletes={}
+E           2026-09-18 19:56:23.370 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2938/test_other_inspector_actions_f2/private-profile-process/profile/config/config.toml
+E           2026-09-18 19:56:23.372 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 19:56:23.372 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 19:56:23.373 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 19:56:23.373 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 19:56:23.392 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2938/test_other_inspector_actions_f2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 19:56:23.393 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 19:56:23.394 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E           2026-09-18 19:56:23.394 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:8399 - Attempting to save setting: [mcp.hub_state].advanced_open = True
+E           2026-09-18 19:56:23.408 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7702 - Attempting to apply literal settings mutation: sets={"('mcp', 'hub_state')": ['advanced_open']}, deletes={}
+E           2026-09-18 19:56:23.418 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7760 - Successfully replaced settings file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2938/test_other_inspector_actions_f2/private-profile-process/profile/config/config.toml
+E           2026-09-18 19:56:23.419 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 19:56:23.419 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/tldw_chatbook
+E           2026-09-18 19:56:23.420 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-09-18 19:56:23.420 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-09-18 19:56:23.439 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3425 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2938/test_other_inspector_actions_f2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-09-18 19:56:23.440 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3437 - load_settings: Configuration cached for future use
+E           2026-09-18 19:56:23.441 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:7788 - Global configuration caches invalidated and reloaded.
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]
+E           1 failed in 1.65s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+2.29s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]
+2.11s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]
+2.00s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]
+1 failed, 2 passed, 11 deselected in 7.17s

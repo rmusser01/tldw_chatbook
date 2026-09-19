@@ -17,6 +17,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import Resize
 from textual.message import Message
 from textual.widgets import (
     Button,
@@ -910,6 +911,8 @@ class MCPInspector(Vertical):
         min-width: 28;
         height: 100%;
         min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     /* F-054: let the empty-state/badge line WRAP at narrow widths instead
     of clipping mid-word -- the shared `.ds-status-badge` rule pins
@@ -1424,6 +1427,22 @@ class MCPInspector(Vertical):
             return f"Showing: server {target}"
         return "Showing: Local control plane"
 
+    def on_resize(self, event: Resize) -> None:
+        """Reveal the current focused child after its viewport changes."""
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def _reveal_focused_control(self) -> None:
+        """Use current focus so a delayed resize never steals a newer target."""
+        if (
+            not self.is_attached
+            or not self.display
+            or self.app.screen is not self.screen
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
+
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section")
         yield Static(
@@ -1477,7 +1496,7 @@ class MCPInspector(Vertical):
         yield Button(
             "Hide advanced" if self._advanced_visible else "Advanced…",
             id="mcp-inspector-advanced-reveal",
-            classes="console-action-subdued",
+            classes="console-action-subdued mcp-inspector-control",
             compact=True,
             tooltip=(
                 "Hide the legacy control-plane action runner."
@@ -1544,7 +1563,7 @@ class MCPInspector(Vertical):
                 Button(
                     "Run Action",
                     id="mcp-adv-run",
-                    classes="console-action-primary",
+                    classes="console-action-primary mcp-inspector-control",
                     compact=True,
                     tooltip="Run the selected legacy control-plane action with this JSON payload.",
                 ),
@@ -1861,7 +1880,7 @@ class MCPInspector(Vertical):
                 cancel_button = Button(
                     "Cancel",
                     id="mcp-inspector-cancel",
-                    classes="mcp-inspector-action console-action-secondary",
+                    classes="mcp-inspector-action console-action-secondary mcp-inspector-control",
                     compact=True,
                     tooltip="Cancel the in-flight operation.",
                 )
@@ -1873,7 +1892,7 @@ class MCPInspector(Vertical):
                 button = Button(
                     _ACTION_LABELS[action],
                     id=f"mcp-inspector-action-{action.value}",
-                    classes="mcp-inspector-action console-action-secondary",
+                    classes="mcp-inspector-action console-action-secondary mcp-inspector-control",
                     compact=True,
                 )
                 if action not in wired:
@@ -2036,7 +2055,7 @@ class MCPInspector(Vertical):
                     Button(
                         "Test Tool",
                         id="mcp-inspector-test-tool",
-                        classes="console-action-primary",
+                        classes="console-action-primary mcp-inspector-control",
                         compact=True,
                         tooltip="Run this tool with test arguments.",
                     )
@@ -2216,7 +2235,7 @@ class MCPInspector(Vertical):
                 Button(
                     "Re-allow",
                     id="mcp-inspector-reallow",
-                    classes="console-action-primary",
+                    classes="console-action-primary mcp-inspector-control",
                     compact=True,
                     tooltip=_REALLOW_TOOLTIP,
                 )
@@ -2276,7 +2295,7 @@ class MCPInspector(Vertical):
                 Button(
                     "Remove",
                     id=f"mcp-inspector-arg-rule-remove-{index}",
-                    classes="console-action-secondary",
+                    classes="console-action-secondary mcp-inspector-control",
                     compact=True,
                     tooltip=_ARG_RULE_REMOVE_TOOLTIP,
                 )
@@ -2307,7 +2326,7 @@ class MCPInspector(Vertical):
                 Button(
                     "Revoke",
                     id=f"mcp-inspector-session-approval-revoke-{index}",
-                    classes="console-action-secondary",
+                    classes="console-action-secondary mcp-inspector-control",
                     compact=True,
                     tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
                 )
@@ -2317,7 +2336,7 @@ class MCPInspector(Vertical):
                 Button(
                     "Change in Permissions",
                     id="mcp-inspector-goto-permission",
-                    classes="console-action-secondary",
+                    classes="console-action-secondary mcp-inspector-control",
                     compact=True,
                     tooltip=_GOTO_PERMISSION_TOOLTIP,
                 )
@@ -2457,14 +2476,14 @@ class MCPInspector(Vertical):
                 Button(
                     "Open tool",
                     id="mcp-audit-open-tool",
-                    classes="console-action-secondary",
+                    classes="console-action-secondary mcp-inspector-control",
                     compact=True,
                     tooltip="Switch to Tools mode and select this tool.",
                 ),
                 Button(
                     "Adjust permission",
                     id="mcp-audit-adjust-permission",
-                    classes="console-action-secondary",
+                    classes="console-action-secondary mcp-inspector-control",
                     compact=True,
                     tooltip="Switch to Permissions mode and select this tool's row.",
                 ),
@@ -2580,7 +2599,7 @@ class MCPInspector(Vertical):
                         Button(
                             _ACTION_LABELS[action],
                             id=f"mcp-finding-action-{action.value}",
-                            classes="console-action-secondary",
+                            classes="console-action-secondary mcp-inspector-control",
                             compact=True,
                             tooltip=_WIRED_ACTION_TOOLTIPS.get(
                                 action, _ACTION_LABELS[action]
@@ -2617,7 +2636,7 @@ class MCPInspector(Vertical):
             Button(
                 "Preparing…",
                 id="mcp-inspector-test-run",
-                classes="console-action-primary",
+                classes="console-action-primary mcp-inspector-control",
                 compact=True,
                 tooltip=_TEST_RUN_TOOLTIP,
                 disabled=True,
@@ -2626,7 +2645,7 @@ class MCPInspector(Vertical):
             Button(
                 "Close",
                 id="mcp-inspector-test-close",
-                classes="console-action-secondary",
+                classes="console-action-secondary mcp-inspector-control",
                 compact=True,
                 tooltip="Close this test form without running the tool.",
             ),
@@ -2699,7 +2718,7 @@ class MCPInspector(Vertical):
         button = Button(
             "Change in Permissions",
             id="mcp-inspector-goto-permission-test",
-            classes="console-action-secondary",
+            classes="console-action-secondary mcp-inspector-control",
             compact=True,
             tooltip=_GOTO_PERMISSION_TOOLTIP,
         )
@@ -2712,7 +2731,7 @@ class MCPInspector(Vertical):
         button = Button(
             "Retry preview",
             id="mcp-inspector-test-retry",
-            classes="console-action-secondary",
+            classes="console-action-secondary mcp-inspector-control",
             compact=True,
             tooltip=(
                 "Request a fresh permission preview without changing these arguments."
