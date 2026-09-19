@@ -2017,9 +2017,13 @@ def chat_with_anthropic(
                     )
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'anthropic_stream_error'}})}\n\n"
                 finally:
-                    yield "data: [DONE]\n\n"
                     if response:
                         response.close()
+                # TASK-32805.1: sentinel emitted AFTER the finally (see the openai
+                # handler): a consumer Stop closes this generator with
+                # GeneratorExit, and yielding while handling that control signal
+                # raises 'generator ignored GeneratorExit' and skips the close above.
+                yield "data: [DONE]\n\n"
 
             return stream_generator()
         else:
@@ -2885,20 +2889,25 @@ def chat_with_cohere(
                     logger.opt(exception=True).error(
                         f"Cohere stream: Error during streaming: {e_stream}"
                     )
-                finally:  # Ensure [DONE] is sent if loop terminates unexpectedly
+                finally:  # Ensure the response is closed even on a Stop
                     if not stream_properly_closed:
                         logger.warning(
                             "Cohere stream generator loop finished without explicit 'message-end'."
                         )
-                        # The 'message-end' branch already emitted [DONE] on the
-                        # happy path; emitting here too doubled the terminator
-                        # (Qodo #690-3).
-                        yield "data: [DONE]\n\n"
                     logger.debug(
                         f"Cohere SSE stream_generator for {final_model} finished. Total text: {''.join(accumulated_text_for_log)[:100]}..."
                     )
                     if response:
                         response.close()
+                # TASK-32805.1: the guarded terminator is emitted AFTER the
+                # finally, not inside it. The 'message-end' branch already
+                # emits [DONE] on the happy path (Qodo #690-3); this covers a
+                # loop that ended without it. A consumer Stop closes the
+                # generator with GeneratorExit, so yielding inside finally
+                # would raise 'generator ignored GeneratorExit' and skip the
+                # response.close() above.
+                if not stream_properly_closed:
+                    yield "data: [DONE]\n\n"
 
             return stream_generator_cohere_sse(response.iter_lines())
         else:  # Non-streaming
@@ -3308,9 +3317,13 @@ def chat_with_deepseek(
                         )
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'deepseek_stream_error'}})}\n\n"
                     finally:
-                        yield "data: [DONE]\n\n"
                         if response:
                             response.close()
+                    # TASK-32805.1: sentinel emitted AFTER the finally (see the openai
+                    # handler): a consumer Stop closes this generator with
+                    # GeneratorExit, and yielding while handling that control signal
+                    # raises 'generator ignored GeneratorExit' and skips the close above.
+                    yield "data: [DONE]\n\n"
 
                 return stream_generator()
         else:
@@ -3916,9 +3929,13 @@ def chat_with_google(
                     )
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'gemini_stream_error'}})}\n\n"
                 finally:
-                    yield "data: [DONE]\n\n"
                     if response:  # Close the response from the outer scope
                         response.close()
+                # TASK-32805.1: sentinel emitted AFTER the finally (see the openai
+                # handler): a consumer Stop closes this generator with
+                # GeneratorExit, and yielding while handling that control signal
+                # raises 'generator ignored GeneratorExit' and skips the close above.
+                yield "data: [DONE]\n\n"
 
             return stream_generator()
         else:  # Non-streaming
@@ -4368,9 +4385,13 @@ def chat_with_groq(
                         )
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'groq_stream_error'}})}\n\n"
                     finally:
-                        yield "data: [DONE]\n\n"
                         if response:
                             response.close()
+                    # TASK-32805.1: sentinel emitted AFTER the finally (see the openai
+                    # handler): a consumer Stop closes this generator with
+                    # GeneratorExit, and yielding while handling that control signal
+                    # raises 'generator ignored GeneratorExit' and skips the close above.
+                    yield "data: [DONE]\n\n"
 
                 return stream_generator()
         else:
@@ -5133,9 +5154,13 @@ def chat_with_mistral(
                                 yield line + "\n\n"
                     # ... (error handling for stream) ...
                     finally:
-                        yield "data: [DONE]\n\n"
                         if response:
                             response.close()
+                    # TASK-32805.1: sentinel emitted AFTER the finally (see the openai
+                    # handler): a consumer Stop closes this generator with
+                    # GeneratorExit, and yielding while handling that control signal
+                    # raises 'generator ignored GeneratorExit' and skips the close above.
+                    yield "data: [DONE]\n\n"
 
                 return stream_generator()
         else:
@@ -5387,9 +5412,13 @@ def chat_with_openrouter(
                                 yield line + "\n\n"
                     # ... (error handling for stream) ...
                     finally:
-                        yield "data: [DONE]\n\n"
                         if response:
                             response.close()
+                    # TASK-32805.1: sentinel emitted AFTER the finally (see the openai
+                    # handler): a consumer Stop closes this generator with
+                    # GeneratorExit, and yielding while handling that control signal
+                    # raises 'generator ignored GeneratorExit' and skips the close above.
+                    yield "data: [DONE]\n\n"
 
                 return stream_generator()
         else:
