@@ -6,7 +6,7 @@ import sqlite3
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -107,7 +107,7 @@ class ConversationLocalMarksService:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     @classmethod
     def _mark_type(cls, mark_type: str | None) -> str:

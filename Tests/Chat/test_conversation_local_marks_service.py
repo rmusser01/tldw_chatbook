@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
-from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 
 
 def _db(tmp_path):
@@ -531,16 +531,18 @@ def test_console_terminal_outcome_companion_rejects_nonterminal_or_body_values(
     db = _db(tmp_path)
     service = ConversationLocalMarksService(db)
 
-    with db.transaction(immediate=True) as cursor:
-        with pytest.raises(ValueError, match="terminal outcome"):
-            service.set_console_terminal_with_cursor(
-                cursor,
-                "conv-a",
-                _RECEIPT_A,
-                outcome,
-                created_at="2026-08-28T00:00:00Z",
-                updated_at="2026-08-28T00:00:00Z",
-            )
+    with (
+        db.transaction(immediate=True) as cursor,
+        pytest.raises(ValueError, match="terminal outcome"),
+    ):
+        service.set_console_terminal_with_cursor(
+            cursor,
+            "conv-a",
+            _RECEIPT_A,
+            outcome,
+            created_at="2026-08-28T00:00:00Z",
+            updated_at="2026-08-28T00:00:00Z",
+        )
 
 
 def test_reapplied_unread_survives_stale_visit_with_same_clock(tmp_path, monkeypatch):
@@ -587,11 +589,13 @@ def test_manual_tokens_reject_other_service_conversation_and_recreation(tmp_path
     service.set_mark("a", service.MANUAL_UNREAD)
     assert not service.mark_read("a", expected=old)
     assert service.unread_token("a") != old
-    with service.db.transaction() as cursor:
-        with pytest.raises(ValueError, match="requires mark_unread"):
-            service.set_mark_with_cursor(
-                cursor, "a", service.MANUAL_UNREAD, created_at="now", updated_at="now"
-            )
+    with (
+        service.db.transaction() as cursor,
+        pytest.raises(ValueError, match="requires mark_unread"),
+    ):
+        service.set_mark_with_cursor(
+            cursor, "a", service.MANUAL_UNREAD, created_at="now", updated_at="now"
+        )
 
 
 def test_failed_manual_write_does_not_publish_revision(tmp_path, monkeypatch):
@@ -636,16 +640,18 @@ def test_manual_compare_delete_serializes_with_remark(tmp_path, monkeypatch):
         writer_started.set()
         return service.mark_unread("a")
 
-    with ThreadPoolExecutor(1, thread_name_prefix="reader") as reader:
-        with ThreadPoolExecutor(1, thread_name_prefix="writer") as writer:
-            clearing = reader.submit(service.mark_read, "a", expected=old)
-            assert in_delete.wait(5)
-            writing = writer.submit(remark)
-            assert writer_started.wait(5)
-            assert not writing.done()
-            release_delete.set()
-            assert clearing.result(5)
-            newer = writing.result(5)
+    with (
+        ThreadPoolExecutor(1, thread_name_prefix="reader") as reader,
+        ThreadPoolExecutor(1, thread_name_prefix="writer") as writer,
+    ):
+        clearing = reader.submit(service.mark_read, "a", expected=old)
+        assert in_delete.wait(5)
+        writing = writer.submit(remark)
+        assert writer_started.wait(5)
+        assert not writing.done()
+        release_delete.set()
+        assert clearing.result(5)
+        newer = writing.result(5)
     assert service.unread_token("a") == newer
     assert not service.mark_read("a", expected=old)
 
