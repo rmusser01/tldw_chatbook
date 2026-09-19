@@ -124,3 +124,29 @@ async def test_the_bounds_are_generous_enough_to_be_useful(calculator):
 
     result = await calculator.execute(expression="'ab' * 100")
     assert len(result["result"]) == 200
+
+
+@pytest.mark.asyncio
+async def test_oversized_bytes_repetition_is_refused(calculator):
+    """Qodo #2: bytes repetition (b'x' * 10**9) blows up memory like str."""
+    started = time.perf_counter()
+    with pytest.raises(ValueError):
+        await calculator.execute(expression="b'x' * 1000000000")
+    assert time.perf_counter() - started < IMMEDIATE_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_percent_string_formatting_is_refused(calculator):
+    """Qodo #2: '%1000000000s' % 'x' allocates an enormous string; % in a
+    calculator is numeric modulo, not string formatting."""
+    started = time.perf_counter()
+    with pytest.raises(ValueError):
+        await calculator.execute(expression="'%1000000000s' % 'x'")
+    assert time.perf_counter() - started < IMMEDIATE_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_numeric_modulo_still_works(calculator):
+    """The legitimate calculator use of % (numeric modulo) is unaffected."""
+    result = await calculator.execute(expression="17 % 5")
+    assert result["result"] == 2

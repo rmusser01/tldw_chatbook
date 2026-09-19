@@ -119,6 +119,11 @@ class BuiltinToolGate:
         # the worst a concurrent child's invalidation can cost a sibling
         # is one extra `store.load()`, never a wrong answer.
         self._payload: dict | None = None
+        # TASK-32806.3 / Qodo #1: True when the permission store could not be
+        # READ. An unreadable policy is an absence of knowledge, so the gate
+        # denies (kill switch on, resolution deny) until it can read again --
+        # never falling to the built-in allow floor.
+        self._load_failed: bool = False
         self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         # RLock, not Lock. To be precise about why, since a plain Lock
         # would work today: NOTHING here currently re-enters the lock --
@@ -155,6 +160,7 @@ class BuiltinToolGate:
         """
         with self._lock:
             self._payload = None
+            self._load_failed = False
             self._stamps = {
                 key: value for key, value in self._stamps.items() if key[0] != run_id
             }
@@ -290,6 +296,7 @@ class BuiltinToolGate:
         with self._lock:
             if self._payload is None:
                 self._payload = {}
+                self._load_failed = False
                 if self._service is not None:
                     try:
                         store = getattr(self._service, "permission_store", None)
@@ -297,7 +304,10 @@ class BuiltinToolGate:
                             loaded = store.load()
                             if isinstance(loaded, dict):
                                 self._payload = loaded
-                    except Exception as exc:  # noqa: BLE001 — fail to the floor
+                    except Exception as exc:  # noqa: BLE001 — fail CLOSED
+                        # TASK-32806.3 / Qodo #1: an unreadable store must not
+                        # resolve untagged built-ins from the allow floor.
+                        self._load_failed = True
                         logger.warning(f"builtin permission load failed: {exc}")
             return self._payload
 
@@ -307,8 +317,11 @@ class BuiltinToolGate:
         The gate captures one permission profile at construction and uses
         that exact id for every resolution and session-approval path.
         """
+        payload = self._load_payload()
+        if self._load_failed:
+            return EffectiveToolState(state="deny", origin="gate_error")
         return resolve_builtin_state(
-            self._load_payload(), tool_ref(tool), profile_id=self._profile_id
+            payload, tool_ref(tool), profile_id=self._profile_id
         )
 
     def _kill_switch(self) -> bool:
@@ -319,10 +332,11 @@ class BuiltinToolGate:
             return False
         try:
             return bool(getter())
-        except Exception as exc:  # noqa: BLE001 — a failed read must not
-            # brick tools; the per-tool state still gates them.
+        except Exception as exc:  # noqa: BLE001 — fail CLOSED
+            # TASK-32806.3 / Qodo #1: an unreadable kill-switch is an absence
+            # of knowledge on a SECURITY control -- block, do not allow.
             logger.warning(f"kill switch read failed: {exc}")
-            return False
+            return True
 
     def _session_approved(self, tool_name: str) -> bool:
         if self._service is None:

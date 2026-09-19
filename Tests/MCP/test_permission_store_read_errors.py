@@ -111,3 +111,41 @@ def test_genuine_corruption_still_backs_up_and_resets(store):
     assert path.with_suffix(".json.bak").exists()
     assert payload["profiles"]["default"]["global_default"] == "ask"
     assert payload["kill_switch"] is False
+
+
+def test_named_profile_also_fails_closed_on_unreadable(store):
+    """Qodo #3: a NAMED profile must also deny on an unreadable store, not fall
+    through to the permissive DEFAULT_GLOBAL ('ask') because it is absent from
+    the fallback payload."""
+    created, path = store
+    _make_unreadable(path)
+    assert created.get_global_default(profile_id="team-alpha") == "off"
+    assert created.get_global_default(profile_id="default") == "off"
+
+
+def test_builtin_gate_denies_when_the_store_is_unreadable(store):
+    """Qodo #1: an unreadable policy store must not let an untagged built-in
+    (calculator/date-time) resolve from the built-in allow floor, and the
+    kill-switch read must block rather than report 'disabled'."""
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    created, path = store
+
+    class _FakeService:
+        def __init__(self, s):
+            self.permission_store = s
+
+        def get_kill_switch(self):
+            return self.permission_store.get_kill_switch()
+
+        def is_session_approved(self, *_a, **_k):
+            return False
+
+    gate = BuiltinToolGate(_FakeService(created))
+    _make_unreadable(path)
+
+    assert gate._kill_switch() is True, "unreadable store must block via kill switch"
+    assert gate.resolve(CalculatorTool()).state == "deny", (
+        "an untagged built-in resolved from the allow floor on an unreadable store"
+    )

@@ -225,10 +225,14 @@ class CalculatorTool(Tool):
             """
             if op is ast.Mult:
                 for text, count in ((left, right), (right, left)):
-                    if isinstance(text, str) and isinstance(count, int):
+                    # bytes/bytearray repetition (b'x' * 10**9) blows up memory
+                    # exactly like str repetition (Qodo #2).
+                    if isinstance(text, (str, bytes, bytearray)) and isinstance(
+                        count, int
+                    ):
                         if len(text) * max(count, 0) > MAX_STRING_RESULT_LENGTH:
                             raise ValueError(
-                                "string repetition would produce more than "
+                                "sequence repetition would produce more than "
                                 f"{MAX_STRING_RESULT_LENGTH} characters"
                             )
                         return
@@ -239,6 +243,13 @@ class CalculatorTool(Tool):
                             f"{MAX_RESULT_BITS} bits"
                         )
                 return
+            if op is ast.Mod and isinstance(left, (str, bytes, bytearray)):
+                # '%1000000000s' % 'x' allocates an enormous string. In a
+                # calculator, %% is numeric modulo, never string formatting
+                # (Qodo #2).
+                raise ValueError(
+                    "string/bytes formatting with %% is not a calculator operation"
+                )
             if op is ast.Pow:
                 if not isinstance(right, int) or not isinstance(left, int):
                     return  # floats overflow to a normal OverflowError
@@ -281,6 +292,10 @@ class CalculatorTool(Tool):
                 raise ValueError(f"Expression type {type(node).__name__} not allowed")
 
         try:
+            # Qodo #4: reject a non-string model argument at the boundary
+            # before it reaches parsing/business logic.
+            if not isinstance(expression, str):
+                raise ValueError("expression must be a string")
             if len(expression) > MAX_EXPRESSION_LENGTH:
                 raise ValueError(
                     f"expression exceeds {MAX_EXPRESSION_LENGTH} characters"

@@ -87,6 +87,9 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
+#: Sentinel key set only by _fail_closed_payload() to mark a store whose
+#: policy file could not be READ; raw getters deny on it (TASK-32806.3).
+_UNREADABLE_MARKER = "__unreadable__"
 HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 #: Risk tags that floor an INHERITED ``allow`` to ``ask`` for in-process
 #: built-ins. A superset of ``HIGH_RISK_TAGS``: built-ins additionally
@@ -251,6 +254,11 @@ def _fail_closed_payload() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "kill_switch": True,
+        # TASK-32806.3 / Qodo #3: an explicit "could not read" marker. The
+        # raw display getters deny for ANY profile on this state, not just
+        # the default one -- a named profile is absent from a static
+        # fallback and would otherwise fall through to DEFAULT_GLOBAL ("ask").
+        _UNREADABLE_MARKER: True,
         "profiles": {
             _DEFAULT_PROFILE_ID: {
                 "global_default": "off",
@@ -1406,6 +1414,9 @@ class MCPPermissionStore:
             One of ``STORE_STATES``, or ``DEFAULT_GLOBAL`` when unset.
         """
         payload = self._load_for_raw_getter()
+        if payload.get(_UNREADABLE_MARKER):
+            # Fail closed for EVERY profile, not only the default one.
+            return "off"
         profiles = _as_mapping(payload.get("profiles"))
         profile = _as_mapping(profiles.get(profile_id))
         return profile.get("global_default", DEFAULT_GLOBAL)
