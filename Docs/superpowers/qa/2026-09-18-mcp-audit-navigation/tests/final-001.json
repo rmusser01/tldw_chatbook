@@ -1,0 +1,260 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_handles_destination_row_removed_during_clear[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_handles_destination_row_removed_during_clear[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_profile_scoped_inspector_requests_preserve_captured_context",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_open_tool_missing_tool_notifies_instead_of_crashing",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_adjust_permission_missing_tool_notifies_instead_of_crashing",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_switching_mode_away_from_audit_clears_entry_detail",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_switching_mode_clears_tool_detail",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_both_sub_view_selections_do_not_stack_visible_detail_panels",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_jumps_to_permissions_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_test_tool_blocked_change_button_jumps_to_permissions_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_clears_stale_tool_detail",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_tools_mode::test_select_tool_row_moves_cursor_to_matching_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_tools_mode::test_select_tool_row_returns_false_for_unknown_tool_id",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_tools_mode::test_select_tool_row_clears_an_active_filter_hiding_the_target",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permissions_mode::test_select_tool_row_moves_cursor_to_matching_tool_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permissions_mode::test_select_tool_row_returns_false_for_tool_not_in_matrix",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permissions_mode::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_classes_defined_only_in_owning_sheet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_owning_sheets_are_bundled",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_deprecated_names_ratchet_down",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_catalog_and_gallery_sync",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_no_new_local_ds_fallbacks",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_literal_ratchet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_python_style_ratchet",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_sheet_size_ceiling",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_ratchet_regexes_match_pin_script",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_ignores_tokens_and_token_definitions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_active_css_extension_is_in_dimension_floor",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_pin_rejects_active_css_extension_without_writing_baseline",
+      "status": "passed"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││                               │
+│ Source                       ││                                                     ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Root: local MCP serving and Hub tests. Blank       ││  Why · Off — enable it to     │
+│ ▊  Local                ▼  ▎ ││  uses the serving process's current folder.         ││  let MCP clients use          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Console uses Chat scratch and admitted Workspace   ││  chatbook's tools.            │
+│                              ││  folders.                                         ▄ ││  Add server                   │
+│ Servers                      ││                                                     ││  chat_with_llm —              │
+│  ◦ off · ⌂ built-in          ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  tldw_chatbook                │
+│    All servers               ││  ▊  Filter tools…   ▎▊  All servers          ▼  ▎   ││  Send a message to an LLM     │
+│  ◦ ⌂ tldw_chatbook (bu…      ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  and get a response.          │
+│                              ││                                                     ││  Tags: —                      │
+│                              ││  Tool                                  State  Se    ││                               │
+│                              ││  chat_with_character                   Ask    tl    ││  Parameters: form             │
+│                              ││  chat_with_llm                         Ask    tl    ││                               │
+│                              ││  create_note                           Ask    tl    ││    Test Tool                  │
+│                              ││  export_conversation                   Ask    tl    ││  chat_with_llm —              │
+│                              ││  get_conversation_history              Ask    tl▂▂  ││  tldw_chatbook                │
+│                              ││  library_get_conversation              Ask    tl    ││  Permission: Ask              │
+│                              ││  library_get_media                     Ask    tl    ││                               │
+│                              ││  library_get_media_chunk               Ask    tl    ││  Inherited from the global    │
+│                              ││  library_get_media_structure           Ask    tl    ││  default.                     │
+│                              ││  library_get_note                      Ask    tl    ││  Change in Permissions        │
+│                              ││  library_get_prompt                    Ask    tl    ││    Advanced…                  │
+│                              ││  library_get_skill                     Ask    tl    ││                               │
+│                              ││  library_list_chunk_specs              Ask    tl    ││                               │
+│                              ││  library_list_conversations            Ask    tl    ││                               │
+│                              ││  library_list_media                    Ask    tl    ││                               │
+│                              ││  library_list_notes                    Ask    tl    ││                               │
+│                              ││  library_list_prompts                  Ask    tl    ││                               │
+│                              ││  library_list_skills                   Ask    tl    ││                               │
+│                              ││  library_rechunk_media                 Ask    tl  ▆ ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_handles_destination_row_removed_during_clear[tool]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_handles_destination_row_removed_during_clear[permission]",
+      "status": "failure"
+    }
+  ]
+}
