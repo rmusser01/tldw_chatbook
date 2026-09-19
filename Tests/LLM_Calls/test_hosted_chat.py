@@ -1214,6 +1214,43 @@ def test_nonstreaming_2xx_malformed_body_is_not_retried(
 
 
 @pytest.mark.allow_network
+def test_owned_json_post_forwards_extra_headers_without_core_overrides():
+    """TASK-32851: providers like OpenRouter send attribution headers, so the
+    engine forwards extra headers as a neutral capability -- and refuses to
+    let them override the Authorization/Content-Type pair it owns."""
+    with _scripted_hosted_server([{"body": b'{"ok":true}'}]) as (server, base_url):
+        result = owned_json_post(
+            config=_transport_config(
+                base_url,
+                extra_headers={
+                    "HTTP-Referer": "http://localhost",
+                    "X-Title": "TLDW-API",
+                },
+            ),
+            route="chat/completions",
+            payload={},
+            streaming=False,
+        )
+
+    assert result == {"ok": True}
+    sent = server.requests[0]["headers"]
+    assert sent["HTTP-Referer"] == "http://localhost"
+    assert sent["X-Title"] == "TLDW-API"
+    assert sent["Authorization"] == "Bearer SECRET-TRANSPORT-CANARY"
+
+    with _scripted_hosted_server([{"body": b'{"ok":true}'}]) as (_server, base_url):
+        with pytest.raises(ChatProviderError, match="transport configuration"):
+            owned_json_post(
+                config=_transport_config(
+                    base_url, extra_headers={"Authorization": "Bearer evil"}
+                ),
+                route="chat/completions",
+                payload={},
+                streaming=False,
+            )
+
+
+@pytest.mark.allow_network
 def test_owned_sse_stream_transfers_ownership_and_closes_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

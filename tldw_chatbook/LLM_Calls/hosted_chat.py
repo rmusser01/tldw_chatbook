@@ -95,6 +95,10 @@ class HostedHTTPTransportConfig:
     timeout: float
     retries: int
     retry_delay: float
+    # Provider-requested additional request headers (TASK-32851). The
+    # engine's Authorization/Content-Type pair is not overridable; any other
+    # header a provider's wire contract requires rides through here.
+    extra_headers: Mapping[str, str] = field(default_factory=dict, compare=False)
 
 
 @dataclass(frozen=True)
@@ -533,11 +537,25 @@ def owned_json_post(
         or not math.isfinite(float(config.retry_delay))
         or config.retry_delay < 0
         or not isinstance(payload, Mapping)
+        or not isinstance(config.extra_headers, Mapping)
+        or any(
+            not isinstance(name, str)
+            or not name
+            or not isinstance(value, str)
+            or not value
+            or name.lower() in {"authorization", "content-type"}
+            for name, value in config.extra_headers.items()
+        )
     ):
         raise _transport_error(config.provider, "transport configuration is invalid")
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json",
+        **config.extra_headers,
+    }
     session = create_default_session()
     response: requests.Response | None = None
     stream_owns_session = False
@@ -560,10 +578,7 @@ def owned_json_post(
             try:
                 response = session.post(
                     url,
-                    headers={
-                        "Authorization": f"Bearer {config.api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=headers,
                     json=deepcopy(dict(payload)),
                     timeout=float(config.timeout),
                     stream=True,
