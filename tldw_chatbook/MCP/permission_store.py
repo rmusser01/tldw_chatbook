@@ -238,6 +238,28 @@ def _fresh_payload() -> dict[str, Any]:
     }
 
 
+def _fail_closed_payload() -> dict[str, Any]:
+    """The payload to show when the real one could not be READ.
+
+    TASK-32806.3. Not ``_fresh_payload()``: that is the permissive
+    first-run default (kill switch off, global default ``ask``), and
+    returning it for an unreadable file tells the user the opposite of
+    what their policy says. A read failure is an absence of knowledge, so
+    this denies everything until the file can be read again. Nothing
+    persists it -- only the raw display getters use it.
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kill_switch": True,
+        "profiles": {
+            _DEFAULT_PROFILE_ID: {
+                "global_default": "off",
+                "servers": {},
+            }
+        },
+    }
+
+
 def _is_sha256(value: Any) -> bool:
     return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
 
@@ -748,9 +770,27 @@ class MCPPermissionStore:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
             payload = json.loads(raw_text)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except OSError as exc:
+            # TASK-32806.3: an OSError is an UNCERTAIN persistence failure
+            # -- a permission bit, a full disk, a network mount blinking --
+            # not evidence that the policy is corrupt. Backing the live
+            # file up and returning fresh defaults flipped the kill switch
+            # from ON to off and resolved a tool set to Off as Allow, and
+            # the next mutator wrote that reset back permanently. This
+            # method's own docstring already promised the opposite:
+            # "uncertain native persistence failures propagate without
+            # resetting policy". Raising is the documented fail-closed
+            # path -- per-tool resolution that raises is rendered as
+            # `gate_error` / "Unknown" with `state="deny"`.
             logger.warning(
-                f"MCP permission store at '{self.path}' is unreadable/corrupt ({exc}); "
+                f"MCP permission store at '{self.path}' could not be read "
+                f"({type(exc).__name__}); policy is left untouched."
+            )
+            raise
+        except (ValueError, json.JSONDecodeError) as exc:
+            # A genuine parse failure: the bytes arrived and are not JSON.
+            logger.warning(
+                f"MCP permission store at '{self.path}' is corrupt ({exc}); "
                 "backing it up and resetting to defaults."
             )
             self._backup_corrupt_file()
@@ -889,7 +929,19 @@ class MCPPermissionStore:
             with mcp_sources.reader(self) as handle:
                 raw_text = handle.read()
             payload = json.loads(raw_text)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
+        except FileNotFoundError:
+            # No file yet is a KNOWN state, not an uncertain one: nothing
+            # has been configured, so the permissive first-run default is
+            # the honest answer. (``_load_locked`` says the same thing with
+            # its ``self.path.exists()`` guard.)
+            return _fresh_payload()
+        except OSError:
+            # TASK-32806.3: unreadable is not the same as unconfigured.
+            # These getters feed display surfaces, so they must not raise
+            # into a screen, but they must not report the permissive
+            # first-run default for a policy nobody could read either.
+            return _fail_closed_payload()
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
             return _fresh_payload()
 
         if (

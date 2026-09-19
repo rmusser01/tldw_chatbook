@@ -1506,8 +1506,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "fa39f89cad5148e6a567",
+      "call_count": 4,
+      "diagnostic_digest": "33e3af4a3b6650abe157",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/permission_store.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -8257,7 +8257,16 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "7469e1357b780a37",
+          "call_digest": "72cca8e3e6838bcb",
+          "method": "warning",
+          "path_expressions": [
+            "self.path"
+          ],
+          "scope": "MCPPermissionStore._load_locked",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "b6ff72a69346701d",
           "method": "warning",
           "path_expressions": [
             "self.path"
@@ -11513,10 +11522,10 @@
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
     "owner_files": 608,
-    "path_privacy_candidate_calls": 701,
+    "path_privacy_candidate_calls": 702,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
-    "task_492_calls": 1407,
+    "task_492_calls": 1408,
     "task_494_calls": 7762
   }
 }
