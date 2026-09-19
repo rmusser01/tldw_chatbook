@@ -1,0 +1,7 @@
+[
+  {
+    "class": "Tests.UI.test_mcp_audit_selection",
+    "name": "test_duplicate_event_keeps_its_row_within_same_filtered_snapshot",
+    "passed": false
+  }
+]

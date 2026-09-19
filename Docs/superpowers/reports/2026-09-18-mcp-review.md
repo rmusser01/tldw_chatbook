@@ -538,6 +538,20 @@ Next: session-grant review/revocation and remaining approval/connected-runtime
 journeys. This draft requires current-head CI/review and final visual approval
 before merge; the wider component review remains open.
 
+## Saved Audit selection qualification — 2026-09-18
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`.
+The closeout notes below are historical; feature reviews have resumed on bounded
+follow-up branches. TASK-32834 qualifies Audit execution selection/filter
+invalidation and exact same-name tool drilldown with [102 targeted cases and
+18 native captures](../qa/2026-09-18-mcp-audit-selection/README.md).
+
+Next: compact Audit filter readability. At 80×24 the current fixed filter slots
+squeeze away the text value and clip the initiator prompt. Also review inspector
+guidance ownership: built-in readiness guidance remains above a selected local
+execution/tool. The separate inspector reachability repair is saved in PR #2718.
+These open visual issues are not qualified by the selection repair.
+
 ## Qualified
 
 | Surface | Evidence | Bounds |
@@ -587,8 +601,8 @@ its merge is confirmed.
   restored roots, bulk actions, review/approval and connected-runtime journeys.
 
 The [component completion ledger](2026-09-17-design-system-completion-audit.md)
-retains other destinations. Draft PR2707 remains open and subject to its own
-visual review and merge approval.
+retains other destinations. Each follow-up PR retains its own current-head CI,
+integration and final visual approval before merge.
 
 ## Post-merge continuation: exact-input Remove and Re-allow
 
