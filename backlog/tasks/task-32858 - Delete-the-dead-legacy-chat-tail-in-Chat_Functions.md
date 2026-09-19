@@ -1,7 +1,7 @@
 ---
 id: TASK-32858
 title: Delete the dead legacy chat tail in Chat_Functions
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-19 08:24'
 labels:
@@ -28,10 +28,10 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-19/report.md`.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Census reconciled with TASK-32807.5: the overlap is recorded in both tasks, and neither claims the other's lines
-- [ ] #2 The dead helpers and their tests are deleted (~1,270 LOC baseline)
-- [ ] #3 The MediaWindow_v2 path decision is recorded: `chat()` kept with its single documented caller chain, or migrated — with tests
-- [ ] #4 Stale `chat_events.py` docstring references removed
-- [ ] #5 Targeted Chat/UI test runs green after deletion
+- [x] #2 The dead helpers and their tests are deleted (~1,270 LOC baseline)
+- [x] #3 The MediaWindow_v2 path decision is recorded: `chat()` kept with its single documented caller chain, or migrated — with tests
+- [x] #4 Stale `chat_events.py` docstring references removed
+- [x] #5 Targeted Chat/UI test runs green after deletion
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,4 +48,13 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-19/report.md`.
 
 <!-- SECTION:NOTES:BEGIN -->
 Census reconciliation (AC#1, 2026-09-19): **disjoint — zero overlap.** TASK-32807.5 owns five dead MODULES (whole files with zero production importers: `console_visual_evaluation.py` 1,286, `console_visual_benchmark.py` 242, `document_generator.py` 601, `prompt_template_manager.py` 138, `server_chat_loop_service.py` 82 = 2,349 lines, per `qa/core-code-review-2026-09-17/report.md` CHAT-rest-3). This task owns dead FUNCTIONS inside the LIVE `Chat_Functions.py` module — a different granularity the module census cannot see, and `Chat_Functions.py` itself has production importers, so it is not in 32807.5's table. Neither task claims the other's lines. Reconciliation note also added to 32807.5.
+
+Implemented 2026-09-19, **PR #2750** (branch `fix/cascade-chat-tail`, independent of the LLM migration stack, rebased on current `origin/dev`). `Chat_Functions.py` 3,476 → 2,435 lines.
+
+- **Re-verification at HEAD changed the cut:** `save_character`/`load_characters` showed 2/6 "production" greps — all false positives (a deprecated-module docstring, unrelated same-named methods in CCP modules, a local variable, a comment); recorded here because those names will trip the next census too. **`generate_chat_history_content` and `extract_media_name` are KEPT**: five live ADR-063 suites (thinking privacy, continuation privacy, roundtrip, e2e, conversation exchange) use the former as their payload builder, and the latter is called inside it. They are test-utility-live; a future slice may move them to a test-fixture home — filed as a note here, not a new task, until a suite actually owns that decision.
+- **Caught mid-deletion:** the dead range carried a load-bearing mid-file re-export (the `Chat_Dictionary_Lib` backward-compat import — `chat()` itself calls `parse_user_dict_markdown_file` through it); the first collection failure caught it and it was restored verbatim at EOF.
+- **AC#3 decision: KEEP** `chat()` with its single documented caller chain (`app.py` → `worker_events.py` → MediaWindow_v2). It owns media-content RAG injection the gateway deliberately does not; migration is a separate decision if MediaWindow ever moves to the gateway.
+- **Census synced on all three sides:** test expectation list, `Docs/Development/console-semantic-mutation-inventory.md` (exact-census row + prose table), and the `model-visible` count 67→66. `test_app_import_weight.py`'s historical comment marked superseded (the wrapper's lazy `ChatPersistenceService` reach is gone entirely; the assertion is an upper bound so counts only improve).
+- **Tests retired:** `TestChatHistorySaving` + `TestCharacterManagement` classes, the `save_chat_history` db-owner test, and `Tests/Packaging/test_chat_persistence_import_closure.py` (subject was the wrapper).
+- **Evidence:** directly-affected tests 65/65 green post-rebase; wider-run failures classified by pristine-worktree A/B at `origin/dev` — 4 `test_chat_functions.py` + 3 inventory scanners + 1 thinking-privacy + 2 e2e, all failing identically at base (the TASK-19642.10-documented admission class). Ruff on the file: 324 findings → 199 (−125, none added).
 <!-- SECTION:NOTES:END -->
