@@ -10,6 +10,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.widgets import Button, Static, TextArea
 
 from tldw_chatbook.Chat.console_prompt_queue import (
@@ -304,7 +305,10 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         for entry in snapshot.entries:
             row = Horizontal(
                 Button(
-                    f"{entry.position}. {entry.preview}",
+                    # TASK-32802.4: the preview is literal text now, and
+                    # Button.label markup-parses on Textual 8 whatever the
+                    # widget's markup flag says, so the escape belongs here.
+                    f"{entry.position}. {escape_markup(entry.preview)}",
                     id=f"console-prompt-queue-entry-{entry.entry_id}",
                     classes="console-prompt-queue-entry-select",
                 ),
