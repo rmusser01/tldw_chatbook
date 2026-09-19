@@ -1,0 +1,845 @@
+{
+  "distinct_cases": 168,
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[replaced-tools]",
+      "status": "passed",
+      "seconds": 3.41
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[replaced-permissions]",
+      "status": "passed",
+      "seconds": 3.542
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]",
+      "status": "passed",
+      "seconds": 3.775
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]",
+      "status": "passed",
+      "seconds": 3.711
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[removed-tools]",
+      "status": "passed",
+      "seconds": 3.69
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[removed-permissions]",
+      "status": "passed",
+      "seconds": 3.819
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_waits_for_in_progress_catalog_publication[tools]",
+      "status": "passed",
+      "seconds": 4.28
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_waits_for_in_progress_catalog_publication[permissions]",
+      "status": "passed",
+      "seconds": 4.444
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-dark-tools]",
+      "status": "passed",
+      "seconds": 14.093
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-dark-permissions]",
+      "status": "passed",
+      "seconds": 11.802
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-light-tools]",
+      "status": "passed",
+      "seconds": 11.079
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-light-permissions]",
+      "status": "passed",
+      "seconds": 10.626
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_catalog_navigation_rejects_profile_change_during_row_selection[tools]",
+      "status": "passed",
+      "seconds": 3.928
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_catalog_navigation_rejects_profile_change_during_row_selection[permissions]",
+      "status": "passed",
+      "seconds": 3.741
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 3.636
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 3.473
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 3.691
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 3.837
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 3.267
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 3.442
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 3.205
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 3.182
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_handles_destination_row_removed_during_clear[tool]",
+      "status": "passed",
+      "seconds": 3.696
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_handles_destination_row_removed_during_clear[permission]",
+      "status": "passed",
+      "seconds": 3.669
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]",
+      "status": "passed",
+      "seconds": 9.363
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]",
+      "status": "passed",
+      "seconds": 9.327
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]",
+      "status": "passed",
+      "seconds": 8.612
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]",
+      "status": "passed",
+      "seconds": 10.607
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 4.083
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 3.536
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[invisible-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 2.964
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[invisible-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 3.465
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[disabled-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 3.007
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[disabled-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 2.856
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 2.848
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 2.904
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 2.87
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 2.815
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[covered-mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 2.773
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_ignores_an_unavailable_owning_view[covered-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 2.829
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_is_invalid_before_pruning_yields[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 2.71
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_navigation_is_invalid_before_pruning_yields[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 2.711
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_current_audit_navigation_is_repeatable[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 2.77
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_current_audit_navigation_is_repeatable[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 2.834
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]",
+      "status": "passed",
+      "seconds": 3.504
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_navigation::test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]",
+      "status": "passed",
+      "seconds": 3.596
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.023
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.074
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.198
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.208
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.243
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.171
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.256
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.213
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.159
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.145
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.023
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.014
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.04
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.065
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[hidden]",
+      "status": "passed",
+      "seconds": 2.06
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[disabled]",
+      "status": "passed",
+      "seconds": 2.03
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[closed]",
+      "status": "passed",
+      "seconds": 2.108
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.1
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.055
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 2.021
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.012
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission]",
+      "status": "passed",
+      "seconds": 1.979
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission-test]",
+      "status": "passed",
+      "seconds": 2.01
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-catalog-freshness]",
+      "status": "passed",
+      "seconds": 0.029
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-navigation]",
+      "status": "passed",
+      "seconds": 0.029
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-revoke]",
+      "status": "passed",
+      "seconds": 0.043
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-rule-actions]",
+      "status": "passed",
+      "seconds": 0.043
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-permission-navigation]",
+      "status": "passed",
+      "seconds": 0.028
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-catalog-freshness]",
+      "status": "passed",
+      "seconds": 0.085
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-navigation]",
+      "status": "passed",
+      "seconds": 0.028
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-revoke]",
+      "status": "passed",
+      "seconds": 0.041
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-rule-actions]",
+      "status": "passed",
+      "seconds": 0.043
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-permission-navigation]",
+      "status": "passed",
+      "seconds": 0.027
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-catalog-freshness]",
+      "status": "passed",
+      "seconds": 0.028
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-navigation]",
+      "status": "passed",
+      "seconds": 0.028
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-revoke]",
+      "status": "passed",
+      "seconds": 0.044
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-rule-actions]",
+      "status": "passed",
+      "seconds": 0.042
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-permission-navigation]",
+      "status": "passed",
+      "seconds": 0.027
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-catalog-freshness]",
+      "status": "passed",
+      "seconds": 0.107
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-navigation]",
+      "status": "passed",
+      "seconds": 0.106
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-revoke]",
+      "status": "passed",
+      "seconds": 0.112
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-rule-actions]",
+      "status": "passed",
+      "seconds": 0.106
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-permission-navigation]",
+      "status": "passed",
+      "seconds": 0.108
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-catalog-freshness]",
+      "status": "passed",
+      "seconds": 0.108
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-navigation]",
+      "status": "passed",
+      "seconds": 0.108
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-revoke]",
+      "status": "passed",
+      "seconds": 0.106
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-rule-actions]",
+      "status": "passed",
+      "seconds": 0.104
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-permission-navigation]",
+      "status": "passed",
+      "seconds": 0.105
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-catalog-freshness]",
+      "status": "passed",
+      "seconds": 0.104
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-navigation]",
+      "status": "passed",
+      "seconds": 0.104
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-revoke]",
+      "status": "passed",
+      "seconds": 0.103
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-rule-actions]",
+      "status": "passed",
+      "seconds": 0.105
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-permission-navigation]",
+      "status": "passed",
+      "seconds": 0.106
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-catalog-freshness]",
+      "status": "passed",
+      "seconds": 0.167
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-navigation]",
+      "status": "passed",
+      "seconds": 0.11
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-revoke]",
+      "status": "passed",
+      "seconds": 0.108
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-rule-actions]",
+      "status": "passed",
+      "seconds": 0.107
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-permission-navigation]",
+      "status": "passed",
+      "seconds": 0.106
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names0]",
+      "status": "passed",
+      "seconds": 0.008
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names1]",
+      "status": "passed",
+      "seconds": 0.002
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes",
+      "status": "passed",
+      "seconds": 0.005
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[outside]",
+      "status": "passed",
+      "seconds": 0.003
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[alias]",
+      "status": "passed",
+      "seconds": 0.002
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[traversal]",
+      "status": "passed",
+      "seconds": 0.002
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[tmp-base]",
+      "status": "passed",
+      "seconds": 0.002
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-home]",
+      "status": "passed",
+      "seconds": 0.002
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-db]",
+      "status": "passed",
+      "seconds": 0.004
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[native.log]",
+      "status": "passed",
+      "seconds": 0.004
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[launch.json]",
+      "status": "passed",
+      "seconds": 0.003
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[evidence]",
+      "status": "passed",
+      "seconds": 0.004
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[dangling-log]",
+      "status": "passed",
+      "seconds": 0.003
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_missing_tmux_is_reported_before_output",
+      "status": "passed",
+      "seconds": 0.003
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]",
+      "status": "passed",
+      "seconds": 2.152
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+      "status": "passed",
+      "seconds": 2.073
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_profile_scoped_inspector_requests_preserve_captured_context",
+      "status": "passed",
+      "seconds": 1.696
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[tool]",
+      "status": "passed",
+      "seconds": 0.562
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[permission]",
+      "status": "passed",
+      "seconds": 0.507
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[tool]",
+      "status": "passed",
+      "seconds": 0.562
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[permission]",
+      "status": "passed",
+      "seconds": 0.57
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_open_tool_switches_to_tools_mode_selects_row_and_shows_detail",
+      "status": "passed",
+      "seconds": 0.937
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_open_tool_missing_tool_notifies_instead_of_crashing",
+      "status": "passed",
+      "seconds": 0.939
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_adjust_permission_switches_to_permissions_mode_and_selects_row",
+      "status": "passed",
+      "seconds": 0.974
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_adjust_permission_missing_tool_notifies_instead_of_crashing",
+      "status": "passed",
+      "seconds": 0.957
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_switching_mode_away_from_audit_clears_entry_detail",
+      "status": "passed",
+      "seconds": 0.78
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_switching_mode_clears_tool_detail",
+      "status": "passed",
+      "seconds": 0.756
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_both_sub_view_selections_do_not_stack_visible_detail_panels",
+      "status": "passed",
+      "seconds": 1.157
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers",
+      "status": "passed",
+      "seconds": 2.398
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_jumps_to_permissions_row",
+      "status": "passed",
+      "seconds": 0.914
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_test_tool_blocked_change_button_jumps_to_permissions_row",
+      "status": "passed",
+      "seconds": 1.394
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_tools_mode_permission_block_change_button_clears_stale_tool_detail",
+      "status": "passed",
+      "seconds": 0.951
+    },
+    {
+      "id": "Tests.UI.test_mcp_tools_mode::test_select_tool_row_moves_cursor_to_matching_row",
+      "status": "passed",
+      "seconds": 0.224
+    },
+    {
+      "id": "Tests.UI.test_mcp_tools_mode::test_select_tool_row_returns_false_for_unknown_tool_id",
+      "status": "passed",
+      "seconds": 0.196
+    },
+    {
+      "id": "Tests.UI.test_mcp_tools_mode::test_select_tool_row_clears_an_active_filter_hiding_the_target",
+      "status": "passed",
+      "seconds": 0.269
+    },
+    {
+      "id": "Tests.UI.test_mcp_permissions_mode::test_select_tool_row_moves_cursor_to_matching_tool_row",
+      "status": "passed",
+      "seconds": 2.014
+    },
+    {
+      "id": "Tests.UI.test_mcp_permissions_mode::test_select_tool_row_returns_false_for_tool_not_in_matrix",
+      "status": "passed",
+      "seconds": 2.025
+    },
+    {
+      "id": "Tests.UI.test_mcp_permissions_mode::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target",
+      "status": "passed",
+      "seconds": 2.151
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+      "status": "passed",
+      "seconds": 1.767
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+      "status": "passed",
+      "seconds": 1.742
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+      "status": "passed",
+      "seconds": 1.718
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+      "status": "passed",
+      "seconds": 1.738
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+      "status": "passed",
+      "seconds": 1.706
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+      "status": "passed",
+      "seconds": 1.778
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+      "status": "passed",
+      "seconds": 1.798
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+      "status": "passed",
+      "seconds": 2.163
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_classes_defined_only_in_owning_sheet",
+      "status": "passed",
+      "seconds": 20.437
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_owning_sheets_are_bundled",
+      "status": "passed",
+      "seconds": 1.681
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_deprecated_names_ratchet_down",
+      "status": "passed",
+      "seconds": 4.572
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_catalog_and_gallery_sync",
+      "status": "passed",
+      "seconds": 1.693
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_no_new_local_ds_fallbacks",
+      "status": "passed",
+      "seconds": 1.901
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_literal_ratchet",
+      "status": "passed",
+      "seconds": 1.671
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_python_style_ratchet",
+      "status": "passed",
+      "seconds": 17.866
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_sheet_size_ceiling",
+      "status": "passed",
+      "seconds": 1.707
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_ratchet_regexes_match_pin_script",
+      "status": "passed",
+      "seconds": 1.706
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]",
+      "status": "passed",
+      "seconds": 1.698
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]",
+      "status": "passed",
+      "seconds": 1.684
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]",
+      "status": "passed",
+      "seconds": 1.703
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]",
+      "status": "passed",
+      "seconds": 1.686
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]",
+      "status": "passed",
+      "seconds": 1.676
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]",
+      "status": "passed",
+      "seconds": 1.686
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_ignores_tokens_and_token_definitions",
+      "status": "passed",
+      "seconds": 1.657
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_active_css_extension_is_in_dimension_floor",
+      "status": "passed",
+      "seconds": 1.642
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_pin_rejects_active_css_extension_without_writing_baseline",
+      "status": "passed",
+      "seconds": 1.699
+    }
+  ]
+}

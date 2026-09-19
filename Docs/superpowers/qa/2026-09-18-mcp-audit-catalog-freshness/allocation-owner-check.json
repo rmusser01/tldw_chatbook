@@ -1,0 +1,12 @@
+{
+  "refs": 352,
+  "worktrees": 35,
+  "history": [],
+  "owners": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "path": "backlog/tasks/task-32838 - Resolve-Audit-destinations-from-the-current-catalog-before-rendering.md"
+    }
+  ],
+  "unique": true
+}

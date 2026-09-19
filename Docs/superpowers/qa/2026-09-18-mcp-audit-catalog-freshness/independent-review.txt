@@ -1,0 +1,5 @@
+Read-only review by /root/mcp_server_action_review.
+
+No concrete blockers found. Both paths revalidate profile context and re-resolve tool identity after acquiring the publication lock, then retain it through row selection and rendering. Lock ordering remains workbench to inspector.
+
+Tests cover replacement, disconnection, removal, and incomplete publication. PR2724 row-selection failure checks remain separate. Reviewer did not run tests or apps.

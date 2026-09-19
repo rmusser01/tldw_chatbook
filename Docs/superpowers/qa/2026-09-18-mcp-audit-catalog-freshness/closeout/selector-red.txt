@@ -1,0 +1,7 @@
+CI run35467225834 job105961688567 on approved a4158a6a9a. The same assertion reproduced locally; that private child log rotated after inspection.
+
+UI latency guardrails	Run boot budget ratchets	2026-09-19T20:29:25.8653127Z E           FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet - AssertionError: 277 ancestor-scoped bare-type-subject rules (ratchet limit 274; Button=174, Input=29, Static=19, Select=17, Vertical=17, Checkbox=13, Horizontal=4, VerticalScroll=4).
+UI latency guardrails	Run boot budget ratchets	2026-09-19T20:29:25.8664028Z E           assert 277 <= 274
+UI latency guardrails	Run boot budget ratchets	2026-09-19T20:29:25.8833526Z FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet - AssertionError: 277 ancestor-scoped bare-type-subject rules (ratchet limit 274; Button=174, Input=29, Static=19, Select=17, Vertical=17, Checkbox=13, Horizontal=4, VerticalScroll=4).
+UI latency guardrails	Run boot budget ratchets	2026-09-19T20:29:25.8847488Z assert 277 <= 274
+UI latency guardrails	Run boot budget ratchets	2026-09-19T20:29:25.9582371Z ======= 1 failed, 17 passed, 2 skipped, 2 warnings in 141.21s (0:02:21) ========

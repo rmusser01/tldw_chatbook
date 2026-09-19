@@ -1,5 +1,42 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2726 approved closeout — selector-budget repair
+
+The owner approved PR2726's integrated conflict choices and gallery. Qodo found
+zero issues on approved head `a4158a6a9a`. The Perf Guard then exposed three
+inherited wide-modal selectors from PR2742 (277/274). Class-qualified subjects
+preserve their exact targets and token values while restoring the unchanged
+ratchet. [203 passing targeted cases, seven guards and independent review](../qa/2026-09-18-mcp-audit-catalog-freshness/CLOSEOUT.md)
+verify the closeout; all twelve modal before/after captures and all eight
+approved Audit captures are pixel-identical. Final-head CI/review and fresh live
+dev inspection remain before the authorized merge. The header rendering race
+and remaining component reviews are separate follow-ups.
+
+
+## Current checkpoint — PR2724 merged; PR2726 integrated
+
+PR2724 merged at `cccf0acdad8e939a55cb003588ff1406cef5d1f4` after owner
+approval, current-head CI and Qodo closeout. Concurrent PR2742 changed the merge
+tree outside MCP; the actual merged app passed 32 Audit cases and its 24 native
+captures matched approved terminal content apart from synthetic timestamps.
+PR2707's continuation heartbeat stays paused.
+
+Existing draft PR2726 / TASK-32838 is rebased onto that verified merged state.
+Both report histories are retained. The source conflict combines the fresh
+same-ID lookup with dev's row-selection and post-selection profile checks.
+[Conflict choices, 168 targeted passes, seven guards, independent review and
+fresh native visuals](../qa/2026-09-18-mcp-audit-catalog-freshness/CURRENT-DEV-REVIEW.md)
+are ready for this PR's own final visual approval and current-head CI/review.
+No merge approval transfers from PR2724.
+
+An [intermittent painted Tools header mismatch](../qa/2026-09-18-mcp-audit-catalog-freshness/HEADER-FOLLOWUP.md)
+was observed in one native run and absent in the unchanged-source replay.
+Attribution needs baseline reproduction; this remains a bounded follow-up before
+Permissions restored roots. Already-open inspector refresh, connected-runtime
+journeys and the wider screen review remain open. Older pending/next statements
+below are historical checkpoints.
+
+
 The token/component migration is implemented. The user's subsequent request to
 review each feature/component remains active. This ledger separates those two
 contracts so that another successful bounded review cannot accidentally close
@@ -401,3 +438,20 @@ review finds no blockers. The fresh native replay matches all 24 approved termin
 captures except fixture timestamps. PR2724 is ready for review and awaits
 current-head CI/review before its authorized merge. Same-ID definition freshness
 remains in PR2726.
+
+## Post-merge Audit catalog freshness — TASK-32838
+
+PR #2707 merged at `149acda36be8939fe8cd5e589bf77d13462257e7`; its earlier
+unmerged checkpoints above are historical. Component reviews have resumed in
+separate PRs and the resume heartbeat is paused.
+
+TASK-32838 re-resolves Audit destinations after pending catalog publication,
+then selects/renders under the existing synchronization lock. [62 targeted
+cases, seven preflight guards, independent review and eight native captures](../qa/2026-09-18-mcp-audit-catalog-freshness/README.md)
+qualify this bounded repair. Native catalog replacement is controlled; it does
+not qualify a connected server or tool execution. PR #2724's control-identity/
+missing-row repair and the earlier inspector refresh/layout/guidance changes
+remain separate. Current-head CI and final visual approval gate merging.
+
+Next: Permissions restored-roots review, with remaining scope retained in the
+[MCP ledger](2026-09-18-mcp-review.md). The wider component workstream stays open.
