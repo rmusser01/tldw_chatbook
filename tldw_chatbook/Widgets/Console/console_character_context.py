@@ -137,8 +137,13 @@ class ConsoleCharacterContext(Vertical):
             if count != button.progress_count:
                 button.progress_count = count
                 prefix = f"Progress: {count} · " if count else ""
+                # progress_base_label is the PARSED (plain) title, so a
+                # title containing markup like [TODO] or [/b] must be set
+                # as Text on BOTH the label and the tooltip -- assigning a
+                # raw str to the markup-enabled tooltip dropped [TODO] and
+                # could raise MarkupError on [/b] (TASK-32802 / Qodo #2).
                 button.label = Text(prefix + button.progress_base_label)
-                button.tooltip = prefix + button.progress_base_label
+                button.tooltip = Text(prefix + button.progress_base_label)
 
     def _observe_focus_intent(self, old: Any, new: Any) -> None:
         """External focus wins; pruning the owning node is not a new intent."""
