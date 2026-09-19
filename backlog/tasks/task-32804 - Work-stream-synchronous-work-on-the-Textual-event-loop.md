@@ -1,9 +1,10 @@
 ---
 id: TASK-32804
 title: 'Work stream: synchronous work on the Textual event loop'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-18 16:46'
+updated_date: '2026-09-19 21:47'
 labels:
   - core-review
   - review-loop
@@ -18,3 +19,9 @@ priority: medium
 
 This is a work-stream parent from the core-runtime code review of 2026-09-17 (`qa/core-code-review-2026-09-17/report.md`, all 29 slices, 887,855 lines). Its child tasks are the individual units of work; close this one when they are all closed. Findings are quoted in each child with the file and line they were verified at, and each slice's full evidence is in `qa/core-code-review-2026-09-17/slices/`.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+.1 done; .10 + .5 done (PR #2739). .3/.8 substantially resolved by .1's warm-read fastpath (per-tick admission cost eliminated); their revision-gate/snapshot ACs are further optimizations. .2/.4/.6/.7/.9/.11/.12 remain (real per-surface memoize/offload work).
+<!-- SECTION:NOTES:END -->
