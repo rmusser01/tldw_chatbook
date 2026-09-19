@@ -1,0 +1,16 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": true,
+  "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": true,
+  "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": true,
+  "tldw_chatbook/css/tldw_cli_modular.tcss": true,
+  "tldw_chatbook/css/widget_defaults_scoped.tcss": true,
+  "tldw_chatbook/css/widget_defaults_self.tcss": true,
+  "tldw_chatbook/css/core/_variables.tcss": true,
+  "tldw_chatbook/css/components/_agentic_terminal.tcss": true,
+  "tldw_chatbook/MCP/client.py": true,
+  "tldw_chatbook/MCP/local_control_service.py": true,
+  "tldw_chatbook/MCP/unified_control_plane_service.py": true,
+  "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": true,
+  "Docs/superpowers/qa/2026-09-18-mcp-inspector-reachability/stdio_server.py": true,
+  "native_check.py": true
+}

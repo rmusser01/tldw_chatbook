@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+3.39s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-False]
+3.37s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[context1-True]
+3.37s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-True]
+3.34s call     Tests/UI/test_mcp_inspector_results.py::test_invalid_attempt_replaces_previous_details_and_can_be_corrected[None-False]
+
+(8 durations < 1s hidden.)
+4 passed, 4 deselected in 14.24s

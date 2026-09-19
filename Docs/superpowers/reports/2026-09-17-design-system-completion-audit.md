@@ -331,3 +331,19 @@ The compact Raw response disclosure title remains clipped and is next for a
 bounded result/schema recovery review. Audit, remaining permission/runtime
 journeys and other destinations stay open. This branch contains no changes from
 other post-merge drafts and does not authorize a merge.
+
+
+## MCP raw-response and validation recovery — TASK-32833
+
+The Raw response gap recorded by TASK-32832 is repaired in a follow-up stacked
+on PR2718. A wrapping disclosure, reduced content inset and compact eight-row
+viewport keep the title and long raw content accessible. Local argument failures
+now replace the entire previous outcome, clearing stale raw data and interpretation
+while preserving input and exact permission-profile context. Corrected requests
+render fresh results. [50 distinct passing targeted cases and 16 inspected native
+captures](../qa/2026-09-18-mcp-inspector-results/README.md) qualify compact/wide
+both-theme geometry, schema/raw correction, default/named profiles, real private
+stdio execution and clean shutdown. Seven preflight guards pass with unchanged
+budgets. No merge; retarget to dev after PR2718 merges and retain final visual
+approval. Broader schema/runtime states and other destinations remain open;
+Audit filtering and exact event/tool drilldown is the next destination slice.

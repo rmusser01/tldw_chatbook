@@ -1108,6 +1108,24 @@ Button.mcp-inspector-control {
     min-height: $ds-size-0;
 }
 
+/* Keep the disclosure and its raw content within the compact inspector.
+   The stock auto-width title otherwise extends beyond the parent clip. */
+#mcp-inspector-test-result-raw > CollapsibleTitle {
+    width: $ds-width-fill;
+    height: auto;
+    min-width: $ds-size-0;
+}
+
+#mcp-inspector-test-result-raw > Contents {
+    padding: $ds-space-0;
+}
+
+/* Leave room for the compact pane's borders and disclosure title while
+   keeping long output keyboard-scrollable inside its own viewport. */
+.mcp-compact #mcp-inspector-test-result-raw-scroll {
+    height: $ds-size-8;
+}
+
 /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
    MCPWorkbench.on_resize) the triad rebalances toward the canvas so the
    servers table keeps its primary columns in-viewport; the rail/inspector

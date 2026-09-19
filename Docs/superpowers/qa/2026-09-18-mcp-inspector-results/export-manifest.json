@@ -1,0 +1,338 @@
+[
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/result.json",
+    "destination": "native/result.json",
+    "source_sha256": "625a43204f9f4eabf921e38907877cbee97051dd827ed1cf2f754b6d15f923c4",
+    "export_sha256": "625a43204f9f4eabf921e38907877cbee97051dd827ed1cf2f754b6d15f923c4",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-corrected.svg",
+    "destination": "native/textual-dark-170x48-corrected.svg",
+    "source_sha256": "d84b3e23f9ab82edd692d1d44d1c464be40806d3a10cbfa1d89b98a36d380028",
+    "export_sha256": "5dfa1e399003156b8316dcd6d829d5ed31d69d627d9e35cda4563f9d08db34d6",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-corrected.txt",
+    "destination": "native/textual-dark-170x48-corrected.txt",
+    "source_sha256": "b40cbd4a69458d66df5b612941c43f0b17e042f04884436c2d2c002ea39d7ab5",
+    "export_sha256": "b40cbd4a69458d66df5b612941c43f0b17e042f04884436c2d2c002ea39d7ab5",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-invalid.svg",
+    "destination": "native/textual-dark-170x48-invalid.svg",
+    "source_sha256": "443e3032d7cc974e63eed4c320a78b091e0eca50f4301a343ba8196ba24a6f79",
+    "export_sha256": "59ff2c1d4f5a0e6c451d8328a8e65d87f2ad7e51bcd7f1fa67e84b8ec2936f4b",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-invalid.txt",
+    "destination": "native/textual-dark-170x48-invalid.txt",
+    "source_sha256": "0a5fa01a0343f5a57b183e6acab048077941d284eb15b43212503f0e32178bd3",
+    "export_sha256": "0a5fa01a0343f5a57b183e6acab048077941d284eb15b43212503f0e32178bd3",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-raw-end.svg",
+    "destination": "native/textual-dark-170x48-raw-end.svg",
+    "source_sha256": "e3e615e25a97824006b20f1c7833e98b8813c168bc5ac7362ea3cf72fd58d18c",
+    "export_sha256": "236c8c869f75ff5fb328303d61d502aba52fe60a3456561fd2dc142df3cdc191",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-raw-end.txt",
+    "destination": "native/textual-dark-170x48-raw-end.txt",
+    "source_sha256": "eba01f117fd1652f1a9be5b845ebd269f07b65890ac81841e67d5b1a28bd20ff",
+    "export_sha256": "eba01f117fd1652f1a9be5b845ebd269f07b65890ac81841e67d5b1a28bd20ff",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-title.svg",
+    "destination": "native/textual-dark-170x48-title.svg",
+    "source_sha256": "3904c57ecc7304346efa1cb432f656381bbe11e1aa25ff774d07c9ce6afb43bf",
+    "export_sha256": "1095f0ef7c1db27c839739faf34a9f2e3902f67845fd62aadb58daef8624fc8a",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-170x48-title.txt",
+    "destination": "native/textual-dark-170x48-title.txt",
+    "source_sha256": "83c800f3a4d22b7f091d04742f043cba8ad82838d180a80289efbf959dc085d4",
+    "export_sha256": "83c800f3a4d22b7f091d04742f043cba8ad82838d180a80289efbf959dc085d4",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-corrected.svg",
+    "destination": "native/textual-dark-80x24-corrected.svg",
+    "source_sha256": "dfb76c826aa653d2396ab13029603bd32eb06b270e5f0c4cb090396badabdef5",
+    "export_sha256": "ef415c437c2d0f80c31ed88d7e98b35417b6930e3f5a8b16d26f9f765540af26",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-corrected.txt",
+    "destination": "native/textual-dark-80x24-corrected.txt",
+    "source_sha256": "3a295431382eddc2d2655e31a62ae3056560eec1703ed318f981fa80fa4b9fb5",
+    "export_sha256": "3a295431382eddc2d2655e31a62ae3056560eec1703ed318f981fa80fa4b9fb5",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-invalid.svg",
+    "destination": "native/textual-dark-80x24-invalid.svg",
+    "source_sha256": "cbc9dd19267a55e3b90041a55ca29fab00deb6af0dc2c37c1e217bbeb046228a",
+    "export_sha256": "2779d937c5ca0cb67beec4e70e19b3e422079fce20e14eeb018e7b5d4baa181f",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-invalid.txt",
+    "destination": "native/textual-dark-80x24-invalid.txt",
+    "source_sha256": "50708db7bd91fa35c1a192edfe62a40e187f95b14bb8866f60cc3aad12330009",
+    "export_sha256": "50708db7bd91fa35c1a192edfe62a40e187f95b14bb8866f60cc3aad12330009",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-raw-end.svg",
+    "destination": "native/textual-dark-80x24-raw-end.svg",
+    "source_sha256": "4d5adaa8c32972e00dfe6fa805c2163a6fcc45344126e785740dcc321bde28a5",
+    "export_sha256": "f125df4d64c17e0377fa09cd7d24b2f58b970b39bacabcfc0ca607f1227c3d60",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-raw-end.txt",
+    "destination": "native/textual-dark-80x24-raw-end.txt",
+    "source_sha256": "e69496dcc7fde792370c31ad93ab8b28e0cd913ba6e20ebc63ded1fac6645ad7",
+    "export_sha256": "e69496dcc7fde792370c31ad93ab8b28e0cd913ba6e20ebc63ded1fac6645ad7",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-title.svg",
+    "destination": "native/textual-dark-80x24-title.svg",
+    "source_sha256": "094aaf227f71983e3576efe37d8b2b8b0cc06baba0542894d454802e562b2d4f",
+    "export_sha256": "6cdf65b562e11568f90311d259c2f28b50b20e7322d2bc70cba733b44531946f",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-dark-80x24-title.txt",
+    "destination": "native/textual-dark-80x24-title.txt",
+    "source_sha256": "29c1a85167b1d0ce272013df8534057370687fa410efe84971dd4d1aefa9dda2",
+    "export_sha256": "29c1a85167b1d0ce272013df8534057370687fa410efe84971dd4d1aefa9dda2",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-corrected.svg",
+    "destination": "native/textual-light-170x48-corrected.svg",
+    "source_sha256": "b0ab2734ae9b83e8b8e76c8044dcda02395041a0c3c09db2565e006d2d85a277",
+    "export_sha256": "c9db8c86c46a74255f9354aba631470286d52c859378af520c91f581deb38478",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-corrected.txt",
+    "destination": "native/textual-light-170x48-corrected.txt",
+    "source_sha256": "b40cbd4a69458d66df5b612941c43f0b17e042f04884436c2d2c002ea39d7ab5",
+    "export_sha256": "b40cbd4a69458d66df5b612941c43f0b17e042f04884436c2d2c002ea39d7ab5",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-invalid.svg",
+    "destination": "native/textual-light-170x48-invalid.svg",
+    "source_sha256": "92a41d69fd1712ceecd45f63c88e230c3c625fec7efd965b4076071d19452272",
+    "export_sha256": "251570a029da6c55ef1ba3ea6f1396b9aecf5c592df4197fc7890239b2503844",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-invalid.txt",
+    "destination": "native/textual-light-170x48-invalid.txt",
+    "source_sha256": "0a5fa01a0343f5a57b183e6acab048077941d284eb15b43212503f0e32178bd3",
+    "export_sha256": "0a5fa01a0343f5a57b183e6acab048077941d284eb15b43212503f0e32178bd3",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-raw-end.svg",
+    "destination": "native/textual-light-170x48-raw-end.svg",
+    "source_sha256": "4700a10361baa72617c9d5d2386571db03b69e93ac275e9b7c2a5246c75c4c27",
+    "export_sha256": "1172d2384121ab74d752d8ef9b44d9535d22d91a4fc5bcd43b764ddb8497b60a",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-raw-end.txt",
+    "destination": "native/textual-light-170x48-raw-end.txt",
+    "source_sha256": "eba01f117fd1652f1a9be5b845ebd269f07b65890ac81841e67d5b1a28bd20ff",
+    "export_sha256": "eba01f117fd1652f1a9be5b845ebd269f07b65890ac81841e67d5b1a28bd20ff",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-title.svg",
+    "destination": "native/textual-light-170x48-title.svg",
+    "source_sha256": "c1ca6f9572e4c325297f2c087c4afd1a1600c342cfaba1f6a59a52bb1a49ab5f",
+    "export_sha256": "0a4e520cf4ce1a39f9306aed7626a60ed62f69793fe9da221b0954e362af61eb",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-170x48-title.txt",
+    "destination": "native/textual-light-170x48-title.txt",
+    "source_sha256": "83c800f3a4d22b7f091d04742f043cba8ad82838d180a80289efbf959dc085d4",
+    "export_sha256": "83c800f3a4d22b7f091d04742f043cba8ad82838d180a80289efbf959dc085d4",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-corrected.svg",
+    "destination": "native/textual-light-80x24-corrected.svg",
+    "source_sha256": "d6afee216b4c33d4c80ef85f0d65368e3e63ebf6ec90df592abfe931f7e5047c",
+    "export_sha256": "3a85de14f1f11a09a004212e8b8645fa6b7be4c9dc67393c92eb468446515b6e",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-corrected.txt",
+    "destination": "native/textual-light-80x24-corrected.txt",
+    "source_sha256": "921864ae5051cd8bb14c30ae3b5aee2ca01e5601be51f46ab36b43eb6b510be3",
+    "export_sha256": "921864ae5051cd8bb14c30ae3b5aee2ca01e5601be51f46ab36b43eb6b510be3",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-invalid.svg",
+    "destination": "native/textual-light-80x24-invalid.svg",
+    "source_sha256": "1cd35638c1981f6d3309c8c69bf19087a0b5fb73e86f4e4f3c451a787cca1a2d",
+    "export_sha256": "c92de2e4b7d682157437234e70a51beec658bc7487ac6534367c27041e6a3f79",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-invalid.txt",
+    "destination": "native/textual-light-80x24-invalid.txt",
+    "source_sha256": "1a012e042f97a6d02c860905c3b5f7fc8484b51bfefc913dcc223de98ceae574",
+    "export_sha256": "1a012e042f97a6d02c860905c3b5f7fc8484b51bfefc913dcc223de98ceae574",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-raw-end.svg",
+    "destination": "native/textual-light-80x24-raw-end.svg",
+    "source_sha256": "a04828add472135326dc9945c491991c30e4deb0b80457821194e1edbb3f58a8",
+    "export_sha256": "5306d990d7ef99d885039bf6b61cd5c91beebd757408c7535dd6f1db633cb118",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-raw-end.txt",
+    "destination": "native/textual-light-80x24-raw-end.txt",
+    "source_sha256": "18b8fb4aff5030f8c4872abfd8bef436b6cef82685f93d37a43fd345704e1e78",
+    "export_sha256": "18b8fb4aff5030f8c4872abfd8bef436b6cef82685f93d37a43fd345704e1e78",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-title.svg",
+    "destination": "native/textual-light-80x24-title.svg",
+    "source_sha256": "0b0787ec28a605fb82b84aeda358a90a9ca3a3a1c74a2a4864ce8c40f54b70cd",
+    "export_sha256": "424c3d44c5ee7109d41fa0d17ef677cef31c94e2c21b0574f65579792cb29ebc",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/evidence/textual-light-80x24-title.txt",
+    "destination": "native/textual-light-80x24-title.txt",
+    "source_sha256": "72619264d699b6f63a52687e2b27289d534e75c6c9915a5344cce8a01a7ae8c4",
+    "export_sha256": "72619264d699b6f63a52687e2b27289d534e75c6c9915a5344cce8a01a7ae8c4",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32833-native-001/lifecycle.json",
+    "destination": "lifecycle.json",
+    "source_sha256": "9987b316e1eca71738bad12e00769116026d68326670466b38259629c715ab4a",
+    "export_sha256": "9987b316e1eca71738bad12e00769116026d68326670466b38259629c715ab4a",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/mcp-result-review-census.json",
+    "destination": "allocation-before.json",
+    "source_sha256": "f97cb802291b6a56cfbe3e58c4a778602f2e3bbf902be1eabd0ce6dcad817e42",
+    "export_sha256": "f97cb802291b6a56cfbe3e58c4a778602f2e3bbf902be1eabd0ce6dcad817e42",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-final-id-census.json",
+    "destination": "allocation-after.json",
+    "source_sha256": "313bd16bd0d7083cb0ee3721af6d9a2c2ee72f346c4eea37bb211ee875eb936c",
+    "export_sha256": "313bd16bd0d7083cb0ee3721af6d9a2c2ee72f346c4eea37bb211ee875eb936c",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-preflight.txt",
+    "destination": "preflight.txt",
+    "source_sha256": "083c5fbf64f0c41353b11bed0b1b89954d1af2d53fc586237bfdce5b05ab072d",
+    "export_sha256": "083c5fbf64f0c41353b11bed0b1b89954d1af2d53fc586237bfdce5b05ab072d",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-static.json",
+    "destination": "static-analysis.json",
+    "source_sha256": "e4fa36b22fb3bb4904fe4ef718510cc81a8381b5c568e195bbc988122dafbd04",
+    "export_sha256": "e4fa36b22fb3bb4904fe4ef718510cc81a8381b5c568e195bbc988122dafbd04",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-red/pytest.log",
+    "destination": "tests/red.txt",
+    "source_sha256": "bea063db26f1616f93c35e236ed634f381027c84c1be53ef310b8362e4427170",
+    "export_sha256": "9a350912951e72ee45e25503f73383bb7d6be2d4cca0dd4fa5bd39ad2f569c12",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-red-settled/pytest.log",
+    "destination": "tests/red-settled.txt",
+    "source_sha256": "cd3914196366ed087a6ef721478a3e97211132a6ddbc344f260f3c146503b14b",
+    "export_sha256": "e981b3bf2db4533ea9e9a76d9f5eae4c2318b65fa0b748d1258d2e11fae1fe2e",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-red-corrected/pytest.log",
+    "destination": "tests/red-corrected.txt",
+    "source_sha256": "a9c21200672ef7842dde5bb440256ec4da1455988293e994763a6069d1594167",
+    "export_sha256": "ea8211217e1bc8f72365de68988ceaaa6e119f53bd214c93f251705353c78ada",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-green/pytest.log",
+    "destination": "tests/green.txt",
+    "source_sha256": "e0dc414f5509c9c5aba1816db813c7133c020642f7184a175f86208f90a89e6b",
+    "export_sha256": "4c6b35942bd5dfa7eef3443f8b1fb4843e5af3fa851e169b2ccd32133c71e85b",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-compact-settled/pytest.log",
+    "destination": "tests/compact-settled.txt",
+    "source_sha256": "f5f620d060f4af1f655996d954c91a04e82e7ba50a7ebaee251d0cbcc32b38ab",
+    "export_sha256": "86f2d478c173bcbc42e62705db941e2bc56bce541b36b07026b593a9b8bc487e",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-body-probe/pytest.log",
+    "destination": "tests/body-probe.txt",
+    "source_sha256": "0d5fc2ec395502a5f24886f37a4a6807f878c0dd35481f30f4236cc22ca11aec",
+    "export_sha256": "4deb510c1f6b1df66fc8823815aeaadebcea85a19bf239977f83735bca8c8c1c",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-complete-settle/pytest.log",
+    "destination": "tests/complete-settle.txt",
+    "source_sha256": "7c4605a94bb0365818ecec8616cff1fdd37f02cbe6f5bf77d50cfcbf790debf9",
+    "export_sha256": "7a39bec07536f6ccd65ce300eed114acd4d5e887b6087e1d33019f5d88c7ef3d",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-final-tests/pytest.log",
+    "destination": "tests/final-tests.txt",
+    "source_sha256": "bb494433230a0b7b942787d91d949669704aa491c3115c6ea988b6227524df4f",
+    "export_sha256": "f13bdfad2376bd87901a5f1ed23ce920832503648f2dca781a2bfdc097f626bb",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-validation-final/pytest.log",
+    "destination": "tests/validation-final.txt",
+    "source_sha256": "2da13ca4c70657ddd31ec0246342be45a00e323158245a87f52e780d8ee7d2e7",
+    "export_sha256": "2da13ca4c70657ddd31ec0246342be45a00e323158245a87f52e780d8ee7d2e7",
+    "normalization": "trailing line whitespace; final newline"
+  },
+  {
+    "source": "/private/tmp/32833-governance/pytest.log",
+    "destination": "tests/governance.txt",
+    "source_sha256": "7a1ce1167ed2960f7d7e328f90f383347d90f84f1d512d6cdf6c654522f2d5e1",
+    "export_sha256": "7a1ce1167ed2960f7d7e328f90f383347d90f84f1d512d6cdf6c654522f2d5e1",
+    "normalization": "trailing line whitespace; final newline"
+  }
+]

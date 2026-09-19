@@ -45,6 +45,15 @@ Seven preflight guards and independent review pass. Six older selected tests
 have matching profile-setup errors on unchanged and modified source; they are
 not counted as passing. This bounded qualification does not complete MCP review.
 
+TASK-32833, `codex/mcp-inspector-result-review`, builds on PR2718's reachability
+fix. Its [50 passing targeted cases and 16 inspected native captures](../qa/2026-09-18-mcp-inspector-results/README.md)
+qualify the compact Raw response disclosure/body, replacement of old raw/note
+content on local validation failure, and corrected execution in the same real
+private stdio session. Default/named profile contexts and raw/schema draft
+retention are covered. Seven preflight guards, source/runner hashes and native
+lifecycle pass. This follow-up is stacked on PR2718; retarget dev after that
+parent merges and recheck integration before visual approval and merge.
+
 ## Remaining review
 
 - **Remote verification:** each follow-up PR requires checks on its own pushed head.
@@ -57,9 +66,10 @@ not counted as passing. This bounded qualification does not complete MCP review.
 - **Inspector refresh and execution:** selected tool definition/currentness,
   argument drafts across background refresh, diagnostic empty-state action routing,
   disconnected/stale tools, schema/raw arguments, execution and inspector recovery.
-  Review the compact Raw response disclosure title/content next: the title is
-  clipped in TASK-32832 captures. Error/current-result recovery still needs its
-  own qualification; the reachability fix does not qualify every execution state.
+  TASK-32833 closes the compact Raw response title/content and local-validation
+  replacement gaps recorded by TASK-32832. Broader schema and execution/preview
+  ownership states still need their own qualification. Next destination slice:
+  Audit filtering and exact event/tool drilldown.
 - **Servers:** source transitions, add/edit/remove and connection lifecycles,
   built-in enable/expose controls, errors and recovery. TASK-32822 repairs the
   compact non-master gate label clipping recorded in TASK-32793. The All servers

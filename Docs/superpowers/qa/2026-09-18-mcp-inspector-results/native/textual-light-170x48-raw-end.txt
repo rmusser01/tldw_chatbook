@@ -1,0 +1,48 @@
+                                                                                      ╭────────╮
+ ‹   ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings   More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││                                             │
+│ Source                                     ││  ▊  Local MCP / Hub test root                         ▎                   ││                                             │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││  A local tool result fixture.               │
+│ ▊  Local                              ▼  ▎ ││                                                                         ▃ ││                                             │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Root: local MCP serving and Hub tests. Blank uses the serving            ││  Tags: —                                 ▃▃ │
+│                                            ││  process's current folder. Console uses Chat scratch and admitted         ││                                             │
+│ Servers                                    ││  Workspace folders.                                                       ││  Parameters: form                           │
+│  ● ready · ◦ off (opt-in) · ⌂ built-in     ││                                                                           ││                                             │
+│    All servers                             ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                 Test Tool                   │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││  ▊  Filter tools…                         ▎▊  All servers          ▼  ▎   ││                                             │
+│  ● execution-review             1          ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││ message *                                   │
+│                                            ││                                                                           ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   │
+│                                            ││  Tool                                  State  Server                      ││ ▊  first                                ▎   │
+│                                            ││  watchlists_get_briefing               Ask    Local workspace, web, a…    ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   │
+│                                            ││  watchlists_get_item                   Ask    Local workspace, web, a…    ││  Approves this one invocation only. The     │
+│                                            ││  watchlists_get_operation_status       Ask    Local workspace, web, a…    ││  approval does not persist.                 │
+│                                            ││  watchlists_get_operations_status      Ask    Local workspace, web, a…    ││            Approve & run once               │
+│                                            ││  watchlists_list_briefings             Ask    Local workspace, web, a…    ││                   Close                     │
+│                                            ││  watchlists_list_collections           Ask    Local workspace, web, a…    ││  OK · 0ms · 1 result                        │
+│                                            ││  watchlists_list_sources               Ask    Local workspace, web, a…    ││                                             │
+│                                            ││  watchlists_search_items               Ask    Local workspace, web, a…    ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   │
+│                                            ││  watchlists_set_briefing_schedule      Ask    Local workspace, web, a…    ││ ▊  ▼ Raw response                       ▎   │
+│                                            ││  watchlists_update_collection_sources  Ask    Local workspace, web, a…    ││ ▊ row-60 row-61 row-62 row-63 row-64    ▎   │
+│                                            ││  web_crawl                             Ask    Local workspace, web, a…    ││ ▊ row-65 row-66 row-67 row-68 row-69    ▎   │
+│                                            ││  web_fetch                             Ask    Local workspace, web, a…    ││ ▊ row-70 row-71 row-72 row-73 row-74    ▎   │
+│                                            ││  web_search                            Ask    Local workspace, web, a…    ││ ▊ row-75 row-76 row-77 row-78 row-79    ▎   │
+│                                            ││  shell_exec                            Ask    Raw CLI (unsafe host sh…    ││ ▊ row-80 row-81 row-82 row-83 row-84    ▎   │
+│                                            ││  cat                                   Ask    Virtual CLI (read-only)     ││ ▊ row-85 row-86 row-87 row-88 row-89    ▎   │
+│                                            ││  find                                  Ask    Virtual CLI (read-only) ▄▄  ││ ▊ row-90 row-91 row-92 row-93 row-94    ▎   │
+│                                            ││  git_blame                             Ask    Virtual CLI (read-only)     ││ ▊ row-95 row-96 row-97 row-98 row-99    ▎   │
+│                                            ││  git_branches                          Ask    Virtual CLI (read-only)     ││ ▊ END"                                  ▎   │
+│                                            ││  git_diff                              Ask    Virtual CLI (read-only)     ││ ▊     }                                 ▎   │
+│                                            ││  git_log                               Ask    Virtual CLI (read-only)     ││ ▊   ]                                   ▎▇▇ │
+│                                            ││  git_status                            Ask    Virtual CLI (read-only)     ││ ▊ }                                     ▎   │
+│                                            ││  grep                                  Ask    Virtual CLI (read-only)     ││ ▊                                       ▎   │
+│                                            ││  ls                                    Ask    Virtual CLI (read-only)     ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   │
+│                                            ││  stat                                  Ask    Virtual CLI (read-only)     ││                                             │
+│                                            ││  review_echo                           Ask    execution-review            ││           Change in Permissions             │
+│                                            ││                                                        ▊                  ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
