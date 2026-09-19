@@ -103,3 +103,18 @@ Ensure the language is installed (e.g. ) |
 | `FeedbackDialog > Container` | 60 | 120 | 120 | OK |
 | `#console-composer-menu` | 56 | 120 | 120 | OK |
 | `#prompt-variables-dialog` | 76 | 120 | 120 | OK |
+
+## Addendum — PR #2742 review additions (2026-09-19, same day)
+
+The qodo PR review found eight substantial modals the 2026-09-13 inventory
+never scoped; they are now registered and shipped in the tier (registry 84
+surfaces): `#speech-voice-profile-picker` (170), `#buddy-review`,
+`#petdex-review`, `#tool-pack-import-options`, `#tool-pack-import-review`,
+`#tool-pack-export-review`, `#tool-profile-bind-review` (150), and
+`#buddy-management` (120). Coverage-contract and owner-module checks cover
+all eight (same tests as the table above), and `#buddy-management` is
+additionally pinned by a live spot-geometry test (base 78 -> 120 at wide,
+both resize directions) in `Tests/UI/test_modal_wide_tier.py`; the visual
+SVG capture above was not re-run for the eight. A new reverse-sweep contract
+also guarantees no other `ModalScreen` class can sit outside the tier
+without an explicit skip entry.

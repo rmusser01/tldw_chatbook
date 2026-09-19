@@ -190,6 +190,7 @@ from tldw_chatbook.Constants import (
     WATCHLISTS_NAV_CONTEXT_RUN_ID,
     WATCHLISTS_NAV_CONTEXT_SECTION,
     WATCHLISTS_SECTION_RUNS,
+    WIDE_VIEWPORT_COLUMNS,
     get_tab_display_label,
 )
 from tldw_chatbook.css import build_css, widget_css
@@ -7597,10 +7598,19 @@ class WideViewportTierMixin:
     pin them), and the shared tier reproduces their values.
     """
 
-    WIDE_VIEWPORT_COLUMNS = 150
+    #: Single source of truth: ``tldw_chatbook.Constants.WIDE_VIEWPORT_COLUMNS``
+    #: (the class attribute keeps the threshold reachable from the mixin and
+    #: re-binds the shared constant so tests and app cannot drift).
+    WIDE_VIEWPORT_COLUMNS = WIDE_VIEWPORT_COLUMNS
 
     def on_resize(self, event: Resize) -> None:
-        """Re-sync the wide tier as the terminal resizes."""
+        """Re-sync the wide tier as the terminal resizes.
+
+        Args:
+            event: Terminal resize event; ``event.size.width`` supplies the
+                new viewport width compared against ``WIDE_VIEWPORT_COLUMNS``
+                to add or remove the ``-wide-viewport`` class on the App.
+        """
         self.set_class(
             event.size.width >= self.WIDE_VIEWPORT_COLUMNS,
             "-wide-viewport",

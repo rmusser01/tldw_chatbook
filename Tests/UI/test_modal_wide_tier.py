@@ -20,6 +20,7 @@ model popover in PR #2672):
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -28,6 +29,8 @@ import pytest
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.modal_wide_tier_registry import (
     MODAL_WIDE_TIER,
+    MODAL_WIDE_TIER_SKIPPED,
+    MODAL_WIDE_TIER_SKIPPED_MODULES,
     WIDE_TIER_CAPS,
     WIDE_TIER_WIDTH_PERCENT,
     WIDE_VIEWPORT_COLUMNS,
@@ -38,6 +41,9 @@ from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
+    BuddyManagementModal,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -125,6 +131,181 @@ def test_every_anchor_targets_real_code(
         assert token.lstrip("#.") in owner_text, (anchor, token, owner)
 
 
+# --------------------------------------------------------------------------
+# Reverse sweep: no ModalScreen subclass may sit OUTSIDE the tier silently.
+#
+# The forward contract above only sees anchors someone remembered to
+# register; PR #2742's review found eight substantial modals the inventory
+# never scoped. This sweep walks the AST for every ModalScreen subclass
+# (direct or inherited), marks one "anchored" when a registry anchor's tokens
+# resolve inside the class's own source segment (or an anchored base class),
+# and fails naming every class that is neither anchored nor explicitly
+# skipped. Stale skip entries (class gone, or module without unanchored
+# modals) fail too, so the skip lists cannot rot into folklore.
+# --------------------------------------------------------------------------
+
+#: Bases that terminate modal-resolution: Textual/widget plumbing that never
+#: carries modal geometry of its own.
+_NON_MODAL_BASES = frozenset(
+    {
+        "ModalScreen",
+        "Screen",
+        "Widget",
+        "App",
+        "object",
+        "Vertical",
+        "Horizontal",
+        "Container",
+        "VerticalScroll",
+        "HorizontalScroll",
+        "ScrollableContainer",
+        "CenterMiddle",
+        "Static",
+        "ListView",
+        "DataTable",
+        "Grid",
+    }
+)
+
+_ANCHOR_TOKENS = [
+    re.findall(r"(?<!\w)([#.][A-Za-z0-9_-]+|[A-Z][A-Za-z0-9]+)(?!\w)", anchor)
+    for anchor, _cap, _owner in MODAL_WIDE_TIER
+]
+
+
+def _scan_modal_classes() -> dict[str, tuple[str, list[str], str]]:
+    """Map class name -> (module relpath, base names, source segment).
+
+    AST-walks every non-vendored module under ``tldw_chatbook`` collecting
+    class definitions; only the ModalScreen subset survives filtering by the
+    callers (this keeps one parse for both the modal check and anchoring).
+    """
+    classes: dict[str, tuple[str, list[str], str]] = {}
+    for py in (REPO_ROOT / "tldw_chatbook").rglob("*.py"):
+        if "Third_Party" in py.parts:
+            continue  # vendored code (e.g. textual_fspicker) -- out of scope
+        try:
+            text = py.read_text(encoding="utf-8")
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        rel = py.relative_to(REPO_ROOT / "tldw_chatbook").as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+
+            def base_name(base: ast.expr) -> str:  # noqa: ANN001 - ast node
+                if isinstance(base, ast.Name):
+                    return base.id
+                if isinstance(base, ast.Attribute):
+                    return base.attr
+                if isinstance(base, ast.Subscript):
+                    return base_name(base.value)
+                return ""
+
+            classes[node.name] = (
+                rel,
+                [base_name(base) for base in node.bases],
+                ast.get_source_segment(text, node) or "",
+            )
+    return classes
+
+
+def _is_modal(
+    name: str,
+    classes: dict[str, tuple[str, list[str], str]],
+    _seen: frozenset[str] | None = None,
+) -> bool:
+    """True when ``name`` reaches ModalScreen through its base chain."""
+    if name == "ModalScreen":
+        return True
+    if name in _NON_MODAL_BASES or name not in classes:
+        return False
+    seen = _seen or frozenset()
+    if name in seen:
+        return False
+    seen = seen | {name}
+    return any(_is_modal(base, classes, seen) for base in classes[name][1])
+
+
+def _is_anchored(
+    name: str,
+    classes: dict[str, tuple[str, list[str], str]],
+    _seen: frozenset[str] | None = None,
+) -> bool:
+    """True when a registry anchor resolves inside ``name``'s own segment.
+
+    An anchor matches when the class name is one of the anchor's type tokens
+    (``FileExtractionDialog > Vertical``) or every id/class token of the
+    anchor appears in the class's source segment and the anchor carries no
+    type token from a different class. Anchored bases propagate: a modal
+    subclassing an anchored modal inherits its tier rule.
+    """
+    if name not in classes:
+        return False
+    _bases, segment = classes[name][1], classes[name][2]
+    for tokens in _ANCHOR_TOKENS:
+        types = [t for t in tokens if not t.startswith(("#", "."))]
+        sels = [t.lstrip("#.") for t in tokens if t.startswith(("#", "."))]
+        if name in types and all(sel in segment for sel in sels):
+            return True
+        if not types and sels and all(sel in segment for sel in sels):
+            return True
+    seen = _seen or frozenset()
+    if name in seen:
+        return False
+    return any(
+        _is_anchored(base, classes, seen | {name}) for base in _bases if base in classes
+    )
+
+
+def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
+    """The reverse sweep: no modal surface may be an unlisted gap.
+
+    Fails naming any ModalScreen subclass that no registry anchor reaches
+    and no skip entry covers -- exactly how the PR #2742 review found the
+    eight modals the inventory missed -- and fails on stale skip entries so
+    the lists stay honest.
+    """
+    classes = _scan_modal_classes()
+    modals = sorted(name for name in classes if _is_modal(name, classes))
+
+    uncovered = {
+        name: classes[name][0]
+        for name in modals
+        if not _is_anchored(name, classes)
+    }
+
+    stale_class_skips = sorted(set(MODAL_WIDE_TIER_SKIPPED) - set(modals))
+    assert not stale_class_skips, (
+        f"skip entries name non-modal/missing classes: {stale_class_skips}"
+    )
+
+    missing = sorted(
+        f"{name} ({module})"
+        for name, module in uncovered.items()
+        if name not in MODAL_WIDE_TIER_SKIPPED
+        and module not in MODAL_WIDE_TIER_SKIPPED_MODULES
+    )
+    assert not missing, (
+        "ModalScreen subclasses outside the wide tier and absent from both "
+        "skip lists (register an anchor or document a skip):\n  "
+        + "\n  ".join(missing)
+    )
+
+    stale_module_skips = sorted(
+        module
+        for module in MODAL_WIDE_TIER_SKIPPED_MODULES
+        if not any(
+            unanchored_module == module
+            for unanchored_module in uncovered.values()
+        )
+    )
+    assert not stale_module_skips, (
+        f"module skip entries with no unanchored modal left: {stale_module_skips}"
+    )
+
+
 class WideTierHarness:  # placeholder until the mixin exists; replaced below
     """Fallback that keeps collection working pre-implementation."""
 
@@ -171,18 +352,26 @@ def _build_reaction_picker_modal() -> ConsoleReactionPickerModal:
     return ConsoleReactionPickerModal(options=[])
 
 
+def _build_buddy_management_modal() -> BuddyManagementModal:
+    return BuddyManagementModal()
+
+
 #: One representative per cap tier: anchor -> (cap, base width rule).
 #: Base geometry is pinned here so the tier provably leaves it untouched:
 #: prompts ``90% / 104``, system prompt ``84 / 95%``, reaction ``76 / 100%``.
+#: ``#buddy-management`` (PR #2742 review addition) additionally pins one of
+#: the newly registered surfaces: ``78 / 96%`` base, 120 cap.
 SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     WIDE_TIER_CAPS[170]: (170, (104, 90)),  # base max-width, base percent
     WIDE_TIER_CAPS[150]: (150, (84, 95)),
     WIDE_TIER_CAPS[120]: (120, (76, 100)),
+    "#buddy-management": (120, (78, 96)),
 }
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
     WIDE_TIER_CAPS[150]: _build_system_prompt_modal,
     WIDE_TIER_CAPS[120]: _build_reaction_picker_modal,
+    "#buddy-management": _build_buddy_management_modal,
 }
 
 
@@ -247,7 +436,7 @@ async def test_spot_modal_geometry_per_tier(anchor: str, size: tuple[int, int]) 
 async def test_spot_modal_wide_tier_tracks_live_resize(
     anchor: str, start_size: tuple[int, int], end_size: tuple[int, int]
 ) -> None:
-    """An open modal re-syncs its tier when the viewport crosses 150 columns."""
+    """An open modal re-syncs its tier when the viewport crosses the breakpoint."""
     cap, (base_max, base_percent) = SPOT_REPRESENTATIVES[anchor]
     app = WideTierHarness()
     modal = SPOT_BUILDERS[anchor]()
@@ -258,7 +447,9 @@ async def test_spot_modal_wide_tier_tracks_live_resize(
         await pilot.pause()
 
         container = modal.query_one(anchor)
-        assert app.has_class("-wide-viewport") is (start_size[0] >= 150)
+        assert app.has_class("-wide-viewport") is (
+            start_size[0] >= WIDE_VIEWPORT_COLUMNS
+        )
 
         await pilot.resize_terminal(*end_size)
         await pilot.pause()

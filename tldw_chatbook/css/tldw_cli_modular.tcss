@@ -4072,6 +4072,11 @@ App.-wide-viewport #internal-prompt-editor-modal {
     max-width: $ds-size-170;
 }
 
+App.-wide-viewport #speech-voice-profile-picker {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+
 
 App.-wide-viewport #personal-context-review-modal {
     width: $ds-percent-85;
@@ -4118,7 +4123,37 @@ App.-wide-viewport EmojiPickerScreen #dialog {
     max-width: $ds-size-150;
 }
 
+App.-wide-viewport #buddy-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #petdex-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-export-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-import-options {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-import-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-profile-bind-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
 
+
+
+App.-wide-viewport #buddy-management {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
 App.-wide-viewport NoteCreationModal > Container {
     width: $ds-percent-85;
     max-width: $ds-size-120;
