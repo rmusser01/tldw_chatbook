@@ -1,0 +1,95 @@
+......................................F................................. [ 67%]
+...................................                                      [100%]
+=================================== FAILURES ===================================
+_______ test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css _______
+
+    @pytest.mark.asyncio
+    async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
+        app = AuditModeAppWithBundledCSS()
+        async with app.run_test(size=(120, 40)) as pilot:
+            canvas = app.query_one(MCPAuditMode)
+            await canvas.update_entries(
+                [
+                    _entry(server_key="local:docs", tool_name="search_docs"),
+                    _entry(server_key="local:docs", tool_name="write_docs"),
+                    _entry(server_key="server:weather", tool_name="get_forecast"),
+                ]
+            )
+            await pilot.pause()
+
+            table = app.query_one("#mcp-audit-table", DataTable)
+            assert table.size.width > 0, (
+                "audit table collapsed to zero width under bundled CSS"
+            )
+            assert table.size.height > 0, (
+                "audit table collapsed to zero height under bundled CSS"
+            )
+            # T9: `height: auto; max-height: 70%;` (bundle-pinned below) must
+            # make the table hug its own row count instead of ballooning to
+            # fill the whole canvas the way a bare `height: 1fr` DataTable does
+            # -- mirrors `test_overview_table_hugs_content_so_callouts_sit_
+            # close_below` (test_mcp_servers_mode.py). Header + 3 rows, generous
+            # slack.
+            assert table.size.height <= 6, (
+                f"audit table ballooned to height {table.size.height} under bundled CSS "
+                "-- height: auto; max-height: 70%; is not winning"
+            )
+
+            text_input = app.query_one("#mcp-audit-filter-text", Input)
+            assert text_input.size.width > 0, (
+                "filter text Input collapsed to zero width under bundled CSS"
+            )
+            assert text_input.size.height > 0, (
+                "filter text Input collapsed to zero height under bundled CSS"
+            )
+
+            decision_select = app.query_one("#mcp-audit-filter-decision", Select)
+            assert decision_select.size.width > 0, (
+                "filter-decision Select collapsed to zero width under bundled CSS"
+            )
+            assert decision_select.size.height > 0, (
+                "filter-decision Select collapsed to zero height under bundled CSS"
+            )
+
+            initiator_select = app.query_one("#mcp-audit-filter-initiator", Select)
+            assert initiator_select.size.width > 0, (
+                "filter-initiator Select collapsed to zero width under bundled CSS"
+            )
+            assert initiator_select.size.height > 0, (
+                "filter-initiator Select collapsed to zero height under bundled CSS"
+            )
+            # Full-width controls occupy separate rows within the filter column.
+>           assert decision_select.size.width == text_input.size.width
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError
+
+Tests/UI/test_mcp_audit_mode.py:708: AssertionError
+============================= slowest 25 durations =============================
+19.18s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+18.85s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+15.10s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]
+14.81s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-light]
+12.36s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size3-textual-light]
+11.31s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size2-textual-light]
+10.67s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size3-textual-dark]
+10.62s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size0-textual-light]
+10.58s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size1-textual-light]
+10.30s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size1-textual-dark]
+10.15s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size2-textual-dark]
+9.84s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size0-textual-dark]
+4.61s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.59s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+1.98s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.78s call     Tests/UI/test_component_pattern_governance.py::test_catalog_and_gallery_sync
+1.71s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.68s call     Tests/UI/test_component_pattern_governance.py::test_ratchet_regexes_match_pin_script
+1.68s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+1.66s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.65s call     Tests/UI/test_component_pattern_governance.py::test_canonical_owning_sheets_are_bundled
+1.62s call     Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
+1.61s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+1.60s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.59s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_audit_mode.py::test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css
+1 failed, 106 passed in 216.32s (0:03:36)

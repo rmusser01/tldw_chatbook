@@ -1412,24 +1412,12 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     min-height: $ds-size-0;
 }
 
-/* Same Defect-1 Select-width lesson as #mcp-tools-filter-server-slot
-   Select above (QA round mcp-hub-phase3-2026-07): `_conversations.tcss`'s
-   bare `Select { width: 100%; }` rule always beats DEFAULT_CSS regardless
-   of source order, so an id-scoped bundle rule is required for it to
-   actually win. MCPAuditMode.DEFAULT_CSS already avoids the 0x0 collapse a
-   different way for these two Selects (each lives in its own definite-
-   width slot Vertical, not a bare auto-sized one -- see that file's own
-   comment) -- these two rules are additional, defensive, EXPLICIT-width
-   pins directly on the Selects' own ids (mirroring their slots' widths,
-   24/20), kept in lockstep with the matching pair T9 added to
-   MCPAuditMode.DEFAULT_CSS itself, so the Selects stay correctly sized
-   even if the slot wrapper's own CSS were ever removed or the Select were
-   ever mounted outside it. */
-#mcp-audit-filter-decision {
-    width: $ds-size-24;
-}
+/* Audit filters share a full-width column. Explicit app-tier widths keep
+   global Input/Select rules from restoring the old narrow fixed slots. */
+#mcp-audit-filter-text,
+#mcp-audit-filter-decision,
 #mcp-audit-filter-initiator {
-    width: $ds-size-20;
+    width: $ds-width-full;
 }
 
 /* task-32287: the card's body and its action bar hug their content too.

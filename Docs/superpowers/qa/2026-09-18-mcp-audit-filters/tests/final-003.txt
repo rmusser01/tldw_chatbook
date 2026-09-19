@@ -1,0 +1,29 @@
+........................................................................ [ 67%]
+...................................                                      [100%]
+============================= slowest 25 durations =============================
+18.80s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+18.42s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+15.99s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-light]
+15.85s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]
+11.81s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size3-textual-light]
+11.77s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size2-textual-light]
+11.51s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size1-textual-light]
+11.40s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size2-textual-dark]
+11.06s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size3-textual-dark]
+10.86s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size0-textual-light]
+10.71s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size0-textual-dark]
+10.61s call     Tests/UI/test_mcp_audit_filter_layout.py::test_filter_values_and_full_selector_labels_paint[size1-textual-dark]
+4.45s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.29s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+1.80s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.68s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.59s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_ignores_tokens_and_token_definitions
+1.57s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.54s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+1.53s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+1.53s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.53s call     Tests/UI/test_component_pattern_governance.py::test_pin_rejects_active_css_extension_without_writing_baseline
+1.53s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.52s call     Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+1.52s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+107 passed in 218.48s (0:03:38)

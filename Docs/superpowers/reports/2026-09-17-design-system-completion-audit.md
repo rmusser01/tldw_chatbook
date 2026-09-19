@@ -5,6 +5,17 @@ review each feature/component remains active. This ledger separates those two
 contracts so that another successful bounded review cannot accidentally close
 the whole workstream.
 
+Current continuation: PR #2707 merged on 2026-09-18 at
+`149acda36be8939fe8cd5e589bf77d13462257e7`; its open-PR checkpoints below are
+historical. MCP follow-up reviews have resumed and the backup heartbeat is paused.
+TASK-32835 repairs readable/reachable Audit filters on a fresh branch from
+`dev` (`cef6bd2a3e3f0b8de0e166146acb4900ca7ea2b6`), with
+[targeted and native evidence](../qa/2026-09-18-mcp-audit-filters/README.md).
+The separate Audit selection repair remains saved in
+[draft PR #2720](https://github.com/rmusser01/tldw_chatbook/pull/2720).
+Next is inspector guidance ownership. Follow-up merges still require final
+visual approval; the wider feature/component review remains open.
+
 Saved work: [PR #2704](https://github.com/rmusser01/tldw_chatbook/pull/2704)
 merged into `dev` at `e89f28d751bc8a5b4f4545b8894b87437252c657`
 after the owner's visual/conflict approval and passing required checks.
