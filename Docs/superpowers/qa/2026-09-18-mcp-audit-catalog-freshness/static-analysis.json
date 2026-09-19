@@ -1,0 +1,17 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+    "baseline_diagnostics": 65,
+    "current_diagnostics": 65,
+    "introduced": []
+  },
+  "Tests/UI/test_mcp_audit_catalog_freshness.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/native_check.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  }
+}

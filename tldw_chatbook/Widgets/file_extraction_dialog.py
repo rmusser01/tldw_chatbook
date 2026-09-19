@@ -94,7 +94,7 @@ class FileExtractionDialog(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Build the dialog UI."""
-        with Vertical():
+        with Vertical(classes="file-extraction-body"):
             yield Label("📎 Extracted Files", classes="dialog-title")
 
             # File list table
