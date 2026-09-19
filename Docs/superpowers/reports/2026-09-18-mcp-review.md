@@ -162,3 +162,15 @@ That existing draft currently conflicts with dev and still requires integration
 review. Other saved MCP drafts, connected-runtime journeys and remaining screen
 reviews stay open. This new repair is a separate draft against dev and requires
 current-head CI/review plus its own final owner visual approval before merge.
+
+
+### PR2724 approved closeout follow-up
+
+The owner approved PR2724's current-dev conflict choices and gallery. Qodo's
+five findings are addressed: structured method docs, test import grouping, and
+serialization of both destination row checks with the existing publication lock.
+The final targeted run passes 147 cases; all seven guards pass and independent
+review finds no blockers. The fresh native replay matches all 24 approved terminal
+captures except fixture timestamps. PR2724 is ready for review and awaits
+current-head CI/review before its authorized merge. Same-ID definition freshness
+remains in PR2726.

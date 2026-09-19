@@ -20,7 +20,7 @@ hidden, invisible, disabled or covered by another screen.
 
 ## Verification
 
-[145 distinct targeted cases](current-dev/qualified-cases.json), all seven
+[147 distinct targeted cases](current-dev/qodo/final-cases.json), all seven
 preflight guards and independent review pass. Three existing inspector setup
 errors were repaired with the documented private-profile test wrapper; original
 assertions are unchanged. See the [full evidence](README.md).
@@ -36,4 +36,8 @@ This review covers both Audit actions, destinations after a nonmatching filter,
 and warnings for unavailable targets. No styles or design-token values changed.
 PR2726 retains same-ID catalog freshness; the wider component review stays open.
 
-PR2724 remains a draft. Approval of PR2740 does not approve this PR's visuals or merge.
+The owner subsequently approved this PR2724 gallery and continuation. Qodo's
+three doc/import findings and two publication races are repaired; the fresh
+[24-capture terminal replay](current-dev/qodo/native-replay-comparison.json) matches
+these approved views except fixture timestamps. Current-head CI/review is the
+remaining merge gate.

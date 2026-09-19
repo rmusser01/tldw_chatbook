@@ -2533,6 +2533,10 @@ class MCPInspector(Vertical):
         metadata-only public schema. It contains categories, types, counts,
         and registered argument names, never argument values, result excerpts,
         or exception text.
+
+        Args:
+            entry: Metadata-only execution record to display, or None to clear it.
+            profile_context: Permission profile captured for this record's actions.
         """
         async with self._refresh_lock:
             container = self.query_one("#mcp-inspector-audit", Vertical)
@@ -3700,6 +3704,11 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-adv-result", Static).update("")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch inspector actions, validating control ownership where required.
+
+        Args:
+            event: Button press carrying the actual control that issued the action.
+        """
         button_id = event.button.id or ""
         if button_id == "mcp-inspector-advanced-reveal":
             event.stop()

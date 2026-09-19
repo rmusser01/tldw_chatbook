@@ -1,0 +1,14 @@
+..                                                                       [100%]
+---- generated xml file: /private/tmp/tldw-32837-qodo-green-001/results.xml ----
+============================= slowest 25 durations =============================
+3.45s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]
+3.29s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]
+
+(4 durations < 1s hidden.)
+2 passed, 30 deselected in 8.44s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc1e22da-5185-4204-b89a-c74195c536ba/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc1e22da-5185-4204-b89a-c74195c536ba/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc1e22da-5185-4204-b89a-c74195c536ba
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc1e22da-5185-4204-b89a-c74195c536ba'
+  warnings.warn(

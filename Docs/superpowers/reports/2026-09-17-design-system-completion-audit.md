@@ -389,3 +389,15 @@ wrapper after setup-only profile-binding errors; their assertions are unchanged.
 are ready for owner review. PR2724 remains draft pending current-head CI/review
 and its own visual approval. PR2726 retains same-ID catalog freshness; the wider
 component review remains open.
+
+
+### PR2724 approved closeout follow-up
+
+The owner approved PR2724's current-dev conflict choices and gallery. Qodo's
+five findings are addressed: structured method docs, test import grouping, and
+serialization of both destination row checks with the existing publication lock.
+The final targeted run passes 147 cases; all seven guards pass and independent
+review finds no blockers. The fresh native replay matches all 24 approved terminal
+captures except fixture timestamps. PR2724 is ready for review and awaits
+current-head CI/review before its authorized merge. Same-ID definition freshness
+remains in PR2726.

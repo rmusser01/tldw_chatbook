@@ -1,6 +1,7 @@
 """Audit navigation keeps the displayed identity and checks its destination."""
 
 import asyncio
+from copy import deepcopy
 
 import pytest
 from textual.screen import Screen
@@ -297,3 +298,64 @@ async def test_current_audit_navigation_is_repeatable(request, button_id, event_
             == ("local:docs", "search", CONTEXT)
             for event in events
         )
+
+
+@pytest.mark.parametrize("destination", ["tools", "permissions"])
+@private_profile_test
+async def test_audit_waits_for_new_tool_rows_during_catalog_publication(
+    request, monkeypatch, destination
+):
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        inspector = app.query_one(MCPInspector)
+        notices = _capture_notifications(app)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = workbench._sync_tools_mode
+
+        async def pause_before_rows(tools, states):
+            entered.set()
+            await release.wait()
+            await original(tools, states)
+
+        monkeypatch.setattr(workbench, "_sync_tools_mode", pause_before_rows)
+        record = deepcopy(workbench._catalog_records["docs"])
+        record["discovery_snapshot"]["tools"].append(
+            {
+                "name": "newly_published",
+                "description": "New catalog tool",
+                "inputSchema": {},
+            }
+        )
+        workbench._catalog_records["docs"] = record
+        publication = asyncio.create_task(workbench._sync_children())
+        navigation = None
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            tool = workbench._tool_for("local:docs", "newly_published")
+            assert tool is not None
+            context = workbench._tool_policy_profile_context
+            navigate = (
+                workbench._open_audit_tool
+                if destination == "tools"
+                else workbench._open_audit_permission
+            )
+            navigation = asyncio.create_task(navigate(tool, context))
+            await pilot.pause()
+            assert not navigation.done(), (
+                "Navigation used rows before publication finished"
+            )
+            assert notices == []
+        finally:
+            release.set()
+            await publication
+            if navigation is not None:
+                await navigation
+        selected = (
+            inspector.current_tool
+            if destination == "tools"
+            else inspector.current_permission_tool
+        )
+        assert selected is not None and selected.tool_id == tool.tool_id
+        assert notices == []

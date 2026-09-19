@@ -2,7 +2,9 @@
 
 Fresh native captures from dev `29b0a31df4701160a3c805e1bf490c76b9353964` plus PR2724.
 See [conflict choices and scope](CURRENT-DEV-REVIEW.md) and [verification](README.md).
-All 24 captures were rendered and inspected. The original 16 captures remain in `native/` as historical evidence only.
+All 24 captures were rendered and inspected and the owner approved this gallery.
+The [post-Qodo native replay](current-dev/qodo/native-replay-comparison.json) matches
+all terminal captures apart from fixture timestamps. The original 16 captures remain in `native/` as historical evidence only.
 
 ## textual-dark · 120x40
 
