@@ -686,12 +686,20 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._refresh_after_speaker_rename(cluster_id)
 
     def _refresh_after_speaker_rename(self, cluster_id: str) -> None:
-        """Re-read the rewritten `Media.content` and patch the preview text
-        plus the just-renamed row's own legend label in place."""
-        row = self.media_db.get_media_by_id(self.speaker_rename_media_id)
-        content = row["content"] if row else ""
+        """Patch the just-renamed row's legend label in place.
+
+        TASK-32811.4: this used to write the whole rewritten `Media.content`
+        (the entire transcript) into `#library-media-preview-lines`, a pane
+        that holds exactly three metadata lines (`canvas.preview_lines`). A
+        speaker rename rewrites transcript text, not the title/type/date
+        metadata those lines show, so the preview must keep rendering those
+        three lines -- re-joined here so the pane cannot drift from what
+        compose put there -- never the transcript body.
+        """
         try:
-            self.query_one("#library-media-preview-lines", Static).update(content)
+            self.query_one("#library-media-preview-lines", Static).update(
+                "\n".join(self.canvas.preview_lines)
+            )
         except NoMatches:
             pass
         try:

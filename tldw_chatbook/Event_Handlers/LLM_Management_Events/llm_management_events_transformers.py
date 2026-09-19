@@ -149,14 +149,15 @@ async def handle_transformers_browse_models_dir_button_pressed(
     logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Transformers browse models directory button pressed.")
 
-    try:
-        from textual_fspicker import FileOpen
-    except ImportError:
-        app.notify(
-            "File picker utility (textual-fspicker) not available.", severity="error"
-        )
-        logger.error("textual_fspicker not found for Transformers model dir browsing.")
-        return
+    # TASK-32811.1: import the VENDORED picker. The old
+    # `from textual_fspicker import ...` targeted an unvendored top-level
+    # package that is not installed, so the button only ever notified "not
+    # available" and returned -- and it asked FileOpen for a `select_dirs`
+    # argument FileOpen does not take, so it could not have worked even if
+    # that import had resolved. `SelectDirectory` is the vendored widget
+    # built for choosing a directory. Every other picker call site imports
+    # from `tldw_chatbook.Third_Party.textual_fspicker`.
+    from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 
     default_loc_str = str(Path.home())
     if hf_constants is not None:
@@ -177,13 +178,11 @@ async def handle_transformers_browse_models_dir_button_pressed(
     logger.debug("Opening Transformers models directory picker.")
 
     await app.push_screen(
-        FileOpen(
+        SelectDirectory(
             location=default_loc_str,
-            select_dirs=True,  # We want to select a directory
             title="Select Local Hugging Face Models Directory",
-            # No specific filters needed for directory selection
         ),
-        # This callback will update the Input widget with id "transformers-models-dir-path"
+        # Updates the Input widget with id "transformers-models-dir-path".
         callback=_make_path_update_callback(
             window, app, "transformers-models-dir-path"
         ),

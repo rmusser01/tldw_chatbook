@@ -1076,6 +1076,13 @@ class SimpleRAGCache:
             del self._cache[key]
 
         if expired_keys:
+            # TASK-32811.6: recompute the memory counter from the surviving
+            # entries, the way `_prune_expired_sync` already does. Deleting
+            # from `self._cache` without this left `_current_memory_bytes`
+            # pinned at the pruned entries' size; it ratcheted to the cap
+            # and the cache silently stopped accepting writes -- dead at
+            # prune cycle 42 in the review's repro, every later search cold.
+            self._update_memory_sync()
             avg_age = total_age / len(expired_keys)
             avg_accesses = total_accesses / len(expired_keys)
             log_counter("cache_entries_expired", value=len(expired_keys))
@@ -1113,6 +1120,8 @@ class SimpleRAGCache:
             del self._cache[key]
 
         if expired_keys:
+            # TASK-32811.6: same accounting fix as the async twin above.
+            self._update_memory_sync()
             avg_age = total_age / len(expired_keys)
             avg_accesses = total_accesses / len(expired_keys)
             log_counter("cache_entries_expired", value=len(expired_keys))
