@@ -41,6 +41,9 @@ zero conversations/messages, unchanged defaults and matching source hashes.
 The original approved gallery/receipts remain historical evidence from
 `8b34eaf4e4dcecf34d61e8d09f2b35462aaee14e`; their runner hash is not rewritten.
 
-The PR remains stacked on PR2731 until that parent merges. Current-head CI and
-accumulated review remain merge gates. CodeRabbit skips these base branches;
-its success status is not counted as code-review clearance.
+Qodo marked all three findings resolved on `8671408d15`, with zero remaining
+bugs or rule violations. PR2731's four findings are also resolved on `edc59b2094`.
+PR2734 now targets dev to run its required checks in parallel, but PR2731 must
+merge first; after that merge the parent changes disappear from this PR's diff.
+Current-head CI and accumulated review remain merge gates. CodeRabbit skips
+these base branches; its success status is not code-review clearance.

@@ -3,6 +3,17 @@
 This ledger separates qualified repairs from remaining destination behavior.
 Token migration alone does not qualify a complete workflow.
 
+## Current closeout checkpoint
+
+PR2707 is merged and its heartbeat remains paused. The owner approved the
+PR2731/PR2734 continuation and visual evidence. Both follow-ups are ready, with
+Qodo's accumulated findings resolved; runner validation and documentation fixes
+preserve the approved application behavior. Both now target dev for required CI,
+with PR2731 explicitly required to merge before PR2734. Historical draft/pending
+approval statements below describe earlier checkpoints, not current status.
+The next bounded review is remaining permission/Audit navigation ownership,
+followed by connected-runtime journeys; neither is part of these PRs.
+
 ## Post-merge continuation: session-grant revocation
 
 PR2707 is merged; its open-PR statements below are historical. The continuation
