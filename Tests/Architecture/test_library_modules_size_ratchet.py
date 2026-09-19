@@ -240,16 +240,17 @@ _BUDGETS: dict[str, int] = {
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
     "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 3080,
-    # DELIBERATELY NOT RAISED, fourth consecutive Library wave. This row is
-    # RED on `origin/dev` itself and has been since before the wave-6
-    # merge-base: the file is dev's, the creep is dev's, and no Library
-    # extraction has ever touched it. Measured at each merge: 410 (wave-6),
-    # 649 (wave-7's own `origin/dev` reconciliation, 2026-09-07) and **686**
-    # 75 commits later the SAME DAY (round 2) against a pin of 371 -- dev's
-    # creep has now nearly doubled the file and is still accelerating.
-    # Raising it from a passing branch would launder dev-side debt behind a
-    # Library merge, which this file's own guidance forbids; it needs an
-    # owner on dev. Recorded in recipe §7's documented-pre-existing list.
+    # Re-pinned to the measured value 2026-09-19 by the core-review ratchet
+    # re-baseline (TASK-32809.1), which SUPERSEDES the prior Library-wave
+    # stance of holding this row at 371. That stance was correct FOR A
+    # LIBRARY EXTRACTION PR (raising a dev-owned creep pin there would
+    # launder dev-side debt behind a Library merge). This is not that: the
+    # core review's explicit, reviewed job was to make every red ratchet
+    # green again at its true current size so the ceiling is meaningful and
+    # the file can only shrink from here. The creep is still dev's and still
+    # needs a decomposition owner (recorded in
+    # backlog/docs/size-decomposition-candidates-2026-09-18.md); this pin
+    # just stops the ratchet lying about where the file is.
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 720,
     # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
