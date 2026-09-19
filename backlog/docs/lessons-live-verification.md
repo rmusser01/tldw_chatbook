@@ -3278,3 +3278,18 @@ capped dialog. A compositor-region regression now requires the whole action to b
 visible; the form fills remaining space and scrolls, with validation errors and
 actions outside the scroller. Keep the existing error-paint assertion too: making
 the form scroll initially hid the unavailable-Persona explanation.
+
+## Assert painted button labels, and use real role enums (TASK-32826–32828)
+
+**2026-09-18, Debian SSH verification.** The conversation action label tests
+passed while the actual menu clipped “Change icon and colour…” and the unread
+button painted `[unread` without its closing bracket. Textual's internal
+`line_pad` consumes two cells even when CSS padding is zero. Shorter menu copy
+and `styles.line_pad = 0` on the fixed icon target resolved the captures. Assert
+painted strips with literal Rich Text (plain bracketed strings are parsed as
+markup), not just the label property or outer geometry.
+
+The same run exposed `ConsoleMessageRole.ASSISTANT` in usage rows and counted
+assistant estimates as input. Existing cost tests used strings; a parameterized
+case with the production enum failed. Normalize its `.value` before string
+conversion and include the real enum in boundary tests.

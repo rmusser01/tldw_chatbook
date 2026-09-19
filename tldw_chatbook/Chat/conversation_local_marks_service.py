@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,21 @@ class ConversationLocalMark:
     updated_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class ManualUnreadToken:
+    """Process-local revision of a durable manual unread mark.
+
+    Args:
+        service_epoch: Identity of the marks service that issued this token.
+        conversation_id: Conversation owning the durable reminder.
+        generation: Monotonic revision within the service epoch.
+    """
+
+    service_epoch: str
+    conversation_id: str
+    generation: int
+
+
 class ConversationLocalMarksService:
     """Manage durable local-only marks for conversations.
 
@@ -35,6 +51,7 @@ class ConversationLocalMarksService:
     """
 
     STARRED = "starred"
+    MANUAL_UNREAD = "manual_unread"
     #: PR3a-2 Task 4: a background sub-agent completion the user has not
     #: seen yet. Set by the fleet drain consumer when a SURVIVOR settles
     #: (a child that outlived its spawning turn -- never one that finished
@@ -49,7 +66,7 @@ class ConversationLocalMarksService:
     #: rather than a stale derivative safe to reconcile away.
     FLEET_RECEIPT_FALLBACK = "fleet_receipt_fallback"
     _ALLOWED_MARK_TYPES = frozenset(
-        {STARRED, FLEET_UNSEEN, FLEET_RECEIPT_FALLBACK}
+        {STARRED, MANUAL_UNREAD, FLEET_UNSEEN, FLEET_RECEIPT_FALLBACK}
     )
     CONSOLE_UNSEEN_PREFIX = "console_unseen:"
     CONSOLE_TERMINAL_OUTCOME_PREFIX = "console_terminal_outcome:"
@@ -62,6 +79,10 @@ class ConversationLocalMarksService:
                 context manager.
         """
         self.db = db
+        self._manual_lock = threading.RLock()
+        self._manual_epoch = str(uuid4())
+        self._manual_generation = 0
+        self._manual_tokens: dict[str, ManualUnreadToken] = {}
         # task-15471: Console's conversation-browser refresh calls
         # `list_marked_conversation_ids` on the event loop from every
         # repaint path, so the answer is cached and only invalidated by
@@ -92,7 +113,7 @@ class ConversationLocalMarksService:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     @classmethod
     def _mark_type(cls, mark_type: str | None) -> str:
@@ -145,9 +166,7 @@ class ConversationLocalMarksService:
         return outcome
 
     @classmethod
-    def console_terminal_outcome_mark_type(
-        cls, receipt_id: str, outcome: str
-    ) -> str:
+    def console_terminal_outcome_mark_type(cls, receipt_id: str, outcome: str) -> str:
         """Build the local-only companion mark for one exact receipt."""
         receipt_id = cls.validate_terminal_receipt_id(receipt_id)
         outcome = cls.validate_terminal_outcome(outcome)
@@ -180,6 +199,144 @@ class ConversationLocalMarksService:
         if not normalized:
             raise ValueError("conversation_id is required")
         return normalized
+
+    @property
+    def manual_revision(self) -> int:
+        """Expose the cache invalidation revision without I/O or token disclosure.
+
+        Returns:
+            Current process-local manual mark generation.
+        """
+        return self._manual_generation
+
+    def _new_unread_token(self, conversation_id: str) -> ManualUnreadToken:
+        self._manual_generation += 1
+        token = ManualUnreadToken(
+            self._manual_epoch, conversation_id, self._manual_generation
+        )
+        self._manual_tokens[conversation_id] = token
+        return token
+
+    def mark_unread(self, conversation_id: str) -> ManualUnreadToken:
+        """Persist a reminder, publishing its new revision only after commit.
+
+        Args:
+            conversation_id: Nonempty conversation identifier.
+
+        Returns:
+            Token identifying the newly committed reminder revision.
+
+        Raises:
+            ValueError: The conversation identifier is empty.
+            Exception: The database transaction fails; no revision is published.
+        """
+        conversation_id = self._conversation_id(conversation_id)
+        with self._manual_lock:
+            now = self._now()
+            with self.db.transaction() as cursor:
+                self._set_mark_with_cursor(
+                    cursor,
+                    conversation_id,
+                    self.MANUAL_UNREAD,
+                    created_at=now,
+                    updated_at=now,
+                )
+            token = self._new_unread_token(conversation_id)
+            self._invalidate_list_cache(self.MANUAL_UNREAD)
+            return token
+
+    def unread_token(self, conversation_id: str) -> ManualUnreadToken | None:
+        """Capture a revision for a deliberate visit; restoration never clears it.
+
+        Args:
+            conversation_id: Nonempty conversation identifier.
+
+        Returns:
+            Current reminder token, or None when the conversation is read.
+
+        Raises:
+            ValueError: The conversation identifier is empty.
+            Exception: Reading the persisted mark fails.
+        """
+        conversation_id = self._conversation_id(conversation_id)
+        with self._manual_lock:
+            if not self.has_mark(conversation_id, self.MANUAL_UNREAD):
+                self._manual_tokens.pop(conversation_id, None)
+                return None
+            return self._manual_tokens.get(conversation_id) or self._new_unread_token(
+                conversation_id
+            )
+
+    def mark_read(
+        self, conversation_id: str, *, expected: ManualUnreadToken | None = None
+    ) -> bool:
+        """Clear only this reminder, optionally requiring a captured revision.
+
+        Comparison and deletion serialize with all manual writers. Operational
+        receipts and timestamps are deliberately independent of this revision.
+
+        Args:
+            conversation_id: Nonempty conversation identifier.
+            expected: Optional token that must match before clearing the mark.
+
+        Returns:
+            True only when a durable reminder was cleared.
+
+        Raises:
+            ValueError: The conversation identifier is empty.
+            Exception: The database transaction fails.
+        """
+        conversation_id = self._conversation_id(conversation_id)
+        with self._manual_lock:
+            with self.db.transaction() as cursor:
+                if expected is not None and (
+                    expected.service_epoch != self._manual_epoch
+                    or expected.conversation_id != conversation_id
+                    or self._manual_tokens.get(conversation_id) != expected
+                ):
+                    return False
+                cursor.execute(
+                    "DELETE FROM conversation_local_marks "
+                    "WHERE conversation_id = ? AND mark_type = ?",
+                    (conversation_id, self.MANUAL_UNREAD),
+                )
+                cleared = cursor.rowcount > 0
+            self._manual_tokens.pop(conversation_id, None)
+            if cleared:
+                self._manual_generation += 1
+            self._invalidate_list_cache(self.MANUAL_UNREAD)
+            return cleared
+
+    def unread_ids_for(self, conversation_ids: Sequence[str]) -> frozenset[str]:
+        """Read all requested IDs in bounded SQL chunks, without a result cap.
+
+        Args:
+            conversation_ids: Nonempty identifiers to check, allowing duplicates.
+
+        Returns:
+            The subset of requested identifiers with durable unread reminders.
+
+        Raises:
+            ValueError: Any supplied identifier is empty.
+            Exception: Reading the persisted marks fails.
+        """
+        ids = tuple(
+            dict.fromkeys(self._conversation_id(cid) for cid in conversation_ids)
+        )
+        if not ids:
+            return frozenset()
+        found: set[str] = set()
+        with self._manual_lock, self.db.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = cursor.execute(
+                    "SELECT conversation_id FROM conversation_local_marks "
+                    f"WHERE mark_type = ? AND conversation_id IN ({placeholders})",
+                    (self.MANUAL_UNREAD, *chunk),
+                ).fetchall()
+                found.update(str(row["conversation_id"]) for row in rows)
+        return frozenset(found)
 
     def star_conversation(self, conversation_id: str) -> None:
         """Mark a conversation as starred locally.
@@ -230,6 +387,9 @@ class ConversationLocalMarksService:
         """
         conversation_id = self._conversation_id(conversation_id)
         mark_type = self._mark_type(mark_type)
+        if mark_type == self.MANUAL_UNREAD:
+            self.mark_unread(conversation_id)
+            return
         now = self._now()
         with self.db.transaction() as cursor:
             self.set_mark_with_cursor(
@@ -250,7 +410,29 @@ class ConversationLocalMarksService:
         created_at: str,
         updated_at: str,
     ) -> None:
-        """Insert or refresh one mark using an existing DB transaction."""
+        """Insert or refresh one operational mark in an existing transaction.
+
+        Manual reminders must use mark_unread so revisions publish after commit.
+        """
+        if self._mark_type(mark_type) == self.MANUAL_UNREAD:
+            raise ValueError("manual unread requires mark_unread")
+        self._set_mark_with_cursor(
+            cursor,
+            conversation_id,
+            mark_type,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    def _set_mark_with_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        mark_type: str,
+        *,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
         conversation_id = self._conversation_id(conversation_id)
         mark_type = self._mark_type(mark_type)
         if not created_at or not updated_at:
@@ -308,6 +490,9 @@ class ConversationLocalMarksService:
         """
         conversation_id = self._conversation_id(conversation_id)
         mark_type = self._mark_type(mark_type)
+        if mark_type == self.MANUAL_UNREAD:
+            self.mark_read(conversation_id)
+            return
         with self.db.transaction() as conn:
             conn.execute(
                 """
@@ -478,9 +663,7 @@ class ConversationLocalMarksService:
             for row in rows
         )
 
-    def acknowledge_console_unseen(
-        self, conversation_id: str, receipt_id: str
-    ) -> bool:
+    def acknowledge_console_unseen(self, conversation_id: str, receipt_id: str) -> bool:
         """Delete only the exact terminal receipt mark being acknowledged."""
         conversation_id = self._conversation_id(conversation_id)
         receipt_id = self.validate_terminal_receipt_id(receipt_id)
@@ -529,9 +712,11 @@ class ConversationLocalMarksService:
         outcomes = {
             parsed[1]
             for row in rows
-            if (parsed := self.parse_console_terminal_outcome_mark_type(
-                row["mark_type"]
-            ))
+            if (
+                parsed := self.parse_console_terminal_outcome_mark_type(
+                    row["mark_type"]
+                )
+            )
             is not None
             and parsed[0] == receipt_id
         }

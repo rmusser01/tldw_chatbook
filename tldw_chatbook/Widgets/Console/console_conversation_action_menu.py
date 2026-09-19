@@ -30,15 +30,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from weakref import WeakSet
 
+from rich.text import Text
+
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import VerticalScroll
 from textual.dom import NoScreen
 from textual.events import Key
 from textual.geometry import Offset
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_conversation_actions import (
     ConversationMenuTarget,
@@ -127,17 +129,22 @@ class ConversationActionMenuDismissed(Message):
         self.restore_focus = restore_focus
 
 
-class ConsoleConversationActionMenu(Vertical):
+class ConsoleConversationActionMenu(VerticalScroll):
     """Paged, keyboard-operable action menu bound to one conversation row."""
 
     can_focus = True
 
-    #: Painted height of the menu's tallest page (the root: six one-row
-    #: buttons plus the rounded border -- Copy as joined in TASK-25886),
-    #: used by the screen's anchor clamping. Keep in lockstep with the
-    #: root page's item count.
-    ROOT_PAGE_HEIGHT = 8
+    @staticmethod
+    def root_page_height(target: ConversationMenuTarget) -> int:
+        """Reserve one line per action, title and state, plus the frame.
 
+        Args:
+            target: Captured conversation target used to build root actions.
+
+        Returns:
+            Desired menu height in terminal rows before viewport clamping.
+        """
+        return len(build_conversation_menu(target)) + 4
 
     #: Anchoring clamps against this; the stylesheet below must declare the
     #: same width or viewport clamping drifts from what is painted (Qodo
@@ -146,14 +153,16 @@ class ConsoleConversationActionMenu(Vertical):
     #: anything that is not a plain string literal. The two are pinned
     #: together by a test instead --
     #: Tests/UI/test_console_conversation_action_menu.py.
-    MENU_WIDTH = 26
+    MENU_WIDTH = 30
 
     BUNDLED_CSS = """
     ConsoleConversationActionMenu {
         position: absolute;
         overlay: screen;
-        width: 26;
+        width: 30;
         height: auto;
+        max-height: 100%;
+        overflow-y: auto;
         border: round $primary;
         background: $surface;
         padding: 0 1;
@@ -228,6 +237,14 @@ class ConsoleConversationActionMenu(Vertical):
             disclosure glyph and the row's present state is bulleted, so a
             keyboard user can tell navigation from commands without colour.
         """
+        yield Static(
+            Text(self._target.title or "Conversation"),
+            classes="conversation-menu-summary",
+        )
+        yield Static(
+            Text(self._target.attention_summary or "Conversation actions"),
+            classes="conversation-menu-summary",
+        )
         for item in build_conversation_menu(self._target, self._page):
             label = f"{item.label} ▸" if item.opens_page and item.action_id.endswith(
                 ("status", "more", "copy")

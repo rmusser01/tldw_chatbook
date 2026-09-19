@@ -275,6 +275,16 @@ class _LazyConsoleActivityReceiptService:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._get_delegate(), name)
 
+    def unseen_snapshot(self) -> tuple[Any, ...]:
+        """Read already-loaded receipts without initializing their coordinator.
+
+        Returns:
+            The current in-memory snapshot, or an empty tuple before hydration
+            or settlement has initialized the authoritative receipt service.
+        """
+        delegate = self._delegate
+        return () if delegate is None else delegate.unseen_snapshot()
+
 
 class _LazyTraceBoundaryFactory:
     """Load normalized write planning only when a provider call reserves."""
