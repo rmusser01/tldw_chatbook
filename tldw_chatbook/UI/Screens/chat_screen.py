@@ -9393,34 +9393,28 @@ class ChatScreen(BaseAppScreen):
         else:
             # The child owns its bounded-body and rail invalidation.
             summary.sync_state(summary_state)
-        provider_value = _summary_row_value(summary_state.provider_row) or "—"
-        model_value = _summary_row_value(summary_state.model_row) or "—"
-        temperature_match = re.search(r"T ([\d.]+)", summary_state.sampling_row or "")
-        temperature_value = temperature_match.group(1) if temperature_match else "—"
-        max_tokens_match = re.search(
-            r"max_tokens (\d+)", summary_state.sampling_row or ""
-        )
-        max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
+        # TASK-32811.7: read the structured values the state already carries
+        # (TASK-32338 added `temperature`/`max_tokens` for exactly this) rather
+        # than regex-parsing them back out of the formatted `sampling_row`,
+        # which drifts the moment that display string is reworded.
+        temperature_value = summary_state.temperature or "—"
+        max_tokens_value = summary_state.max_tokens or "—"
         readiness = summary_state.readiness
 
-        try:
-            self.query_one(
-                "#console-model-section-provider .console-model-section-value",
-                Static,
-            ).update(provider_value)
-            self.query_one(
-                "#console-model-section-model .console-model-section-value", Static
-            ).update(model_value)
-            self.query_one(
-                "#console-model-section-temperature .console-model-section-value",
-                Static,
-            ).update(temperature_value)
-            self.query_one(
-                "#console-model-section-max-tokens .console-model-section-value",
-                Static,
-            ).update(max_tokens_value)
-        except (NoMatches, QueryError):
-            pass
+        # TASK-32811.7: the Provider and Model rows were removed from this
+        # section (TASK-23196 -- the status bar owns them), so querying their
+        # ids here raised NoMatches on the FIRST lookup and the temperature
+        # and max-token writes below it never ran, leaving those two rows
+        # frozen at their compose-time values. Query only the ids that are
+        # actually composed. Each is guarded on its own so a future removal
+        # of one cannot silently freeze the other.
+        for section_id, value in (
+            ("console-model-section-temperature", temperature_value),
+            ("console-model-section-max-tokens", max_tokens_value),
+        ):
+            rows = self.query(f"#{section_id} .console-model-section-value")
+            if rows:
+                rows.first(Static).update(value)
 
         try:
             recovery = self.query_one("#console-model-section-recovery", Static)
