@@ -110,12 +110,39 @@ def test_provider_name_is_case_insensitive(tmp_path, monkeypatch):
         assert get_api_key("OpenAI") == "sk-test-nested-stored-key"
 
 
-def test_env_var_named_by_config_wins_over_the_stored_key(tmp_path, monkeypatch):
-    """Precedence WITHIN the branch is unchanged: `api_key_env_var` first,
-    stored `api_key` second."""
+def test_the_stored_key_wins_over_the_env_var_it_names(tmp_path, monkeypatch):
+    """TASK-32806.2: the ruling, and the reason this test changed sides.
+
+    This asserted the opposite order, and so did
+    `Tests/Chat/test_provider_readiness.py::
+    test_modern_api_settings_key_outranks_the_env_var_for_the_spending_path`
+    -- two accessors, two pinned orders. With both a Settings key and an
+    env var set, `chat_api_call` spent the Settings key while MCP tools and
+    Console realtime spent the env key.
+
+    The ruling is the one already written down: CLAUDE.md records that for
+    provider API keys "an explicit `api_settings.<provider>.api_key` now
+    outranks the matching environment variable", which is what the spend
+    path does and what ADR-012's precedence section now states. A key the
+    user typed into Settings must take effect without them having to hunt
+    down a shell variable first.
+
+    The env var is still resolved -- see the test below -- it is just the
+    fallback now.
+    """
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv(UNSET_ENV_VAR, "sk-test-from-env-var")
     with _real_config(tmp_path, monkeypatch, NESTED_STORED_KEY_TOML):
+        assert get_api_key("openai") == "sk-test-nested-stored-key"
+
+
+def test_the_named_env_var_is_still_used_when_nothing_is_stored(
+    tmp_path, monkeypatch
+):
+    """The fallback the ruling keeps: no stored key, so the env var spends."""
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv(UNSET_ENV_VAR, "sk-test-from-env-var")
+    with _real_config(tmp_path, monkeypatch, NESTED_PLACEHOLDER_TOML):
         assert get_api_key("openai") == "sk-test-from-env-var"
 
 
