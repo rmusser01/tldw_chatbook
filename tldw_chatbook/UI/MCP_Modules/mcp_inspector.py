@@ -1798,17 +1798,9 @@ class MCPInspector(Vertical):
         async with self._refresh_lock:
             self._snapshot = snapshot
             state = self.query_one("#mcp-inspector-state", Static)
-            # RAG-50: `show_tool()` owns `state.display` (hidden while tool
-            # detail is shown, restored on `show_tool(None)`) -- this method
-            # only ever touches `state`'s CONTENT/CSS class below and must
-            # keep it that way. A server-selection sync
-            # (`MCPWorkbench._sync_children()`) can legitimately fire while
-            # Tools mode has a tool displayed (e.g. a background readiness
-            # refresh with no server selected, or a stale-selection race);
-            # if this method ever starts writing `state.display` too, guard
-            # it on "a detail container is currently displayed"
-            # (`not self._current_tool`) so it can't resurrect the badge
-            # over populated detail.
+            # Detail show/clear paths own the entire readiness block's
+            # visibility. Refresh content/actions without revealing server
+            # guidance above a tool, permission, audit entry or finding.
             message = self.query_one("#mcp-inspector-message", Static)
             actions = self.query_one("#mcp-inspector-actions", Vertical)
             await actions.remove_children()
@@ -1914,25 +1906,20 @@ class MCPInspector(Vertical):
             or self._current_finding is not None
         )
 
-    def _sync_state_badge_display(self) -> None:
-        """task-2270: single owner of `#mcp-inspector-state`'s DISPLAY.
+    def _sync_readiness_display(self) -> None:
+        """Show server guidance only when no detail view owns the inspector.
 
-        The badge (empty-state copy, or the selected server's readiness --
-        whatever `update_readiness()` last wrote) shows exactly when NO
-        detail view is displayed. RAG-50 fixed this for Tools mode only,
-        with `show_tool()` writing `state.display` directly; the other
-        three detail views (`show_permission()` via
-        `_render_permission_container()`, `show_audit_entry()`,
-        `show_finding()`) never touched it and left the "Pick a server,
-        tool, or entry…" badge stacked above fully populated detail.
-        Every view's show/clear path now funnels through this method, so
-        clearing ONE view cannot resurrect the badge while another still
-        shows detail, and `update_readiness()` stays content-only (it can
-        never force the badge back over displayed detail in any mode).
+        Readiness updates keep content current while hidden. Every detail's
+        show/clear path uses this owner, so clearing one of several details
+        cannot restore an unrelated server explanation or its action buttons.
         """
-        self.query_one(
-            "#mcp-inspector-state", Static
-        ).display = not self._any_detail_displayed()
+        show_readiness = not self._any_detail_displayed()
+        for selector in (
+            "#mcp-inspector-state",
+            "#mcp-inspector-message",
+            "#mcp-inspector-actions",
+        ):
+            self.query_one(selector).display = show_readiness
 
     async def show_tool(
         self,
@@ -1978,7 +1965,7 @@ class MCPInspector(Vertical):
             container = self.query_one("#mcp-inspector-tool", Vertical)
             await container.remove_children()
             # RAG-50 / task-2270: the empty-state badge's DISPLAY is owned
-            # by `_sync_state_badge_display()` (badge shows exactly when NO
+            # by `_sync_readiness_display()` (badge shows exactly when NO
             # detail view is displayed -- RAG-50 fixed Tools mode alone and
             # left the other three views stacking the badge over populated
             # detail). The sync here runs BEFORE any await so a paint
@@ -1988,7 +1975,7 @@ class MCPInspector(Vertical):
             # Content stays `update_readiness()`'s job -- restoring
             # visibility just reveals whatever it last wrote (or the
             # compose()-time `_EMPTY_STATE_COPY` if it never ran).
-            self._sync_state_badge_display()
+            self._sync_readiness_display()
             if tool is None:
                 container.display = False
                 await self._render_permission_container(None, None)
@@ -2135,7 +2122,7 @@ class MCPInspector(Vertical):
             self._current_permission_goto = False
             # task-2270: restore the badge -- unless another detail view
             # (tool/audit/finding) still shows content.
-            self._sync_state_badge_display()
+            self._sync_readiness_display()
             return
         container.display = True
         self._current_permission_tool = tool
@@ -2147,7 +2134,7 @@ class MCPInspector(Vertical):
         # task-2270: a Permissions-matrix row selection hides the badge
         # exactly like Tools mode does; synced before the mounts below so
         # no paint frame shows badge + populated detail together.
-        self._sync_state_badge_display()
+        self._sync_readiness_display()
         widgets: list[Any] = [
             # UX batch item 8: identity line first, mirroring
             # `show_tool()`'s own `#mcp-inspector-tool-name` -- this block
@@ -2431,12 +2418,12 @@ class MCPInspector(Vertical):
                 self._current_audit_profile_context = None
                 # task-2270: restore the badge unless another detail view
                 # still shows content (e.g. a finding alongside this entry).
-                self._sync_state_badge_display()
+                self._sync_readiness_display()
                 return
             container.display = True
             self._current_audit_entry = entry
             self._current_audit_profile_context = profile_context
-            self._sync_state_badge_display()  # task-2270: hide over detail
+            self._sync_readiness_display()  # task-2270: hide over detail
             server_key = str(entry.get("server_key") or "")
             tool_name = str(entry.get("tool_name") or "")
             detail_payload = audit_entry_detail_payload(entry)
@@ -2526,12 +2513,12 @@ class MCPInspector(Vertical):
                 self._current_finding_server_key = None
                 # task-2270: restore the badge unless another detail view
                 # still shows content (e.g. the audit entry beside this).
-                self._sync_state_badge_display()
+                self._sync_readiness_display()
                 return
             container.display = True
             self._current_finding = finding
             self._current_finding_server_key = server_key
-            self._sync_state_badge_display()  # task-2270: hide over detail
+            self._sync_readiness_display()  # task-2270: hide over detail
             severity = _finding_text(finding, "severity")
             finding_type = _finding_text(finding, "finding_type", "type")
             message = _finding_text(finding, "message")
