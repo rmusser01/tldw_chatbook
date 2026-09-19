@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  follow Ask, Allow, or Off               ││                  │
+│ Source       ││  permissions.                          ▂ ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▎   │
+│ ▊▔▔▔▔▔▔▔▔▎   ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root       ││ ▊  ▼ Raw     ▎   │
+│ ▊Local  ▼▎   ││  ▊  Local MCP / Hub  ▎                   ││ ▊  response  ▎   │
+│ ▊▁▁▁▁▁▁▁▁▎   ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                   ││ ▊ row-96     ▎   │
+│              ││                                          ││ ▊ row-97     ▎   │
+│ Servers      ││  Root: local MCP serving and Hub         ││ ▊ row-98     ▎   │
+│  ● ready     ││  tests. Blank uses the serving         ▁ ││ ▊ row-99     ▎▃▃ │
+│  · ◦ off     ││  process's current folder. Console       ││ ▊ END"       ▎   │
+│  · ⌂         ││  uses Chat scratch and admitted          ││ ▊     }      ▎▁▁ │
+│  built-in    ││  Workspace folders.                      ││ ▊   ]        ▎   │
+│    All       ││                                          ││ ▊ }          ▎   │
+│  servers  ▆▆ ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││ ▊            ▎   │
+│  ◦ ⌂ t…        ││  ▊  Filter tools…                    ▎   ││                │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -1,0 +1,295 @@
+{
+  "pid": 34219,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "title_paint": "\u25b6 Raw response \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+      "tail_paint": "row-96 row-97 row-98 row-99 END\" } ] }",
+      "validation_cleared_previous_output": true,
+      "invalid_attempt_not_executed": true,
+      "corrected_output_current": true,
+      "same_connection": true,
+      "closed_and_reopened": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "title_paint": "\u25b6 Raw response \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+      "tail_paint": "row-60 row-61 row-62 row-63 row-64 row-65 row-66 row-67 row-68 row-69 row-70 row-71 row-72 row-73 row-74 row-75 row-76 row-77 row-78 row-79 row-80 row-81 row-82 row-83 row-84 row-85 row-86 row-87 row-88 row-89 row-90 row-91 row-92 row-93 row-94 row-95 row-96 row-97 row-98 row-99 END\" } ] }",
+      "validation_cleared_previous_output": true,
+      "invalid_attempt_not_executed": true,
+      "corrected_output_current": true,
+      "same_connection": true,
+      "closed_and_reopened": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "title_paint": "\u25b6 Raw response \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+      "tail_paint": "row-96 row-97 row-98 row-99 END\" } ] }",
+      "validation_cleared_previous_output": true,
+      "invalid_attempt_not_executed": true,
+      "corrected_output_current": true,
+      "same_connection": true,
+      "closed_and_reopened": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "title_paint": "\u25b6 Raw response \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+      "tail_paint": "row-60 row-61 row-62 row-63 row-64 row-65 row-66 row-67 row-68 row-69 row-70 row-71 row-72 row-73 row-74 row-75 row-76 row-77 row-78 row-79 row-80 row-81 row-82 row-83 row-84 row-85 row-86 row-87 row-88 row-89 row-90 row-91 row-92 row-93 row-94 row-95 row-96 row-97 row-98 row-99 END\" } ] }",
+      "validation_cleared_previous_output": true,
+      "invalid_attempt_not_executed": true,
+      "corrected_output_current": true,
+      "same_connection": true,
+      "closed_and_reopened": true
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "2418773e8a5c0baccc86514b90beb76db569ec23a1748f0ba2e2413a119bb107",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "6e6a717a72eb52d6d3c7cfa3d75c1561df426813610f5380049453aa54710149",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "e4f41a3cbb4f3c1006375e45a648e9f6d319be4d4331802c89ec1083216c79cd",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "b4a57140ffae703c3bdc11e9919bd6a672b7dc47ecc65cee41238e807d7216eb",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "a1c6c71e6767d0833c634a5822c7ecea08b5ed33a72d4a9e885fbddad715c0c0",
+    "tldw_chatbook/MCP/client.py": "9fce5defe045f633a98244c2d4a0f757765c097305085f2fe04cee373e479d97",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "2c32115597b8558da94885170c49ef76c57aefda54ef6996bf2887844cb078be",
+    "Docs/superpowers/qa/2026-09-18-mcp-inspector-reachability/stdio_server.py": "09bda60b8c32ed7ffb76bbad059a00cc271e433ad036c84e89d281b67822bfbf"
+  },
+  "runner_sha256": "6512bdce127bd86ba76bcc8c9cd4d7be77d5110fe899f234df37891e3aacefb7",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "reopened preview",
+  "fixture_pid": 34307,
+  "audit": [
+    {
+      "ts": "2026-09-19T03:30:25.229422+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 32,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:30:20.362476+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 31,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:30:16.558618+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 24,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:30:11.362037+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 29,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:30:07.561936+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 26,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:30:02.763544+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:29:58.666496+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 30,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    },
+    {
+      "ts": "2026-09-19T03:29:53.359225+00:00",
+      "server_key": "local:execution-review",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "approved",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 33,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [
+        "message"
+      ],
+      "unknown_argument_count": 0,
+      "result_type": "dict",
+      "result_size": 1
+    }
+  ],
+  "wire_requests": [
+    {
+      "pid": 34307,
+      "method": "initialize"
+    },
+    {
+      "pid": 34307,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/list"
+    },
+    {
+      "pid": 34307,
+      "method": "resources/list"
+    },
+    {
+      "pid": 34307,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    },
+    {
+      "pid": 34307,
+      "method": "tools/call"
+    }
+  ],
+  "fixture_returncode": -15,
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}
