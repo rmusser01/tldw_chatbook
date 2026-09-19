@@ -1,0 +1,27 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+    "baseline_diagnostics": 65,
+    "current_diagnostics": 65,
+    "introduced": []
+  },
+  "tldw_chatbook/UI/Screens/mcp_screen.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "introduced": []
+  },
+  "Tests/UI/test_destination_shells.py": {
+    "baseline_diagnostics": 11,
+    "current_diagnostics": 11,
+    "introduced": []
+  },
+  "Tests/Backup_Recovery/test_mcp_recovery_publication.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  },
+  "Docs/superpowers/qa/2026-09-18-mcp-restored-roots/native_check.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "introduced": []
+  }
+}

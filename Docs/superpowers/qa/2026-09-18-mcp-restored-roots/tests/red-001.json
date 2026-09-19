@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-current]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-mode]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-round_trip]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-screen]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-mode]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-round_trip]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-screen]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-service]",
+      "status": "failure"
+    }
+  ]
+}
