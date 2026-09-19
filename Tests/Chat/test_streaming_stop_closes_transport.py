@@ -33,13 +33,31 @@ def _streaming_response(lines):
     return response
 
 
-# A minimal two-chunk stream in each provider's SSE shape. The exact delta
-# schema does not matter -- the test stops after the first chunk, before any
-# parsing that a malformed delta might trip.
-_TWO_CHUNKS = [
+# A minimal two-chunk stream in each provider's SSE shape. The passthrough
+# providers (anthropic/deepseek/groq/mistral/openrouter) yield any non-empty
+# line, but the cohere and google TRANSLATORS parse their native schema and
+# yield nothing for an OpenAI-style chunk -- so a shared OpenAI fixture made
+# next(generator) exhaust (StopIteration) before generator.close() ran, and
+# their cancellation cleanup was never exercised (Qodo #1). Give those two a
+# fixture in their own schema so the first next() suspends at a real yield.
+_OPENAI_STYLE = [
     'data: {"choices": [{"delta": {"content": "first"}}]}',
     'data: {"choices": [{"delta": {"content": "second"}}]}',
 ]
+_CHUNKS_BY_PROVIDER = {
+    "cohere": [
+        'data: {"type": "content-delta", "delta": {"message": {"content": {"text": "first"}}}}',
+        'data: {"type": "content-delta", "delta": {"message": {"content": {"text": "second"}}}}',
+    ],
+    "google": [
+        'data: {"candidates": [{"content": {"parts": [{"text": "first"}], "role": "model"}, "index": 0}]}',
+        'data: {"candidates": [{"content": {"parts": [{"text": "second"}], "role": "model"}, "index": 0}]}',
+    ],
+}
+
+
+def _chunks_for(provider):
+    return list(_CHUNKS_BY_PROVIDER.get(provider, _OPENAI_STYLE))
 
 
 @pytest.mark.parametrize(
@@ -47,7 +65,7 @@ _TWO_CHUNKS = [
     ["anthropic", "cohere", "deepseek", "google", "groq", "mistral", "openrouter"],
 )
 def test_stopping_a_hosted_stream_closes_its_response(provider):
-    response = _streaming_response(list(_TWO_CHUNKS))
+    response = _streaming_response(_chunks_for(provider))
     with patch("requests.Session.post", return_value=response), patch(
         "requests.post", return_value=response
     ):

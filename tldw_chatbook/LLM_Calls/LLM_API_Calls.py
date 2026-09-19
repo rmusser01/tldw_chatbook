@@ -5207,7 +5207,13 @@ def chat_with_mistral(
                         for line in response.iter_lines(decode_unicode=True):
                             if line and line.strip():
                                 yield line + "\n\n"
-                    # ... (error handling for stream) ...
+                    except Exception as e:
+                        logger.error(f"Mistral stream: error during streaming: {e}")
+                        # TASK-32805.1 / Qodo #2: convert an iteration failure into an
+                        # error SSE event so the consumer sees a provider error AND the
+                        # [DONE] sentinel below still fires, instead of the exception
+                        # propagating past both.
+                        yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'mistral_stream_error'}})}\n\n"
                     finally:
                         if response:
                             response.close()
@@ -5465,7 +5471,13 @@ def chat_with_openrouter(
                         for line in response.iter_lines(decode_unicode=True):
                             if line and line.strip():
                                 yield line + "\n\n"
-                    # ... (error handling for stream) ...
+                    except Exception as e:
+                        logger.error(f"Openrouter stream: error during streaming: {e}")
+                        # TASK-32805.1 / Qodo #2: convert an iteration failure into an
+                        # error SSE event so the consumer sees a provider error AND the
+                        # [DONE] sentinel below still fires, instead of the exception
+                        # propagating past both.
+                        yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'openrouter_stream_error'}})}\n\n"
                     finally:
                         if response:
                             response.close()
