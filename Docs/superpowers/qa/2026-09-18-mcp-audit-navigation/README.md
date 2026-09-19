@@ -1,76 +1,79 @@
-# Audit navigation ownership — TASK-32837
+# Audit navigation ownership — TASK-32837 / PR2724
 
-Queued presses from retired Audit buttons could open a replacement record.
-Mutating the original entry dictionary could also redirect a still-displayed
-button. Each mounted action now captures its rendered tool and profile identity;
-replacement/clear invalidates those controls before pruning yields. Both
-navigation destinations now honor row-selection failure, clear detail and warn
-when the tool disappears during navigation. The Permissions repair also applies
-to its existing shared jump helper's other two callers.
+Audit's Open tool and Adjust permission buttons retain the tool/profile identity
+shown when they were rendered. Retired controls are invalidated before async
+pruning. Held events are ignored if their control or owning view has become
+hidden, invisible, disabled or covered by another screen. Current controls remain
+repeatable. Both destinations honor failed row selection, clear stale detail and
+show the existing unavailable-tool warning.
 
-This is an implementation repair under ADR-150/161; no new ADR is required.
-There are no CSS, design-token, permission-policy or persistence changes.
+Rebased onto merged dev `29b0a31df4701160a3c805e1bf490c76b9353964` (PR2740).
+The [conflict review](CURRENT-DEV-REVIEW.md) records both documentation choices;
+application source merged automatically. No CSS, token values, permission policy,
+storage or runtime authority changed. Existing ADR-150/161 apply; no new ADR.
 
-## Verification
+## Current verification
 
-[64 distinct targeted cases pass](qualified-cases.json): 14 new regression cases,
-24 adjacent inspector/workbench/table cases and 26 design/component governance
-cases. [Exact case selection](selected-cases.txt) and [final output](tests/final-001.txt)
-record the scope. No full suite ran. The final run has two cleanup warnings
-for unrelated old pytest temporary folders and no test failures.
+[145 distinct targeted checks pass](current-dev/qualified-cases.json):
+30 Audit navigation cases, 23 adjacent permission-navigation cases, 24 existing
+inspector/workbench/table cases, 26 design/component governance cases and 42
+native-runner argument/path checks. No full suite ran.
 
-The initial [red run](tests/red-001.txt) has eight intended failures, two passing
-clear-only cases and four deselected full-app cases. It reproduced retired and
-mutated identity plus missing destination rows. All [14 new cases passed](tests/green-001.txt)
-after the repair. Tests also cover same-record re-render, profile capture,
-profile switches before/during navigation, both shared permission jump callers,
-and real-app dark/light navigation to rows hidden by destination filters.
+The [12-case red run](current-dev/red-tests.txt) reproduced both actions navigating
+from unavailable controls/views. The [95-case green run](current-dev/green-tests.txt)
+includes all 30 Audit cases, queued replacement/clear, retirement before pending
+pruning, immutable identity, repeatability and both filtered destination routes.
 
-All [seven preflight guards](preflight.txt) pass. [Static analysis](static-analysis.json)
-adds no diagnostics: inspector/workbench retain their 13/65 baseline diagnostics;
-new files are clean. New files and [changed production ranges](formatting.txt)
-pass formatting. [Independent read-only review](independent-review.txt) found
-no concrete blockers.
+The [adjacent run](current-dev/adjacent-tests.txt) passed 47 cases; three older
+inspector cases stopped during fixture setup with `raw_source_selection_changed`.
+Their per-test fixture changed the profile after collection had bound the config
+source (the documented TASK-32749 issue). Applying the existing private-profile
+process wrapper preserves their assertions and [all three pass](current-dev/setup-fix-tests.txt).
+[Log export hashes](current-dev/log-export-manifest.json) record trailing-whitespace
+normalization of saved pytest output. No production recovery guard changed.
+Cleanup warnings concern unrelated old
+pytest temporary folders, which were left untouched.
 
-## Native visual and lifecycle evidence
+All [seven preflight guards](current-dev/preflight.txt) pass. Ruff adds
+[no diagnostics](current-dev/static-analysis.json), new files and changed ranges
+[pass formatting](current-dev/formatting.txt), and [independent read-only review](current-dev/independent-review.txt)
+found no blockers, including the fixture follow-up.
 
-The real TldwCli runs with LinuxDriver and TTY streams inside a fresh private
-HOME, USERPROFILE, XDG and TLDW profile validated before app imports. Only two
-synthetic execution metadata records are appended: one for the real built-in
-`chat_with_llm` catalog entry and one for an unavailable tool. No tool executes,
-no external server connects and no permission profile changes.
+## Current native evidence
 
-In each dark/light × 120×40/170×48 cell, the journey seeds a nonmatching destination
-filter, selects the valid Audit row, and activates each real action button with
-Enter after direct focus. It verifies the selected identity, exact destination
-row key, cleared filter and removed Audit controls. It then selects the missing
-record and checks that both actions stay in Audit and show the warning.
-Full visibility of each activated control is asserted. Destination-row loss
-during an await is verified by deterministic tests, not by a native race.
+The [24-capture gallery](GALLERY.md) covers both focused Audit controls, Tools and
+Permissions destinations after clearing a nonmatching filter, and each action's
+missing-tool warning. Dark/light themes run at 120×40 and 170×48. Every activated
+button is focused, fully inside its compositor clip, paints its complete label
+and owns the center hit target. The normal Enter handlers perform navigation.
+All 24 screenshots were rendered and inspected. Existing Audit filter layout
+and inspector guidance are visible; their separate PRs remain outside this repair.
 
-All [16 captures](GALLERY.md) were rendered and inspected. Tool and permission
-destinations select `chat_with_llm`; missing destinations show the unavailable-tool
-warning. Existing inspector guidance and Audit filter layout are visible because
-their separate PRs are not included. Compact 80×24 inspector reachability remains
-with PR #2718 and is not qualified here.
+The [native receipt](current-dev/native/result.json) records the real TldwCli with
+LinuxDriver and TTY streams, a fresh validated private profile, two synthetic
+metadata records, correct destination row identities, unchanged permission
+profiles and zero network attempts. No tool executes or external server connects.
+Destination loss during an await is covered by deterministic tests rather than
+a native timing race.
 
-The [native receipt](native/result.json) and [lifecycle check](lifecycle.json)
-record four passing cells, normal App.run return, exit 0, absent process,
-released lock, ten healthy private databases, zero conversations/messages,
-unchanged default config/UI state/runtime policy, and no app errors or
-faulthandler output. All eleven captured source hashes and the runner hash
-match final source. [Export hashes](export-manifest.json) distinguish original
-private evidence from repository copies normalized only for trailing whitespace.
+[Lifecycle verification](current-dev/lifecycle.json) confirms exit 0, normal app
+return, absent process, released instance lock, ten healthy private databases,
+zero conversations/messages, unchanged default-profile files, no app errors and
+empty faulthandler output. All eleven source hashes and both runner/journey hashes
+match. [Native export hashes](current-dev/native-export-manifest.json) record only
+trailing-whitespace normalization of SVG exports; visual content is unchanged.
 
-## Scope and follow-ups
+## History and bounds
 
-This independent branch starts at dev `cef6bd2a3e3f0b8de0e166146acb4900ca7ea2b6`,
-after PR #2707 merged. Audit selection (#2720), filter layout (#2721) and inspector
-guidance (#2722) remain separate draft PRs. Current-head CI and final visual
-approval remain required before merging this follow-up.
+The original `native/`, `tests/`, lifecycle and verification receipts in this
+folder are historical evidence from commit `b0eca0deb0`; they do not qualify the
+current source. The runner was refreshed for the supported terminal warm-up API,
+shared argument validation and network guard. Current receipts are exclusively
+under `current-dev/`; [current export hashes](current-dev/export-manifest.json)
+cover those files, the runners and review documents.
 
-Next: review catalog replacement while an Audit drilldown is already in flight.
-This repair qualifies missing rows, not same-ID tool-definition freshness across
-an await. Connected-runtime and the wider component review remain open.
-[Allocation](allocation-census.json), [fresh census](precommit-census.json) and
-[sole ownership](allocation-owner-check.json) checks cover the task ID.
+Audit selection PR2720, filter layout PR2721, inspector guidance PR2722 and
+same-ID catalog freshness PR2726 remain separate. Compact 80×24 inspector
+reachability, connected-runtime journeys and the wider component review remain
+open. PR2724 stays draft pending current-head CI/review and its own final owner
+visual approval. PR2740 approval does not authorize this merge.

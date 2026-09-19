@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││  ╭──────────────╮    Findings                       ││                               │
+│ Source                       ││  │  Executions  │                                   ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  ╰──────────────╯                                   ││  Why · Off — enable it to     │
+│ ▊  Local                ▼  ▎ ││  ▊▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔  ││  let MCP clients use          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  ▊    ▎▊  All decisions    ▼  ▎▊  All          ▼    ││  chatbook's tools.            │
+│                              ││  ▊▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊  initiators        ││  Add server                   │
+│ Servers                      ││                                ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁  ││  missing_review_tool —        │
+│  ◦ off · ⌂ built-in          ││                                                     ││  local:removed                │
+│    All servers               ││  When                 Tool                          ││ {                             │
+│  ◦ ⌂ tldw_chatbook (bu…      ││  2026-09-19 12:20:49  local:removed::missing_review ││   "ts":                       │
+│                              ││  2026-09-19 12:20:49  builtin:tldw_chatbook::chat_w ││ "2026-09-19T19:20:49.711878+  │
+│                              ││                           ▍                         ││ 00:00",                       │
+│                              ││                                                     ││   "tool":                     │
+│                              ││                                                     ││ "local:removed::missing_revi  │
+│                              ││                                                     ││ ew_tool",                   ▅ │
+│                              ││                                                     ││   "initiator": "test",        │
+│                              ││                                                     ││   "decision": "allowed",      │
+│                              ││                                                     ││   "decision_label":           │
+│                              ││                                                     ││ "Allowed",                    │
+│                              ││                                                     ││   "ok": true,                 │
+│                              ││                                                     ││    Open tool                  │
+│                              ││                                                     ││  Adjust permission            │
+│                              ││                                                     ││    Advanced…                  │
+│                              ││                                                     ││                               │
+│                              ││                          ╭─────────────────────────────────────────────────────────╮ │
+│                              ││                          │                                                         │ │
+│                              ││                          │ local:removed::missing_review_tool: tool no longer      │ │
+│                              ││                          │ available.                                              │ │
+│                              ││                          │                                                         │ │
+│                              ││                          ╰─────────────────────────────────────────────────────────╯ │
+│                              ││                                                     ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

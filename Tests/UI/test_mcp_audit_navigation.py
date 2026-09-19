@@ -1,12 +1,16 @@
 """Audit navigation keeps the displayed identity and checks its destination."""
 
+import asyncio
+
 import pytest
+from textual.screen import Screen
 from textual.widgets import Button, DataTable, Input, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_mcp_compact_readability import _settle
 from Tests.UI.test_mcp_inspector import InspectorApp
+from Tests.UI.test_mcp_session_revoke_ownership import CONTEXT, held_press
 from Tests.UI.test_mcp_workbench import (
     AuditHubService,
     ToolTestApp,
@@ -61,7 +65,7 @@ async def test_retired_audit_press_cannot_target_replacement(
             None if replacement == "clear" else _audit_record(tool_name=target),
             profile_context=new_context,
         )
-        inspector.on_button_pressed(held[0])
+        inspector.post_message(held[0])
         await pilot.pause()
         assert not [event for event in app.events if isinstance(event, event_type)]
 
@@ -200,3 +204,96 @@ async def test_audit_drill_reveals_target_hidden_by_destination_filter(
         key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
         assert key.value == "local:docs::search"
         assert not workbench.query("#mcp-audit-open-tool")
+
+
+@pytest.mark.parametrize("button_id,event_type", ACTIONS)
+@pytest.mark.parametrize(
+    "state",
+    [
+        "hidden",
+        "invisible",
+        "disabled",
+        "ancestor_hidden",
+        "ancestor_disabled",
+        "covered",
+    ],
+)
+@private_profile_test
+async def test_audit_navigation_ignores_an_unavailable_owning_view(
+    request, monkeypatch, button_id, event_type, state
+):
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_audit_entry(_audit_record(), profile_context=CONTEXT)
+        await pilot.pause()
+        button = inspector.query_one("#" + button_id, Button)
+        event = held_press(button, monkeypatch)
+        if state == "hidden":
+            button.display = False
+        elif state == "invisible":
+            button.visible = False
+        elif state == "disabled":
+            button.disabled = True
+        elif state == "ancestor_hidden":
+            inspector.display = False
+        elif state == "ancestor_disabled":
+            inspector.disabled = True
+        else:
+            await app.push_screen(Screen())
+        inspector.post_message(event)
+        await pilot.pause()
+        assert not [event for event in app.events if isinstance(event, event_type)]
+
+
+@pytest.mark.parametrize("button_id,event_type", ACTIONS)
+@private_profile_test
+async def test_audit_navigation_is_invalid_before_pruning_yields(
+    request, monkeypatch, button_id, event_type
+):
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_audit_entry(_audit_record(), profile_context=CONTEXT)
+        await pilot.pause()
+        event = held_press(inspector.query_one("#" + button_id, Button), monkeypatch)
+        container = inspector.query_one("#mcp-inspector-audit")
+        original = container.remove_children
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def hold_removal():
+            entered.set()
+            await release.wait()
+            await original()
+
+        monkeypatch.setattr(container, "remove_children", hold_removal)
+        refresh = asyncio.create_task(inspector.show_audit_entry(None))
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            inspector.post_message(event)
+            await pilot.pause()
+            assert not [event for event in app.events if isinstance(event, event_type)]
+        finally:
+            release.set()
+            await refresh
+
+
+@pytest.mark.parametrize("button_id,event_type", ACTIONS)
+@private_profile_test
+async def test_current_audit_navigation_is_repeatable(request, button_id, event_type):
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_audit_entry(_audit_record(), profile_context=CONTEXT)
+        await pilot.pause()
+        button = inspector.query_one("#" + button_id, Button)
+        for _ in range(2):
+            button.press()
+            await pilot.pause()
+        events = [event for event in app.events if isinstance(event, event_type)]
+        assert len(events) == 2
+        assert all(
+            (event.server_key, event.tool_name, event.profile_context)
+            == ("local:docs", "search", CONTEXT)
+            for event in events
+        )

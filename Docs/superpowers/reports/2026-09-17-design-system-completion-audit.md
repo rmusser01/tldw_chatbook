@@ -374,3 +374,18 @@ and final visual approval remain required before merging the follow-up.
 Next review: same-ID catalog replacement during an in-flight Audit drilldown.
 The [MCP ledger](2026-09-18-mcp-review.md) retains that and the wider scope; this
 repair does not close the component review workstream.
+
+## Current-dev Audit integration — PR2724 / TASK-32837
+
+PR2731, PR2734 and PR2740 are merged. Existing PR2724 now builds on dev
+`29b0a31df4701160a3c805e1bf490c76b9353964`; both report conflicts retained the
+merged history and Audit-specific notes. Product source merged automatically.
+Held Audit events now also reject unavailable controls/views. [145 targeted
+checks, independent review, seven preflight guards and 24 inspected native
+captures](../qa/2026-09-18-mcp-audit-navigation/README.md) qualify this bounded
+integration. Three older inspector cases use the existing process-isolation
+wrapper after setup-only profile-binding errors; their assertions are unchanged.
+[Conflict choices and visual review](../qa/2026-09-18-mcp-audit-navigation/CURRENT-DEV-REVIEW.md)
+are ready for owner review. PR2724 remains draft pending current-head CI/review
+and its own visual approval. PR2726 retains same-ID catalog freshness; the wider
+component review remains open.

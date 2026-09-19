@@ -1,0 +1,250 @@
+{
+  "normalization": "SVG trailing whitespace only; no visual changes. Other files unchanged.",
+  "files": [
+    {
+      "path": "current-dev/native/result.json",
+      "original_sha256": "7ea8064d4507088be5a0bf2b3b321b86681ccf1c1e50610666aec216788cd6c6",
+      "export_sha256": "7ea8064d4507088be5a0bf2b3b321b86681ccf1c1e50610666aec216788cd6c6"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-missing-permissions.svg",
+      "original_sha256": "181a12bb7176d7648209909fcd057a698e77e7381c41e8654bb71cabcfc08c75",
+      "export_sha256": "7f8f105a1cc555802d02280a06bf0515ec845e534dd1a04ca7d84f99421cb60b"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-missing-permissions.txt",
+      "original_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3",
+      "export_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-missing-tools.svg",
+      "original_sha256": "ffe0500ca9d6eccdc96717409881792e2e130eb162b77443e5480abb77efd2ce",
+      "export_sha256": "67358307a33eaea702acf73d8ecd87573956195a9570a77eaab84947ea526118"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-missing-tools.txt",
+      "original_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3",
+      "export_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-permissions.svg",
+      "original_sha256": "2bcdda410e6b7cc1c1404f2d5b8dab0c80d745fd87944fdc516f4aa80d7c8571",
+      "export_sha256": "179cf57b0700ed82a5837fa5a6c2d1fab955f4f32180d88aa9653b34bb41ee21"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-permissions.txt",
+      "original_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19",
+      "export_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-source-permissions.svg",
+      "original_sha256": "21aa3985616c94ae04ec75f574fadc3885f685d97ae7566451799718adec6473",
+      "export_sha256": "50b5b5f5596e854231d8f1492ff143630149550d2406fe73a3e68f3b686a47db"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-source-permissions.txt",
+      "original_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490",
+      "export_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-source-tools.svg",
+      "original_sha256": "2a0fd776011ba5c13e305468aaa5a67a38b93e183f6b966d2c70fc81cb38652f",
+      "export_sha256": "571974fa41d61bda1bfb553b7e7577a6024317fe69a212becc00c7941b530601"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-source-tools.txt",
+      "original_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490",
+      "export_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-tools.svg",
+      "original_sha256": "476534c33f762dedf0f6d8bb05d8809171a98b65562329dc8369d01809f68b94",
+      "export_sha256": "a02a328fc875c0be36e3c0858a805720cc2fccde5d47d2a3fd015862a4f72167"
+    },
+    {
+      "path": "current-dev/native/textual-dark-120x40-tools.txt",
+      "original_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6",
+      "export_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-missing-permissions.svg",
+      "original_sha256": "3e8d4ea1cd1b9594b4614138f1186da48b2373312afbd9f5add34f9f6bd64056",
+      "export_sha256": "584feb8cb15d524c49233495fe36e4255002ffb92b7ef0c5a0b2ca96e80bde9c"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-missing-permissions.txt",
+      "original_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446",
+      "export_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-missing-tools.svg",
+      "original_sha256": "18a66379cb2c3874c84fcb08e2a90771a0055a69ffe67a45a21258da145f3ee8",
+      "export_sha256": "84ba3b1265c4008827bf09827bef9f804dc537cf4258540f449baad1b94c4314"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-missing-tools.txt",
+      "original_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446",
+      "export_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-permissions.svg",
+      "original_sha256": "9fbef6a37cbf74b7bac85e46c894e80aa333f05acd5e69bb3a34d6976d81eb89",
+      "export_sha256": "106fc4d2b478ed212ed997c3c6e887d98b59816ee7c21af453e89e301227d39f"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-permissions.txt",
+      "original_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f",
+      "export_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-source-permissions.svg",
+      "original_sha256": "496d55c2c5faf433dc3f8fa159c29c4efc38266c367c5d99ce8df4f1ddd8df96",
+      "export_sha256": "f6b1d3f12e1861273f211c9605b04d5b8f5e9d12f514a30de914ad9c93c9a6d5"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-source-permissions.txt",
+      "original_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1",
+      "export_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-source-tools.svg",
+      "original_sha256": "41eba28cee076925cf8687e224aa73a27b9a88433b5883bc1b6054f49068be52",
+      "export_sha256": "d86478f2970c59540ac81303db94e96f43a027d83ea32bc7f283e8c577f83ac8"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-source-tools.txt",
+      "original_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1",
+      "export_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-tools.svg",
+      "original_sha256": "365105296833b2313c9e4b4500e98a496f8f6924f6b9c03ebd7e7c07261490c0",
+      "export_sha256": "0862f8587f993bd7c12f989055d76aa71f4a0abc1cdddf429a00dda4175342b4"
+    },
+    {
+      "path": "current-dev/native/textual-dark-170x48-tools.txt",
+      "original_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55",
+      "export_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-missing-permissions.svg",
+      "original_sha256": "3598b769855fc8ee825dfccd573681dae426071f22498a321e0f1c5d4a8c349a",
+      "export_sha256": "7a92f9a9359c24a2a9d74ead086552edd069916471d8cf5038a9bceecea4618f"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-missing-permissions.txt",
+      "original_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3",
+      "export_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-missing-tools.svg",
+      "original_sha256": "9003391a96d05ef5021f2e75dc93da41ca2c8778914280bad06cca3f7ecfabe5",
+      "export_sha256": "2365bba42786c3bff5f6de0321ec63654e8462cc5b6200318cf649fa99765cd7"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-missing-tools.txt",
+      "original_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3",
+      "export_sha256": "810c665816e652a1c36af5cbf7c1e95fe8bcc08b2a6fb24c2f78cf63cfc9f8c3"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-permissions.svg",
+      "original_sha256": "b244d43fa365e643d371eb93bbeb625c79f890c35f9e7233bf25f5d50bd69ff4",
+      "export_sha256": "f5cd20e599f03850b0642fd530d41436575564c4b79eb8ea56856fba7d9f2724"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-permissions.txt",
+      "original_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19",
+      "export_sha256": "1940522e46c809176b6f388d67e42f06a570fd819d609c404956d72b20491f19"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-source-permissions.svg",
+      "original_sha256": "db23f2f8a7abcb55e24e0bdb33cb011881b9a212341ccd9a638dac6ad8d8d3b8",
+      "export_sha256": "1430b5ed83e22eeb2078d2b29c7186dfbfa81dac020375c53b52648d073ab6e1"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-source-permissions.txt",
+      "original_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490",
+      "export_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-source-tools.svg",
+      "original_sha256": "9040262846fb3094fcb1833c219979b41ea1352381f2c1ea2c63cab803ce569d",
+      "export_sha256": "aeaaad51d692cee67cb799b38805825f62dab8a9fff0fb84eed22fda9d012634"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-source-tools.txt",
+      "original_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490",
+      "export_sha256": "93caf32240018968385fd360790b2115638479e77dee51bcda40f30d89228490"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-tools.svg",
+      "original_sha256": "989550fdc507d5441552372bdbb5c0654a8bebc58eddcc50f9928b1ce5185c1c",
+      "export_sha256": "54e013580f561d2e511f39281ec8055dfe488e4aa2869e2ee70f2e98f6efb37b"
+    },
+    {
+      "path": "current-dev/native/textual-light-120x40-tools.txt",
+      "original_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6",
+      "export_sha256": "313ba305a1015aac205b05f01114f884b640d6d2ce5f5e38476c606d7dd18cc6"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-missing-permissions.svg",
+      "original_sha256": "6c3d5e42eb18160420126126ea411ccc5fbef8b0e8104cf2a91ebe0a5177f6c9",
+      "export_sha256": "3410b0c09fd6b68c4651ea5f54bc8e7dc78e9c2619e3d4a58a2bee135aa14311"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-missing-permissions.txt",
+      "original_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446",
+      "export_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-missing-tools.svg",
+      "original_sha256": "082e6361cdf73878eccbb6570c219711a49e442023b51cde024e942243e10908",
+      "export_sha256": "43a666f19f2f79f3a10a2aeeb177640e0c8b889c815cb71151b8619b1379aa72"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-missing-tools.txt",
+      "original_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446",
+      "export_sha256": "fad7718d7281b5021af4e4ca84cbe2e21cd1f0eb987380e3c0b4242bbbacf446"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-permissions.svg",
+      "original_sha256": "ed19620b17f9a69c66512d314ef1c81d8d658b2e94498a9fb6d76b4d2c16b539",
+      "export_sha256": "d9e9b37040425578ab28e98a1ded29c2861419dfbc620a143c08edabac60bada"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-permissions.txt",
+      "original_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f",
+      "export_sha256": "57190ba35a911d4d88dc2bb8a3283c83f8a5caa623fc9e4fa203fa48da7ef98f"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-source-permissions.svg",
+      "original_sha256": "4b627509010cba2ed2b204626f47c90362a04f71e27bb9f7cbea813520b18233",
+      "export_sha256": "60297e8a91f45791f7726a177e28588788cd76ac4f471cd076afabacef4b4075"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-source-permissions.txt",
+      "original_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1",
+      "export_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-source-tools.svg",
+      "original_sha256": "83280955a789cd79d32704facce7a040824ce12e4af3bceb708b67360f4f1011",
+      "export_sha256": "cb589244b94d1b31f29f83888a64db736ed6836134df1907634dab08e0549dd7"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-source-tools.txt",
+      "original_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1",
+      "export_sha256": "a28165c063f5b920dfe801d7f069974d824e5895d6cb18fe43b0200030f334e1"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-tools.svg",
+      "original_sha256": "d1d2960e9680e4c90cbca70c5f4da75280dba9abcfbe51bc374a32672eb37f7f",
+      "export_sha256": "637b9b1c360066d8bc32ee33d2b64e78dba667c3cc92e0bf0c7c3816f5f5d3d8"
+    },
+    {
+      "path": "current-dev/native/textual-light-170x48-tools.txt",
+      "original_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55",
+      "export_sha256": "abd62be241be2e7e651d0bfbbae1867e90a5d9552f36b3bbfeb7030b948ede55"
+    }
+  ]
+}

@@ -1,107 +1,157 @@
-# Audit navigation native gallery
+# Audit navigation: current-dev visual review
 
-All 16 captures were rendered and inspected. See [scope and lifecycle](README.md).
+Fresh native captures from dev `29b0a31df4701160a3c805e1bf490c76b9353964` plus PR2724.
+See [conflict choices and scope](CURRENT-DEV-REVIEW.md) and [verification](README.md).
+All 24 captures were rendered and inspected. The original 16 captures remain in `native/` as historical evidence only.
 
-## Dark · 120x40
+## textual-dark · 120x40
 
-### Open tool destination
+### Open tool: focused Audit action
 
-![dark 120x40 Open tool destination](native/textual-dark-120x40-tools.svg)
+![textual-dark 120x40 Open tool: focused Audit action](current-dev/native/textual-dark-120x40-source-tools.svg)
 
-[Terminal text](native/textual-dark-120x40-tools.txt)
+[Terminal text](current-dev/native/textual-dark-120x40-source-tools.txt)
 
-### Open tool unavailable warning
+### Open tool: selected destination after filter cleared
 
-![dark 120x40 Open tool unavailable warning](native/textual-dark-120x40-missing-tools.svg)
+![textual-dark 120x40 Open tool: selected destination after filter cleared](current-dev/native/textual-dark-120x40-tools.svg)
 
-[Terminal text](native/textual-dark-120x40-missing-tools.txt)
+[Terminal text](current-dev/native/textual-dark-120x40-tools.txt)
 
-### Adjust permission destination
+### Open tool: unavailable target warning
 
-![dark 120x40 Adjust permission destination](native/textual-dark-120x40-permissions.svg)
+![textual-dark 120x40 Open tool: unavailable target warning](current-dev/native/textual-dark-120x40-missing-tools.svg)
 
-[Terminal text](native/textual-dark-120x40-permissions.txt)
+[Terminal text](current-dev/native/textual-dark-120x40-missing-tools.txt)
 
-### Adjust permission unavailable warning
+### Adjust permission: focused Audit action
 
-![dark 120x40 Adjust permission unavailable warning](native/textual-dark-120x40-missing-permissions.svg)
+![textual-dark 120x40 Adjust permission: focused Audit action](current-dev/native/textual-dark-120x40-source-permissions.svg)
 
-[Terminal text](native/textual-dark-120x40-missing-permissions.txt)
+[Terminal text](current-dev/native/textual-dark-120x40-source-permissions.txt)
 
-## Dark · 170x48
+### Adjust permission: selected destination after filter cleared
 
-### Open tool destination
+![textual-dark 120x40 Adjust permission: selected destination after filter cleared](current-dev/native/textual-dark-120x40-permissions.svg)
 
-![dark 170x48 Open tool destination](native/textual-dark-170x48-tools.svg)
+[Terminal text](current-dev/native/textual-dark-120x40-permissions.txt)
 
-[Terminal text](native/textual-dark-170x48-tools.txt)
+### Adjust permission: unavailable target warning
 
-### Open tool unavailable warning
+![textual-dark 120x40 Adjust permission: unavailable target warning](current-dev/native/textual-dark-120x40-missing-permissions.svg)
 
-![dark 170x48 Open tool unavailable warning](native/textual-dark-170x48-missing-tools.svg)
+[Terminal text](current-dev/native/textual-dark-120x40-missing-permissions.txt)
 
-[Terminal text](native/textual-dark-170x48-missing-tools.txt)
+## textual-dark · 170x48
 
-### Adjust permission destination
+### Open tool: focused Audit action
 
-![dark 170x48 Adjust permission destination](native/textual-dark-170x48-permissions.svg)
+![textual-dark 170x48 Open tool: focused Audit action](current-dev/native/textual-dark-170x48-source-tools.svg)
 
-[Terminal text](native/textual-dark-170x48-permissions.txt)
+[Terminal text](current-dev/native/textual-dark-170x48-source-tools.txt)
 
-### Adjust permission unavailable warning
+### Open tool: selected destination after filter cleared
 
-![dark 170x48 Adjust permission unavailable warning](native/textual-dark-170x48-missing-permissions.svg)
+![textual-dark 170x48 Open tool: selected destination after filter cleared](current-dev/native/textual-dark-170x48-tools.svg)
 
-[Terminal text](native/textual-dark-170x48-missing-permissions.txt)
+[Terminal text](current-dev/native/textual-dark-170x48-tools.txt)
 
-## Light · 120x40
+### Open tool: unavailable target warning
 
-### Open tool destination
+![textual-dark 170x48 Open tool: unavailable target warning](current-dev/native/textual-dark-170x48-missing-tools.svg)
 
-![light 120x40 Open tool destination](native/textual-light-120x40-tools.svg)
+[Terminal text](current-dev/native/textual-dark-170x48-missing-tools.txt)
 
-[Terminal text](native/textual-light-120x40-tools.txt)
+### Adjust permission: focused Audit action
 
-### Open tool unavailable warning
+![textual-dark 170x48 Adjust permission: focused Audit action](current-dev/native/textual-dark-170x48-source-permissions.svg)
 
-![light 120x40 Open tool unavailable warning](native/textual-light-120x40-missing-tools.svg)
+[Terminal text](current-dev/native/textual-dark-170x48-source-permissions.txt)
 
-[Terminal text](native/textual-light-120x40-missing-tools.txt)
+### Adjust permission: selected destination after filter cleared
 
-### Adjust permission destination
+![textual-dark 170x48 Adjust permission: selected destination after filter cleared](current-dev/native/textual-dark-170x48-permissions.svg)
 
-![light 120x40 Adjust permission destination](native/textual-light-120x40-permissions.svg)
+[Terminal text](current-dev/native/textual-dark-170x48-permissions.txt)
 
-[Terminal text](native/textual-light-120x40-permissions.txt)
+### Adjust permission: unavailable target warning
 
-### Adjust permission unavailable warning
+![textual-dark 170x48 Adjust permission: unavailable target warning](current-dev/native/textual-dark-170x48-missing-permissions.svg)
 
-![light 120x40 Adjust permission unavailable warning](native/textual-light-120x40-missing-permissions.svg)
+[Terminal text](current-dev/native/textual-dark-170x48-missing-permissions.txt)
 
-[Terminal text](native/textual-light-120x40-missing-permissions.txt)
+## textual-light · 120x40
 
-## Light · 170x48
+### Open tool: focused Audit action
 
-### Open tool destination
+![textual-light 120x40 Open tool: focused Audit action](current-dev/native/textual-light-120x40-source-tools.svg)
 
-![light 170x48 Open tool destination](native/textual-light-170x48-tools.svg)
+[Terminal text](current-dev/native/textual-light-120x40-source-tools.txt)
 
-[Terminal text](native/textual-light-170x48-tools.txt)
+### Open tool: selected destination after filter cleared
 
-### Open tool unavailable warning
+![textual-light 120x40 Open tool: selected destination after filter cleared](current-dev/native/textual-light-120x40-tools.svg)
 
-![light 170x48 Open tool unavailable warning](native/textual-light-170x48-missing-tools.svg)
+[Terminal text](current-dev/native/textual-light-120x40-tools.txt)
 
-[Terminal text](native/textual-light-170x48-missing-tools.txt)
+### Open tool: unavailable target warning
 
-### Adjust permission destination
+![textual-light 120x40 Open tool: unavailable target warning](current-dev/native/textual-light-120x40-missing-tools.svg)
 
-![light 170x48 Adjust permission destination](native/textual-light-170x48-permissions.svg)
+[Terminal text](current-dev/native/textual-light-120x40-missing-tools.txt)
 
-[Terminal text](native/textual-light-170x48-permissions.txt)
+### Adjust permission: focused Audit action
 
-### Adjust permission unavailable warning
+![textual-light 120x40 Adjust permission: focused Audit action](current-dev/native/textual-light-120x40-source-permissions.svg)
 
-![light 170x48 Adjust permission unavailable warning](native/textual-light-170x48-missing-permissions.svg)
+[Terminal text](current-dev/native/textual-light-120x40-source-permissions.txt)
 
-[Terminal text](native/textual-light-170x48-missing-permissions.txt)
+### Adjust permission: selected destination after filter cleared
+
+![textual-light 120x40 Adjust permission: selected destination after filter cleared](current-dev/native/textual-light-120x40-permissions.svg)
+
+[Terminal text](current-dev/native/textual-light-120x40-permissions.txt)
+
+### Adjust permission: unavailable target warning
+
+![textual-light 120x40 Adjust permission: unavailable target warning](current-dev/native/textual-light-120x40-missing-permissions.svg)
+
+[Terminal text](current-dev/native/textual-light-120x40-missing-permissions.txt)
+
+## textual-light · 170x48
+
+### Open tool: focused Audit action
+
+![textual-light 170x48 Open tool: focused Audit action](current-dev/native/textual-light-170x48-source-tools.svg)
+
+[Terminal text](current-dev/native/textual-light-170x48-source-tools.txt)
+
+### Open tool: selected destination after filter cleared
+
+![textual-light 170x48 Open tool: selected destination after filter cleared](current-dev/native/textual-light-170x48-tools.svg)
+
+[Terminal text](current-dev/native/textual-light-170x48-tools.txt)
+
+### Open tool: unavailable target warning
+
+![textual-light 170x48 Open tool: unavailable target warning](current-dev/native/textual-light-170x48-missing-tools.svg)
+
+[Terminal text](current-dev/native/textual-light-170x48-missing-tools.txt)
+
+### Adjust permission: focused Audit action
+
+![textual-light 170x48 Adjust permission: focused Audit action](current-dev/native/textual-light-170x48-source-permissions.svg)
+
+[Terminal text](current-dev/native/textual-light-170x48-source-permissions.txt)
+
+### Adjust permission: selected destination after filter cleared
+
+![textual-light 170x48 Adjust permission: selected destination after filter cleared](current-dev/native/textual-light-170x48-permissions.svg)
+
+[Terminal text](current-dev/native/textual-light-170x48-permissions.txt)
+
+### Adjust permission: unavailable target warning
+
+![textual-light 170x48 Adjust permission: unavailable target warning](current-dev/native/textual-light-170x48-missing-permissions.svg)
+
+[Terminal text](current-dev/native/textual-light-170x48-missing-permissions.txt)

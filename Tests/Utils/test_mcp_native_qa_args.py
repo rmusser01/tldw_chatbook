@@ -11,6 +11,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 RUNNERS = [
+    REPO / "Docs/superpowers/qa/2026-09-18-mcp-audit-navigation/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-19-mcp-session-revocation/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-19-mcp-permission-navigation/native_check.py",
@@ -18,7 +19,9 @@ RUNNERS = [
 
 
 @pytest.mark.parametrize(
-    "runner", RUNNERS, ids=["revoke", "rule-actions", "permission-navigation"]
+    "runner",
+    RUNNERS,
+    ids=["audit-navigation", "revoke", "rule-actions", "permission-navigation"],
 )
 @pytest.mark.parametrize(
     "arguments",

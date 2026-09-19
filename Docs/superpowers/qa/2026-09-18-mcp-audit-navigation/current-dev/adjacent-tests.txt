@@ -1,0 +1,263 @@
+EEE...............................................                       [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested] _
+
+self = <Coroutine test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:137: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:1166: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109777650>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+---------------------------- Captured stderr setup -----------------------------
+2026-09-19 12:22:31.926 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-19 12:22:31.966 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-19 12:22:31.973 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-19 12:22:31.975 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-09-19 12:22:32.202 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-09-19 12:22:32.455 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+_ ERROR at setup of test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested] _
+
+self = <Coroutine test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:137: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:1166: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109777650>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+_ ERROR at setup of test_profile_scoped_inspector_requests_preserve_captured_context _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_profile_scoped_inspector_requests_preserve_captured_context>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/conftest.py:137: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:1166: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109777650>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+- generated xml file: /private/tmp/tldw-32837-followup-adjacent-001/results.xml -
+============================= slowest 25 durations =============================
+20.34s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+18.92s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+4.54s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+2.34s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.29s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+2.16s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+1.99s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target
+1.97s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_moves_cursor_to_matching_tool_row
+1.87s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_returns_false_for_tool_not_in_matrix
+1.81s call     Tests/UI/test_component_pattern_governance.py::test_pin_rejects_active_css_extension_without_writing_baseline
+1.80s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+1.78s call     Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+1.77s call     Tests/UI/test_component_pattern_governance.py::test_catalog_and_gallery_sync
+1.77s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_ignores_tokens_and_token_definitions
+1.74s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+1.73s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]
+1.73s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling
+1.73s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.71s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+1.71s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]
+1.68s call     Tests/UI/test_component_pattern_governance.py::test_ratchet_regexes_match_pin_script
+1.65s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.65s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.63s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.62s call     Tests/UI/test_component_pattern_governance.py::test_canonical_owning_sheets_are_bundled
+=========================== short test summary info ============================
+ERROR Tests/UI/test_mcp_inspector.py::test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]
+ERROR Tests/UI/test_mcp_inspector.py::test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+ERROR Tests/UI/test_mcp_inspector.py::test_profile_scoped_inspector_requests_preserve_captured_context
+47 passed, 3 errors in 110.92s (0:01:50)
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-020a578e-50f7-4c41-bca8-903eb1a418ce/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-020a578e-50f7-4c41-bca8-903eb1a418ce/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-020a578e-50f7-4c41-bca8-903eb1a418ce
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-020a578e-50f7-4c41-bca8-903eb1a418ce'
+  warnings.warn(

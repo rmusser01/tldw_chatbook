@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 05:23'
-updated_date: '2026-09-19 05:38'
+updated_date: '2026-09-19 19:27'
 labels: []
 dependencies: []
 ---
@@ -21,21 +21,22 @@ Make Audit Open tool and Adjust permission actions keep the identity the user se
 - [x] #1 Retired Audit controls cannot navigate to a replacement record; current controls preserve rendered tool and profile identity.
 - [x] #2 Missing destination rows do not leave stale tool or permission detail; current and filtered targets still navigate correctly.
 - [x] #3 Targeted ownership/routing regressions and private dark/light native journeys verify the bounded repair.
+- [x] #4 Queued Audit navigation is ignored when its control or owning view becomes hidden, disabled or covered; live controls remain repeatable and keep their rendered identity.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Reproduce held Button.Pressed after Audit replacement/clear and loss of a destination row while navigation waits.
-2. Bind Audit actions to their mounted control and immutable rendered context; honor destination-selection failure without stale detail.
-3. Preserve profile checks and normal/filtered/missing-tool routing; verify targeted tests, independent review and private native dark/light journeys. Save a separate draft PR against dev.
+1. Preserve both report histories while rebasing the existing Audit PR onto merged dev.
+2. Exercise actual queued Button.Pressed messages, pending pruning and unavailable control/view ownership. Reproduce the unavailable-view failure before applying the adjacent permission-jump guard.
+3. Refresh the validated native runner and private dark/light compact/wide evidence. Run targeted tests, preflight and independent review; update draft PR2724 for final visual approval.
 ADR required: no
 ADR path: backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md
-Reason: repair of existing inspector/action ownership and selection contracts; no new runtime authority, persistent state or application structure.
+Reason: routine hardening of the existing action ownership and selection contracts; no new runtime authority, storage or application structure.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Bound each Audit action control to its rendered tool/profile identity and invalidated retired controls before asynchronous pruning. Both drill destinations now honor failed row selection and leave detail cleared with the existing warning. Added 14 regressions; all 64 targeted cases and seven preflight guards pass. Ruff introduces no diagnostics and changed ranges/new files pass formatting. Independent read-only review found no blocker. Sixteen inspected native captures cover dark/light at 120x40 and 170x48 with real private catalog rows, filtered destinations and missing-tool warnings; clean exit, unchanged defaults, no execution or permission changes. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-navigation/README.md. Existing ADR-150/161 apply; no new architectural decision. Updated both component review ledgers. Same-ID catalog replacement during an in-flight drill remains a separate next review; final visual approval and current-head CI are required before merge.
+Audit actions capture rendered tool/profile identity, invalidate retired controls before pruning, reject unavailable controls or owning views, and remain repeatable when current. Both destinations honor failed row selection and clear stale detail with the existing warning. Updated existing draft PR2724 by rebasing onto merged dev 29b0a31df4701160a3c805e1bf490c76b9353964; both documentation conflicts preserve current dev history and Audit notes, while production code auto-merged. Current verification: 145 distinct targeted checks, seven preflight guards, no new Ruff diagnostics, formatted changed ranges and independent review without blockers. Twelve unavailable-view cases failed before the guard. Three old inspector setup errors were fixed using the existing private-profile process wrapper without changing their assertions or production recovery gates. The refreshed native launcher validates paths/arguments, uses the supported terminal warm-up and blocks network connects. Twenty-four inspected dark/light captures at 120x40 and 170x48 verify focused actions, filtered destinations and missing-target warnings; clean private lifecycle, unchanged defaults and permission profiles, no execution/network. Evidence and exact conflict choices: Docs/superpowers/qa/2026-09-18-mcp-audit-navigation/README.md and CURRENT-DEV-REVIEW.md. ADR-150/161 apply; no new ADR. Same-ID catalog freshness remains PR2726. Current-head CI/review and PR2724 visual approval are still required before merge.
 <!-- SECTION:NOTES:END -->

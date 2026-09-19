@@ -3835,7 +3835,15 @@ class MCPInspector(Vertical):
         if button_id in {"mcp-audit-open-tool", "mcp-audit-adjust-permission"}:
             event.stop()
             target = self._audit_action_targets.get(event.button)
-            if target is None or not event.button.is_attached:
+            if (
+                target is None
+                or not event.button.is_attached
+                or not event.button.display
+                or not event.button.visible
+                or any(not parent.display for parent in event.button.ancestors)
+                or event.button.is_disabled
+                or event.button.screen is not self.app.screen
+            ):
                 return
             request = (
                 self.AuditOpenToolRequested

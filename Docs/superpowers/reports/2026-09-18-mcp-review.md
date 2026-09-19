@@ -3,7 +3,21 @@
 This ledger separates qualified repairs from remaining destination behavior.
 Token migration alone does not qualify a complete workflow.
 
-## Current closeout checkpoint
+## Current checkpoint — PR2724 integration
+
+PR2731 (session revocation), PR2734 (permission rule actions) and PR2740
+(permission navigation) have merged. PR2707's continuation heartbeat remains
+paused. Existing draft PR2724 / TASK-32837 is rebased onto dev
+`29b0a31df4701160a3c805e1bf490c76b9353964`, preserving all three merged repairs.
+Only this ledger and the completion report conflicted; both histories were kept.
+[Exact conflict choices and fresh visuals](../qa/2026-09-18-mcp-audit-navigation/CURRENT-DEV-REVIEW.md)
+cover the integration and rejection of queued Audit controls whose owning view
+has become unavailable. Current-head CI and PR2724's own final visual approval
+remain required. Same-ID catalog freshness is saved separately in PR2726;
+connected-runtime journeys and the wider destination review remain open.
+All pending/next statements below are historical checkpoints.
+
+## Earlier closeout checkpoint
 
 PR2707 is merged and its heartbeat remains paused. The owner approved the
 PR2731/PR2734 continuation and visual evidence. Both follow-ups are ready, with
