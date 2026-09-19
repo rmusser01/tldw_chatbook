@@ -1,0 +1,46 @@
+........................................................................ [ 35%]
+........................................................................ [ 70%]
+...........................................................              [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+-- generated xml file: /private/tmp/tldw-2726-closeout-green-001/results.xml ---
+============================= slowest 25 durations =============================
+19.27s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+11.79s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-permissions]
+11.09s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-tools]
+10.51s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-permissions]
+9.59s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+9.38s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-tools]
+8.39s call     Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+4.70s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[tools]
+4.51s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[permissions]
+4.30s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]
+4.27s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]
+4.26s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-permissions]
+4.21s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-tools]
+4.14s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-tools]
+4.02s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-permissions]
+3.95s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_catalog_navigation_rejects_profile_change_during_row_selection[permissions]
+3.88s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_catalog_navigation_rejects_profile_change_during_row_selection[tools]
+3.67s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+3.52s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-dictionary]
+3.49s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-extraction]
+3.48s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-conversation]
+3.33s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-conversation]
+3.29s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-extraction]
+3.23s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-dictionary]
+2.68s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+203 passed, 3 warnings in 189.03s (0:03:09)
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1fbff1cc-0a00-4889-ab8b-98e1a4082763/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1fbff1cc-0a00-4889-ab8b-98e1a4082763/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1fbff1cc-0a00-4889-ab8b-98e1a4082763
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1fbff1cc-0a00-4889-ab8b-98e1a4082763'
+  warnings.warn(

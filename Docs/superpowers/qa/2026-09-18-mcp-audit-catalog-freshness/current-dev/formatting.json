@@ -1,0 +1,90 @@
+[
+  {
+    "path": "Tests/UI/test_mcp_audit_catalog_freshness.py",
+    "formatted": true
+  },
+  {
+    "path": "Tests/Utils/test_mcp_native_qa_args.py",
+    "formatted": true
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/native_check.py",
+    "formatted": true
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/native_journey.py",
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      4869,
+      4875
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      4884,
+      4892
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      4898,
+      4899
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      4901,
+      4901
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      5009,
+      5021
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      5023,
+      5023
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      5027,
+      5027
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      5036,
+      5038
+    ],
+    "formatted": true
+  },
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "range": [
+      5040,
+      5040
+    ],
+    "formatted": true
+  }
+]
