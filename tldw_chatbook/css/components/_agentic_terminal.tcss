@@ -1092,6 +1092,22 @@ ListItem.personas-library-row.is-active.-highlight {
     min-height: $ds-size-0;
 }
 
+/* Actions stay operable inside the compact inspector's scroll viewport.
+   Button's default minimum otherwise extends under the scrollbar, and a
+   one-row action silently truncates the one-shot approval label. */
+Button.mcp-inspector-control {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-control-height-compact;
+    padding: $ds-space-0;
+}
+
+#mcp-inspector-test-panel {
+    height: auto;
+    min-height: $ds-size-0;
+}
+
 /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
    MCPWorkbench.on_resize) the triad rebalances toward the canvas so the
    servers table keeps its primary columns in-viewport; the rail/inspector

@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+2.91s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]
+2.70s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]
+2.59s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-light]
+2.48s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]
+2.45s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-light]
+2.43s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-light]
+
+(12 durations < 1s hidden.)
+6 passed, 8 deselected in 16.70s

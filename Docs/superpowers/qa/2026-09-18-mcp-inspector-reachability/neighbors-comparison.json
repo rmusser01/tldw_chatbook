@@ -1,0 +1,11 @@
+{
+  "baseline_sha": "149acda36be8939fe8cd5e589bf77d13462257e7",
+  "baseline_exit": 1,
+  "production_restored": true,
+  "restored_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c4292ad1da237a14e3fdab8ec7ab0372f39ab3b720983f72630d8752ab4d5e99",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "9092854d35877effc448e549e3a173052994aa3b674b355b0be1fbdc88fe1057",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "50f2410cf577b9a6056938865a70386e03bd7ac6e49ff62a189a224c43f12b0d",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "b4a57140ffae703c3bdc11e9919bd6a672b7dc47ecc65cee41238e807d7216eb"
+  }
+}

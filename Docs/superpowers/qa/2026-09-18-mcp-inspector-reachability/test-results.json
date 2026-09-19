@@ -1,0 +1,462 @@
+{
+  "red": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-light]",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-dark]",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-light]",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-dark]",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-light]",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]",
+      "outcome": "error"
+    }
+  ],
+  "red-private": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-light]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-dark]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-light]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-dark]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-light]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]",
+      "outcome": "failed"
+    }
+  ],
+  "overflow-probe": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]",
+      "outcome": "failed"
+    }
+  ],
+  "size-probe": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]",
+      "outcome": "failed"
+    }
+  ],
+  "green": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]",
+      "outcome": "failed"
+    }
+  ],
+  "focus-settled": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]",
+      "outcome": "passed"
+    }
+  ],
+  "sibling-red": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]",
+      "outcome": "failed"
+    }
+  ],
+  "sibling-scroll-red": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]",
+      "outcome": "failed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]",
+      "outcome": "failed"
+    }
+  ],
+  "all-geometry": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-light]",
+      "outcome": "passed"
+    }
+  ],
+  "permission-final": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-light]",
+      "outcome": "passed"
+    }
+  ],
+  "governance": [
+    {
+      "id": "Tests.UI.test_design_token_governance::test_all_referenced_ds_tokens_are_defined",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_defined_tokens_have_no_orphans_in_catalog",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_documented_design_vocabulary_is_available",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_literals_are_ratcheted_outside_token_definitions",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_hex_ratchet_ignores_comments",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_new_sheets_must_use_spacing_tokens",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_active_css_extension_is_in_hex_floor",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_design_token_governance::test_section_header_preserves_global_and_stats_computed_geometry",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_classes_defined_only_in_owning_sheet",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_canonical_owning_sheets_are_bundled",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_deprecated_names_ratchet_down",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_catalog_and_gallery_sync",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_no_new_local_ds_fallbacks",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_literal_ratchet",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_python_style_ratchet",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_sheet_size_ceiling",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_ratchet_regexes_match_pin_script",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-0 -2;]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_and_pin_reject_every_numeric_slot[height: +.25;]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_dimension_floor_ignores_tokens_and_token_definitions",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_active_css_extension_is_in_dimension_floor",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_component_pattern_governance::test_pin_rejects_active_css_extension_without_writing_baseline",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.Performance.test_boot_css_byte_budget::test_boot_parsed_css_bytes_stay_within_budget",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.Performance.test_textual_css_fastpath::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+      "outcome": "passed"
+    }
+  ],
+  "neighbors": [
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_test_run_posts_tool_test_requested_with_collected_arguments",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_raw_mode_tool_test_panel_shows_raw_textarea",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_show_tool_result_ok_renders_status_line_and_reenables_run",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_close_button_removes_test_panel_and_reenables_test_tool_button",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_test_panel_open_moves_focus_inside_and_escape_closes",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_run_action_is_reachable_under_a_tall_section_payload",
+      "outcome": "error"
+    }
+  ],
+  "neighbors-baseline": [
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_test_run_posts_tool_test_requested_with_collected_arguments",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_raw_mode_tool_test_panel_shows_raw_textarea",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_show_tool_result_ok_renders_status_line_and_reenables_run",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_close_button_removes_test_panel_and_reenables_test_tool_button",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_test_panel_open_moves_focus_inside_and_escape_closes",
+      "outcome": "error"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_run_action_is_reachable_under_a_tall_section_payload",
+      "outcome": "error"
+    }
+  ],
+  "rebased": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-light]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]",
+      "outcome": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_reachability::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-light]",
+      "outcome": "passed"
+    }
+  ]
+}

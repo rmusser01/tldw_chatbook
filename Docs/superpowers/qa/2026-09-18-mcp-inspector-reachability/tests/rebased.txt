@@ -1,0 +1,19 @@
+..............                                                           [100%]
+============================= slowest 25 durations =============================
+3.63s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-dark]
+3.51s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-dark]
+3.49s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[False-size0-textual-light]
+3.42s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[True-size0-textual-light]
+3.25s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-light]
+3.08s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[False-size1-textual-dark]
+2.80s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-dark]
+2.75s call     Tests/UI/test_mcp_inspector_reachability.py::test_keyboard_form_actions_and_resize_keep_arguments[True-size1-textual-light]
+2.31s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-dark]
+2.30s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[advanced-textual-light]
+2.04s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-dark]
+2.01s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[permission-textual-light]
+1.98s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-dark]
+1.93s call     Tests/UI/test_mcp_inspector_reachability.py::test_other_inspector_actions_fit_beside_scrollbar[readiness-textual-light]
+
+(11 durations < 1s hidden.)
+14 passed in 39.65s

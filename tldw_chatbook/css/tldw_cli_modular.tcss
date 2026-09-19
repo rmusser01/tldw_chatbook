@@ -3394,6 +3394,20 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 
+Button.mcp-inspector-control {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-control-height-compact;
+    padding: $ds-space-0;
+}
+
+#mcp-inspector-test-panel {
+    height: auto;
+    min-height: $ds-size-0;
+}
+
+
 #mcp-hub-grid.mcp-compact #mcp-hub-rail {
     width: $ds-fr-2;
     min-width: $ds-size-16;

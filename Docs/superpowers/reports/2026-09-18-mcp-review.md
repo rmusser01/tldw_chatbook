@@ -20,21 +20,34 @@ Token migration alone does not qualify a complete workflow.
 | Compact rail navigation | TASK-32812, [119 targeted cases and eight native captures](../qa/2026-09-18-mcp-rail-navigation/README.md) | Full All servers/Source paint, literal Unicode names/counts, ordinary-refresh/resize focus, exact row identity and scrollbars; structural catalog replacement focus is not qualified |
 | Complete tool-switch labels | TASK-32822, [37 targeted cases and eight native captures](../qa/2026-09-18-mcp-gate-labels/README.md) | All eleven gate labels, focus/scroll reveal, disabled dependencies and real private Deep research save/reversal; no broader save concurrency or execution qualification |
 
-## PR #2707 closeout boundary
+## Post-merge follow-ups
 
-The owner approved moving remaining MCP reviews to follow-up PRs. TASK-32823
-is preserved on `codex/mcp-inspector-refresh-followup` at `135f226888`, outside
-PR #2707. Its inspector refresh prototype has an unresolved delayed-preview
-ownership race; it is not qualified or complete. Resume MCP lifecycle/inspector
-work from merged `dev` after the current PR receives final visual approval and
-its merge is confirmed.
+PR [2707](https://github.com/rmusser01/tldw_chatbook/pull/2707) merged into dev at
+149acda36be8939fe8cd5e589bf77d13462257e7. Its post-merge heartbeat is paused;
+component review resumed on separate bounded branches. Earlier closeout notes
+are historical, not a current merge gate for that already-merged PR.
+
+The following independently based draft PRs retain their own evidence and visual
+approval requirement: [2711 inspector refresh](https://github.com/rmusser01/tldw_chatbook/pull/2711),
+[2712 server action ownership](https://github.com/rmusser01/tldw_chatbook/pull/2712),
+[2713 lifecycle cancellation](https://github.com/rmusser01/tldw_chatbook/pull/2713),
+[2714 connected catalog refresh](https://github.com/rmusser01/tldw_chatbook/pull/2714),
+and [2716 tool-error propagation](https://github.com/rmusser01/tldw_chatbook/pull/2716).
+PR2716's applicable remote checks pass on 5d3e1cb97b; these changes are not included
+in the inspector reachability branch.
+
+TASK-32832, `codex/mcp-inspector-scroll-review`, repairs the compact Test Tool
+viewport, action wrapping and focused-control reveal after resize. Its
+[42 distinct targeted checks and 12 inspected native captures](../qa/2026-09-18-mcp-inspector-reachability/README.md)
+qualify schema/raw argument draft retention, Ask execution through a real private
+stdio process, validation recovery, Close/reopen and sibling button geometry.
+Seven preflight guards and independent review pass. Six older selected tests
+have matching profile-setup errors on unchanged and modified source; they are
+not counted as passing. This bounded qualification does not complete MCP review.
 
 ## Remaining review
 
-- **Remote verification:** Fast Lane, CSS, latency, backlog and all platform GGUF
-  checks pass on saved head d7b4c10a7d. The derived-artifact aggregate is still
-  running at this checkpoint; checks on the next pushed head are separate.
-  TASK-32814 repaired the earlier rail ellipsis assertion failure.
+- **Remote verification:** each follow-up PR requires checks on its own pushed head.
 - **Existing test debt:** four Audit CSS literal assertions fail against unchanged
   token-based CSS; two Speech harness cases failed during profile setup before UI
   creation. Both boundaries are recorded in TASK-32796 evidence. TASK-32812 also
@@ -44,6 +57,9 @@ its merge is confirmed.
 - **Inspector refresh and execution:** selected tool definition/currentness,
   argument drafts across background refresh, diagnostic empty-state action routing,
   disconnected/stale tools, schema/raw arguments, execution and inspector recovery.
+  Review the compact Raw response disclosure title/content next: the title is
+  clipped in TASK-32832 captures. Error/current-result recovery still needs its
+  own qualification; the reachability fix does not qualify every execution state.
 - **Servers:** source transitions, add/edit/remove and connection lifecycles,
   built-in enable/expose controls, errors and recovery. TASK-32822 repairs the
   compact non-master gate label clipping recorded in TASK-32793. The All servers
@@ -52,5 +68,5 @@ its merge is confirmed.
   restored roots, bulk actions, review/approval and connected-runtime journeys.
 
 The [component completion ledger](2026-09-17-design-system-completion-audit.md)
-retains other destinations. Draft PR2707 remains open and subject to its own
-visual review and merge approval.
+retains other destinations. Follow-up drafts remain subject to their own visual
+review and merge approval.
