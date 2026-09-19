@@ -480,7 +480,7 @@ async def stop_server_process(
     return stopped
 
 
-def _signal_server_process_group(process: Any, sig: int) -> None:
+def _signal_server_process_group(process: Any, *, hard: bool) -> None:
     """Signal the whole group a local server was spawned into.
 
     TASK-32806.5: these servers fork workers. Signalling only the direct
@@ -498,6 +498,10 @@ def _signal_server_process_group(process: Any, sig: int) -> None:
     """
     if os.name != "posix":
         return
+    # Resolved HERE, not at the call site: Windows has no SIGKILL, and an
+    # argument is evaluated before the call, so naming it in the caller
+    # raised AttributeError on Windows before this guard could run.
+    sig = signal.SIGKILL if hard else signal.SIGTERM
     pid = getattr(process, "pid", None)
     if not isinstance(pid, int) or pid <= 0:
         return
@@ -523,7 +527,7 @@ def terminate_process_bounded(process: Any, timeout: float = 5.0) -> bool:
     if not process_is_running(process):
         return True
     try:
-        _signal_server_process_group(process, signal.SIGTERM)
+        _signal_server_process_group(process, hard=False)
         process.terminate()
         try:
             process.wait(timeout=timeout)
@@ -533,14 +537,14 @@ def terminate_process_bounded(process: Any, timeout: float = 5.0) -> bool:
         pass
     if process_is_running(process):
         try:
-            _signal_server_process_group(process, signal.SIGKILL)
+            _signal_server_process_group(process, hard=True)
             process.kill()
             process.wait(timeout=timeout)
         except Exception:
             pass
     else:
         # The leader is gone; its workers must not outlive it.
-        _signal_server_process_group(process, signal.SIGKILL)
+        _signal_server_process_group(process, hard=True)
     return not process_is_running(process)
 
 
