@@ -330,3 +330,32 @@ async def test_cancel_render_keeps_original_operation_across_detail_await(reques
         await finish(app)
         assert rendered[0] is original
         assert not cancelled
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_immediate_native_worker_completion_releases_admission(request):
+    """Native App.run uses eager tasks; run_test normally hides this boundary."""
+    app = LifecycleApp()
+    calls = []
+
+    async def immediate(profile_id):
+        calls.append(profile_id)
+        return {"tools": []}
+
+    app.unified_mcp_service.refresh_local_profile = immediate
+    async with app.run_test() as pilot:
+        wb = await ready(app, pilot)
+        loop = asyncio.get_running_loop()
+        previous_factory = loop.get_task_factory()
+        loop.set_task_factory(asyncio.eager_task_factory)
+        try:
+            wb._start_lifecycle("local:docs", "docs", "refresh")
+            await finish(app)
+            assert "local:docs" not in wb._in_flight
+            wb._start_lifecycle("local:docs", "docs", "refresh")
+            await finish(app)
+        finally:
+            loop.set_task_factory(previous_factory)
+        assert calls == ["docs", "docs"]
+        assert "local:docs" not in wb._in_flight

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 01:17'
-updated_date: '2026-09-19 01:41'
+updated_date: '2026-09-19 02:00'
 labels:
   - mcp
   - ui
@@ -40,4 +40,6 @@ ADR required: no. ADR path: backlog/decisions/161-component-pattern-library.md. 
 Keep per-server lifecycle ownership until the original worker and final readiness collection settle. Inspector Cancel binds the displayed control, server and operation; stale/repeated intents cannot cancel replacements or interrupt cleanup. Lazy lifecycle/redraw callbacks prevent pre-start coroutine leaks. Ten new regressions and eleven UI neighbors pass; thirteen token/bundle checks pass (34 distinct focused cases). Four native dark/light compact/wide cells and twelve inspected captures qualify visible cancellation progress and retry with controlled client cleanup/failure through the real control-plane/persistence path. Native shutdown, lock, ten DBs, default-file fingerprints and source hashes pass. Seven preflight guards pass; no introduced Ruff diagnostics versus dev. Independent review findings fixed; final review has no blockers. Four unrelated service tests reproduce raw_source_selection_changed on unchanged dev and remain documented baseline debt. Existing ADR-161 applies; no new ADR or transport/security/token contract change. Evidence: Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/README.md. The separate draft PR retains CI, remote review and owner visual approval gates.
 
 Saved independently as draft PR #2713 against dev: https://github.com/rmusser01/tldw_chatbook/pull/2713. Current-head CI, accumulated review and owner visual approval remain merge gates; broader MCP external connection and execution review remains open.
+
+Real stdio follow-up reproduced native eager-worker completion leaving a SUCCESS worker busy on unchanged dev. The existing observer already fixes it; added an isolated regression using asyncio.eager_task_factory, red on dev and green here, with immediate retry. Total now 35 distinct passing cases. Real comparison connection/refresh/disconnect/reconnect exited cleanly; cached catalog refresh is a separate next-review issue. No production change in this follow-up.
 <!-- SECTION:NOTES:END -->

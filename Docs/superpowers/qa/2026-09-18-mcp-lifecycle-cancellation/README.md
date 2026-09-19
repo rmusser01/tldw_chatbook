@@ -15,9 +15,10 @@ timeout, permission and persistence contracts are unchanged; no CSS/token change
 
 ## Verification
 
-- **34 distinct passing targeted cases**: [21 lifecycle UI cases](targeted-ui.txt)
+- **35 distinct passing targeted cases**: [21 lifecycle UI cases](targeted-ui.txt)
+  plus [one native-scheduling regression](targeted-native-scheduling.txt)
   and [13 token/generated-CSS checks](targeted-css.txt). The [exact inventory](test-results.json)
-  includes ten new regressions: held cleanup, independent profiles, repeated Cancel,
+  includes eleven new regressions: held cleanup, independent profiles, repeated Cancel,
   queued retired buttons/messages across same/different server attempts,
   cancellation before startup, actual success/error after suppressed cancellation,
   held final collection, and operation identity across awaited detail rendering.
@@ -35,7 +36,7 @@ timeout, permission and persistence contracts are unchanged; no CSS/token change
   (`RecoveryRequired: raw_source_selection_changed`) and three passes, reproduced
   unchanged on fresh dev: [current run](service-neighbors-initial.txt),
   [baseline run](service-neighbors-baseline.txt). They do not qualify service outcomes
-  and are not counted among the 34 passes. No full repository sweep was run.
+  and are not counted among the 35 passes. No full repository sweep was run.
 
 ## Native evidence and visual review
 
@@ -77,3 +78,21 @@ controlled client delays/failure. It does not qualify a successful external
 server connection, connected tool execution, every recovery path, or the entire
 MCP destination. Current-head CI, accumulated remote review and owner visual
 approval remain separate merge gates.
+
+## Real connection follow-up — native worker scheduling
+
+A real stdio fixture exposed another admission boundary: Textual `App.run()`
+installs `asyncio.eager_task_factory`, while `run_test()` normally does not. On
+unchanged dev, a cached Refresh completed synchronously before its worker was
+registered, leaving a SUCCESS worker permanently busy. The existing PR2713
+observer already handles this ordering. A [failing dev regression](red-native-scheduling.txt)
+now [passes](targeted-native-scheduling.txt), including immediate retry, without
+additional production changes. The total is 35 distinct passing cases.
+
+The [native wire comparison](native-wire-comparison.json) completed connection,
+Refresh, disconnect, reconnect and final disconnect on the saved implementation;
+[shutdown and persistence checks](native-wire-comparison-lifecycle.json) passed.
+The fixture processes were reaped (`returncode=-15` from normal client terminate).
+This probe also exposed a separate open bug: connected Refresh reports success
+but returns its cached catalog; only reconnect discovers the changed tool. That
+service repair belongs to the next bounded review, not this cancellation PR.

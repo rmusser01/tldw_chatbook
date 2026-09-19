@@ -222,6 +222,30 @@
       "export": "initial-probe.json",
       "raw_sha256": "6c74789cff4c9036156c1f03ec00bba965294dbf7f12051b9d074454a17e9919",
       "export_sha256": "6c74789cff4c9036156c1f03ec00bba965294dbf7f12051b9d074454a17e9919"
+    },
+    {
+      "source": "/private/tmp/32829-red-eager/pytest.log",
+      "export": "red-native-scheduling.txt",
+      "raw_sha256": "421d456317e28fc731e1406a21f60db894844c3ae822a5dd40f71e4219b1d493",
+      "export_sha256": "8609637058f607788dcf6eb35e171586c0afdb67606eb03c8529c24dbb740c80"
+    },
+    {
+      "source": "/private/tmp/32829-green-eager/pytest.log",
+      "export": "targeted-native-scheduling.txt",
+      "raw_sha256": "614e2d12c66cda61ed448423fca473e3b68f8b2a6a3a28fa775d558830e8c9fb",
+      "export_sha256": "614e2d12c66cda61ed448423fca473e3b68f8b2a6a3a28fa775d558830e8c9fb"
+    },
+    {
+      "source": "/private/tmp/tldw-mcp-connection-probe-003/evidence/result.json",
+      "export": "native-wire-comparison.json",
+      "raw_sha256": "3e1427032be3c8e98f45ee7e1c0b83c6e23e775f1f0ffcfd61102fa45b4d2451",
+      "export_sha256": "3e1427032be3c8e98f45ee7e1c0b83c6e23e775f1f0ffcfd61102fa45b4d2451"
+    },
+    {
+      "source": "/private/tmp/tldw-mcp-connection-probe-003/lifecycle.json",
+      "export": "native-wire-comparison-lifecycle.json",
+      "raw_sha256": "77e67533afb706cc5a7b60e1d74073621180de7a36cf5c065bdcba6d4daa80cd",
+      "export_sha256": "77e67533afb706cc5a7b60e1d74073621180de7a36cf5c065bdcba6d4daa80cd"
     }
   ]
 }

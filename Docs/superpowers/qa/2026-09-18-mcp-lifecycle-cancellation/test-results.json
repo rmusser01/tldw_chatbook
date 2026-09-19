@@ -1,5 +1,5 @@
 {
-  "distinct_passed": 34,
+  "distinct_passed": 35,
   "runs": [
     {
       "source": "/private/tmp/32829-green-final/results.xml",
@@ -45,6 +45,13 @@
         "Tests.UI.test_css_bundle_sync_guard::test_committed_bundle_reproduces_from_sources",
         "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace",
         "Tests.UI.test_css_bundle_sync_guard::test_generated_widget_and_screen_sheets_end_with_one_newline"
+      ]
+    },
+    {
+      "source": "/private/tmp/32829-green-eager/results.xml",
+      "passed": 1,
+      "test_ids": [
+        "Tests.UI.test_mcp_lifecycle_cancellation::test_immediate_native_worker_completion_releases_admission"
       ]
     }
   ]

@@ -346,6 +346,11 @@ remain open. PR2711 and PR2712 have green applicable current-head Actions checks
 remote review and owner visual approval remain open for each bounded follow-up.
 
 TASK-32829 is Done and saved as [draft PR #2713](https://github.com/rmusser01/tldw_chatbook/pull/2713).
-34 focused cases, seven preflight guards, four native cells and twelve inspected
+35 focused cases, seven preflight guards, four native cells and twelve inspected
 captures pass. Its current-head CI, remote review and owner visual approval remain
 open; broader external connection and execution reviews remain unfinished.
+
+The real connection follow-up pinned Textual native eager-worker completion in
+TASK-32829: the saved observer already prevents a completed worker remaining busy.
+A separate connected Refresh catalog bug is confirmed by real stdio requests and
+remains open for the next bounded service repair.
