@@ -4862,18 +4862,32 @@ class MCPWorkbench(Container):
         # the same exclusive "mcp-tool-clear" group, so it must not be
         # relied upon here.
         await inspector.show_audit_entry(None)
-        await self.query_one(MCPToolsMode).select_tool_row(tool.tool_id)
-        context = self._validate_profile_context(context)
-        if context is None:
-            await inspector.show_tool(None)
-            return
-        await inspector.show_tool(
-            tool,
-            effective=self._effective_for_display(tool),
-            profile_context=context,
-            arg_rules=self._arg_rules_for_row(tool, context.profile_id),
-            session_approvals=self._session_approvals_for_row(context.profile_id),
-        )
+        # A catalog sync may have replaced this identity while we cleared.
+        # Share its lock through rendering so rows, definition and policy
+        # come from a completed publication, including inspector lock waits.
+        async with self._sync_children_lock:
+            context = self._validate_profile_context(context)
+            if context is None:
+                await inspector.show_tool(None)
+                return
+            current = self._tool_for(tool.server_key, tool.name)
+            if current is None:
+                await inspector.show_tool(None)
+                self.app.notify(
+                    _toast(
+                        f"{tool.server_key}::{tool.name}: tool no longer available."
+                    ),
+                    severity="warning",
+                )
+                return
+            await self.query_one(MCPToolsMode).select_tool_row(current.tool_id)
+            await inspector.show_tool(
+                current,
+                effective=self._effective_for_display(current),
+                profile_context=context,
+                arg_rules=self._arg_rules_for_row(current, context.profile_id),
+                session_approvals=self._session_approvals_for_row(context.profile_id),
+            )
 
     async def on_mcp_inspector_audit_adjust_permission_requested(
         self, event: MCPInspector.AuditAdjustPermissionRequested
@@ -4976,18 +4990,32 @@ class MCPWorkbench(Container):
         # Permissions-mode block. Harmless no-op for the audit-drill
         # caller, where `#mcp-inspector-tool` is already hidden.
         await inspector.show_tool(None)
-        self.query_one(MCPPermissionsMode).select_tool_row(tool.server_key, tool.name)
-        context = self._validate_profile_context(context)
-        if context is None:
-            return
-        await inspector.show_permission(
-            tool,
-            self._effective_for_display(tool),
-            cascade=self._cascade_for_tool(tool),
-            profile_context=context,
-            arg_rules=self._arg_rules_for_row(tool, context.profile_id),
-            session_approvals=self._session_approvals_for_row(context.profile_id),
-        )
+        # Match the Tools drill's publication boundary; the captured object
+        # is only an identity hint after the clearing awaits above.
+        async with self._sync_children_lock:
+            context = self._validate_profile_context(context)
+            if context is None:
+                return
+            current = self._tool_for(tool.server_key, tool.name)
+            if current is None:
+                self.app.notify(
+                    _toast(
+                        f"{tool.server_key}::{tool.name}: tool no longer available."
+                    ),
+                    severity="warning",
+                )
+                return
+            self.query_one(MCPPermissionsMode).select_tool_row(
+                current.server_key, current.name
+            )
+            await inspector.show_permission(
+                current,
+                self._effective_for_display(current),
+                cascade=self._cascade_for_tool(current),
+                profile_context=context,
+                arg_rules=self._arg_rules_for_row(current, context.profile_id),
+                session_approvals=self._session_approvals_for_row(context.profile_id),
+            )
 
     async def on_mcp_inspector_reallow_requested(
         self, event: MCPInspector.ReallowRequested

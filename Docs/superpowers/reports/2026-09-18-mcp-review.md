@@ -3,6 +3,25 @@
 This ledger separates qualified repairs from remaining destination behavior.
 Token migration alone does not qualify a complete workflow.
 
+## Post-merge Audit catalog freshness — TASK-32838
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`.
+Its unmerged closeout checkpoint below is historical; component review resumed
+on bounded follow-up branches and the resume heartbeat is paused.
+
+[62 targeted cases, seven preflight guards and eight inspected native captures](../qa/2026-09-18-mcp-audit-catalog-freshness/README.md)
+qualify both Audit drilldowns against same-ID catalog replacements, removals
+and pending publication. Navigation re-resolves under the existing publication
+lock before selecting/rendering detail; captured profile checks remain.
+The real private app uses a controlled collector replacement, without tool
+execution or policy mutation. It exited cleanly with defaults unchanged.
+
+PR #2724 separately saves retired-control identity and missing-row handling.
+This fresh-dev branch does not include that or the inspector refresh/layout/
+guidance follow-ups. Refresh of an already-open inspector, 80×24 reachability
+and connected-runtime qualification remain separate. Current-head CI and final
+visual approval still gate merging. Next: Permissions restored-roots review.
+
 ## Qualified
 
 | Surface | Evidence | Bounds |
