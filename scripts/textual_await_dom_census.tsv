@@ -37,8 +37,6 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_prepare_mcp_recovery_review	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_prepare_tool_test_preview	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_record_mcp_recovery_review	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_run_prepared_tool_test	1
-tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_save_tools_mode_local_enabled	1
-tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_save_tools_mode_workspace_root	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_switch_source	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_audit_mode	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_children	3
