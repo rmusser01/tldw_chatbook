@@ -127,6 +127,12 @@ def _build_retry_policy(*, retries: int, retry_delay: float) -> Retry:
     )
 
 
+#: task-32805.4: upper bound on a provider-supplied Retry-After. api_base_url
+#: is user-configurable and this delay is slept on the gateway worker thread
+#: that Stop cannot interrupt, so an unbounded value would pin the worker.
+_MAX_RETRY_AFTER_SECONDS = 60.0
+
+
 def _advance_retry_policy(
     retry_policy: Retry,
     *,
@@ -153,6 +159,7 @@ def _advance_retry_policy(
             error=error,
         )
     delay = retry_after if retry_after is not None else next_policy.get_backoff_time()
+    delay = max(0.0, min(delay, _MAX_RETRY_AFTER_SECONDS))
     return next_policy, delay
 
 

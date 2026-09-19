@@ -864,6 +864,13 @@ def _raise_http_error(provider: str, status: int) -> Never:
     ) from None
 
 
+#: task-32805.4: an upper bound on a provider-supplied Retry-After. api_base_url
+#: is user-configurable for these providers and time.sleep() runs on the
+#: gateway worker thread that Stop cannot interrupt, so an unbounded value
+#: (e.g. Retry-After: 99999999) pins the worker for an arbitrary time.
+_MAX_RETRY_AFTER_SECONDS = 60.0
+
+
 def _retry_delay(
     response: requests.Response,
     *,
@@ -874,14 +881,16 @@ def _retry_delay(
     if raw_value is not None:
         try:
             if raw_value.strip().isdigit():
-                return max(0.0, float(int(raw_value.strip())))
-            from email.utils import parsedate_to_datetime
+                delay = float(int(raw_value.strip()))
+            else:
+                from email.utils import parsedate_to_datetime
 
-            parsed = parsedate_to_datetime(raw_value)
-            return max(0.0, parsed.timestamp() - time.time())
+                parsed = parsedate_to_datetime(raw_value)
+                delay = parsed.timestamp() - time.time()
+            return max(0.0, min(delay, _MAX_RETRY_AFTER_SECONDS))
         except (OverflowError, TypeError, ValueError):
             pass
-    return retry_delay * (2**attempt)
+    return min(retry_delay * (2**attempt), _MAX_RETRY_AFTER_SECONDS)
 
 
 def _invalid_base_url() -> HostedChatBaseURLValidationError:

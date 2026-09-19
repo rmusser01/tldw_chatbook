@@ -1103,32 +1103,27 @@ def summarize_with_anthropic(
             if not anthropic_model_rejects_temperature_top_p_combination(model):
                 data["top_p"] = 1.0
 
+        # task-32805.4: build the session ONCE (it was re-created and leaked
+        # every attempt) and POST THROUGH IT below, so the mounted Retry
+        # adapter and the configured api_retries actually apply. The request
+        # previously went through the bare module-level requests.post, which
+        # bypasses the adapter entirely, so a 429 returned None on attempt 1.
+        session = create_default_session()
+        retry_count = int(get_cli_setting("anthropic_api", "api_retries", 3))
+        retry_delay = int(get_cli_setting("anthropic_api", "api_retry_delay", 5))
+        retry_strategy = Retry(
+            total=retry_count,  # Total number of retries
+            backoff_factor=retry_delay,  # A delay factor (exponential backoff)
+            status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
         for attempt in range(max_retries):
             try:
-                # Create a session
-                session = create_default_session()
-
-                # Load config values
-                retry_count = int(get_cli_setting("anthropic_api", "api_retries", 3))
-                retry_delay = int(
-                    get_cli_setting("anthropic_api", "api_retry_delay", 5)
-                )
-
-                # Configure the retry strategy
-                retry_strategy = Retry(
-                    total=retry_count,  # Total number of retries
-                    backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                    status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                )
-
-                # Create the adapter
-                adapter = HTTPAdapter(max_retries=retry_strategy)
-
-                # Mount adapters for both HTTP and HTTPS
-                session.mount("http://", adapter)
-                session.mount("https://", adapter)
                 logging.debug("Anthropic: Posting request to API")
-                response = requests.post(
+                response = session.post(
                     "https://api.anthropic.com/v1/messages",
                     headers=headers,
                     json=data,
@@ -2287,7 +2282,10 @@ def summarize_with_deepseek(
                                     "DeepSeek Stream: Response event missing required field"
                                 )
                                 continue
-                yield collected_text
+                # task-32805.4: no trailing full-text yield here. A consumer
+                # that joins the streamed chunks already has the whole
+                # summary; re-emitting the accumulated text doubled it (the
+                # huggingface/anthropic/groq/mistral siblings omit it too).
 
             return stream_generator()
         else:

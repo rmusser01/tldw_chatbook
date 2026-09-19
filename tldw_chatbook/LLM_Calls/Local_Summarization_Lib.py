@@ -1309,11 +1309,14 @@ def summarize_with_vllm(
     streaming=False,
 ):
     try:
+        # task-32805.4: bind config unconditionally. It was previously assigned
+        # only on the no-key branch, so an explicit api_key raised
+        # UnboundLocalError at the retry-count reads below.
+        loaded_config_data = load_settings()
         # API key validation
         if not api_key or api_key.strip() == "":
             logging.info("vLLM Summarize: API key not provided as parameter")
             logging.info("vLLM Summarize: Attempting to use API key from config file")
-            loaded_config_data = load_settings()
             api_key = loaded_config_data.get("vllm_api", {}).get("api_key", "")
             logging.debug("vLLM Summarize: Credential config lookup completed")
 
@@ -2002,7 +2005,10 @@ def summarize_with_custom_openai(
                                 len(data_str),
                             )
                             continue
-                yield collected_messages
+                # task-32805.4: no trailing full-text yield here. A consumer
+                # that joins the streamed chunks already has the whole
+                # summary; re-emitting the accumulated text doubled it (the
+                # huggingface/anthropic/groq/mistral siblings omit it too).
 
             return stream_generator()
         else:
@@ -2261,7 +2267,10 @@ def summarize_with_custom_openai_2(
                                 len(data_str),
                             )
                             continue
-                yield collected_messages
+                # task-32805.4: no trailing full-text yield here. A consumer
+                # that joins the streamed chunks already has the whole
+                # summary; re-emitting the accumulated text doubled it (the
+                # huggingface/anthropic/groq/mistral siblings omit it too).
 
             return stream_generator()
         else:
