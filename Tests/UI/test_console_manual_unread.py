@@ -4,7 +4,9 @@ import asyncio
 
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_left_rail import make_console_pilot
+from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
@@ -15,7 +17,10 @@ from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
 )
 
 
-async def test_current_unread_survives_repaint_and_clears_after_tab_revisit(tmp_path):
+@private_profile_test
+async def test_current_unread_survives_repaint_and_clears_after_tab_revisit(
+    request, tmp_path
+):
     async with make_console_pilot(production_styles=True) as pilot:
         screen = pilot.app.screen
         db = CharactersRAGDB(str(tmp_path / "marks.sqlite"), client_id="unread")
@@ -40,7 +45,7 @@ async def test_current_unread_survives_repaint_and_clears_after_tab_revisit(tmp_
             if button.conversation_id == a.persisted_conversation_id
         )
         opener.press()
-        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#console-conversation-action-menu")
         menu = screen.query_one(ConsoleConversationActionMenu)
         menu.query_one("#console-conversation-action-mark_unread", Button).press()
         async with asyncio.timeout(5):
@@ -67,8 +72,9 @@ import pytest
 @pytest.mark.parametrize(
     "change", ["remark", "profile", "service", "navigation", "unpainted", "wrong_chat"]
 )
+@private_profile_test
 async def test_late_read_acknowledgement_cannot_clear_a_new_or_unseen_reminder(
-    tmp_path, monkeypatch, change
+    request, tmp_path, monkeypatch, change
 ):
     async with make_console_pilot(production_styles=True) as pilot:
         screen = pilot.app.screen
@@ -114,7 +120,10 @@ async def test_late_read_acknowledgement_cannot_clear_a_new_or_unseen_reminder(
         assert marks.unread_token(cid) is not None
 
 
-async def test_duplicate_tabs_and_cancelled_activation_preserve_manual_unread(tmp_path):
+@private_profile_test
+async def test_duplicate_tabs_and_cancelled_activation_preserve_manual_unread(
+    request, tmp_path
+):
     async with make_console_pilot(production_styles=True) as pilot:
         screen = pilot.app.screen
         db = CharactersRAGDB(str(tmp_path / "marks.sqlite"), client_id="unread")
@@ -146,8 +155,9 @@ async def test_duplicate_tabs_and_cancelled_activation_preserve_manual_unread(tm
 
 @pytest.mark.parametrize("size", [(80, 24), (120, 40), (160, 48)])
 @pytest.mark.parametrize("ascii_mode", [False, True])
+@private_profile_test
 async def test_compact_row_keeps_action_geometry_and_keyboard_focus(
-    tmp_path, size, ascii_mode
+    request, tmp_path, size, ascii_mode
 ):
     from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 

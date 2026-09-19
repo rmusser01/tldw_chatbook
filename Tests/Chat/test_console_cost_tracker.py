@@ -27,6 +27,15 @@ from tldw_chatbook.Chat.console_session_settings import _estimate_tokens_locally
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
 
+@pytest.fixture(autouse=True)
+def seeded_pricing_catalog(monkeypatch):
+    """Cost math uses seeded rates without opening a profile-bound config."""
+    from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
+
+    catalog = PricingCatalog(config={})
+    monkeypatch.setattr(tracker, "get_pricing_catalog", lambda: catalog)
+
+
 def _msg(content="hi", usage=None, role="assistant"):
     return SimpleNamespace(content=content, usage=usage, role=role)
 
