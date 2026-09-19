@@ -1,9 +1,10 @@
 ---
 id: TASK-32805
 title: 'Work stream: provider and streaming correctness'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-18 16:46'
+updated_date: '2026-09-19 20:31'
 labels:
   - core-review
   - review-wire
@@ -18,3 +19,9 @@ Seven of eight streaming handlers leak the HTTP response when a consumer stops t
 
 This is a work-stream parent from the core-runtime code review of 2026-09-17 (`qa/core-code-review-2026-09-17/report.md`, all 29 slices, 887,855 lines). Its child tasks are the individual units of work; close this one when they are all closed. Findings are quoted in each child with the file and line they were verified at, and each slice's full evidence is in `qa/core-code-review-2026-09-17/slices/`.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+.1-.4 done, .5 core done (dup-key crash fixed); .5 broader mechanical dedup pending. PR #2738.
+<!-- SECTION:NOTES:END -->
