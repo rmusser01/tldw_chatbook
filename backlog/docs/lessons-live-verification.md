@@ -1,5 +1,17 @@
 # Lessons: verifying against the real thing
 
+## A clipped region check does not prove a control is painted
+
+**TASK-32841, 2026-09-19.** A native approval probe completed real controller
+round trips and accepted `region.intersection(clip) == region`, yet all eight
+screenshots showed the provider-setup overlay instead of the approval card.
+The empty/occluded geometry was not useful visual evidence. The corrected
+disposable profile represents completed onboarding; the final probe requires
+positive dimensions, the expected widget at the control's center, and its full
+label in the screen compositor's painted strips before pressing it. Replacement
+captures visibly show the real approval controls. Keep functional round-trip
+results distinct from visual qualification and inspect the captures.
+
 ## Private config and data paths do not replace a private recovery HOME
 
 **TASK-32749, 2026-09-17.** The first integration probe selected private config
