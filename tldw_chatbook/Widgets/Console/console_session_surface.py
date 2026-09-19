@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import replace
 from typing import Any, Callable
 
-from rich.markup import escape as _escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult

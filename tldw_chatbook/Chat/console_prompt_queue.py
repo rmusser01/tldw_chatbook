@@ -18,7 +18,6 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from rich.cells import cell_len, split_graphemes
-from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
@@ -157,10 +156,20 @@ def make_prompt_preview(
     *,
     cell_budget: int = PROMPT_PREVIEW_CELL_BUDGET,
 ) -> str:
-    """Return a one-line, terminal-safe, Rich-markup-safe prompt preview.
+    """Return a one-line, terminal-safe, LITERAL prompt preview.
 
-    The budget applies to rendered terminal cells.  Rich escaping happens only
-    after fitting, so escape syntax does not consume the visible-cell budget.
+    The budget applies to rendered terminal cells, and because this returns
+    the text as the user typed it, the fitted string IS the rendered string.
+
+    TASK-32802.4: this used to Rich-escape on the way out, which was wrong
+    for its main consumer and wrong about its own budget. The shelf renders
+    it through ``Static(..., markup=False)``, so a prompt reading
+    ``summarize [draft]`` was shown as ``summarize \\[draft]``; and the
+    escape was applied AFTER fitting, so ``[`` * 40 fitted to 96 cells came
+    back 120 cells wide, overflowing the row the budget exists to protect.
+    The one consumer that does parse markup -- the manage modal's button
+    label -- escapes at its own render site, which is where a markup escape
+    belongs.
     """
 
     if not isinstance(text, str):
@@ -168,7 +177,7 @@ def make_prompt_preview(
     if not isinstance(cell_budget, int) or isinstance(cell_budget, bool):
         raise TypeError("preview cell budget must be an integer")
     normalized = _WHITESPACE_RE.sub(" ", _strip_terminal_controls(text)).strip()
-    return escape_markup(_truncate_cells(normalized, max(0, cell_budget)))
+    return _truncate_cells(normalized, max(0, cell_budget))
 
 
 @dataclass(frozen=True, slots=True, repr=False)

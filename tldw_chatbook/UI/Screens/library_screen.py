@@ -32,7 +32,7 @@ from weakref import ref
 
 from loguru import logger
 from loguru import logger as loguru_logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import events, on, work
 from textual.app import ComposeResult
@@ -31621,7 +31621,7 @@ class LibraryScreen(BaseAppScreen):
             # the fallback when it cannot (no active set to describe).
             self._notify_review_set(f"Reviewing {len(items)} items.")
         if displaced is not None and displaced.completed_at is None:
-            from rich.markup import escape
+            from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
             from tldw_chatbook.Library.review_set_state import (
                 format_review_progress,

@@ -15,6 +15,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.events import Click, DescendantBlur, DescendantFocus, Key
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.widgets import Button, Input, Static
 
 from ...Character_Chat.character_conversation_navigation import (
@@ -273,20 +274,33 @@ class ConsoleCharacterContext(Vertical):
 
     @staticmethod
     def _row_label(row: CharacterConversationRow) -> str:
+        # TASK-32802.3: `Button.label` markup-parses in Textual 8 whatever the
+        # widget's markup flag says, and these labels are also used verbatim as
+        # tooltips, which render through a markup-on Static. A chat titled
+        # `[TODO] plan` rendered as ` plan` and one containing `[/b]` raised
+        # MarkupError inside compose, taking the whole rail down. The escape
+        # lives here, in the one place each label is built, so both the button
+        # and its tooltip get it.
         suffix = " · current" if row.is_current else ""
-        return f"{row.title or 'Untitled chat'}{suffix}"
+        return f"{escape_markup(row.title or 'Untitled chat')}{suffix}"
 
     @staticmethod
     def _search_row_label(row: CharacterConversationRow) -> str:
         age = format_console_relative_age(row.last_modified, now=datetime.now(UTC))
         suffix = f" · {age}" if age else ""
-        return f"{row.title or 'Untitled chat'}\n{row.character_label}\nLocal{suffix}"
+        return (
+            f"{escape_markup(row.title or 'Untitled chat')}\n"
+            f"{escape_markup(row.character_label)}\nLocal{suffix}"
+        )
 
     @staticmethod
     def _group_label(group: CharacterConversationGroup, expanded: bool) -> str:
         glyph = "▾" if expanded else "▸"
         current = " · current" if group.is_current else ""
-        return f"{glyph} {group.character_label} · {group.total} chats{current}"
+        return (
+            f"{glyph} {escape_markup(group.character_label)} · "
+            f"{group.total} chats{current}"
+        )
 
     def _reason_for(self, row: CharacterConversationRow) -> str:
         detail = self._state.unavailable_detail(row.row_key)

@@ -35,7 +35,7 @@ import re
 import time
 from typing import Any, Mapping, Sequence
 
-from rich.markup import escape
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical

@@ -95,7 +95,7 @@ from textual.widget import Widget
 # 3rd-Party Libraries
 import asyncio
 from loguru import logger as loguru_logger, logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.events import AppFocus

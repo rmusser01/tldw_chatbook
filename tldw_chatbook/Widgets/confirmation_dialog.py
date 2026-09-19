@@ -111,9 +111,17 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
+        # TASK-32802.2: both are prose with user data interpolated into them
+        # -- a conversation, watchlist, preset or file name -- never markup.
+        # Rendered with markup ON, a title like `[TODO] Q3 plan` named the
+        # wrong subject (` Q3 plan`), `[IMPORTANT]` named an empty one, and
+        # `[/b]` raised MarkupError inside compose, so an irreversible
+        # "Delete stored Full captures" confirmation never appeared at all.
+        # Callers therefore must NOT pre-escape; the ones that did were
+        # changed in the same commit.
         with Container(id="confirmation-dialog"):
-            yield Static(self.title, classes="dialog-title")
-            yield Label(self.message, classes="dialog-message")
+            yield Static(self.title, classes="dialog-title", markup=False)
+            yield Label(self.message, classes="dialog-message", markup=False)
 
             with Horizontal(classes="button-container"):
                 yield Button(
