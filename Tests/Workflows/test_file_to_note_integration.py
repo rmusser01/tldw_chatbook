@@ -23,6 +23,11 @@ import pytest
 import toml
 
 ROOT = Path(__file__).resolve().parents[2]
+if __name__ == "__main__":
+    sys.path.insert(0, str(ROOT))
+
+from Tests.private_profile import is_private_profile_child, private_profile_test
+
 FIXTURE = ROOT / "Tests/fixtures/workflows/file_to_note.json"
 MODEL = (
     "../../../Working/Language_Models/gemma-4-26B-A4B/"
@@ -81,15 +86,30 @@ def write_profile(root):
 
 
 @pytest.fixture
-def tmp_path(tmp_path):
+def tmp_path(tmp_path, request):
     # The ancestor autouse fixture imports config AFTER requesting tmp_path.
     # Precreate its exact selected TOML, without creating its HOME directory.
-    write_profile(tmp_path / "test_data")
+    root = (
+        Path(os.environ["TLDW_TEST_CONFIG_ROOT"])
+        if is_private_profile_child(request)
+        else tmp_path / "test_data"
+    )
+    if is_private_profile_child(request) and os.environ.get("TASK6_LIVE_PROFILE"):
+        # The standalone launcher already prepared this exact profile. A fresh
+        # restart must inspect its saved config, never replace it with defaults.
+        assert root.resolve() == Path(os.environ["TASK6_LIVE_PROFILE"]).resolve()
+        tomllib.loads((root / "config/config.toml").read_text())
+    else:
+        write_profile(root)
     return tmp_path
 
 
 @pytest.fixture
-def isolated_profile(isolate_test_environment, monkeypatch):
+def isolated_profile(isolate_test_environment, monkeypatch, request):
+    if getattr(request.function, "_private_profile_test", False) and not (
+        is_private_profile_child(request)
+    ):
+        return None  # Only the fresh child constructs or exercises the real app.
     from tldw_chatbook import config
 
     root = isolate_test_environment.resolve()
@@ -235,8 +255,9 @@ async def approve(app, pilot, step):
 @pytest.mark.parametrize(
     "hold_nested_mount", [False, True], ids=["ordinary", "held-nested-mount"]
 )
+@private_profile_test
 async def test_saved_file_controls_real_http_edited_local_note(
-    isolated_profile, monkeypatch, hold_nested_mount
+    request, isolated_profile, monkeypatch, hold_nested_mount
 ):
     """Catches lost reviewed text or recaptured mutable provider/Notes bindings."""
     from textual.widgets import TextArea
@@ -401,7 +422,8 @@ def note_rows(app):
 @pytest.mark.skipif(
     not os.environ.get("TASK6_LIVE_PROFILE"), reason="explicit isolated live UAT only"
 )
-async def test_live_full_app(isolated_profile, monkeypatch):
+@private_profile_test
+async def test_live_full_app(request, isolated_profile, monkeypatch):
     """Real app, real localhost:9099, actual Notes; separately invoked restart."""
     from textual.widgets import TextArea
 
@@ -717,6 +739,9 @@ if __name__ == "__main__":
         environment.update(
             {
                 "TLDW_TEST_CONFIG_ROOT": profile,
+                "TLDW_TEST_PRIVATE_PROFILE_NODE": (
+                    "Tests/Workflows/test_file_to_note_integration.py::test_live_full_app"
+                ),
                 "TASK6_LIVE_PROFILE": profile,
                 "TASK6_LIVE_PHASE": phase,
                 "TASK6_LIVE_SIZE": size,

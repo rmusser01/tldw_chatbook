@@ -1,11 +1,11 @@
 ---
 id: TASK-32691
 title: Execute session-bound file-to-note workflows
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:59'
-updated_date: '2026-09-16 16:40'
+updated_date: '2026-09-19 19:57'
 labels:
   - workflows
 dependencies:
@@ -38,6 +38,7 @@ Deliver the approved local text-file, prompt, llama.cpp, editable review and Loc
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR; direct implementation of the user-approved session-bound amendment to ADR-138. ADR path: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md. Reason: storage ownership and service-composition boundaries remain governed by ADR-125 and ADR-036; the approved design already specifies the opt-in model and permission integration. 1. Map exact current source seams and write Docs/superpowers/plans/2026-09-16-workflows-first-run.md from the approved spec. 2. Qualify bounded llama.cpp and strict permission integration with failing/passing targeted tests. 3. Implement bounded local effects and the in-memory sequential session with retained physical operations. 4. Wire existing app lifecycle and Workflows Run/setup/review/Open Note surfaces without redesign. 5. Verify targeted regressions and isolated actual-app/live-model UAT, self-review and independent review, and update docs/task evidence. No implementation code is written during the planning checkpoint.
+PR #2743 review follow-up: rebase the existing commits onto dev, preserve upstream behavior, verify each Qodo finding, restore payload-free Note-failure correlation, document the public Run controls, and run targeted workflow/lifecycle/Notes/style checks before publishing replies and the rewritten branch. ADR required: no new ADR. ADR paths: backlog/decisions/138-portable-workflow-definitions-and-local-execution.md and backlog/decisions/029-local-private-data-boundary.md. Reason: routine review corrections preserve existing lifecycle, transport, and private-data boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -50,4 +51,6 @@ Qualification fixed nested Library mounting and stale editor focus restoration p
 Verification: initial final affected run159 passed/1liveSkip; final fix covering229 and separate ProductionApp12 passed; exact final-source controller run11 passed/1liveSkip/1existingwarning in38.16s. No new static debt. Counts overlap and are not additive. Historical merged failures remain recorded, not relabeled green. An unrelated unchanged Skills test-double failure, legacy lint/dependency warning debt and native PTY/font limits are disclosed. No full repository suite or new live requests were run for the final guard fix.
 
 ADR required: no new ADR; existing backlog/decisions/138-portable-workflow-definitions-and-local-execution.md and ADR-125 govern these boundaries. All six task reviews, one whole-branch review and its single fix-wave scoped review are reconciled. Reviewed source head: bcc8290dd2d883893c781a83a3e5cd0f13f27eb5. Evidence: Docs/Developer/Workflows/2026-09-16-first-run-uat.md. Acceptance, rulings and review record: Docs/Developer/Workflows/2026-09-16-first-run-review-record.md. User guide and testing lessons updated. No push, PR or merge performed.
+
+PR #2743 follow-up: rebase onto latest dev and evaluate all nine Qodo findings. Preserve ADR-138 session-only/non-streaming and failed-drain fences. Verify upstream fixes survived, add safe Note-error correlation and public control docstrings, then run targeted rebase/review checks and publish exact-head review dispositions. No merge or full-suite authorization.
 <!-- SECTION:NOTES:END -->

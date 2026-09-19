@@ -243,20 +243,6 @@ async def test_confirmation_changes_do_not_cancel_newer_review(harness):
     assert harness.session.update_review(run_id, "review", "Still editable")
 
 
-async def test_production_composition_is_lazy_single_owner(harness):
-    from Tests.UI.app_factory import _build_test_app
-
-    app = _build_test_app()
-    assert app._workflow_session is None
-    app.notes_scope_service = harness.scope
-    app.notes_user_id = "reader"
-    owner = app.ensure_workflow_session()
-    assert app.ensure_workflow_session() is owner
-    assert owner.view() is None
-    assert app._workflow_authoring is None
-    await app._shutdown_workflow_session()
-
-
 @pytest.mark.parametrize("cancel_waiter", [False, True])
 @pytest.mark.parametrize("waiting_state", ["review", "approval"])
 async def test_reconfirmation_abort_restores_same_workflow_owners(

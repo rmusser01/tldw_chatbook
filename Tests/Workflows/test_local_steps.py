@@ -214,9 +214,16 @@ def test_before_read_is_last_check_and_open_is_readonly(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def notes_bridge(tmp_path):
+def notes_bridge(tmp_path, monkeypatch):
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
     from tldw_chatbook.Workflows.local_steps import capture_local_note_destination
 
+    # This bridge exercises real temporary Notes owners, not process-lived config
+    # selection. Keep unrelated migration defaults independent of fixture HOME.
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.Notes_Library.load_console_library_migration_seed",
+        lambda: ConsoleLibraryMigrationSeed(auto_retrieve_on_send=False),
+    )
     template = CharactersRAGDB(tmp_path / "notes.db", client_id="template")
     owner = NotesInteropService(tmp_path, "application", global_db_to_use=template)
     policy = {"state": RuntimeSourceState(active_source="local")}
@@ -548,6 +555,32 @@ def test_real_bridge_error_logs_exclude_private_title_and_content(
         loguru_logger.remove(sink)
     assert note_rows(bridge) == []
     assert canary not in caplog.text + "".join(records)
+
+
+@pytest.mark.parametrize(
+    ("note_id", "note_ref"),
+    [(None, "generated"), ("PRIVATE_ATTEMPT_CANARY_7h4", "759916bcadcd")],
+)
+def test_null_note_failure_keeps_safe_correlation(
+    notes_bridge, monkeypatch, caplog, note_id, note_ref
+):
+    # Exercise the real interop error path and logging; only the DB's invalid
+    # return is injected. Losing the references must fail without exposing input.
+    monkeypatch.setattr(notes_bridge.db, "add_note", lambda **kwargs: None)
+    with caplog.at_level(logging.ERROR), pytest.raises(CharactersRAGDBError):
+        notes_bridge.owner.add_note(
+            "reader", "PRIVATE_TITLE", "PRIVATE_CONTENT", note_id=note_id
+        )
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "tldw_chatbook.Notes.Notes_Library"
+    ]
+    assert len(messages) == 1
+    assert "user_ref=3d0941964aa3" in messages[0]
+    assert f"note_ref={note_ref}" in messages[0]
+    assert all(value not in messages[0] for value in ("PRIVATE_", "reader"))
+    assert note_rows(notes_bridge) == []
 
 
 @pytest.fixture

@@ -43,7 +43,11 @@ class SessionButton(WorkflowButton):
     run_view: RunView | None = None
 
     def press(self) -> Self:
-        """Deliver the ordinary button event with immutable displayed identity."""
+        """Deliver the ordinary button event with immutable displayed identity.
+
+        Returns:
+            This button, including when hidden or disabled and no event is posted.
+        """
         if self.disabled or not self.display:
             return self
         self._start_active_affect()
@@ -54,7 +58,17 @@ class SessionButton(WorkflowButton):
 
 
 def captured_models(app: Any) -> tuple[ModelSelection, ...]:
-    """Capture configured identities and current transport facts once, without discovery."""
+    """Capture configured identities and transport facts without discovery.
+
+    Args:
+        app: Host providing the configured local model catalog.
+
+    Returns:
+        Keyless llama.cpp selections; no endpoint is contacted or authorized.
+
+    Raises:
+        SessionError: No configured keyless llama.cpp selection is available.
+    """
     from tldw_chatbook.config import get_runtime_config_snapshot
 
     settings = get_runtime_config_snapshot().values
@@ -113,6 +127,14 @@ class WorkflowRunSetup(ModalScreen[tuple[dict[str, Any], RunSetup] | None]):
         actor: str,
         protected_paths: tuple[Path, ...],
     ) -> None:
+        """Initialize disposable setup for one saved revision.
+
+        Args:
+            revision: Immutable definition selected for execution.
+            models: Nonempty tuple of configured keyless llama.cpp selections.
+            actor: Local execution identity captured for this setup.
+            protected_paths: Private paths excluded from source-file selection.
+        """
         super().__init__()
         self.revision, self.models = revision, models
         self.actor, self.protected_paths = actor, protected_paths
@@ -131,6 +153,11 @@ class WorkflowRunSetup(ModalScreen[tuple[dict[str, Any], RunSetup] | None]):
         }
 
     def compose(self) -> ComposeResult:
+        """Build the editable setup form without starting effects.
+
+        Yields:
+            Identity disclosure, source/model/input fields, and setup actions.
+        """
         with Vertical(classes="workflow-run-dialog"):
             yield Static("Run saved revision", classes="workflow-run-heading")
             with VerticalScroll():
@@ -178,17 +205,29 @@ class WorkflowRunSetup(ModalScreen[tuple[dict[str, Any], RunSetup] | None]):
                 yield compact_button("Cancel", "workflow-setup-cancel")
 
     def on_mount(self) -> None:
+        """Focus the source field after setup controls mount."""
         self.query_one("#workflow-source", Input).focus()
 
     def action_cancel(self) -> None:
+        """Dismiss setup with no inputs or execution authority."""
         self.dismiss(None)
 
     @on(Select.Changed, "#workflow-model-choice")
     def model_changed(self, event: Select.Changed) -> None:
+        """Copy the selected configured model into its editable field.
+
+        Args:
+            event: Selection change carrying an index into the captured models.
+        """
         self.query_one("#workflow-model", Input).value = self.models[event.value].model
 
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
+        """Cancel, choose a source, or return validated setup for review.
+
+        Args:
+            event: Setup action; consumed here without starting execution.
+        """
         event.stop()
         if event.button.id == "workflow-setup-cancel":
             self.action_cancel()
@@ -252,11 +291,23 @@ class WorkflowRunConfirmation(ModalScreen[bool]):
     def __init__(
         self, revision: Revision, binding: RunBindings, note_title: str
     ) -> None:
+        """Retain the exact destinations the user is being asked to approve.
+
+        Args:
+            revision: Saved definition associated with the setup ticket.
+            binding: Captured source, model endpoint, and local Notes destination.
+            note_title: Resolved title displayed before the run starts.
+        """
         super().__init__()
         self.revision, self.binding = revision, binding
         self.note_title = note_title
 
     def compose(self) -> ComposeResult:
+        """Build destination review without consuming the setup ticket.
+
+        Yields:
+            Captured identities, session-loss disclosure, and confirmation actions.
+        """
         binding = self.binding
         with Vertical(classes="workflow-run-dialog"):
             yield Static("Confirm run destinations", classes="workflow-run-heading")
@@ -275,10 +326,16 @@ class WorkflowRunConfirmation(ModalScreen[bool]):
                 yield compact_button("Cancel", "workflow-start-cancel")
 
     def action_cancel(self) -> None:
+        """Dismiss destination review without approval."""
         self.dismiss(False)
 
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
+        """Return approval only for the explicit Start run action.
+
+        Args:
+            event: Confirmation action, consumed before dismissing this modal.
+        """
         event.stop()
         self.dismiss(event.button.id == "workflow-start")
 
@@ -287,12 +344,23 @@ class WorkflowRunPanel(Vertical):
     """A disposable projection; the app session retains every edit and operation."""
 
     def __init__(self, session: WorkflowSession, **kwargs: Any) -> None:
+        """Bind a disposable view to the app-owned execution session.
+
+        Args:
+            session: Owner of run state, review edits, and physical operations.
+            **kwargs: Textual container initialization options.
+        """
         super().__init__(**kwargs)
         self.session = session
         self.shown: RunView | None = None
         self._release = None
 
     def compose(self) -> ComposeResult:
+        """Build the collapsed session status, review editor, and actions.
+
+        Yields:
+            Projection widgets; none owns or restarts the underlying run.
+        """
         with Collapsible(
             title="Session run", collapsed=True, id="workflow-session-collapse"
         ):
@@ -318,18 +386,26 @@ class WorkflowRunPanel(Vertical):
                 yield Static(SESSION_DISCLOSURE, markup=False)
 
     def on_mount(self) -> None:
+        """Subscribe to session changes and refresh after child layout settles."""
         self._release = self.session.subscribe(self.refresh_view)
         self.call_after_refresh(self.refresh_view)
 
     def on_unmount(self) -> None:
+        """Detach this view without cancelling the app-owned run."""
         if self._release:
             self._release()
 
     @on(Collapsible.Toggled)
     def toggled(self, event: Collapsible.Toggled) -> None:
+        """Project disclosure expansion into the panel's layout class.
+
+        Args:
+            event: The session disclosure's current collapsed state.
+        """
         self.set_class(not event.collapsible.collapsed, "workflow-session-expanded")
 
     def refresh_view(self) -> None:
+        """Render current session state and fence unavailable or stale actions."""
         if not self.is_mounted:
             return
         view = self.session.view()
@@ -403,6 +479,11 @@ class WorkflowRunPanel(Vertical):
 
     @on(TextArea.Changed, "#workflow-review-text")
     def edited(self, event: TextArea.Changed) -> None:
+        """Retain review edits in the session using the displayed run identity.
+
+        Args:
+            event: Current text from the mounted human-review editor.
+        """
         event.stop()
         view = self.shown
         if view and event.text_area.text != view.review_text:
@@ -410,6 +491,14 @@ class WorkflowRunPanel(Vertical):
 
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
+        """Dispatch identity-bound answers or cancellation to the session.
+
+        Open Note bubbles to the screen's existing Library route. Stale answers
+        cannot authorize a different run, step, or resolved effect.
+
+        Args:
+            event: Button action carrying the view captured when it was pressed.
+        """
         if event.button.id == "workflow-open-note":
             return  # The owning screen performs the existing Library route.
         event.stop()

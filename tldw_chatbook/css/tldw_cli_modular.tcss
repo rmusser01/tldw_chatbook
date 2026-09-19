@@ -19687,7 +19687,7 @@ WorkflowsScreen.workflow-short WorkflowEditor TextArea.form-textarea {
 }
 WorkflowsScreen WorkflowEditor TextArea.form-textarea.workflow-expanded { height: $ds-size-18; max-height: $ds-size-18; }
 
-/* One disposable session panel; the continuous authoring panes retain their flex. */
+
 WorkflowRunPanel { height: auto; padding: $ds-space-0 $ds-space-inset; }
 WorkflowRunPanel Collapsible { height: 1fr; padding: $ds-space-0; margin: $ds-space-0; border: none; }
 WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: 1fr; }

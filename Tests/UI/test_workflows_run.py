@@ -12,6 +12,7 @@ import pytest
 from textual.screen import Screen
 from textual.widgets import Button, Input, OptionList, Static, TextArea
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_workflows_editor import (
     WorkflowEditorHarness,
     assert_hit,
@@ -101,7 +102,7 @@ class WorkflowRunHarness(WorkflowEditorHarness):
 
 
 async def configure_model():
-    save_setting_to_cli_config(
+    assert save_setting_to_cli_config(
         "api_settings",
         "llama_cpp",
         {
@@ -112,7 +113,25 @@ async def configure_model():
     )
 
 
-async def test_real_run_press_opens_reviewed_setup(tmp_path, harness):
+@private_profile_test
+async def test_production_composition_is_lazy_single_owner(request, harness):
+    # Keep the real constructor check in this fresh-profile module: the separate
+    # ProductionApp collection profile predates its lifecycle-method imports.
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    assert app._workflow_session is None
+    app.notes_scope_service = harness.scope
+    app.notes_user_id = "reader"
+    owner = app.ensure_workflow_session()
+    assert app.ensure_workflow_session() is owner
+    assert owner.view() is None
+    assert app._workflow_authoring is None
+    await app._shutdown_workflow_session()
+
+
+@private_profile_test
+async def test_real_run_press_opens_reviewed_setup(request, tmp_path, harness):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
     async with app.run_test(size=(110, 36)) as pilot:
@@ -187,8 +206,9 @@ def control_contrast(app, label):
 
 
 @pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
+@private_profile_test
 async def test_pressed_flow_edits_note_navigates_and_paints(
-    tmp_path, harness, size, monkeypatch
+    request, tmp_path, harness, size, monkeypatch
 ):
     monkeypatch.delenv("NO_COLOR", raising=False)
     await configure_model()
@@ -267,7 +287,10 @@ async def test_pressed_flow_edits_note_navigates_and_paints(
         capture(app, size, "library")
 
 
-async def test_navigation_retains_edits_and_original_revision(tmp_path, harness):
+@private_profile_test
+async def test_navigation_retains_edits_and_original_revision(
+    request, tmp_path, harness
+):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
     async with app.run_test(size=(110, 36)) as pilot:
@@ -310,8 +333,9 @@ async def test_navigation_retains_edits_and_original_revision(tmp_path, harness)
 @pytest.mark.parametrize(
     "provider,credential", [("ollama", None), ("llama_cpp", "secret")]
 )
+@private_profile_test
 async def test_unsupported_or_credentialed_provider_blocks_without_effects(
-    tmp_path, harness, provider, credential
+    request, tmp_path, harness, provider, credential
 ):
     await configure_model()
     if credential:
@@ -337,8 +361,9 @@ async def test_unsupported_or_credentialed_provider_blocks_without_effects(
         assert harness.requests == [] and harness.rows() == []
 
 
+@private_profile_test
 async def test_snapshot_is_current_and_final_bindings_survive_settings_change(
-    tmp_path, harness
+    request, tmp_path, harness
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -363,8 +388,9 @@ async def test_snapshot_is_current_and_final_bindings_survive_settings_change(
         )
 
 
+@private_profile_test
 async def test_invalid_review_does_not_accept_old_value_and_reject_writes_nothing(
-    tmp_path, harness
+    request, tmp_path, harness
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -381,8 +407,9 @@ async def test_invalid_review_does_not_accept_old_value_and_reject_writes_nothin
         assert harness.rows() == []
 
 
+@private_profile_test
 async def test_exact_effect_ask_double_delivery_and_literal_review_instructions(
-    tmp_path, harness
+    request, tmp_path, harness
 ):
     await configure_model()
     harness.set_permission("workflow_read_file", "ask")
@@ -424,8 +451,9 @@ async def test_exact_effect_ask_double_delivery_and_literal_review_instructions(
         assert len(harness.rows()) == len(harness.requests) == 1
 
 
+@private_profile_test
 async def test_changed_destination_refuses_open_but_later_note_edits_are_legal(
-    tmp_path, harness
+    request, tmp_path, harness
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -465,8 +493,9 @@ async def test_changed_destination_refuses_open_but_later_note_edits_are_legal(
 
 
 @pytest.mark.parametrize("cancel_second", [True, False])
+@private_profile_test
 async def test_open_note_during_second_note_keeps_loop_and_stop_responsive(
-    tmp_path, harness, monkeypatch, cancel_second
+    request, tmp_path, harness, monkeypatch, cancel_second
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -618,8 +647,9 @@ async def test_open_note_during_second_note_keeps_loop_and_stop_responsive(
 @pytest.mark.parametrize(
     "change", ["scope", "user", "owner", "path", "client", "cache", "missing"]
 )
+@private_profile_test
 async def test_queued_open_note_rechecks_destination(
-    tmp_path, harness, monkeypatch, change
+    request, tmp_path, harness, monkeypatch, change
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -656,8 +686,9 @@ async def test_queued_open_note_rechecks_destination(
         assert len(harness.rows()) == 1
 
 
+@private_profile_test
 async def test_delayed_accept_message_cannot_accept_a_replacement_run(
-    tmp_path, harness, monkeypatch
+    request, tmp_path, harness, monkeypatch
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -688,7 +719,10 @@ async def test_delayed_accept_message_cannot_accept_a_replacement_run(
 
 
 @pytest.mark.parametrize("choice", ["saved", "save", "history"])
-async def test_dirty_draft_requires_explicit_revision_choice(tmp_path, harness, choice):
+@private_profile_test
+async def test_dirty_draft_requires_explicit_revision_choice(
+    request, tmp_path, harness, choice
+):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
     async with app.run_test(size=(110, 36)) as pilot:
@@ -723,8 +757,9 @@ async def test_dirty_draft_requires_explicit_revision_choice(tmp_path, harness, 
         assert harness.rows() == [] and harness.requests == []
 
 
+@private_profile_test
 async def test_review_expiry_while_unmounted_disables_accept_on_return(
-    tmp_path, harness
+    request, tmp_path, harness
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -746,8 +781,9 @@ async def test_review_expiry_while_unmounted_disables_accept_on_return(
         assert harness.rows() == []
 
 
+@private_profile_test
 async def test_setup_picker_is_the_existing_txt_picker_and_cancel_has_no_effect(
-    tmp_path, harness
+    request, tmp_path, harness
 ):
     from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
 
@@ -768,7 +804,8 @@ async def test_setup_picker_is_the_existing_txt_picker_and_cancel_has_no_effect(
         assert harness.rows() == [] and harness.requests == []
 
 
-async def test_real_stay_button_restores_painted_accept(tmp_path, harness):
+@private_profile_test
+async def test_real_stay_button_restores_painted_accept(request, tmp_path, harness):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
     async with app.run_test(size=(110, 36)) as pilot:
@@ -787,7 +824,10 @@ async def test_real_stay_button_restores_painted_accept(tmp_path, harness):
         await until(app._workflow_session, lambda v: v.state == "rejected")
 
 
-async def test_pressed_cancel_retains_held_note_commit(tmp_path, harness, monkeypatch):
+@private_profile_test
+async def test_pressed_cancel_retains_held_note_commit(
+    request, tmp_path, harness, monkeypatch
+):
     await configure_model()
     entered, release = threading.Event(), threading.Event()
     save = harness.scope.save_note
@@ -821,8 +861,9 @@ async def test_pressed_cancel_retains_held_note_commit(tmp_path, harness, monkey
         assert not app.screen.query_one("#workflow-open-note", Button).disabled
 
 
+@private_profile_test
 async def test_delayed_accept_does_not_accept_changed_review(
-    tmp_path, harness, monkeypatch
+    request, tmp_path, harness, monkeypatch
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -859,8 +900,9 @@ async def test_delayed_accept_does_not_accept_changed_review(
         ("note", "create_note", "Create a Local Note"),
     ],
 )
+@private_profile_test
 async def test_capture_effect_ask_with_focused_approval(
-    tmp_path, harness, size, monkeypatch, kind, permission, action
+    request, tmp_path, harness, size, monkeypatch, kind, permission, action
 ):
     monkeypatch.delenv("NO_COLOR", raising=False)
     await configure_model()
@@ -925,7 +967,10 @@ async def test_capture_effect_ask_with_focused_approval(
 
 
 @pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
-async def test_capture_recoverable_setup_error(tmp_path, harness, size, monkeypatch):
+@private_profile_test
+async def test_capture_recoverable_setup_error(
+    request, tmp_path, harness, size, monkeypatch
+):
     monkeypatch.delenv("NO_COLOR", raising=False)
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -984,8 +1029,9 @@ async def test_capture_recoverable_setup_error(tmp_path, harness, size, monkeypa
         ),
     ],
 )
+@private_profile_test
 async def test_setup_error_identifies_field_and_preserves_inputs(
-    tmp_path, harness, size, field, value, problem, correction
+    request, tmp_path, harness, size, field, value, problem, correction
 ):
     await configure_model()
     app = WorkflowRunHarness(tmp_path, harness)
@@ -1022,7 +1068,10 @@ async def test_setup_error_identifies_field_and_preserves_inputs(
         assert harness.requests == [] and harness.rows() == []
 
 
-async def test_capture_narrow_setup_and_review_context(tmp_path, harness, monkeypatch):
+@private_profile_test
+async def test_capture_narrow_setup_and_review_context(
+    request, tmp_path, harness, monkeypatch
+):
     from textual.containers import VerticalScroll
     from textual.widgets import Select
 

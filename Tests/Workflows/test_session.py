@@ -15,6 +15,7 @@ from Tests.Workflows.test_session_admission import file_definition, revision_of
 @pytest.fixture
 async def harness(tmp_path, monkeypatch):
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
     from tldw_chatbook.MCP.permission_store import MCPPermissionStore
@@ -32,6 +33,11 @@ async def harness(tmp_path, monkeypatch):
     )
     from tldw_chatbook.Workflows.session_permissions import WorkflowPermissions
 
+    # Session tests own temporary Notes, not the interpreter's config binding.
+    monkeypatch.setattr(
+        "tldw_chatbook.Notes.Notes_Library.load_console_library_migration_seed",
+        lambda: ConsoleLibraryMigrationSeed(auto_retrieve_on_send=False),
+    )
     template = CharactersRAGDB(tmp_path / "notes.db", client_id="template")
     owner = NotesInteropService(tmp_path, "application", global_db_to_use=template)
     policy = {"state": RuntimeSourceState(active_source="local")}

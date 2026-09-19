@@ -280,7 +280,23 @@ class NotesInteropService:
             db = self._get_db(user_id)
             created_note_id = db.add_note(title=title, content=content, note_id=note_id)
             if created_note_id is None:
-                logger.error("add_note returned None unexpectedly.")
+                # Keep correlation without persisting caller-supplied identifiers
+                # or resolved Note payloads. A missing ID was DB-generated.
+                user_ref = hashlib.sha256(
+                    user_id.encode("utf-8", errors="surrogatepass")
+                ).hexdigest()[:12]
+                note_ref = (
+                    hashlib.sha256(
+                        note_id.encode("utf-8", errors="surrogatepass")
+                    ).hexdigest()[:12]
+                    if note_id is not None
+                    else "generated"
+                )
+                logger.error(
+                    "add_note returned None unexpectedly (user_ref=%s, note_ref=%s).",
+                    user_ref,
+                    note_ref,
+                )
                 log_counter(
                     "notes_library_add_note_error",
                     labels={"error_type": "null_id_returned"},
