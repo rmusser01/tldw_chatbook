@@ -299,6 +299,13 @@ from authoritative state; do not create a second execution/receipt owner.
 Implementation plans must link ADR-171. Add task plans only when their task
 enters In Progress. Leave implementation tasks To Do until execution begins.
 
+Detailed execution documents (Backlog task Implementation Plan fields are added
+when execution starts):
+
+- [TASK-32826: manual unread and attention](../plans/2026-09-18-console-manual-unread-and-attention.md)
+- [TASK-32827: conversation row parity](../plans/2026-09-18-console-conversation-row-parity.md)
+- [TASK-32828: Conversation Inspector modal](../plans/2026-09-18-conversation-inspector-modal.md)
+
 ## 6. Verification and acceptance
 
 Run targeted checks only; a full suite requires a separate user request.

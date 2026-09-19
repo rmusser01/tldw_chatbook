@@ -4,13 +4,14 @@ title: Add manual unread and meaningful conversation attention actions
 status: To Do
 assignee: []
 created_date: '2026-09-19 01:04'
-updated_date: '2026-09-19 01:18'
+updated_date: '2026-09-19 01:29'
 labels: []
 dependencies: []
 documentation:
   - >-
     Docs/superpowers/specs/2026-09-18-console-conversation-review-and-attention-design.md
   - backlog/decisions/171-console-conversation-review-and-attention.md
+  - Docs/superpowers/plans/2026-09-18-console-manual-unread-and-attention.md
 ---
 
 ## Description

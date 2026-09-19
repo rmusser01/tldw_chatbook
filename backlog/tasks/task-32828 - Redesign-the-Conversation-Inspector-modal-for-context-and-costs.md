@@ -4,13 +4,14 @@ title: Redesign the Conversation Inspector modal for context and costs
 status: To Do
 assignee: []
 created_date: '2026-09-19 01:05'
-updated_date: '2026-09-19 01:18'
+updated_date: '2026-09-19 01:29'
 labels: []
 dependencies: []
 documentation:
   - >-
     Docs/superpowers/specs/2026-09-18-console-conversation-review-and-attention-design.md
   - backlog/decisions/171-console-conversation-review-and-attention.md
+  - Docs/superpowers/plans/2026-09-18-conversation-inspector-modal.md
 ---
 
 ## Description
