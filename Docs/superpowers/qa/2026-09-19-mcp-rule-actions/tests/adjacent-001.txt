@@ -1,0 +1,13 @@
+...................                                                      [100%]
+----- generated xml file: /private/tmp/tldw-32866-adjacent-001/results.xml -----
+============================= slowest 25 durations =============================
+3.82s call     Tests/MCP/test_permission_store.py::test_concurrent_permission_writes_survive_arg_rule_churn
+
+(24 durations < 1s hidden.)
+19 passed, 59 deselected in 6.62s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-34603054-d737-4dbf-a912-e892bb02a034/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-34603054-d737-4dbf-a912-e892bb02a034/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-34603054-d737-4dbf-a912-e892bb02a034
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-34603054-d737-4dbf-a912-e892bb02a034'
+  warnings.warn(

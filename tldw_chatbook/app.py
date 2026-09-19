@@ -14259,6 +14259,40 @@ class TldwCli(
                 f"{screen_name!r}."
             )
 
+    def _resync_navigation_bar_active(self, screen: Any) -> None:
+        """Re-sync the visible screen's nav bar to its own route (CE-007).
+
+        A navigation click optimistically highlights the clicked destination
+        on the OUTGOING screen's own bar. Reusable routes survive navigation
+        as suspended instances, so a warm return reinstated that screen with
+        its bar still claiming the destination the user clicked away to; the
+        bar's already-active guard then swallowed every later press of that
+        destination (UAT re-run 2026-09-13, TASK-32534: nav-settings presses
+        logged with zero "Navigation requested" lines, while palette routes
+        kept working because they post ``NavigateToScreen`` directly).
+        Re-syncing the visible bar to its own route after every completed
+        navigation restores both the highlight and retry-ability; the
+        navigation-failure path already does the same for the unchanged
+        screen via ``_notify_navigation_failure`` -> ``restore_active``.
+        """
+        route = getattr(screen, "nav_bar_active", None)
+        if route is None:
+            route = getattr(screen, "screen_name", None)
+        if not isinstance(route, str):
+            return
+        # Navigation targets may be duck-typed (test fakes without the
+        # Textual widget API), so probe the seam instead of assuming it.
+        query_one = getattr(screen, "query_one", None)
+        if not callable(query_one):
+            return
+        try:
+            bar = query_one(MainNavigationBar)
+        except (NoMatches, QueryError):
+            return
+        restore_active = getattr(bar, "restore_active", None)
+        if callable(restore_active):
+            restore_active(route)
+
     async def _complete_screen_navigation(
         self,
         *,
@@ -14540,6 +14574,11 @@ class TldwCli(
                     # screen's -focus class (the next toggle would do the wrong
                     # visible action).
                     self._clear_focus_if_leaving_console(screen_name)
+                    # TASK-32534 (CE-007): the now-visible screen may be a
+                    # reused instance whose nav bar still carries the
+                    # optimistic highlight set by the departure click.
+                    self._resync_navigation_bar_active(new_screen)
+
                     # ADR-171: only successful top-level navigation is a departure;
                     # modal suspension and automatic startup never set this token.
                     if outgoing_key == TAB_CHAT and current_tab_value != TAB_CHAT:

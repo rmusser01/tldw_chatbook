@@ -1,0 +1,1 @@
+Reviewer /root/mcp_server_action_review: no concrete blockers or missing essential cases within Revoke scope. Button identity captures grant plus profile; invalidation precedes prune; pop-before-post prevents duplicate delivery; failure rebuilds retry controls and profile-guarded completion preserves newer listings. Read-only; no tests or apps run.

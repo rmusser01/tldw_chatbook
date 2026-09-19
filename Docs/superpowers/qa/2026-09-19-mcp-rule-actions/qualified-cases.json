@@ -1,0 +1,286 @@
+{
+  "distinct_cases": 56,
+  "qualification": "27 new mounted ownership/definition/retry/completion cases, 10 parent Revoke regressions and 19 permission-store cases. No full suite.",
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[same-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[same-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[reorder-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[reorder-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[tool-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[tool-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[profile-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[profile-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[clear-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[clear-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[roundtrip-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_obsolete_permission_controls_cannot_target_a_replacement[roundtrip-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_live_permission_controls_are_consumed_once_with_the_displayed_target[remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_live_permission_controls_are_consumed_once_with_the_displayed_target[reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[description]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_reallow_refuses_a_definition_changed_since_rendering[schema]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_failed_permission_action_is_retryable[remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_failed_permission_action_is_retryable[reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[tool-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[tool-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[clear-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[clear-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[roundtrip-remove]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_permission_completion_preserves_a_newer_selection[roundtrip-reallow]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[retry]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[session]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[reorder]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[replace]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[profile]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[clear]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[same]",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_invalid_as_soon_as_permission_replacement_starts",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_failed_revoke_can_be_retried_without_reselecting_the_tool",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_older_revoke_refresh_preserves_a_newer_profiles_listing",
+      "status": "passed",
+      "run": "green-003"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_builtin_allow_with_legacy_stored_hash_is_not_rug_pulled",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rule_allows_exact_args_and_still_prompts_otherwise",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rule_field_glob_patterns_match_one_field",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rules_participate_in_the_rug_pull_guard",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rules_never_quiet_high_risk_tools",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_service_arg_rule_round_trip",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_returns_rule_id_and_created_at",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_omits_hand_written_field_pattern_rules",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_empty_for_unknown_tool",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_remove_tool_arg_rule_round_trip_makes_the_next_call_ask_again",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_remove_tool_arg_rule_unknown_id_is_a_no_op",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_remove_tool_arg_rule_only_deletes_the_matching_rule",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_service_list_and_remove_tool_arg_rules_round_trip",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_strict_snapshot_accepts_an_arg_rule_only_tool_entry",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_strict_snapshot_rejects_a_non_list_arg_rules_value",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_list_tool_arg_rules_lists_an_inherited_rule_with_its_owner",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_arg_rule_writes_route_through_the_guarded_mutation_path",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_concurrent_permission_writes_survive_arg_rule_churn",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_permission_store::test_add_tool_arg_rule_still_seeds_a_missing_named_profile",
+      "status": "passed",
+      "run": "adjacent-001"
+    }
+  ]
+}

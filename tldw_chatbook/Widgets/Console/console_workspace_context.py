@@ -2086,7 +2086,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 progress_count=row.progress_count,
             )
             row_button.add_class("console-conversation-compact-row")
-            # Content-dependent height; spacing and compact resting size are CSS tokens.
+            # ds-runtime: content-dependent row height (base row plus activity, subagent, and progress indicator rows; resting size and spacing are CSS tokens)
             row_button.styles.height = (
                 1 + bool(activity) + bool(row.subagent_count) + bool(row.progress_count)
             )
