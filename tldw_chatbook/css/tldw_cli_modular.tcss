@@ -19663,17 +19663,14 @@ LogsWindow {
 
 /* ===== MODULE: features/_workflows.tcss ===== */
     WorkflowEditor TextArea { height: $ds-size-6; min-height: $ds-control-height; }
-    WorkflowEditor Input { height: $ds-control-height; margin: $ds-space-0; }
     WorkflowEditor Collapsible { padding: $ds-space-0; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; border: none; }
     WorkflowEditor Collapsible > Contents { padding: $ds-space-0 $ds-space-inset; }
 
 
     ChoiceModal { align: center middle; background: $background $ds-opacity-dim; }
-    ChoiceModal > Vertical { width: $ds-percent-90; max-width: $ds-size-90; height: $ds-percent-80; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
     ChoiceModal OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
     ChoiceModal .choice-copy { height: auto; max-height: $ds-size-8; }
     ChoiceModal.has-scroll-detail #workflow-dialog-choices { height: $ds-control-height; min-height: $ds-control-height; }
-    StepChooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
     StepChooser .choice-copy { max-height: $ds-control-height; }
 WorkflowsScreen #workflow-library-search > .input--placeholder {
     color: $ds-text-muted;
@@ -19691,7 +19688,6 @@ WorkflowsScreen WorkflowEditor TextArea.form-textarea.workflow-expanded { height
 WorkflowRunPanel { height: auto; padding: $ds-space-0 $ds-space-inset; }
 WorkflowRunPanel Collapsible { height: 1fr; padding: $ds-space-0; margin: $ds-space-0; border: none; }
 WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: 1fr; }
-WorkflowRunPanel Static { height: auto; }
 WorkflowRunPanel TextArea { height: 6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
 WorkflowRunSetup, WorkflowRunConfirmation { align: center middle; background: $background $ds-opacity-dim; }
 

@@ -246,8 +246,17 @@ def _schema_shape(schema: dict) -> Any:
 def admit_definition(revision: Revision) -> dict[str, Any]:
     """Detach a saved revision and refuse unsupported execution before effects.
 
+    Args:
+        revision: Immutable saved revision whose JSON and identity are checked.
+
+    Returns:
+        Detached definition admitted for the supported sequential session
+        subset. Saved bytes are unchanged; admission grants no effect authority.
+
     Raises:
-        SessionError: Invalid, oversized or unsupported definition (code only).
+        SessionError: The definition is invalid, exceeds admission bounds,
+            mismatches the revision identity, or uses unsupported execution
+            fields or values. The error contains only a payload-free code.
     """
     try:
         raw = revision.raw_json

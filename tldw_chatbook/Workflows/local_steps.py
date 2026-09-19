@@ -142,7 +142,23 @@ def _require_worker() -> None:
 def capture_local_note_destination(
     scope: NotesScopeService, *, user_id: str
 ) -> LocalNoteDestination:
-    """Capture the actual cached database off-loop and close this thread's handle."""
+    """Capture the actual Notes route off-loop and close this thread's handle.
+
+    Args:
+        scope: Existing Notes scope whose local owner selects the database.
+        user_id: Nonblank Notes user ID; surrounding whitespace is stripped.
+
+    Returns:
+        Frozen destination retaining the scope, owner, database, and user
+        identity. The owner's cached database remains available for later use.
+
+    Raises:
+        RuntimeError: Called on a thread with a running event loop.
+        ValueError: The user ID is invalid or the selected route changes.
+        TypeError: The local owner is not a NotesInteropService.
+        LocalNoteCleanupError: Closing this thread's database connection fails.
+        Exception: An existing Notes owner or database operation fails.
+    """
     _require_worker()
     if not isinstance(user_id, str) or not user_id.strip():
         raise ValueError("note_user")
@@ -192,6 +208,26 @@ def create_local_note(
 
     The caller retains the attempted ID for authorized same-destination readback.
     No update, retry, organization change or Sync v2 profile is requested.
+
+    Args:
+        destination: Captured Notes route, rechecked while holding its owner lock.
+        create_note_id: Caller-retained attempt ID, nonblank with no surrounding
+            whitespace; reused only for authorized readback after uncertainty.
+        title: Nonblank note title; surrounding whitespace is stripped.
+        content: Exact note content to save, including any whitespace.
+        before_write: Authority recheck called under the route lock immediately
+            before invoking the existing Notes save operation.
+
+    Returns:
+        The created note ID, verified to equal create_note_id.
+
+    Raises:
+        RuntimeError: Called on a thread with a running event loop.
+        ValueError: Inputs are invalid, the captured route changes, or the
+            returned note ID differs from the attempted ID.
+        LocalNoteCleanupError: Closing this thread's database connection fails.
+        Exception: The authority callback or existing Notes policy or storage
+            operation fails. An error does not prove the note was not committed.
     """
     with _bound_destination(destination):
         if (
@@ -226,6 +262,21 @@ def read_local_note(
 
     The coordinator must compare normalized title and exact accepted content;
     an existing ID alone cannot confirm an uncertain write.
+
+    Args:
+        destination: Captured Notes route, rechecked while holding its owner lock.
+        note_id: Exact attempted note ID to read through the captured route.
+
+    Returns:
+        The active note row with matching note and client IDs, or None when the
+        existing Notes service returns no row. Content is not compared here.
+
+    Raises:
+        RuntimeError: Called on a thread with a running event loop.
+        ValueError: The captured route changes or the returned row has an
+            unexpected shape, identity, or deletion state.
+        LocalNoteCleanupError: Closing this thread's database connection fails.
+        Exception: An existing Notes policy or database read operation fails.
     """
     with _bound_destination(destination):
         row = asyncio.run(

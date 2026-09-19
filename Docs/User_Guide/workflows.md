@@ -111,6 +111,7 @@ execution does not establish server schema parity or publish/sync support.
 | Run boundary | Limit |
 | --- | --- |
 | Saved executable definition | 2 MiB UTF-8; 1–100 sequential steps |
+| Setup's ordinary inputs JSON field | 1 MiB UTF-8, checked before parsing; rejected edits stay in the form |
 | Materialized inputs | 10 MiB serialized JSON |
 | Source `.txt` | 1 MiB raw bytes; also must fit its serialized result |
 | Resolved config, step output, review text | 1 MiB serialized JSON per value |

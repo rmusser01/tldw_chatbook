@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     resolve_provider_credential,
 )
 from tldw_chatbook.UI.Workflows_Modules.library import WorkflowButton, compact_button
+from tldw_chatbook.Utils.input_validation import validate_json_size
 from tldw_chatbook.Workflows.models import Revision
 from tldw_chatbook.Workflows.session import (
     ModelSelection,
@@ -35,6 +36,8 @@ SESSION_DISCLOSURE = (
     "quitting loses pending review and intermediate results. Saved Notes remain."
 )
 TERMINAL_STATES = {"completed", "cancelled", "failed", "rejected", "uncertain"}
+# Ordinary UI-authored inputs are small; file contents enter through the file step.
+SETUP_INPUT_BYTES = 1024 * 1024
 
 
 class SessionButton(WorkflowButton):
@@ -159,17 +162,32 @@ class WorkflowRunSetup(ModalScreen[tuple[dict[str, Any], RunSetup] | None]):
             Identity disclosure, source/model/input fields, and setup actions.
         """
         with Vertical(classes="workflow-run-dialog"):
-            yield Static("Run saved revision", classes="workflow-run-heading")
-            with VerticalScroll():
+            yield Static(
+                "Run saved revision", classes="workflow-run-heading workflow-run-copy"
+            )
+            with VerticalScroll(classes="workflow-run-scroll"):
                 yield Static(
                     f"Workflow {self.revision.workflow_id}\nRevision {self.revision.revision_id}",
                     markup=False,
+                    classes="workflow-run-copy",
                 )
-                yield Static(SESSION_DISCLOSURE, markup=False)
-                yield Static("Source · local UTF-8 .txt", markup=False)
-                yield Input(id="workflow-source", classes="form-input")
+                yield Static(
+                    SESSION_DISCLOSURE, markup=False, classes="workflow-run-copy"
+                )
+                yield Static(
+                    "Source · local UTF-8 .txt",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
+                yield Input(
+                    id="workflow-source", classes="form-input workflow-run-field"
+                )
                 yield compact_button("Choose file…", "workflow-source-choose")
-                yield Static("Configured provider / model", markup=False)
+                yield Static(
+                    "Configured provider / model",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
                 yield Select(
                     (
                         (
@@ -181,25 +199,43 @@ class WorkflowRunSetup(ModalScreen[tuple[dict[str, Any], RunSetup] | None]):
                     value=0,
                     allow_blank=False,
                     id="workflow-model-choice",
+                    classes="workflow-run-field",
                 )
-                yield Static("Actual model ID (editable)", markup=False)
+                yield Static(
+                    "Actual model ID (editable)",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
                 yield Input(
-                    self.models[0].model, id="workflow-model", classes="form-input"
+                    self.models[0].model,
+                    id="workflow-model",
+                    classes="form-input workflow-run-field",
                 )
-                yield Static("Note title · Local Note", markup=False)
+                yield Static(
+                    "Note title · Local Note", markup=False, classes="workflow-run-copy"
+                )
                 yield Input(
                     str(self.inputs.get("note_title", "")),
                     id="workflow-note-title",
-                    classes="form-input",
+                    classes="form-input workflow-run-field",
                 )
-                yield Static("Other ordinary inputs (JSON object)", markup=False)
+                yield Static(
+                    "Other ordinary inputs (JSON object)",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
                 ordinary = {k: v for k, v in self.inputs.items() if k != "note_title"}
                 yield TextArea(
                     json.dumps(ordinary, ensure_ascii=False),
                     id="workflow-inputs",
                     classes="form-textarea",
                 )
-                yield Static("", id="workflow-setup-error", markup=False)
+                yield Static(
+                    "",
+                    id="workflow-setup-error",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
             with Horizontal(classes="workflow-run-actions"):
                 yield compact_button("Review destinations", "workflow-setup-review")
                 yield compact_button("Cancel", "workflow-setup-cancel")
@@ -244,9 +280,19 @@ class WorkflowRunSetup(ModalScreen[tuple[dict[str, Any], RunSetup] | None]):
             )
         elif event.button.id == "workflow-setup-review":
             error = self.query_one("#workflow-setup-error", Static)
+            raw = self.query_one("#workflow-inputs", TextArea).text
             try:
-                values = json.loads(self.query_one("#workflow-inputs", TextArea).text)
-            except ValueError:
+                # Bound characters before allocating UTF-8, then bound actual bytes
+                # before the synchronous decoder sees user-authored text.
+                if len(raw) > SETUP_INPUT_BYTES or not validate_json_size(
+                    raw, SETUP_INPUT_BYTES
+                ):
+                    error.update(
+                        "Inputs JSON exceeds the 1 MiB limit. Shorten ordinary inputs."
+                    )
+                    return
+                values = json.loads(raw)
+            except (ValueError, RecursionError):
                 error.update("Inputs JSON is invalid. Use valid JSON, e.g. {}.")
                 return
             if not isinstance(values, dict):
@@ -310,8 +356,11 @@ class WorkflowRunConfirmation(ModalScreen[bool]):
         """
         binding = self.binding
         with Vertical(classes="workflow-run-dialog"):
-            yield Static("Confirm run destinations", classes="workflow-run-heading")
-            with VerticalScroll():
+            yield Static(
+                "Confirm run destinations",
+                classes="workflow-run-heading workflow-run-copy",
+            )
+            with VerticalScroll(classes="workflow-run-scroll"):
                 yield Static(
                     f"Workflow {self.revision.workflow_id}\nRevision {self.revision.revision_id}\n"
                     f"File: {binding.source}\nProvider: {binding.model.provider_id}\n"
@@ -320,6 +369,7 @@ class WorkflowRunConfirmation(ModalScreen[bool]):
                     f"Local Note: {binding.notes.db_path}\nUser: {binding.notes.user_id}\n"
                     f"Note title: {self.note_title}\n\n" + SESSION_DISCLOSURE,
                     markup=False,
+                    classes="workflow-run-copy",
                 )
             with Horizontal(classes="workflow-run-actions"):
                 yield compact_button("Start run", "workflow-start")
@@ -364,7 +414,12 @@ class WorkflowRunPanel(Vertical):
         with Collapsible(
             title="Session run", collapsed=True, id="workflow-session-collapse"
         ):
-            yield Static("", id="workflow-session-status", markup=False)
+            yield Static(
+                "",
+                id="workflow-session-status",
+                markup=False,
+                classes="workflow-run-copy",
+            )
             with Horizontal(classes="workflow-run-actions"):
                 for label, identifier in (
                     ("Approve once", "workflow-effect-approve"),
@@ -378,12 +433,34 @@ class WorkflowRunPanel(Vertical):
                         label, id=identifier, classes="workflow-compact", disabled=True
                     )
             with VerticalScroll(id="workflow-session-content"):
-                yield Static("", id="workflow-session-identity", markup=False)
-                yield Static("", id="workflow-effect-summary", markup=False)
-                yield Static("", id="workflow-effect-text", markup=False)
-                yield Static("", id="workflow-review-instructions", markup=False)
+                yield Static(
+                    "",
+                    id="workflow-session-identity",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
+                yield Static(
+                    "",
+                    id="workflow-effect-summary",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
+                yield Static(
+                    "",
+                    id="workflow-effect-text",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
+                yield Static(
+                    "",
+                    id="workflow-review-instructions",
+                    markup=False,
+                    classes="workflow-run-copy",
+                )
                 yield TextArea("", id="workflow-review-text", classes="form-textarea")
-                yield Static(SESSION_DISCLOSURE, markup=False)
+                yield Static(
+                    SESSION_DISCLOSURE, markup=False, classes="workflow-run-copy"
+                )
 
     def on_mount(self) -> None:
         """Subscribe to session changes and refresh after child layout settles."""

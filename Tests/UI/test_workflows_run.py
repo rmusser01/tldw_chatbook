@@ -147,6 +147,47 @@ async def test_real_run_press_opens_reviewed_setup(request, tmp_path, harness):
         await pilot.pause()
 
 
+@pytest.mark.parametrize("raw", ["{" + " " * 32, '{"x":"' + "é" * 13 + '"}'])
+@private_profile_test
+async def test_setup_rejects_oversized_utf8_before_parsing_and_keeps_edits(
+    request, tmp_path, harness, monkeypatch, raw
+):
+    from tldw_chatbook.UI.Workflows_Modules import run_controls
+
+    # Use a small boundary so the test covers admission, not TextArea bulk paste.
+    monkeypatch.setattr(run_controls, "SETUP_INPUT_BYTES", 32, raising=False)
+    await configure_model()
+    app = WorkflowRunHarness(tmp_path, harness)
+    async with app.run_test(size=(110, 36)) as pilot:
+        await pilot.pause()
+        await pilot.click("#workflow-run")
+        await pilot.pause()
+        app.screen.query_one("#workflow-source", Input).value = str(
+            harness.setup.source
+        )
+        editor = app.screen.query_one("#workflow-inputs", TextArea)
+        editor.load_text(raw)
+        await pilot.click("#workflow-setup-review")
+        await pilot.pause()
+        assert "Inputs JSON exceeds" in str(
+            app.screen.query_one("#workflow-setup-error", Static).renderable
+        )
+        assert editor.text == raw
+        assert not app.screen.query("#workflow-start")
+        assert harness.requests == [] and harness.rows() == []
+        # Recover at exactly the UTF-8 byte limit; ordinary setup still works.
+        editor.load_text('{ "note_title":"' + "é" * 7 + '"}')
+        recovery = app.screen.query_one("#workflow-setup-review", Button)
+        async with asyncio.timeout(2):
+            while recovery.has_class("-active"):
+                await pilot.pause()
+        await pilot.click("#workflow-setup-review")
+        async with asyncio.timeout(10):
+            while not app.screen.query("#workflow-start"):
+                await pilot.pause()
+        assert harness.requests == [] and harness.rows() == []
+
+
 async def open_setup(app, pilot, source, capture_size=None):
     await pilot.pause()
     await pilot.click("#workflow-run")
@@ -1018,6 +1059,13 @@ async def test_capture_recoverable_setup_error(
     ("field", "value", "problem", "correction"),
     [
         ("workflow-inputs", "{invalid}", "Inputs JSON is invalid", "Use valid JSON"),
+        pytest.param(
+            "workflow-inputs",
+            '{"value":' + "[" * 10_000 + "0" + "]" * 10_000 + "}",
+            "Inputs JSON is invalid",
+            "Use valid JSON",
+            id="excessive-nesting",
+        ),
         ("workflow-inputs", "[]", "Inputs must be a JSON object", "not a list"),
         ("workflow-source", "relative.txt", "Source must be an absolute", "Choose"),
         ("workflow-model", " ", "Model ID is required", "Enter the actual model ID"),
@@ -1087,7 +1135,9 @@ async def test_capture_narrow_setup_and_review_context(
             harness.setup.source
         )
         choice = app.screen.query_one("#workflow-model-choice", Select)
-        choice.focus()
+        # This check chooses an explicit top-of-viewport position; don't race
+        # Textual's deferred automatic focus scroll against that manual scroll.
+        choice.focus(scroll_visible=False)
         choice.scroll_visible(animate=False, top=True)
         await pilot.pause()
         for identifier in (
@@ -1107,7 +1157,9 @@ async def test_capture_narrow_setup_and_review_context(
         await pilot.click("#workflow-start")
         view = await until(app._workflow_session, lambda v: v.state == "review")
         await pilot.pause()
-        app.screen.query_one("#workflow-review-accept", Button).focus()
+        app.screen.query_one("#workflow-review-accept", Button).focus(
+            scroll_visible=False
+        )
         app.screen.query_one("#workflow-session-content", VerticalScroll).scroll_home(
             animate=False
         )

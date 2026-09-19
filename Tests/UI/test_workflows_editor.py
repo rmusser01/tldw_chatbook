@@ -9,6 +9,7 @@ import pytest
 from textual.binding import Binding
 from textual.widgets import Button, Collapsible, Input, OptionList, TextArea
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
@@ -870,8 +871,9 @@ async def test_load_failure_is_visible_and_retry_keeps_the_document_owner(
 
 
 @pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
+@private_profile_test
 async def test_real_css_panes_f6_tab_and_precise_nested_issue_are_painted(
-    tmp_path, size
+    request, tmp_path, size
 ):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=size) as pilot:
@@ -908,6 +910,9 @@ async def test_real_css_panes_f6_tab_and_precise_nested_issue_are_painted(
         await pilot.pause()
         field = field_for(editor, "/steps/2/timeout_seconds")
         assert harness.focused is field
+        # Re-keying workflow selectors must preserve the shared field rhythm.
+        assert field.styles.margin.bottom == 1
+        assert field.region.height == 3
         assert not screen.query_one(
             "#workflow-section-execution", Collapsible
         ).collapsed
