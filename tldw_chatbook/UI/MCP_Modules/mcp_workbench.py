@@ -3387,6 +3387,43 @@ class MCPWorkbench(Container):
             # navigation still invalidates this token and suppresses the receipt.
             token = (token[0], service, token[2], self._mcp_recovery_view())
             self._mcp_recovery_token = token
+            catalog_failed = False
+            try:
+                # Read saved definitions only. A normal reload also owns source
+                # navigation/discovery state and must not be used as this receipt.
+                records = await service.local_external_catalog()
+                if not isinstance(records, list) or any(
+                    not isinstance(record, Mapping) or not record.get("profile_id")
+                    for record in records
+                ):
+                    raise ValueError("invalid local MCP catalog")
+                catalog = {
+                    str(record["profile_id"]): dict(record) for record in records
+                }
+                snapshots = [local_profile_readiness(record) for record in records]
+            except Exception as exc:  # noqa: BLE001 - preserve the completed approval
+                catalog_failed = True
+                catalog, snapshots = {}, []
+                logger.warning(
+                    "{}",
+                    _safe_diagnostic_message(
+                        "Reviewed MCP catalog refresh failed", exc
+                    ),
+                )
+            if not self._mcp_recovery_current(token):
+                return
+            self._catalog_records = catalog
+            self._snapshots = [
+                builtin_readiness(
+                    enabled=bool(get_cli_setting("mcp", "enabled", False)),
+                    expose_tools=bool(get_cli_setting("mcp", "expose_tools", True)),
+                    expose_resources=bool(
+                        get_cli_setting("mcp", "expose_resources", True)
+                    ),
+                    expose_prompts=bool(get_cli_setting("mcp", "expose_prompts", True)),
+                ),
+                *snapshots,
+            ]
             self._rebind_inspector_advanced_context(service)
             inspector = self.query_one(MCPInspector)
             await inspector.show_tool(None)
@@ -3397,9 +3434,16 @@ class MCPWorkbench(Container):
                 return
             await self._sync_children(recovery_token=token)
             if self._mcp_recovery_current(token):
-                self.app.notify(
-                    "Fresh MCP roots reviewed. Connect and tool grants remain separate actions."
-                )
+                if catalog_failed:
+                    self.app.notify(
+                        "Fresh MCP roots reviewed, but the server list could not "
+                        "refresh. Press r to retry.",
+                        severity="warning",
+                    )
+                else:
+                    self.app.notify(
+                        "Fresh MCP roots reviewed. Connect and tool grants remain separate actions."
+                    )
         finally:
             self._mcp_recovery_busy = False
             if token is self._mcp_recovery_token:

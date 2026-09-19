@@ -1,0 +1,48 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research    More ▾
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────────╮
+│                                            ││  Review restored MCP roots                                                ││                                             │
+│ Source                                     ││ Review creates fresh Ask/local defaults. Historical rules and grants      ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ remain inactive. Connecting and granting tools are separate actions.      ││  Pick a server, tool, or entry to see       │
+│ ▊  Local                              ▼  ▎ ││  Block all tool calls in chat: Off ▸                                      ││  what's wrong and what you can do.          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Also blocks the app's own built-in tools (calculator, date/time, file  ▇ ││                                             │
+│                                            ││  and note tools).                                                         ││                                             │
+│ Servers                                    ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││    Advanced…                                │
+│  ○ needs setup · ◦ off (opt-in) · ⌂        ││ ▊  Filter tool or server…                                              ▎  ││                                             │
+│  built-in                                  ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││                                             │
+│    All servers                             ││  Tool                                                   State  Tags       ││                                             │
+│  ◦ ⌂ tldw_chatbook (built-in)              ││  Global default                                         Ask    —          ││                                             │
+│  ○ demo                                    ││  Server default — Local workspace, web, and Watchlists  Ask    —          ││                                             │
+│                                            ││    fs_edit                                              Ask    mutates    ││                                             │
+│                                            ││    fs_glob                                              Ask    —          ││                                             │
+│                                            ││    fs_grep                                              Ask    —          ││                                             │
+│                                            ││    fs_list                                              Ask    —          ││                                             │
+│                                            ││    fs_patch                                             Ask    mutates    ││                                             │
+│                                            ││    fs_read                                              Ask    —      ▂▂  ││                                             │
+│                                            ││    fs_write                                             Ask    mutates    ││                                             │
+│                                            ││    git_blame                                            Ask    —          ││                                             │
+│                                            ││    git_branches                                         Ask    —          ││                                             │
+│                                            ││    git_diff                                             Ask    —          ││                                             │
+│                                            ││    git_log                                              Ask    —          ││                                             │
+│                                            ││    git_status                                           Ask    —          ││                                             │
+│                                            ││    shell_exec                                           Ask    process    ││                                             │
+│                                            ││    watchlists_check_sources                             Ask    mutates    ││                                             │
+│                                            ││    watchlists_create_collection                         Ask    mutates    ││                                             │
+│                                            ││    watchlists_create_sources                            Ask    mutates    ││                                             │
+│                                            ││    watchlists_generate_briefing                         Ask    mutates    ││                                             │
+│                                            ││    watchlists_get_briefing                              Ask    —          ││                                             │
+│                                            ││    watchlists_get_item                                  Ask    —          ││                                             │
+│                                            ││    watchlists_get_operation_status                      Ask    —          ││                                             │
+│                                            ││    watchlists_get_operations_status                     Ask    —          ││                                             │
+│                                            ││    watchlists_list_briefings                            Ask    —          ││                                             │
+│                                            ││    watchlists_list_collections                          Ask    —        ▃ ││                                             │
+│                                            ││                                                                      ▏    ││                                             │
+│                                            ││ global default: ask                                                       ││                                             │
+│                                            ││ • override · ⚠ definition changed · ⚑ high-risk floor · ≡ exact-input     ││                                             │
+│                                            ││ allows · (session) approved until Chatbook exits · Space cycles Inherit   ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
