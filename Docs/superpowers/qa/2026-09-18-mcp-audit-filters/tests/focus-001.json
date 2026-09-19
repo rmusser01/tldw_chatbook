@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_keyboard_filters_and_table_remain_visible_after_resize[textual-light]",
+      "status": "passed"
+    }
+  ]
+}

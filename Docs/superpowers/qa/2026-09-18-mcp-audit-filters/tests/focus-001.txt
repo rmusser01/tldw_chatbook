@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+15.48s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-light]
+14.93s call     Tests/UI/test_mcp_audit_filter_layout.py::test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]
+
+(4 durations < 1s hidden.)
+2 passed, 8 deselected in 32.01s

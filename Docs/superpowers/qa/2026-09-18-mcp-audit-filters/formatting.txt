@@ -1,0 +1,6 @@
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check Tests/UI/test_mcp_audit_filter_layout.py Docs/superpowers/qa/2026-09-18-mcp-audit-filters/native_check.py
+2 files already formatted
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check --range 640-749 Tests/UI/test_mcp_audit_mode.py
+1 file already formatted
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff format --check --range 494-520 tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py
+1 file already formatted

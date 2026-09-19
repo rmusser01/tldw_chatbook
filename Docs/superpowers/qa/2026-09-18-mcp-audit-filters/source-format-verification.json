@@ -1,0 +1,7 @@
+{
+  "path": "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py",
+  "captured_sha256": "f1a572f03db6ddc455ccd01bf534f8654a4ef11fa0b9e416e5f0462b6d81ec9d",
+  "formatted_sha256": "8fe5ba010d43695d6955592fab4d0668bc016015a7d2faad3886f3c30837cafd",
+  "ast_identical": true,
+  "change": "Ruff wrapped the focus guard condition; no semantic change after native capture."
+}
