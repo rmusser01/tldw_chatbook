@@ -93,7 +93,8 @@ async def run():
   else:
    assert service.permission_store.get_global_default()=='ask'
    assert bench._selected_server_key is None
-   assert bench.query_one('#mcp-servers-table',DataTable).row_count==0,'old Servers rows survived review'
+   assert bench.query_one('#mcp-servers-table',DataTable).row_count==2
+   assert not bench._catalog_records['demo']['discovery_snapshot'],'historical discovery survived review'
    table=bench.query_one('#mcp-tools-table',DataTable)
    assert all('historical_tool' not in str(table.get_row_at(i)) for i in range(table.row_count)),'old Tools row survived review'
    assert bench.query_one('#mcp-audit-table',DataTable).row_count==0

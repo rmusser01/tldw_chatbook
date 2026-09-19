@@ -322,3 +322,20 @@ then bulk permission actions and approval workflows. Current-head CI and final
 visual approval still gate merging this draft.
 
 The wider component workstream remains open; see the [MCP ledger](2026-09-18-mcp-review.md).
+
+## Post-review MCP catalog and guidance — TASK-32840
+
+[49 targeted cases, seven preflight guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/README.md)
+qualify passive repopulation of reviewed local definitions, current-view
+publication through navigation/service changes, successful approval with a
+catalog retry warning, and accurate retained-history guidance. No discovery,
+connection or grants occur. The private native app exits normally with unchanged
+user defaults; one unrelated Evals enrollment diagnostic is recorded.
+
+This follow-up stacks on PR #2727's ownership guards and closes its deferred
+catalog/guidance items. Retarget its draft to dev after the parent merges.
+Next review: bulk permission actions and approval workflows, then remaining
+connected-runtime journeys. Current-head CI and final visual approval still
+gate merging. The resume heartbeat remains paused.
+
+The wider component workstream remains open; see the [MCP ledger](2026-09-18-mcp-review.md).
