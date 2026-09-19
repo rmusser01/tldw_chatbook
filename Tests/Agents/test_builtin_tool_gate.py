@@ -1,6 +1,14 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate, build_builtin_gate
+from tldw_chatbook.MCP.permission_store import (
+    MCPPermissionStore,
+    PermissionStoreSnapshotError,
+)
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, Tool
 
 #: PR2a Task 5: the gate keys every per-turn verdict by ``(run_id,
@@ -911,3 +919,204 @@ def test_builtin_ephemeral_refusal_is_not_an_approval_fact():
         )
     assert not result.ok and result.outcome == "blocked"
     assert result.approval_decision is None
+
+
+@pytest.fixture
+def strict_authority(tmp_path, monkeypatch):
+    """A real store whose legacy recovery paths must never be entered."""
+    authority_dir = tmp_path / "authority"
+    authority_dir.mkdir()
+    store = MCPPermissionStore(authority_dir / "permissions.json")
+    store.path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kill_switch": False,
+                "profiles": {"default": {"global_default": "ask", "servers": {}}},
+            }
+        )
+    )
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Strict checks entered a legacy recovery or service read")
+
+    monkeypatch.setattr(store, "load", forbidden)
+    monkeypatch.setattr(store, "save", forbidden)
+    service = SimpleNamespace(
+        permission_store=store,
+        get_kill_switch=forbidden,
+        is_session_approved=forbidden,
+    )
+    return store, service
+
+
+@pytest.mark.parametrize("service", [None, SimpleNamespace(), _ServiceWithoutStore()])
+def test_strict_missing_service_or_store_is_unavailable(service):
+    gate = BuiltinToolGate(service)
+    with pytest.raises(PermissionStoreSnapshotError):
+        gate.resolve(CalculatorTool(), strict=True)
+    result = gate.check_detailed(CalculatorTool(), RUN, strict=True)
+    assert result.refusal is not None
+    assert result.refusal_code == "unavailable"
+    assert result.approval_decision is None
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt", "schema", "unreadable"])
+def test_strict_authority_failure_never_repairs_or_grants(
+    strict_authority, monkeypatch, failure
+):
+    store, service = strict_authority
+    original = store.path.read_bytes()
+    if failure == "missing":
+        store.path.unlink()
+    elif failure == "corrupt":
+        store.path.write_bytes(b"{private-broken-payload")
+    elif failure == "schema":
+        store.path.write_text('{"schema_version":99}')
+    else:
+        real_read = Path.read_bytes
+
+        def unreadable(path):
+            if path == store.path:
+                raise PermissionError("private-path")
+            return real_read(path)
+
+        monkeypatch.setattr(Path, "read_bytes", unreadable)
+    before = store.path.read_text() if store.path.exists() else None
+    gate = BuiltinToolGate(service)
+    gate.stamp(RUN, "calculator", "approve_once")
+    result = gate.check_detailed(CalculatorTool(), RUN, strict=True)
+    assert result.refusal_code == "unavailable"
+    assert result.refusal is not None
+    assert result.approval_decision is None
+    assert "private" not in result.refusal
+    with pytest.raises(PermissionStoreSnapshotError):
+        gate.resolve(CalculatorTool(), strict=True)
+    assert (store.path.read_text() if store.path.exists() else None) == before
+    assert sorted(p.name for p in store.path.parent.iterdir()) == (
+        [] if failure == "missing" else ["permissions.json"]
+    )
+    if failure == "unreadable":
+        assert store.path.read_text() == original.decode()
+
+
+@pytest.mark.parametrize("profile_id", ["missing", "", None, []])
+def test_strict_requires_the_exact_captured_profile(strict_authority, profile_id):
+    _, service = strict_authority
+    gate = BuiltinToolGate(service, profile_id=profile_id)
+    result = gate.check_detailed(CalculatorTool(), RUN, strict=True)
+    assert result.refusal_code == "unavailable"
+    with pytest.raises(PermissionStoreSnapshotError):
+        gate.resolve(CalculatorTool(), strict=True)
+
+
+def test_strict_named_profile_inherits_then_refuses_deleted_profile(strict_authority):
+    store, service = strict_authority
+    payload = json.loads(store.path.read_text())
+    payload["profiles"]["research"] = {"servers": {}}
+    payload["profiles"]["default"]["servers"] = {
+        "agent:builtin": {"tools": {"write_thing": {"state": "allow"}}}
+    }
+    store.path.write_text(json.dumps(payload))
+    gate = BuiltinToolGate(service, profile_id="research")
+    assert gate.resolve(_Mutating(), strict=True).state == "allow"
+    assert gate.check_detailed(_Mutating(), RUN, strict=True).refusal is None
+    del payload["profiles"]["research"]
+    store.path.write_text(json.dumps(payload))
+    assert (
+        gate.check_detailed(_Mutating(), RUN, strict=True).refusal_code == "unavailable"
+    )
+
+
+def test_strict_verdict_uses_one_snapshot_for_kill_and_policy(
+    strict_authority, monkeypatch
+):
+    store, service = strict_authority
+    original_read = store.read_snapshot_strict
+    reads = []
+
+    def read_then_revoke():
+        snapshot = original_read()
+        reads.append(snapshot)
+        payload = json.loads(store.path.read_text())
+        payload["kill_switch"] = True
+        payload["profiles"]["default"]["servers"] = {
+            "agent:builtin": {"default": "deny"}
+        }
+        store.path.write_text(json.dumps(payload))
+        return snapshot
+
+    monkeypatch.setattr(store, "read_snapshot_strict", read_then_revoke)
+    gate = BuiltinToolGate(service)
+    assert gate.check_detailed(CalculatorTool(), RUN, strict=True).refusal is None
+    assert len(reads) == 1
+    assert (
+        gate.check_detailed(CalculatorTool(), RUN, strict=True).refusal_code
+        == "kill_switch"
+    )
+    assert len(reads) == 2
+
+
+def test_strict_bypasses_stale_turn_cache_without_replacing_it(tmp_path):
+    store = MCPPermissionStore(tmp_path / "permissions.json")
+    store.set_tool_state("agent:builtin", "calculator", "allow")
+    gate = BuiltinToolGate(SimpleNamespace(permission_store=store))
+    assert gate.resolve(CalculatorTool()).state == "allow"
+    store.set_tool_state("agent:builtin", "calculator", "deny")
+    assert gate.resolve(CalculatorTool(), strict=True).state == "deny"
+    assert (
+        gate.check_detailed(CalculatorTool(), RUN, strict=True).refusal_code == "denied"
+    )
+    assert gate.resolve(CalculatorTool()).state == "allow"
+    gate.begin_turn(RUN)
+    assert gate.resolve(CalculatorTool()).state == "deny"
+
+
+@pytest.mark.parametrize(
+    "state,kill,stamp,code,fact",
+    [
+        ("ask", False, None, "approval_required", None),
+        ("ask", False, "approve_once", None, "approved"),
+        ("ask", False, "deny", "denied", "denied"),
+        ("deny", False, "approve_once", "denied", "denied"),
+        ("allow", True, "approve_once", "kill_switch", None),
+        ("allow", False, None, None, None),
+    ],
+)
+def test_strict_codes_preserve_approval_facts(
+    strict_authority, state, kill, stamp, code, fact
+):
+    store, service = strict_authority
+    payload = json.loads(store.path.read_text())
+    payload["kill_switch"] = kill
+    payload["profiles"]["default"]["servers"] = {
+        "agent:builtin": {"tools": {"write_thing": {"state": state}}}
+    }
+    store.path.write_text(json.dumps(payload))
+    gate = BuiltinToolGate(service)
+    if stamp:
+        gate.stamp(RUN, "write_thing", stamp)
+    result = gate.check_detailed(
+        _Mutating(), RUN, strict=True, allow_session_approvals=False
+    )
+    assert result.refusal_code == code
+    assert result.approval_decision == fact
+    assert (result.refusal is None) == (code is None)
+
+
+def test_session_approval_opt_out_leaves_ordinary_behavior_unchanged(strict_authority):
+    _, service = strict_authority
+    service.is_session_approved = lambda *args, **kwargs: True
+    gate = BuiltinToolGate(service)
+    assert gate.check_detailed(_Mutating(), RUN, strict=True).refusal is None
+    result = gate.check_detailed(
+        _Mutating(), RUN, strict=True, allow_session_approvals=False
+    )
+    assert result.refusal_code == "approval_required"
+    ordinary = BuiltinToolGate(_FakeService(session={"write_thing"}))
+    assert ordinary.check_detailed(_Mutating(), RUN).refusal is None
+    assert ordinary.check_detailed(_Mutating(), RUN).refusal_code is None
+    assert (
+        ordinary.check_detailed(_Mutating(), RUN, allow_session_approvals=False).refusal
+        is not None
+    )
