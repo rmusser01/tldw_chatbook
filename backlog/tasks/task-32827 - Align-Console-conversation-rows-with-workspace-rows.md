@@ -4,6 +4,7 @@ title: Align Console conversation rows with workspace rows
 status: To Do
 assignee: []
 created_date: '2026-09-19 01:05'
+updated_date: '2026-09-19 01:18'
 labels: []
 dependencies:
   - TASK-32826
@@ -26,4 +27,5 @@ Make the Console Conversations list and workspace conversation rows consistent, 
 - [ ] #3 Identity, ordering, paging, draft state, subagent progress and workspace ownership survive refreshes and row interactions.
 - [ ] #4 Both row surfaces use the attention action contract from TASK-32826 and provide equivalent keyboard menu access.
 - [ ] #5 Targeted tests and mounted checks cover narrow layouts, long titles, ASCII mode, scroll boundaries and pointer target stability; the Inspector sidebar remains unchanged.
+- [ ] #6 Collapsed workspace and capped-list indicators retain attention using the same semantic precedence as their conversation rows; focus explains state and menu action.
 <!-- AC:END -->

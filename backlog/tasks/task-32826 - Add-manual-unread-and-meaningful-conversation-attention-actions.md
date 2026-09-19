@@ -4,6 +4,7 @@ title: Add manual unread and meaningful conversation attention actions
 status: To Do
 assignee: []
 created_date: '2026-09-19 01:04'
+updated_date: '2026-09-19 01:18'
 labels: []
 dependencies: []
 documentation:
@@ -25,8 +26,7 @@ Let users mark Console conversations unread as reminders and recognize each atte
 - [ ] #3 Approval, blocked, failed, running, stopped, unseen-result and unread states have meaningful distinguishable indicators, text explanations and ASCII fallbacks; urgent states override unread without erasing it.
 - [ ] #4 Manual unread never changes operational receipt acknowledgement; stale async callbacks cannot clear a newer mark or affect another conversation/profile.
 - [ ] #5 Targeted persistence, activation, action-menu and mounted keyboard tests pass; existing custom icon and colour restore after overrides clear.
+- [ ] #6 Visible/page-ID unread enrichment remains correct beyond 100 marked chats; compare-and-clear serializes with writers and rejects stale generations even when timestamps repeat.
+- [ ] #7 Coarse background-unseen evidence with an unknown outcome never displays a success check; semantic projection preserves simultaneous and hidden/capped-row attention.
+- [ ] #8 The enlarged action menu clamps to its actual content height and remains keyboard/pointer usable near viewport edges.
 <!-- AC:END -->
-
-## ID allocation
-
-CLI initially allocated TASK-32773; corrected immediately before work to TASK-32826 after surveying all local refs and 31 worktrees (maximum observed 32825).
