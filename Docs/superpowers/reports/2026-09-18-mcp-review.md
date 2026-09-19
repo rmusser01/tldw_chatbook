@@ -102,3 +102,23 @@ Seven preflight guards, unchanged static-analysis baseline, independent review,
 normal shutdown, lock release, database health and source hashes pass.
 Current-head CI/review and owner visual approval remain merge gates. Other
 permission controls, connected runtime journeys and the wider review remain open.
+
+## Tool permission navigation continuation — TASK-32867
+
+PR2731 (session Revoke) and PR2734 (exact-input Remove/Re-allow) are now merged
+into dev, at `7a695b5e73` and `6095db2f5f` respectively. This continuation starts
+from that merged state on `codex/mcp-navigation-action-review`.
+
+Both Tools inspector and Test Tool “Change in Permissions” controls now retain
+the displayed tool/profile and reject retired, hidden, disabled or covered-screen
+presses. Live navigation remains retryable. [75 targeted passing cases, independent
+review and twelve inspected native captures](../qa/2026-09-19-mcp-permission-navigation/README.md)
+verify the repair. Eight native keyboard routes select the expected permission row
+without changing its record; no server connects or tool executes. All seven
+preflight guards and private lifecycle checks pass.
+
+Audit navigation is already saved in PR2724 / TASK-32837; it was not duplicated.
+That existing draft currently conflicts with dev and still requires integration
+review. Other saved MCP drafts, connected-runtime journeys and remaining screen
+reviews stay open. This new repair is a separate draft against dev and requires
+current-head CI/review plus its own final owner visual approval before merge.
