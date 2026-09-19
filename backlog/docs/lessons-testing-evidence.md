@@ -15974,3 +15974,18 @@ queues and retain native inputs; bypassing the production post_message boundary
 would bypass the fix and test a different path. The same task's native compact
 run found a focused recovery button below a padded callout; full-app compositor
 paint assertions caught what focus identity alone missed.
+
+### TASK-32829: hold cancellation cleanup before asserting admission is released
+
+The MCP lifecycle review found that clicking Cancel popped the per-server busy
+marker before the cancelled operation finished cleanup. A retry could start, and
+the old wrapper could later clear the newer attempt's marker. A fixture that
+immediately raised `CancelledError` missed the interval. Holding an explicit gate
+inside cancellation cleanup exposed the lost marker, premature “Cancelled” toast,
+and duplicate same-server launch. Also hold awaited detail rendering: a CHECKING
+snapshot and its operation must be captured together before yielding, or a stale
+Cancel view can bind to a replacement operation. Cancel-before-start coverage
+must force coroutine collection; both service and redraw workers need lazy
+callbacks when their body may never execute. In Textual tests, a cancelled
+worker's `wait()` raises `WorkerCancelled`; settle that expected outcome without
+masking the behavior assertions or swallowing other worker failures.

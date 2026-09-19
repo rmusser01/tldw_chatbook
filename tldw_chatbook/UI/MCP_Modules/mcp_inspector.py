@@ -1114,14 +1114,12 @@ class MCPInspector(Vertical):
             self.server_key = server_key
 
     class CancelRequested(Message, namespace="mcp_inspector"):
-        """Posted when the user clicks Cancel on an in-flight (CHECKING)
-        lifecycle operation. `MCPWorkbench` owns the actual worker and
-        cancels it -- this pane only knows which server the button belongs
-        to."""
+        """Cancel intent bound to the operation displayed when accepted."""
 
-        def __init__(self, server_key: str) -> None:
+        def __init__(self, server_key: str, operation: object | None = None) -> None:
             super().__init__()
             self.server_key = server_key
+            self.operation = operation
 
     class ToolTestRequested(Message, namespace="mcp_inspector"):
         """One click bound to the immutable preview currently rendered."""
@@ -1308,6 +1306,7 @@ class MCPInspector(Vertical):
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"ds-inspector {classes}".strip(), **kwargs)
         self._snapshot: ReadinessSnapshot | None = None
+        self._cancel_control: tuple[Button, str, object | None] | None = None
         self._service: Any = None
         self._sections: list[tuple[str, str]] = [("Overview", "overview")]
         self._action_templates: dict[str, str] = {}
@@ -1777,7 +1776,13 @@ class MCPInspector(Vertical):
 
     # -- readiness block -----------------------------------------------------
 
-    async def update_readiness(self, snapshot: ReadinessSnapshot | None) -> None:
+    async def update_readiness(
+        self,
+        snapshot: ReadinessSnapshot | None,
+        *,
+        cancelling: bool = False,
+        cancel_operation: object | None = None,
+    ) -> None:
         """Rebuild the action-button list for the given snapshot.
 
         Awaited end to end (remove, then mount) within a single call so
@@ -1796,6 +1801,8 @@ class MCPInspector(Vertical):
         begins once the first has fully completed.
         """
         async with self._refresh_lock:
+            # Retire the old control before the first awaited DOM mutation.
+            self._cancel_control = None
             self._snapshot = snapshot
             state = self.query_one("#mcp-inspector-state", Static)
             # RAG-50: `show_tool()` owns `state.display` (hidden while tool
@@ -1859,13 +1866,23 @@ class MCPInspector(Vertical):
                 # with a single Cancel button -- nothing else is actionable
                 # on this server until the worker finishes or is cancelled.
                 cancel_button = Button(
-                    "Cancel",
+                    "Cancelling…" if cancelling else "Cancel",
                     id="mcp-inspector-cancel",
                     classes="mcp-inspector-action console-action-secondary",
                     compact=True,
-                    tooltip="Cancel the in-flight operation.",
+                    tooltip=(
+                        "Waiting for the current operation to finish cleanup."
+                        if cancelling
+                        else "Cancel the in-flight operation."
+                    ),
+                    disabled=cancelling or cancel_operation is None,
                 )
                 await actions.mount_all([cancel_button])
+                self._cancel_control = (
+                    cancel_button,
+                    snapshot.server_key,
+                    cancel_operation,
+                )
                 return
             wired = _wired_actions(snapshot)
             buttons = []
@@ -3601,8 +3618,22 @@ class MCPInspector(Vertical):
             return
         if button_id == "mcp-inspector-cancel":
             event.stop()
-            if self._snapshot is not None:
-                self.post_message(self.CancelRequested(self._snapshot.server_key))
+            current = self._cancel_control
+            if current is None or event.button is not current[0]:
+                return
+            button, server_key, operation = current
+            if (
+                button.disabled
+                or not button.is_attached
+                or button.screen is not self.app.screen
+                or any(
+                    not node.display or not node.visible
+                    for node in button.ancestors_with_self
+                )
+            ):
+                return
+            button.disabled = True
+            self.post_message(self.CancelRequested(server_key, operation))
             return
         if button_id.startswith("mcp-inspector-action-"):
             event.stop()
