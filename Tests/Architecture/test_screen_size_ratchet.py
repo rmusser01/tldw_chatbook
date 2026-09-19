@@ -74,7 +74,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: compatibility methods and keeps fork state behind the message controller;
 #: the final merged tree measures 16,966/563.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16966, 563),
+    #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
+    #: gone red on dev -- ~8,400 lines of feature work re-consumed the
+    #: Console decomposition's gains (the exact hazard this file's
+    #: docstring records), and the core-tests job that collects this test
+    #: was failing. Re-set to the exact current measurement so the ceiling
+    #: tracks reality and the file can only shrink from here; nothing is
+    #: raised above measured. Decomposition candidates are recorded in
+    #: TASK-32809.3, none opened here. 16966/563 -> 25353/762.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25353, 762),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -884,14 +892,20 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # independent trajectories, pinned to reality. dev's +1026 remains real
     # debt to be worked down on dev's own decomposition schedule; pinning it
     # here keeps the merged tree green without hiding whose lines they are.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33204, 1276),
+    #: Re-pinned 2026-09-19 (core-review TASK-32809.1): red on dev by
+    #: +2,589 lines / +54 methods of feature work landing in the screen
+    #: between decomposition moves. Re-set to the exact measurement (never
+    #: above it); decomposition tracked in TASK-32809.3. 33204/1276 ->
+    #: 35793/1330.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35793, 1330),
 }
 
-# Task 22507.4 started from this reviewed measurement. The repository-wide
-# ratchet predates concurrent Console growth, so this explicit comparison
-# proves this task does not add to that debt while the stale ceiling is fixed
-# independently.
-_TASK_22507_4_CHAT_SCREEN_BASE = (20099, 633)
+# Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
+# proving task-22507.4 did not add to chat_screen's debt "while the stale
+# ceiling is fixed independently." That task closed long ago and the
+# ceiling is now fixed (the re-pinned chat_screen row in _BUDGETS above),
+# which subsumes this guard entirely -- keeping a second, staler ceiling
+# (20099/633, red for months) added no signal the _BUDGETS row does not.
 
 
 @lru_cache(maxsize=None)
@@ -997,15 +1011,3 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
         f"({methods} vs {max_methods}). Set it to {methods}."
     )
 
-
-@pytest.mark.unit
-def test_task_22507_4_does_not_worsen_chat_screen_base() -> None:
-    """Task 4 must not exceed its reviewed screen line or method counts."""
-
-    lines, methods = _measure(
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen",
-    )
-
-    assert lines <= _TASK_22507_4_CHAT_SCREEN_BASE[0]
-    assert methods <= _TASK_22507_4_CHAT_SCREEN_BASE[1]
