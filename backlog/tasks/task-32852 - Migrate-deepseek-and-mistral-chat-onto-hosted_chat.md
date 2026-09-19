@@ -1,7 +1,7 @@
 ---
 id: TASK-32852
 title: Migrate deepseek and mistral chat handlers onto the hosted_chat engine
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-19 08:24'
 labels:
@@ -32,9 +32,31 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-19/report.md`.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `chat_with_deepseek` and `chat_with_mistral` route transport through `hosted_chat.py` as provider profiles; mistral's provider-specific payload behavior is preserved and pinned
-- [ ] #2 The DeepSeek dual-API coordination with TASK-15677/ADR-064 is recorded: either this landed first (15677 builds on the profile) or the handoff is written down
-- [ ] #3 Streaming Stop closes the transport (no yield-in-`finally`); streamed usage is captured for both
-- [ ] #4 Metrics name the right provider; consumers of the old labels identified
-- [ ] #5 Provider-neutral contract coverage for both; existing tests pass
+- [x] #1 `chat_with_deepseek` and `chat_with_mistral` route transport through `hosted_chat.py` as provider profiles; mistral's provider-specific payload behavior is preserved and pinned
+- [x] #2 The DeepSeek dual-API coordination with TASK-15677/ADR-064 is recorded: either this landed first (15677 builds on the profile) or the handoff is written down
+- [x] #3 Streaming Stop closes the transport (no yield-in-`finally`); streamed usage is captured for both
+- [x] #4 Metrics name the right provider; consumers of the old labels identified
+- [x] #5 Provider-neutral contract coverage for both; existing tests pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Extract the shared `LegacyLineStream` from the groq/openrouter shims; refactor both profiles onto it (green before touching the new providers).
+2. TDD red: deepseek/mistral preserved-contract pins + flipped defect pins.
+3. deepseek.py + mistral.py profiles mirroring the established pattern; splice the old handlers; re-export entry points.
+4. Full verification incl. pristine-A/B classification of any adjacent failures; ruff; commit; push.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Landed 2026-09-19, commit `7b78a6da57` on `fix/cascade-prep` (branch rebased onto `origin/dev` `cccf0acdad` first — dev's 22 intervening commits touch none of this branch's files). TDD red→green: 4 pins failed for the right reasons pre-implementation, all 16 green after.
+
+- **Shared shim first:** `tldw_chatbook/LLM_Calls/legacy_line_stream.py` — the ~60-line line-relay shim extracted from the two identical per-provider classes; groq.py/openrouter.py refactored onto it and their own copies deleted (verified green before the new providers).
+- **Profiles:** `deepseek.py` (331 lines) and `mistral.py` (324) on the established pattern. Mistral's specifics preserved and pinned: `random_seed`/`safe_prompt` keys, `Accept: application/json` via `extra_headers`, system-message dedup, `mistralai` endpoint key, no stop/penalties/top_k forwarded. deepseek is the standard OpenAI payload.
+- **Fixed and pinned:** clean Stop with exactly-once close; requested + forwarded streamed usage; exactly one `[DONE]`; deepseek's non-streaming metrics now name `deepseek_api_*` (was `mistral_api_*`), mistral's streaming metrics now name `mistral_api_*` (was `openrouter_api_*`); stream-read failures raise typed redacted errors instead of yielding synthetic error chunks (deepseek's old behavior). No consumer outside `LLM_Calls/` keys on the old labels (grep-verified, same as 32851).
+- **AC#2 coordination:** no in-flight work exists on TASK-15677 (no branch, no PR — checked 2026-09-19). This landed first, so 15677's Responses wire mode builds as a mode on `deepseek.py`'s profile; the module docstring says so.
+- **LOC:** `LLM_API_Calls.py` −572 more lines this commit (5,127 → 4,555; **−1,084 on the branch across both waves** against +1,046 of new profile/shim modules — the four OpenAI-compatible providers now share one transport instead of four).
+- **Verification:** 284 passed / 0 failed across the 4-provider characterization file, both engine contract suites, the streaming suite, and the dispatcher mapping; ruff clean (repo config) on all five provider/shim modules. Adjacent failures classified by pristine-worktree A/B at `cccf0acdad`: all 5 `Tests/Chat/test_openai_streaming_usage.py` failures (drive `chat_with_openai`, untouched here) fail identically at the base — pre-existing on dev, same class of finding as TASK-19642.10's notes; whoever picks up the openai handler's keep-profile treatment should sweep them.
+<!-- SECTION:NOTES:END -->
