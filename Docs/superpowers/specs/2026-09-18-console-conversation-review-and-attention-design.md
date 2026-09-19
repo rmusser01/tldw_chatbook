@@ -3,6 +3,7 @@
 Date: 2026-09-18
 
 Status: Written design approved; pre-implementation review corrections recorded below.
+Status: Design approved in conversation; written specification awaiting user review.
 
 ## Scope and owner decisions
 
@@ -38,6 +39,8 @@ attention presentation, and change the modal's long-lived information architectu
 Reuse ADR-010's local marks, ADR-083's workspace ownership, ADR-085's operational
 receipt authority, ADR-069 including its September 7 capture amendment,
 ADR-097's trace disclosure policy, ADR-031's keyboard rules, and ADR-150's tokens.
+receipt authority, ADR-069's automatic-instruction disclosure limits, ADR-031's
+keyboard rules, and ADR-150's design tokens.
 
 ## 1. Conversation Inspector modal
 
@@ -54,6 +57,7 @@ the underlying target must not silently retarget the modal. Profile changes,
 target deletion, or loss of disclosure authority invalidate loaded bodies and
 disable stale exports; preserving the last valid preview applies only while
 its target and disclosure authority remain valid. Keep Close visible
+the underlying target must not silently retarget the modal. Keep Close visible
 and support Escape using the existing safe-dismiss contract; restore focus to
 the invoking control when it still exists.
 
@@ -99,6 +103,10 @@ September 7 amendment and ADR-097 permit retained provider-visible instructions
 when capture was enabled, through the existing Safe/Full projections and frozen
 masks. Preserve that historical access without copying it into the live summary.
 Preserve ephemeral-save restrictions, capture policy, and disclosure controls.
+Automatic project-instruction bodies remain confined to the explicit disposable
+Next Send preview. Summaries, current-conversation sections, row tooltips, logs,
+and incidental tab mounting must not reveal those bodies. Preserve redaction,
+ephemeral-save restrictions, capture policy, and explicit disclosure controls.
 
 ### Usage & cost
 
@@ -133,6 +141,8 @@ historical trace content is displayed, including a Usage & cost call detail,
 and identify their modal-wide disclosure scope. Changing that scope invalidates
 cached bodies across both views before repaint/export. Preserve all existing
 guards and do not silently alter Next Send policy.
+and safe/full trace-view controls live in the historical inspection context;
+they retain all existing guards and do not silently alter Next Send policy.
 
 ### Responsive and keyboard behavior
 
@@ -206,6 +216,8 @@ from current runtime/receipt owners before applying this display precedence;
 do not decode glyphs to fabricate missing state. Keep the projection independent
 of Chat-layer imports. Hidden/capped-row and collapsed-workspace indicators
 use the same semantic priority, preserving existing unseen-activity visibility.
+The first three refine the approved action-required/failure priority. Use
+actual operational state and outcome, never infer state from title or glyph.
 An ordinary old failure does not remain attention-worthy after its existing
 acknowledgement policy says it is handled. Paused states use the pause symbol
 only when an authoritative producer actually reports a resumable paused state;
@@ -229,6 +241,8 @@ move the click target. Qualify the representative symbols in supported
 terminals. Reuse the existing user-selected ASCII mode for terminals that cannot
 render them legibly; do not invent unreliable runtime font-support detection.
 Do not globally replace unrelated Console/sidebar glyphs.
+terminals; fall back to the explicit ASCII state when a glyph cannot be
+rendered legibly. Do not globally replace unrelated Console/sidebar glyphs.
 
 ## 4. Manual unread lifecycle and authority
 
@@ -279,6 +293,7 @@ Enrich each fetched page/visible ID batch with marks off the UI loop. Do not
 treat `list_marked_conversation_ids`' default 100-row limit as the complete set,
 and do not run one database query per painted row. A failed mark read is an
 unavailable state rather than evidence that every chat is read.
+Serialize mark writes and reconcile all visible projections after commit.
 Display unread on an existing Ctrl+K result when present, without changing its
 Active membership or operational receipt rules solely because of the mark.
 
@@ -325,6 +340,17 @@ Run targeted checks only; a full suite requires a separate user request.
   token/cost bases, unavailable pricing, partial totals, freshness, empty/error
   states, lazy large-history detail, on-demand preview preparation, cross-view
   disclosure invalidation, privacy, stale-target and export guards.
+  handling and independence from sync/receipts.
+- Activation tests cover mark-current, leave/return, same-row click, modal
+  close, explicit vs automatic restore, cancelled/failed navigation, stale
+  callbacks, rapid re-marking, and native/Ctrl+K/workspace opening paths.
+- Pure presentation tests cover each state, overlaps, representative glyphs,
+  ASCII mapping, custom appearance restoration and unknown-state honesty.
+- Mounted row tests exercise pointer targeting, focus, keyboard menus,
+  long/wide titles, updates while pressed, paging and scroll stability.
+- Modal tests cover entry-point selection, context/preview separation,
+  token/cost bases, unavailable pricing, partial totals, freshness, empty/error
+  states, lazy large-history detail, privacy and export guards.
 - Render the production stylesheet at 80x24, 120x40 and a wide viewport;
   exercise Back/Close and all important actions with keyboard and pointer.
   Compare representative glyph rendering in iTerm2 and Windows Terminal under
@@ -373,3 +399,7 @@ Evidence: `ConversationLocalMarksService.get_mark/clear_mark/list_marked_convers
 `ConsoleConversationActionMenu.ROOT_PAGE_HEIGHT`, and the cited ADRs.
 The Inspector sidebar is excluded. Glyph appearance and layout remain
 implementation-verification work; this document does not claim live UX evidence.
+Reviewed for scope, target identity, unread/receipt separation, current vs
+historical content, icon precedence, narrow-terminal behavior, and privacy.
+The Inspector sidebar is excluded. Glyph appearance and layout remain subjects
+of implementation verification; this document does not claim live UX evidence.
