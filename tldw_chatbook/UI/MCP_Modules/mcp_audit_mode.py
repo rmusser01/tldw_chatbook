@@ -414,23 +414,22 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     """
 
     class EntrySelected(Message, namespace="mcp_audit_mode"):
-        """Posted when an Executions-table row is selected. `index` is the
-        entry's position in the FULL cached list `update_entries()` was
-        last given (the row key, a stable synthetic index -- stable across
-        a client-side re-filter, since that re-renders from the same
-        cached list)."""
+        """Carry the rendered execution, never resolve a queued index anew.
 
-        def __init__(self, index: int) -> None:
+        ``index`` describes its position at publication; ``entry=None`` clears
+        a selection removed by filtering or log rotation.
+        """
+
+        def __init__(self, index: int | None, entry: dict[str, Any] | None) -> None:
             super().__init__()
             self.index = index
+            self.entry = entry
 
     class FindingSelected(Message, namespace="mcp_audit_mode"):
         """Posted when a Findings-table row is selected (T8, MCP Hub
         Phase 5). `index` is the finding's position in the full list
-        `update_findings()` was last given -- mirrors `EntrySelected`'s own
-        row-key contract exactly (Findings has no client-side filtering to
-        re-render against, but the same stable-synthetic-index shape keeps
-        both selection paths symmetric for the workbench's routing code)."""
+        `update_findings()` was last given. Findings has no client-side
+        filtering and retains its index-based routing contract."""
 
         def __init__(self, index: int) -> None:
             super().__init__()
@@ -457,6 +456,11 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._entries: list[dict[str, Any]] = []
+        self._entry_keys: list[str] = []
+        self._next_entry_key = 0
+        self._visible_entries: dict[str, tuple[int, dict[str, Any]]] = {}
+        self.selected_entry: dict[str, Any] | None = None
+        self._selected_entry_key: str | None = None
         self._filter_text: str = ""
         self._filter_decision: str | None = None
         self._filter_initiator: str | None = None
@@ -539,6 +543,12 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
                 never re-sorts (the log is already newest-first).
         """
         self._entries = list(entries)
+        # Keys belong to one log snapshot. An old queued table activation
+        # must not resolve to a new event at the same index.
+        self._entry_keys = [
+            str(self._next_entry_key + index) for index in range(len(entries))
+        ]
+        self._next_entry_key += len(entries)
         self._apply_filter()
 
     def _matches(self, entry: dict[str, Any]) -> bool:
@@ -571,14 +581,9 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
         empty-state rationale: a filter narrowing to zero rows is just an
         empty table, not "nothing has ever been recorded".
 
-        Preserves the cursor's ROW KEY (the synthetic index, stable across
-        a re-filter against the same cached list) across the rebuild below
-        -- `DataTable.clear()` unconditionally resets `cursor_coordinate` to
-        (0, 0), and this canvas re-renders on every keystroke in the filter
-        Input/Select. Mirrors `mcp_permissions_mode.py`'s `update_matrix()`
-        cursor-key restore (same bug class, same fix shape: a key lookup
-        survives a row reorder/insertion/removal from filtering; a bare
-        saved index would not).
+        Preserve the cursor by execution content across newest-first refreshes,
+        and by row key within one filtered snapshot. The metadata-only log has
+        no event ID; ambiguous duplicate records clear selection on refresh.
         """
         table = self.query_one("#mcp-audit-table", DataTable)
 
@@ -593,6 +598,34 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             if row_key is not None and row_key.value is not None:
                 cursor_key = str(row_key.value)
 
+        cursor_entry = self._visible_entries.get(cursor_key, (None, None))[1]
+        visible_entries = {
+            key: (index, entry)
+            for index, (key, entry) in enumerate(zip(self._entry_keys, self._entries))
+            if self._matches(entry)
+        }
+        if cursor_key not in visible_entries and cursor_entry is not None:
+            matches = [
+                key
+                for key, (_, entry) in visible_entries.items()
+                if entry == cursor_entry
+            ]
+            cursor_key = matches[0] if len(matches) == 1 else None
+        if (
+            self.selected_entry is not None
+            and self._selected_entry_key not in visible_entries
+        ):
+            matches = [
+                key
+                for key, (_, entry) in visible_entries.items()
+                if entry == self.selected_entry
+            ]
+            self._selected_entry_key = matches[0] if len(matches) == 1 else None
+            if self._selected_entry_key is None:
+                self.selected_entry = None
+                self.post_message(self.EntrySelected(None, None))
+        self._visible_entries = visible_entries
+
         # Rebuilding moves the cursor to row 0 before the key-based restore
         # below puts it back; declaring the rebuild keeps that transient from
         # being read as a selection (DataTableClickSelectMixin).
@@ -600,10 +633,7 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             table.clear(columns=True)
             table.add_columns(*_TABLE_COLUMNS)
             restored_index: int | None = None
-            for index, entry in enumerate(self._entries):
-                if not self._matches(entry):
-                    continue
-                key = str(index)
+            for key, (_, entry) in visible_entries.items():
                 # Task 1 (MCP Hub Phase 6): Decision and Outcome are colored by
                 # their own semantic bucket -- separately, since a rug-pull
                 # "downgraded" decision (warning) and a hard "denied" one
@@ -766,6 +796,8 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             self.post_message(self.SubViewChanged(self._sub_view))
         elif event.button.id == "mcp-audit-subview-findings":
             event.stop()
+            self.selected_entry = None
+            self._selected_entry_key = None
             self._sub_view = "findings"
             self._apply_subview_display()
             self.post_message(self.SubViewChanged(self._sub_view))
@@ -809,15 +841,16 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
         event.stop()
         if event.row_key is None or event.row_key.value is None:
             return
-        try:
-            index = int(str(event.row_key.value))
-        except ValueError:
-            # Defensive: row keys are always synthetic ints assigned by
-            # `_apply_filter()`/`_render_findings()` above, but a
-            # mismatched cell key from a mid-rebuild race is a no-op, not
-            # a crash.
-            return
         if event.data_table.id == "mcp-audit-findings-table":
+            try:
+                index = int(str(event.row_key.value))
+            except ValueError:
+                return
             self.post_message(self.FindingSelected(index))
-        else:
-            self.post_message(self.EntrySelected(index))
+        elif event.data_table.id == "mcp-audit-table" and self._sub_view == "executions":
+            selected = self._visible_entries.get(str(event.row_key.value))
+            if selected is not None:
+                index, entry = selected
+                self.selected_entry = entry
+                self._selected_entry_key = str(event.row_key.value)
+                self.post_message(self.EntrySelected(index, entry))

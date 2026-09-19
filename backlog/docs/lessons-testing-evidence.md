@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## A row index is not an execution identity across a newest-first refresh
+
+**TASK-32834, 2026-09-18.** MCP Audit retained row 1 when a new execution was
+prepended, moving its cursor from search to fetch while the inspector still
+described search. Filters and eviction also left live drill actions for absent
+rows. Tests now compare the displayed event/tool identity after refresh and hold
+both table and canvas selection messages across replacement. Retire old snapshot
+keys and carry the rendered event rather than re-resolving an index. Equal metadata
+rows retain their distinct keys during filtering; independent review caught a
+first repair that incorrectly treated them as ambiguous before any refresh.
+
 ## Large SVG failure diagnostics can hide a quick assertion result
 
 **TASK-32821, 2026-09-18.** Both gallery snapshots passed at the baseline.

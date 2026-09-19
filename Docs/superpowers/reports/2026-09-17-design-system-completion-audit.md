@@ -5,6 +5,12 @@ review each feature/component remains active. This ledger separates those two
 contracts so that another successful bounded review cannot accidentally close
 the whole workstream.
 
+Post-merge continuation: PR #2707 merged at `149acda36be8939fe8cd5e589bf77d13462257e7`.
+Bounded MCP reviews have resumed. TASK-32834 records [Audit selection and exact
+drilldown evidence](../qa/2026-09-18-mcp-audit-selection/README.md); compact Audit
+filter readability is next. The historical PR #2707 scope boundary below does
+not hold this continuation open or grant merge approval to its follow-up PRs.
+
 Saved work: [PR #2704](https://github.com/rmusser01/tldw_chatbook/pull/2704)
 merged into `dev` at `e89f28d751bc8a5b4f4545b8894b87437252c657`
 after the owner's visual/conflict approval and passing required checks.

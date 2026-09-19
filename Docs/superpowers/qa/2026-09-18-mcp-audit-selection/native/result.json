@@ -1,0 +1,224 @@
+{
+  "pid": 48945,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true,
+      "exact_same_name_tool_drilldown": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "refresh_retained_event": true,
+      "filter_cleared_detail": true,
+      "zero_and_combined_filters": true,
+      "exact_same_name_tool_drilldown": true
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "4bfb2c3bb62fe2ccbb61a7ef3c6e7928ddc87018c935c37c3886f0c2a8528c60",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "790e3152c7ad417e822bb6d6fa81c000c93d7f8a03f46396d84aeaf8fbecf7cb",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c623a8bd25550d7a454aa06e98365656bd399673158f05e16cbc2304ef030711",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c",
+    "tldw_chatbook/MCP/client.py": "9fce5defe045f633a98244c2d4a0f757765c097305085f2fe04cee373e479d97",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/stdio_server.py": "09bda60b8c32ed7ffb76bbad059a00cc271e433ad036c84e89d281b67822bfbf"
+  },
+  "runner_sha256": "8aacde5a3e2206349ab7c17c487f96c278d6905f01d418c31bde39cba43f6c2e",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "fixture_pids": [
+    49075,
+    49077
+  ],
+  "records": [
+    {
+      "ts": "2026-09-19T03:53:08.643737+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-19T03:53:04.997393+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-19T03:53:00.514433+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-19T03:52:57.348218+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-19T03:52:56.026879+00:00",
+      "server_key": "local:audit-alpha",
+      "tool_name": "review_echo",
+      "initiator": "agent",
+      "decision": "denied",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    },
+    {
+      "ts": "2026-09-19T03:52:56.008562+00:00",
+      "server_key": "local:audit-beta",
+      "tool_name": "review_echo",
+      "initiator": "test",
+      "decision": "allowed",
+      "ok": true,
+      "status": "success",
+      "duration_ms": 42,
+      "error_category": null,
+      "exception_type": null,
+      "status_code": null,
+      "argument_names": [],
+      "unknown_argument_count": 0,
+      "result_type": "none",
+      "result_size": 0
+    }
+  ],
+  "wire_requests": [
+    {
+      "pid": 49075,
+      "method": "initialize"
+    },
+    {
+      "pid": 49075,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 49075,
+      "method": "tools/list"
+    },
+    {
+      "pid": 49075,
+      "method": "resources/list"
+    },
+    {
+      "pid": 49075,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 49077,
+      "method": "initialize"
+    },
+    {
+      "pid": 49077,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 49077,
+      "method": "tools/list"
+    },
+    {
+      "pid": 49077,
+      "method": "resources/list"
+    },
+    {
+      "pid": 49077,
+      "method": "prompts/list"
+    }
+  ],
+  "fixture_returncodes": [
+    0,
+    0
+  ],
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││  ╭──────────────╮    Findings            ││                  │
+│ Source       ││  │  Executions  │                        ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▎   ││  ╰──────────────╯                        ││  ◦ Off (opt-in)  │
+│ ▊Local  ▼▎   ││  ┌────┐▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔  ││  tldw_chatbook   │
+│ ▊▁▁▁▁▁▁▁▁▎   ││  │    │▊  All decisions    ▼  ▎▊  All    ││  (built-in)      │
+│              ││  └────┘▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊  initi  ││  Why · Off —     │
+│ Servers      ││                                ▊▁▁▁▁▁▁▁  ││  enable it to    │
+│  ● ready     ││                                          ││  let MCP         │
+│  · ◦ off     ││  When                 Tool               ││  clients use     │
+│  · ⌂         ││  2026-09-18 20:53:04  local:audit-alpha: ││  chatbook's      │
+│  built-in    ││  2026-09-18 20:53:00  local:audit-alpha: ││  tools.          │
+│    All       ││  2026-09-18 20:52:57  local:audit-alpha: ││  Add server      │
+│  servers     ││  2026-09-18 20:52:56  local:audit-alpha: ││    Advanced…     │
+│  ◦ ⌂ t…        │                ▍                       ::│                  │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -1,0 +1,17 @@
+[
+  {
+    "class": "Tests.UI.test_mcp_audit_selection",
+    "name": "test_filtering_out_selected_execution_clears_detail",
+    "passed": false
+  },
+  {
+    "class": "Tests.UI.test_mcp_audit_selection",
+    "name": "test_newer_execution_keeps_selected_event_and_drill_target",
+    "passed": false
+  },
+  {
+    "class": "Tests.UI.test_mcp_audit_selection",
+    "name": "test_execution_eviction_clears_detail_without_selecting_replacement",
+    "passed": false
+  }
+]
