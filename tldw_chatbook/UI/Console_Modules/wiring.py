@@ -89,7 +89,6 @@ from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 from .agent import ConsoleAgentController
-from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
 from .character_context import (
     ConsoleCharacterContextController,
@@ -466,6 +465,8 @@ def _review_selection_capture_policy_bindings(
     screen: Any, session_id: str, conversation_id: str
 ) -> Any | None:
     """Build trajectory capture-policy bindings when the runtime supports them."""
+    from .capture_policy_bindings import build_capture_policy_bindings
+
     runtime = screen._console_runtime()
     if not hasattr(runtime, "chat_controller"):
         return None

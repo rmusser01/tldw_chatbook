@@ -134,3 +134,10 @@ Inspector control selectors with a dedicated class, and records the off-loop
 unread batch worker needed for restored reminder indicators in the boot census.
 No boot module or CSS budget ceiling was raised. Final remote checks and review
 completion are tracked on the PR. Native client rendering limitations above remain.
+
+Final boot follow-up: reading an uninitialized receipt snapshot no longer loads
+its coordinator; hydration/settlement retain that ownership. Capture-policy
+bindings and their dialog also load only when invoked. The startup module census,
+receipt service, affected controller binding, and Inspector loader checks passed:
+**38 passed**. The other boot guard tests passed (**19 passed**); the module-census
+failure from the earlier intermediate run is covered by this successful rerun.

@@ -134,9 +134,6 @@ from ..Console_Modules.prompt_queue import (
 )
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
-from ..Console_Modules.capture_policy_bindings import (
-    build_inspector_capture_policy_wiring,
-)
 from ..Console_Modules.left_rail import (
     CONSOLE_DISCARD_DEFAULT_RETRY_ID,
     CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
@@ -12293,6 +12290,9 @@ class ChatScreen(BaseAppScreen):
         """
         from ...Widgets.Console.console_conversation_inspector import (
             ConsoleConversationInspector,
+        )
+        from ..Console_Modules.capture_policy_bindings import (
+            build_inspector_capture_policy_wiring,
         )
 
         rows, totals, turns, exchanges_loader = (
