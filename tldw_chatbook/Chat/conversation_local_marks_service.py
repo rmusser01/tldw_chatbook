@@ -194,6 +194,11 @@ class ConversationLocalMarksService:
             raise ValueError("conversation_id is required")
         return normalized
 
+    @property
+    def manual_revision(self) -> int:
+        """Cheap cache invalidation revision; no I/O or token disclosure."""
+        return self._manual_generation
+
     def _new_unread_token(self, conversation_id: str) -> ManualUnreadToken:
         self._manual_generation += 1
         token = ManualUnreadToken(
@@ -254,6 +259,8 @@ class ConversationLocalMarksService:
                 )
                 cleared = cursor.rowcount > 0
             self._manual_tokens.pop(conversation_id, None)
+            if cleared:
+                self._manual_generation += 1
             self._invalidate_list_cache(self.MANUAL_UNREAD)
             return cleared
 

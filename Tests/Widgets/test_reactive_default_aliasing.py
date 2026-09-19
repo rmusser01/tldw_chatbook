@@ -208,6 +208,9 @@ async def _empty_exchanges_loader(
 
 def _inspector(snapshot_factory) -> ConsoleConversationInspector:
     return ConsoleConversationInspector(
+        conversation_title="Test chat",
+        target_profile_key="test-profile",
+        target_is_current=lambda: True,
         rows=[],
         totals=ConsoleCostRowTotals(0, 0.0, False, 0),
         turns=[],

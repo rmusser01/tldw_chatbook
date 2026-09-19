@@ -38,14 +38,16 @@ def test_state_vocabulary_matches_the_database():
 
 
 @pytest.mark.unit
-def test_root_menu_offers_the_six_requested_entries():
+def test_root_menu_offers_read_and_appearance_with_existing_actions():
     labels = [item.label for item in build_conversation_menu(_saved())]
     assert labels == [
         "Favourite",
+        "Mark as unread",
         "Change status",
         "Archive",
         "Rename…",
         "Copy as",
+        "Change icon and colour…",
         "More",
     ]
 
@@ -61,10 +63,10 @@ def test_favourite_toggles_label_and_action_with_current_state():
 
 @pytest.mark.unit
 def test_archive_is_the_resolved_state_and_toggles_to_unarchive():
-    plain = build_conversation_menu(_saved(state="in-progress"))[2]
+    plain = build_conversation_menu(_saved(state="in-progress"))[3]
     assert (plain.action_id, plain.label) == (ACTION_ARCHIVE, "Archive")
 
-    archived = build_conversation_menu(_saved(state=ARCHIVED_STATE))[2]
+    archived = build_conversation_menu(_saved(state=ARCHIVED_STATE))[3]
     assert (archived.action_id, archived.label) == (ACTION_UNARCHIVE, "Unarchive")
 
 
@@ -144,3 +146,22 @@ def test_every_state_has_a_human_label():
     for state in CONVERSATION_STATES:
         label = conversation_state_label(state)
         assert label and label != state
+
+
+def test_saved_read_chat_offers_unread_and_appearance():
+    items = build_conversation_menu(ConversationMenuTarget(conversation_id="c"))
+    ids = {item.action_id for item in items}
+    assert {"mark_unread", "change_appearance"} <= ids
+    assert "mark_read" not in ids
+
+
+def test_unread_chat_offers_read_and_unavailable_read_state_is_disabled():
+    target = ConversationMenuTarget(conversation_id="c", manual_unread=True)
+    assert "mark_read" in {item.action_id for item in build_conversation_menu(target)}
+    target = ConversationMenuTarget(conversation_id="c", manual_unread=None)
+    item = next(
+        item
+        for item in build_conversation_menu(target)
+        if item.action_id == "mark_unread"
+    )
+    assert not item.enabled and item.disabled_reason

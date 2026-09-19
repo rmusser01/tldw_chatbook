@@ -2025,8 +2025,7 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     )
 
     # At budget 20 every title here is a single name line, so:
-    # Plain row (no subagent_count): costs 3px (1 name + 1 metadata + 1 margin).
-    # Badge row (subagent_count > 0): costs 4px (plus a dedicated badge line).
+    # Compact plain rows use one line; subagent badges add one line.
     plain_rows = tuple(
         ConsoleConversationBrowserRow(
             row_key=f"plain-{i}",
@@ -2065,13 +2064,13 @@ def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
     )
     mixed_rows = plain_rows + badge_rows
 
-    # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
-    expected_height = 3 * 3 + 2 * 4
+    # Three plain rows and two rows with a dedicated badge line.
+    expected_height = 3 * 1 + 2 * 2
     actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
         mixed_rows, 20
     )
 
-    assert actual_height == expected_height == 17
+    assert actual_height == expected_height == 7
     assert (
         actual_height
         == ConsoleWorkspaceContextTray._conversation_browser_rows_height(plain_rows, 20)
@@ -2142,12 +2141,8 @@ def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
 
 
 @pytest.mark.asyncio
-
-
-@pytest.mark.asyncio
-async def test_conversation_row_renders_colored_icon_left_of_the_name():
-    """task-31207: the icon control is the row's leftmost element and shows
-    the colored custom icon; unset rows show the dim placeholder."""
+async def test_conversation_row_renders_custom_icon_in_right_action_slot():
+    """The single trailing action uses saved appearance in the resting state."""
     decorated = _browser_row("conv-icon", "Lab chat", icon="🧪", color="#f87171", scope_type="global", workspace_id=None, workspace_label="Chats")
     plain = _browser_row("conv-plain", "Plain chat", scope_type="global", workspace_id=None, workspace_label="Chats")
     app = _build_test_app()
@@ -2168,7 +2163,7 @@ async def test_conversation_row_renders_colored_icon_left_of_the_name():
         )
         await pilot.pause()
 
-        controls = list(console.query(".console-conversation-appearance"))
+        controls = list(console.query(".console-conversation-actions"))
         assert len(controls) == 2
         by_conversation = {
             str(getattr(control, "conversation_id", "") or ""): control
@@ -2190,29 +2185,18 @@ async def test_conversation_row_renders_colored_icon_left_of_the_name():
 
         assert any(_tinted(span) for span in getattr(decorated_label, "spans", []))
         plain_label = plain_control.label
-        assert "▢" in str(plain_label)
+        assert "💬" in str(plain_label)
 
-        # The icon control is the leftmost child of its row line, left of
-        # the conversation name button; the row's trailing control is the
-        # actions menu (TASK-23200 replaced the star column with it).
         row_line = decorated_control.parent
         children = list(row_line.children)
-        assert children[0] is decorated_control
-        title_button = console.query_one(
-            "#console-workspace-conversation-0", Button
-        )
-        assert children.index(decorated_control) < children.index(title_button)
-        assert isinstance(children[-1], Button) and children[-1].has_class(
-            "console-conversation-actions"
-        )
+        title_button = console.query_one("#console-workspace-conversation-0", Button)
+        assert children == [title_button, decorated_control]
+        assert not console.query(".console-conversation-appearance")
 
 
 @pytest.mark.asyncio
-async def test_conversation_row_appearance_control_geometry_stays_contained():
-    """task-31207 + lessons-testing-evidence: a new widget in a shared row
-    needs neighbor geometry assertions, not just display/text. The title
-    button and the star must stay fully on-screen with the icon control
-    mounted at a narrow rail width."""
+async def test_conversation_right_action_geometry_stays_contained():
+    """Both compact title and trailing action stay visible without overlap."""
     row = _browser_row(
         "conv-geometry",
         "A reasonably long conversation title that used to fit exactly",
@@ -2241,9 +2225,6 @@ async def test_conversation_row_appearance_control_geometry_stays_contained():
         await pilot.pause()
 
         screen_width = console.size.width
-        icon_region = console.query_one(
-            "#console-conversation-appearance-0", Button
-        ).region
         title_region = console.query_one(
             "#console-workspace-conversation-0", Button
         ).region
@@ -2251,7 +2232,6 @@ async def test_conversation_row_appearance_control_geometry_stays_contained():
             "#console-conversation-actions-0", Button
         ).region
         for name, region in (
-            ("icon", icon_region),
             ("title", title_region),
             ("trailing control", trailing_region),
         ):
@@ -2259,15 +2239,12 @@ async def test_conversation_row_appearance_control_geometry_stays_contained():
             assert (
                 region.x >= 0 and region.x + region.width <= screen_width
             ), f"{name} escapes the screen: {region}"
-        # Left-to-right ordering with no overlap: icon, then title, then
-        # star — the icon is left of the name and steals no title cells.
-        assert icon_region.x < title_region.x
-        assert icon_region.right <= title_region.x
         assert title_region.right <= trailing_region.x
+        assert title_region.height == trailing_region.height == 1
 
 
 @pytest.mark.asyncio
-async def test_conversation_row_appearance_control_ascii_mode_substitutes():
+async def test_conversation_action_ascii_mode_substitutes():
     """task-31207: ASCII-glyph mode replaces both set icons and the
     placeholder with fixed pure-ASCII glyphs (emoji are exactly what that
     mode exists to avoid)."""
@@ -2295,21 +2272,18 @@ async def test_conversation_row_appearance_control_ascii_mode_substitutes():
             await pilot.pause()
 
             labels = {
-                str(getattr(control, "conversation_id", "") or ""): str(
-                    control.label
-                )
-                for control in console.query(".console-conversation-appearance")
+                str(getattr(control, "conversation_id", "") or ""): str(control.label)
+                for control in console.query(".console-conversation-actions")
             }
-            assert labels["conv-ascii"].strip() == "*"
-            assert labels["conv-ascii-plain"].strip() == "+"
+            assert labels["conv-ascii"].strip() == "[icon]"
+            assert labels["conv-ascii-plain"].strip() == "[chat]"
     finally:
         glyph_fallback.set_ascii_glyph_mode(previous_mode)
 
 
 @pytest.mark.asyncio
-async def test_unpersisted_native_row_disables_appearance_control():
-    """task-31207: an unsaved native session has no conversations row to
-    carry metadata, so its icon control is disabled like its star."""
+async def test_unpersisted_native_row_keeps_combined_menu_available():
+    """An unsaved chat keeps its menu; saved-only actions are gated inside it."""
     native = _browser_row(
         "native:session-1",
         "Draft chat",
@@ -2331,15 +2305,15 @@ async def test_unpersisted_native_row_disables_appearance_control():
         tray.sync_state(_base_grouped_workspace_state(rows=(native,)))
         await pilot.pause()
 
-        for control in console.query(".console-conversation-appearance"):
-            if str(getattr(control, "conversation_id", "") or "") == "":
-                assert control.disabled
+        control = console.query_one("#console-conversation-actions-0", Button)
+        assert not control.disabled
+        assert control.native_session_id == "session-1"
+        assert not console.query(".console-conversation-appearance")
 
 
 @pytest.mark.asyncio
-async def test_appearance_control_press_opens_the_picker():
-    """task-31207: pressing the icon control routes to the workspace
-    controller's picker-open with the row's identity and appearance."""
+async def test_combined_menu_change_appearance_opens_picker_with_saved_identity():
+    """Appearance editing routes through the combined menu with captured identity."""
     decorated = _browser_row("conv-route", "Routed chat", icon="🎨", color="#a78bfa", scope_type="global", workspace_id=None, workspace_label="Chats")
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2353,16 +2327,20 @@ async def test_appearance_control_press_opens_the_picker():
         tray.sync_state(_base_grouped_workspace_state(rows=(decorated,)))
         await pilot.pause()
 
-        control = console.query_one(
-            "#console-conversation-appearance-0", Button
-        )
+        control = console.query_one("#console-conversation-actions-0", Button)
         opened: list[dict[str, object]] = []
 
         def _capture(conversation_id, **kwargs):
             opened.append({"conversation_id": conversation_id, **kwargs})
 
         console._workspace._open_console_conversation_appearance_picker = _capture
-        await console.on_button_pressed(Button.Pressed(control))
+        console._workspace._console_conversation_appearance_map = lambda _: {
+            "conv-route": ("🎨", "#a78bfa")
+        }
+        await console._open_console_conversation_action_menu(control)
+        await pilot.pause()
+        menu = console.query_one("ConsoleConversationActionMenu")
+        menu.query_one("#console-conversation-action-change_appearance", Button).press()
         await pilot.pause()
 
         assert opened == [

@@ -23,13 +23,13 @@ def _opener(screen) -> Button:
 
 
 @pytest.mark.asyncio
-async def test_row_carries_a_one_row_asterisk_not_a_full_height_star() -> None:
+async def test_row_carries_one_right_conversation_icon() -> None:
     """The control must not reserve the row's whole height any more."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         screen = pilot.app.screen
         opener = _opener(screen)
 
-        assert str(opener.label).strip() == "*"
+        assert str(opener.label).strip() == "💬"
         assert opener.disabled is False
         assert opener.region.height == 1, (
             "the action opener is still reserving full row height"
@@ -65,10 +65,12 @@ async def test_asterisk_opens_the_menu_with_the_expected_entries() -> None:
         labels = [str(button.label).strip() for button in menu.query(Button)]
         assert labels == [
             "Favourite",
+            "Mark as unread",
             "Change status ▸",
             "Archive",
             "Rename…",
             "Copy as ▸",
+            "Change icon and colour…",
             "More ▸",
         ]
 
@@ -323,7 +325,7 @@ async def test_root_menu_offers_copy_as_with_disclosure_glyph() -> None:
             str(button.label).strip()
             for button in screen.query_one(ConsoleConversationActionMenu).query(Button)
         ]
-        assert labels[4] == "Copy as ▸"
+        assert labels[5] == "Copy as ▸"
 
 
 @pytest.mark.asyncio

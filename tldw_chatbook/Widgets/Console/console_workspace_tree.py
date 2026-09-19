@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import chain
 from typing import Literal
 
@@ -18,6 +18,8 @@ from textual.widgets import Tree
 from textual.widgets._tree import TreeNode
 
 from ...Workspaces.workspace_tree_state import WorkspaceTreeWorkspace
+from ...Workspaces.conversation_attention import present_conversation_attention
+from .conversation_row_presentation import conversation_action_width
 from ..glyph_fallback import ascii_glyph_mode, resolve_glyph
 
 
@@ -51,6 +53,11 @@ class WorkspaceTreeNodeData:
     selected: bool = False
     selectable: bool = False
     star_enabled: bool = False
+    action_icon: str = ""
+    action_summary: str = ""
+    action_class: str = ""
+    action_color: str = ""
+    hidden_attention: str = ""
 
     @classmethod
     def workspace(cls, workspace_id: str, label: str) -> "WorkspaceTreeNodeData":
@@ -72,6 +79,10 @@ class WorkspaceTreeNodeData:
         starred: bool,
         selected: bool,
         star_enabled: bool,
+        action_icon: str = "",
+        action_summary: str = "",
+        action_class: str = "",
+        action_color: str = "",
     ) -> "WorkspaceTreeNodeData":
         return cls(
             "conversation",
@@ -83,6 +94,10 @@ class WorkspaceTreeNodeData:
             selected=selected,
             selectable=True,
             star_enabled=star_enabled,
+            action_icon=action_icon,
+            action_summary=action_summary,
+            action_class=action_class,
+            action_color=action_color,
         )
 
     @classmethod
@@ -257,6 +272,16 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     local scroll state remain attached to the same objects.
     """
 
+    COMPONENT_CLASSES = Tree.COMPONENT_CLASSES | {
+        "conversation-attention-ready",
+        "conversation-attention-paused",
+        "conversation-attention-approval-required",
+        "conversation-attention-blocked",
+        "conversation-attention-running",
+        "conversation-attention-info",
+        "conversation-attention-error",
+    }
+
     BINDINGS = [
         *Tree.BINDINGS,
         Binding("left", "workspace_left", "Collapse", show=False),
@@ -355,17 +380,23 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         parts = []
         if conversation.starred:
             parts.append("★")
-        if conversation.selected:
-            parts.append("›")
-        if conversation.run_marker:
-            parts.append(resolve_glyph(conversation.run_marker))
         prefix = f"{' '.join(parts)} " if parts else ""
         progress = (
             f"Progress: {conversation.progress_count} · "
             if conversation.progress_count
             else ""
         )
-        return Text(f"{prefix}{progress}{_single_physical_row(conversation.title)}")
+        urgent = " · ".join(
+            dict.fromkeys(
+                fact.label
+                for fact in conversation.attention
+                if fact.kind in {"approval", "blocked", "failed", "paused"}
+            )
+        )
+        activity = f"{urgent} · " if urgent else ""
+        return Text(
+            f"{prefix}{activity}{progress}{_single_physical_row(conversation.title)}"
+        )
 
     @staticmethod
     def _status_specs(
@@ -493,6 +524,20 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 workspace_data = WorkspaceTreeNodeData.workspace(
                     workspace.workspace_id, workspace.label
                 )
+                aggregate = present_conversation_attention(
+                    tuple(
+                        fact
+                        for child in workspace.conversations
+                        for fact in child.attention
+                    ),
+                    ascii_mode=ascii_glyph_mode(),
+                )
+                workspace_data = replace(
+                    workspace_data,
+                    hidden_attention=f"{aggregate.icon} {aggregate.label}"
+                    if aggregate.summary
+                    else "",
+                )
                 workspace_label = self._workspace_label(workspace)
                 if workspace_node is None:
                     workspace_node = self.root.add(
@@ -503,9 +548,12 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                     )
                     self.workspace_nodes[workspace.workspace_id] = workspace_node
                 else:
-                    if workspace_node.data != workspace_data:
+                    data_changed = workspace_node.data != workspace_data
+                    if data_changed:
                         workspace_node.data = workspace_data
-                    if workspace_node.label != workspace_label:
+                    if workspace_node.label != workspace_label or (
+                        data_changed and workspace_node.is_collapsed
+                    ):
                         workspace_node.set_label(workspace_label)
                     if not self._node_is_at_index(
                         workspace_node, self.root, workspace_index
@@ -524,6 +572,11 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 for conversation_index, conversation in enumerate(
                     workspace.conversations
                 ):
+                    presentation = present_conversation_attention(
+                        conversation.attention,
+                        custom_icon=conversation.icon,
+                        ascii_mode=ascii_glyph_mode(),
+                    )
                     data = WorkspaceTreeNodeData.conversation(
                         workspace.workspace_id,
                         conversation.conversation_id,
@@ -531,6 +584,12 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                         starred=conversation.starred,
                         selected=conversation.selected,
                         star_enabled=conversation.star_enabled,
+                        action_icon=presentation.icon,
+                        action_summary=presentation.summary,
+                        action_class=presentation.css_class,
+                        action_color=conversation.color
+                        if not conversation.attention
+                        else "",
                     )
                     conversation_label = self._conversation_label(conversation)
                     node = self.conversation_nodes.get(conversation.conversation_id)
@@ -542,9 +601,10 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                         )
                         self.conversation_nodes[conversation.conversation_id] = node
                     else:
-                        if node.data != data:
+                        changed_data = node.data != data
+                        if changed_data:
                             node.data = data
-                        if node.label != conversation_label:
+                        if changed_data or node.label != conversation_label:
                             node.set_label(conversation_label)
                         if not self._node_is_at_index(
                             node, workspace_node, conversation_index
@@ -637,6 +697,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         """
 
         label = super().render_label(node, base_style, style)
+        if node.data is not None and node.data.selected:
+            label.stylize("bold")
         toggle = (
             self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE
         ) if node.allow_expand else ""
@@ -653,19 +715,48 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             label[toggle_length:],
         )
         data = node.data
-        kind = data.kind if data is not None else None
-        affordance = _MENU_AFFORDANCES.get(kind or "")
+        if (
+            data is not None
+            and data.kind == "workspace"
+            and node.is_collapsed
+            and data.hidden_attention
+        ):
+            label.append(f" · {data.hidden_attention}")
+        affordance = self._action_affordance(data)
         content_budget = self._label_budget(node)
         label.truncate(content_budget, overflow="ellipsis")
         if affordance is not None and data is not None:
             label.append(" " * max(0, content_budget - label.cell_len), base_style)
-            label.append(affordance, base_style)
+            action_style = base_style
+            if data.action_class:
+                action_style = self.get_component_rich_style(data.action_class)
+            elif data.action_color:
+                action_style = Style(color=data.action_color)
+            label.append(affordance, action_style)
             end = self._visible_guide_cells(node) + label.cell_len
-            self._menu_zones[data.key] = (end - len(affordance), end)
+            self._menu_zones[data.key] = (end - cell_len(affordance), end)
         else:
             if data is not None:
                 self._menu_zones.pop(data.key, None)
         return label
+
+    @staticmethod
+    def _action_affordance(data) -> str | None:
+        if data is None:
+            return None
+        if data.kind == "conversation":
+            icon = data.action_icon or ("[chat]" if ascii_glyph_mode() else "💬")
+            return (
+                " "
+                + icon
+                + " "
+                * max(
+                    0,
+                    conversation_action_width(ascii_mode=ascii_glyph_mode())
+                    - cell_len(icon),
+                )
+            )
+        return _MENU_AFFORDANCES.get(data.kind)
 
     def _label_budget(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
         """Return the content-cell budget for one row's label.
@@ -677,9 +768,9 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
 
         budget = self._available_label_cells(node)
         data = node.data
-        affordance = _MENU_AFFORDANCES.get(data.kind) if data is not None else None
+        affordance = self._action_affordance(data)
         if affordance is not None:
-            budget -= len(affordance)
+            budget -= cell_len(affordance)
         return max(1, budget)
 
     def _visible_guide_cells(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
@@ -1280,7 +1371,20 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             and (
                 node is None
                 or node.data is None
-                or node.data.raw_label != tooltip_plain
+                or (
+                    " · ".join(
+                        part
+                        for part in (
+                            node.data.raw_label,
+                            node.data.action_summary,
+                            "m: conversation actions",
+                        )
+                        if part
+                    )
+                    if node.data.kind == "conversation"
+                    else node.data.raw_label
+                )
+                != tooltip_plain
             )
         ):
             self.hover_line = -1
@@ -1290,7 +1394,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         label = node.label if node is not None else ""
         memo_key = (
             data.key if data is not None else None,
-            data.raw_label if data is not None else "",
+            (data.raw_label, data.action_summary) if data is not None else "",
             getattr(label, "plain", str(label)),
             bool(node is not None and node.is_expanded),
             self.scrollable_content_region.width,
@@ -1299,7 +1403,19 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             return
         self._tooltip_memo_key = memo_key
         self.tooltip = (
-            Text(data.raw_label)
+            Text(
+                " · ".join(
+                    part
+                    for part in (
+                        data.raw_label,
+                        data.action_summary,
+                        "m: conversation actions",
+                    )
+                    if part
+                )
+            )
+            if data is not None and data.kind == "conversation"
+            else Text(data.raw_label)
             if data is not None
             and cell_len(self._untruncated_visible_label(node))
             > self._label_budget(node)

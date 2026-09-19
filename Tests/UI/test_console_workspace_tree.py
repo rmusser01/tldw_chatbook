@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from tldw_chatbook.Workspaces.conversation_attention import ConversationAttentionFact
 from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -156,9 +157,11 @@ async def test_workspace_and_chat_action_markers_share_the_right_edge() -> None:
         conversation = tree.conversation_nodes["c1"]
 
         assert tree._menu_zones[workspace.data.key] == (edge - 2, edge)
-        assert tree._menu_zones[conversation.data.key] == (edge - 2, edge)
+        assert tree._menu_zones[conversation.data.key] == (edge - 5, edge)
         assert tree.render_line(int(workspace._line)).text[edge - 1] == "@"
-        assert tree.render_line(int(conversation._line)).text[edge - 1] == "*"
+        assert (
+            "💬" in tree.render_line(int(conversation._line)).crop(edge - 5, edge).text
+        )
 
 
 @pytest.mark.asyncio
@@ -443,7 +446,8 @@ async def test_selected_and_active_markers_are_independently_legible() -> None:
         assert "▌" not in neither_text
         assert "▌" in selected_only_text
         assert "●" in active_only_text
-        assert "›" in selected_active_text
+        assert selected_active.data.selected
+        assert "›" not in selected_active_text
         assert "▌" in selected_active_text
         assert "▌" not in active_only_text
 
@@ -517,7 +521,7 @@ async def test_tooltip_boundary_matches_compositor_painted_viewport(
         guide_cells = tree.guide_depth if nested else 0
         disclosure_cells = 0 if nested else 2
         marker_cells = 2
-        action_cells = 2
+        action_cells = 5 if nested else 2
         exact_raw = "x" * (
             viewport_cells
             - guide_cells
@@ -548,7 +552,9 @@ async def test_tooltip_boundary_matches_compositor_painted_viewport(
             tree.region.x : tree.region.right
         ]
         assert "…" not in painted_row
-        assert tree.tooltip is None
+        assert (str(tree.tooltip) if tree.tooltip is not None else None) == (
+            f"{exact_raw} · m: conversation actions" if nested else None
+        )
 
         if nested:
             over_projection = (
@@ -565,7 +571,9 @@ async def test_tooltip_boundary_matches_compositor_painted_viewport(
         ]
         assert "…" in painted_row
         assert isinstance(tree.tooltip, Text)
-        assert tree.tooltip.plain == over_raw
+        assert tree.tooltip.plain == (
+            f"{over_raw} · m: conversation actions" if nested else over_raw
+        )
 
 
 @pytest.mark.asyncio
@@ -694,7 +702,7 @@ async def test_collapse_does_not_transfer_fitting_child_hover_to_long_row() -> N
         child_line = child.line
         tree.hover_line = child_line
         await pilot.pause()
-        assert tree.tooltip is None
+        assert str(tree.tooltip) == "Fits · m: conversation actions"
 
         parent.collapse()
         await pilot.pause()
@@ -1164,6 +1172,7 @@ def test_changed_projection_push_still_reconciles_after_skips(monkeypatch) -> No
             replace(
                 _workspace("w1", "One", ("c1", "First")).conversations[0],
                 run_marker="●",
+                attention=(ConversationAttentionFact("running", "Running"),),
             ),
             _workspace("w1", "One", ("c2", "Second")).conversations[0],
         ),
@@ -1172,7 +1181,7 @@ def test_changed_projection_push_still_reconciles_after_skips(monkeypatch) -> No
         (changed, _workspace("w2", "Two", ("c3", "Third"))),
         expanded_workspace_ids={"w1"},
     )
-    assert tree.conversation_nodes["c1"].label.plain.startswith("●")
+    assert tree.conversation_nodes["c1"].data.action_icon == "⟳"
 
     tree.sync_projection(
         (
@@ -1216,6 +1225,7 @@ def test_single_conversation_change_invalidates_no_tree_wide_cache(monkeypatch) 
             replace(
                 _workspace("w1", "One", ("c1", "First")).conversations[0],
                 run_marker="●",
+                attention=(ConversationAttentionFact("running", "Running"),),
             ),
             _workspace("w1", "One", ("c2", "Second")).conversations[0],
         ),
@@ -1356,6 +1366,7 @@ def test_keyed_sync_refreshes_only_the_changed_native_label() -> None:
             replace(
                 _workspace("w1", "One", ("c1", "First")).conversations[0],
                 run_marker="●",
+                attention=(ConversationAttentionFact("running", "Running"),),
             ),
             _workspace("w1", "One", ("c2", "Second")).conversations[0],
         ),
@@ -1548,3 +1559,34 @@ def test_node_data_kinds_are_explicit() -> None:
     assert data.kind == "workspace"
     assert data.workspace_id == "w"
     assert data.selectable is True
+
+
+@pytest.mark.asyncio
+async def test_collapsed_workspace_explains_hidden_attention_without_duplicate_marker():
+    from dataclasses import replace
+
+    from tldw_chatbook.Workspaces.conversation_attention import (
+        ConversationAttentionFact,
+    )
+
+    workspace = _workspace("w", "Work", ("c", "Reminder"))
+    workspace = replace(
+        workspace,
+        conversations=(
+            replace(
+                workspace.conversations[0],
+                attention=(ConversationAttentionFact("unread", "Unread"),),
+            ),
+        ),
+    )
+    tree = ConsoleWorkspaceTree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        tree.sync_projection((workspace,), expanded_workspace_ids=())
+        await pilot.pause()
+        node = tree.workspace_nodes["w"]
+        assert "Unread" in tree.render_line(node.line).text
+        node.expand()
+        await pilot.pause()
+        assert "Unread" not in tree.render_line(node.line).text
+        assert "✉" in tree.render_line(tree.conversation_nodes["c"].line).text

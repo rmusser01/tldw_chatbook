@@ -2276,3 +2276,108 @@ WorktreeRecoveryDialog {
     height: auto;
     margin-bottom: $ds-space-section;
 }
+
+/* ADR-171: compact conversation rows share the workspace row rhythm. */
+.console-conversation-compact-row {
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0;
+    width: 1fr;
+    min-width: 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+.console-conversation-actions {
+    width: $ds-conversation-action-width;
+    min-width: $ds-conversation-action-width;
+    max-width: $ds-conversation-action-width;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    border: none;
+    text-align: center;
+}
+.console-conversation-actions.conversation-actions-ascii {
+    width: $ds-conversation-action-ascii-width;
+    min-width: $ds-conversation-action-ascii-width;
+    max-width: $ds-conversation-action-ascii-width;
+}
+
+.conversation-attention-approval-required { color: $ds-status-approval-required; }
+
+.conversation-attention-blocked { color: $ds-status-blocked; }
+
+.conversation-attention-error { color: $ds-status-error-readable; }
+
+.conversation-attention-running { color: $ds-status-running; }
+
+.conversation-attention-paused { color: $ds-status-paused; }
+
+.conversation-attention-info { color: $ds-status-info; }
+
+.conversation-attention-ready { color: $ds-status-ready; }
+
+    ConsoleConversationActionMenu .conversation-menu-summary {
+        height: $ds-control-height-compact;
+        color: $ds-text-muted;
+        text-overflow: ellipsis;
+        text-wrap: nowrap;
+    }
+
+    ConsoleWorkspaceTree .conversation-attention-approval-required { color: $ds-status-approval-required; }
+    ConsoleWorkspaceTree .conversation-attention-blocked { color: $ds-status-blocked; }
+    ConsoleWorkspaceTree .conversation-attention-error { color: $ds-status-error-readable; }
+    ConsoleWorkspaceTree .conversation-attention-running { color: $ds-status-running; }
+    ConsoleWorkspaceTree .conversation-attention-paused { color: $ds-status-paused; }
+    ConsoleWorkspaceTree .conversation-attention-info { color: $ds-status-info; }
+    ConsoleWorkspaceTree .conversation-attention-ready { color: $ds-status-ready; }
+
+/* Inspector requires 28 cells for section selection and 60 for readable detail.
+   Below 90 cells the same widgets become list/detail with a Back control. */
+ConsoleInspectorDetailPane { height: 1fr; min-height: 0; }
+.inspector-detail-body { height: 1fr; min-height: 0; }
+.inspector-section-list { width: $ds-inspector-section-width; min-width: 0; height: 1fr; border: none; }
+.inspector-detail-reader { width: 1fr; min-width: 0; height: 1fr; }
+.inspector-detail-title { height: $ds-control-height-compact; text-style: $ds-text-strong; text-wrap: nowrap; text-overflow: ellipsis; }
+.inspector-detail-text { height: 1fr; min-height: 0; border: solid $ds-grid-line; }
+.inspector-detail-back { height: $ds-control-height-compact; min-height: $ds-control-height-compact; border: none; padding: $ds-space-0 $ds-space-inline; }
+.inspector-detail-narrow .inspector-section-list { width: 1fr; }
+
+/* The modal owns chrome; only the list, reader, and recovery panel scroll. */
+ConsoleConversationInspector #console-inspector-modal {
+    width: $ds-inspector-modal-width;
+    height: $ds-inspector-modal-height;
+    max-width: 100%;
+    max-height: 100%;
+    border: solid $ds-grid-line;
+    padding: $ds-space-0 $ds-space-inline;
+}
+ConsoleConversationInspector #console-inspector-header { height: $ds-control-height-compact; text-style: $ds-text-strong; text-wrap: nowrap; text-overflow: ellipsis; }
+ConsoleConversationInspector #console-inspector-tabs { margin-top: $ds-space-0; min-height: 0; }
+ConsoleConversationInspector TabPane { padding: $ds-space-0; }
+ConsoleConversationInspector #console-inspector-next-send-pane { min-height: 0; }
+ConsoleConversationInspector #console-inspector-next-send-header { color: $ds-text-muted; }
+ConsoleConversationInspector #console-inspector-next-send-warning { color: $ds-status-warning; }
+ConsoleConversationInspector #console-inspector-project-recovery { height: auto; max-height: $ds-inspector-recovery-max-height; }
+ConsoleConversationInspector #console-inspector-actions,
+ConsoleConversationInspector #console-inspector-next-send-actions { height: $ds-control-height-compact; margin: $ds-space-0; }
+ConsoleConversationInspector Button,
+ConsoleConversationInspector Checkbox { height: $ds-control-height-compact; min-height: $ds-control-height-compact; border: none; padding: $ds-space-0 $ds-space-inline; min-width: 0; }
+ConsoleConversationInspector #console-inspector-costs-totals { margin: $ds-space-0; }
+ConsoleConversationInspector #console-inspector-exchange-caveat { margin: $ds-space-0; max-height: 2; color: $ds-text-muted; }
+ConsoleConversationInspector .inspector-view-note { height: auto; color: $ds-text-muted; }
+ConsoleConversationInspector #console-inspector-tabs,
+ConsoleConversationInspector #console-inspector-tabs > ContentSwitcher,
+ConsoleConversationInspector #console-inspector-tabs > ContentSwitcher > TabPane {
+    height: 1fr;
+    min-height: 0;
+}
+.inspector-usage-detail .inspector-section-list {
+    width: $ds-inspector-usage-list-width;
+}
+ConsoleConversationInspector #console-inspector-tabs > ContentTabs {
+    height: $ds-control-height-compact;
+}
+
+.inspector-usage-detail.inspector-detail-narrow .inspector-section-list { width: 1fr; }
+ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }

@@ -471,3 +471,13 @@ $ds-theme-preview-invalid: #808080;
 
 /* Wide Conversation settings dialog preserved from upstream. */
 $ds-console-settings-wide-max-width: 196;
+
+/* Conversation Inspector: readable split-pane geometry (ADR-171). */
+$ds-inspector-modal-width: 120;
+$ds-inspector-modal-height: 42;
+$ds-inspector-section-width: 28;
+$ds-inspector-recovery-max-height: 6;
+$ds-conversation-action-width: 4;
+$ds-conversation-action-ascii-width: 9;
+$ds-inspector-usage-list-width: 60;
+$ds-conversation-menu-width: 30;

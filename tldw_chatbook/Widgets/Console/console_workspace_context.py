@@ -40,6 +40,11 @@ from tldw_chatbook.Workspaces.display_state import (
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Workspaces.conversation_attention import present_conversation_attention
+from .conversation_row_presentation import (
+    conversation_action_width,
+    conversation_title_cells,
+)
 
 
 class ConsoleBrowserSearchInput(Input):
@@ -349,9 +354,27 @@ def _marker_meaning_tooltip_suffix(marker_glyph: str) -> str:
     An unrecognized or empty glyph (the steady state) adds no suffix, so a
     caller can always append this unconditionally.
     """
-    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(
-        str(marker_glyph or "").strip(), ""
-    )
+    semantic_meanings = {
+        "✋": "Approval required",
+        "[approve]": "Approval required",
+        "⛔": "Blocked",
+        "[blocked]": "Blocked",
+        "[failed]": "Failed",
+        "⟳": "Running",
+        "[running]": "Running",
+        "⏸": "Paused",
+        "[paused]": "Paused",
+        "⏹": "Stopped",
+        "[stopped]": "Stopped",
+        "✉": "Unread",
+        "[unread]": "Unread",
+        "[ready]": "New result ready",
+        "🔔": "Background activity ended — outcome unavailable",
+        "[new]": "Background activity ended — outcome unavailable",
+    }
+    meaning = semantic_meanings.get(
+        str(marker_glyph or "").strip()
+    ) or CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(str(marker_glyph or "").strip(), "")
     return f" — {meaning}" if meaning else ""
 
 
@@ -406,6 +429,17 @@ _ROW_BOTTOM_MARGIN = 1
 # state-change recompose (observed as a collapse failing to render) and, in
 # any environment where the gutter CSS is absent, oscillate the relabel.
 _RELABEL_MIN_WIDTH_DELTA = 2
+
+
+def _conversation_activity_text(row) -> str:
+    parts = [
+        fact.label
+        for fact in row.attention
+        if fact.kind in {"approval", "blocked", "failed", "paused"}
+    ]
+    if row.queued_count:
+        parts.append(f"Queue {row.queued_count}")
+    return " · ".join(dict.fromkeys(parts))
 
 
 def _conversation_row_render_height(name_line_count: int, subagent_count: int, progress_count: int = 0) -> int:
@@ -1306,16 +1340,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """Total height for a row sequence: per-row button height (from the
         same wrap the labels use, so the two cannot disagree) plus margin."""
         return sum(
-            _conversation_row_render_height(
-                len(
-                    _marker_prefixed_name_lines(
-                        row.title, _row_marker(row.run_marker, row.starred), budget
-                    )
-                ),
-                row.subagent_count,
-                row.progress_count,
-            )
-            + _ROW_BOTTOM_MARGIN
+            1
+            + bool(row.subagent_count)
+            + bool(row.progress_count)
+            + bool(_conversation_activity_text(row))
             for row in rows
         )
 
@@ -2039,52 +2067,42 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         with Horizontal(classes="console-conversation-browser-row-line"):
             budget = self._browser_title_budget()
             title = self._conversation_title(row.title)
-            name_lines = _marker_prefixed_name_lines(
-                row.title, _row_marker(row.run_marker, row.starred), budget
+            prefix = ("* " if ascii_glyph_mode() else "★ ") if row.starred else ""
+            name = prefix + conversation_title_cells(title, budget - cell_len(prefix))
+            activity = _conversation_activity_text(row)
+            text = name + (
+                "\n" + conversation_title_cells(activity, budget) if activity else ""
             )
-            status = self._conversation_status(row.status)
-            detail = self._conversation_detail_status(row.status)
-            secondary_copy = (
-                self._conversation_row_secondary(
-                    detail,
-                    row.updated_label,
-                    workspace_label=row.workspace_label if show_workspace else "",
-                )
-                or "conversation"
+            presentation = present_conversation_attention(
+                row.attention, custom_icon=row.icon, ascii_mode=ascii_glyph_mode()
             )
-            if row.queued_count:
-                secondary_copy = f"{secondary_copy} · Queue {row.queued_count}"
-            secondary = truncate_console_row_cells(secondary_copy, budget)
-            status_suffix = f" [{status}]" if status else ""
-            # task-31207: the icon control is the row's leftmost element,
-            # left of the conversation name, mirroring the star on the right.
-            control_height = _conversation_row_render_height(
-                len(name_lines), row.subagent_count, row.progress_count
-            )
-            yield self._conversation_appearance_button(
-                row,
-                index,
-                row_height=control_height,
-            )
-            # TASK-1233 AC#1 (review round 1): `tooltip_label` here is the
-            # PRE-escape, pre-period sentence body -- `_conversation_button`
-            # passes it straight to `_marker_aware_tooltip`, which escapes
-            # the whole thing (title + this bracket-wrapped status badge)
-            # exactly once. Escaping only `title` here, as an earlier round
-            # did, left the literal "[" in `status_suffix` un-escaped: Rich/
-            # Textual markup parsing reads it as a style-tag start and
-            # silently drops the unrecognized "saved"/etc. tag -- the word
-            # never reaches the rendered tooltip at all.
             row_button = self._conversation_button(
-                "\n".join((*name_lines, secondary)),
+                text,
                 id=f"console-workspace-conversation-{index}",
                 conversation_id=row.conversation_id or row.row_key,
-                tooltip_label=f"{title}{status_suffix}",
-                run_marker=row.run_marker,
+                tooltip_label=title,
                 selected=row.selected,
                 subagent_count=row.subagent_count,
                 progress_count=row.progress_count,
-                name_line_count=len(name_lines),
+            )
+            row_button.add_class("console-conversation-compact-row")
+            # Content-dependent height; spacing and compact resting size are CSS tokens.
+            row_button.styles.height = (
+                1 + bool(activity) + bool(row.subagent_count) + bool(row.progress_count)
+            )
+            row_button.styles.min_height = None
+            row_button.tooltip = Text(
+                " · ".join(
+                    part
+                    for part in (
+                        title,
+                        self._conversation_status(row.status),
+                        row.updated_label,
+                        presentation.summary,
+                        "m: conversation actions",
+                    )
+                    if part
+                )
             )
             row_button.row_key = row.row_key
             # TASK-15454: this pair is the row's click identity; `compose`
@@ -2110,32 +2128,21 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 )
             yield row_button
 
-            # TASK-23200: this control used to be a star that toggled a
-            # favourite and nothing else. On a fresh install the marks
-            # service is often absent, so it shipped DISABLED, stretched to
-            # the full height of a multi-line row, and was explained by the
-            # developer-facing line "Local stars unavailable" -- a column of
-            # dead vertical space (2026-08-29 UX audit). It is now an
-            # asterisk that opens the row's action menu: favourite, status,
-            # archive, rename, delete. The menu itself decides what is
-            # available, and says why when something is not, so this control
-            # is never disabled and never needs an apology line beside it.
-            #
-            # One row tall, not the row's full height: favourite state is
-            # carried by the marker beside the title (see
-            # ``_marker_prefixed_name_lines``), so the column no longer has
-            # to be tall enough to show it.
             menu_button = Button(
-                "*",
+                Text(presentation.icon, style=row.color if not row.attention else ""),
                 id=f"console-conversation-actions-{index}",
-                classes="console-workspace-action console-conversation-actions",
+                classes="console-workspace-action console-conversation-actions "
+                + presentation.css_class,
                 compact=True,
             )
             menu_button.remove_class(*(name for name in menu_button.classes if name.startswith("h-")))
             menu_button.set_styles(height=None)
             menu_button.add_class("h-1")
             menu_button.styles.min_height = 1
-            menu_button.tooltip = f"Actions for {title}"
+            menu_button.set_class(ascii_glyph_mode(), "conversation-actions-ascii")
+            menu_button.tooltip = Text(
+                f"{title} · {presentation.summary or 'Conversation'} — conversation actions"
+            )
             menu_button.row_key = row.row_key
             menu_button.conversation_id = row.conversation_id
             # PR #2262 review: Copy-as-markdown reads open native sessions
@@ -2145,6 +2152,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.starred = row.starred
             menu_button.marks_available = marks_available
             menu_button.conversation_title = row.title
+            menu_button.manual_unread = row.manual_unread
             yield menu_button
 
     def _workspace_selector_label(self) -> str:
@@ -2168,8 +2176,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     def _browser_title_budget(self) -> int:
         """Cells available to grouped-browser row text."""
         return max(
-            _MIN_TITLE_WRAP_BUDGET,
-            self._row_content_width - _BROWSER_ROW_CHROME_WIDTH,
+            0,
+            self._row_content_width
+            - conversation_action_width(ascii_mode=ascii_glyph_mode())
+            - 2,
         )
 
     @staticmethod

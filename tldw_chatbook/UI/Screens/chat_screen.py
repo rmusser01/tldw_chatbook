@@ -6316,9 +6316,9 @@ class ChatScreen(BaseAppScreen):
         instance, and the user can switch to the Next Send tab regardless
         of which tab it opened on, so a caller that skipped this would
         leave the tab showing nothing. Building the closures themselves is
-        cheap (no I/O happens until one is actually CALLED); the Next Send
-        pane calls ``snapshot_factory`` once on mount regardless of
-        ``initial_tab`` (see ``ConsoleConversationInspector.on_mount``).
+        cheap: the Context view calls ``snapshot_factory`` only when opened
+        or explicitly refreshed. Usage and exchange views do not prepare
+        hidden next-send content.
 
         ``session_id`` is threaded in rather than re-read from the store
         because the composer only reflects the ACTIVE session; see
@@ -6555,7 +6555,16 @@ class ChatScreen(BaseAppScreen):
             str(getattr(opener, "conversation_id", "") or "").strip() or None
         )
         native_session_id = str(getattr(opener, "native_session_id", "") or "")
+        presentation = await self._workspace.conversation_menu_presentation(
+            conversation_id, native_session_id
+        )
+        if (
+            presentation["profile_authority"]
+            != self._workspace._console_switcher_authority()
+        ):
+            return
         target = ConversationMenuTarget(
+            **presentation,
             conversation_id=conversation_id,
             title=str(getattr(opener, "conversation_title", "") or ""),
             state=self._console_conversation_state(conversation_id),
@@ -6571,11 +6580,15 @@ class ChatScreen(BaseAppScreen):
         # otherwise anchor a menu that runs off the end of the screen.
         region = opener.region
         menu_width = ConsoleConversationActionMenu.MENU_WIDTH
-        menu_height = ConsoleConversationActionMenu.ROOT_PAGE_HEIGHT
+        menu_height = ConsoleConversationActionMenu.root_page_height(target)
         screen_region = self.region
+        return_focus_id = str(
+            getattr(opener, "console_return_focus_id", None) or opener.id or ""
+        )
+        opener.console_return_focus_id = None
         await self._mount_console_row_action_menu(
             target,
-            opener_id=str(opener.id or ""),
+            opener_id=return_focus_id,
             screen_x=max(
                 screen_region.x, min(region.x, screen_region.right - menu_width)
             ),
@@ -6775,7 +6788,16 @@ class ChatScreen(BaseAppScreen):
             is_starred = getattr(marks_service, "is_starred", None)
             if callable(is_starred):
                 starred = bool(is_starred(conversation_id))
+        presentation = await self._workspace.conversation_menu_presentation(
+            conversation_id, native_session_id
+        )
+        if (
+            presentation["profile_authority"]
+            != self._workspace._console_switcher_authority()
+        ):
+            return
         target = ConversationMenuTarget(
+            **presentation,
             conversation_id=conversation_id,
             title=title,
             state=self._console_conversation_state(conversation_id),
@@ -6787,7 +6809,7 @@ class ChatScreen(BaseAppScreen):
             ),
         )
         menu_width = ConsoleConversationActionMenu.MENU_WIDTH
-        menu_height = ConsoleConversationActionMenu.ROOT_PAGE_HEIGHT
+        menu_height = ConsoleConversationActionMenu.root_page_height(target)
         screen_region = self.region
         await self._mount_console_row_action_menu(
             target,
@@ -7190,6 +7212,26 @@ class ChatScreen(BaseAppScreen):
         if not conversation_id:
             self.app.notify(
                 "Send or save this chat before managing it.", severity="warning"
+            )
+            return
+
+        if (
+            target.profile_authority is not None
+            and target.profile_authority
+            != self._workspace._console_switcher_authority()
+        ):
+            return
+        if action_id in ("mark_unread", "mark_read"):
+            self._workspace.set_conversation_manual_unread(
+                target, unread=action_id == "mark_unread"
+            )
+            return
+        if action_id == "change_appearance":
+            self._workspace._open_console_conversation_appearance_picker(
+                conversation_id,
+                conversation_title=target.title,
+                icon=target.icon,
+                color=target.color,
             )
             return
 
@@ -12208,6 +12250,9 @@ class ChatScreen(BaseAppScreen):
             estimate_factory=estimate_factory,
             token_estimate=token_estimate,
             in_progress=in_progress,
+            payload_estimate=lambda snapshot: self._console_next_send_token_estimate(
+                snapshot, session_id=session_id
+            ),
         )
 
     def _push_console_inspector(
@@ -12253,7 +12298,47 @@ class ChatScreen(BaseAppScreen):
         capture_policy_wiring = build_inspector_capture_policy_wiring(controller)
         if capture_policy_wiring is None:
             return
+        captured_store = controller.store
+        captured_profile = self._workspace._console_switcher_authority()
+        captured_session_id = capture_policy_wiring.target_session_id
+        captured_conversation_id = capture_policy_wiring.target_conversation_id
+        captured_session = next(
+            (
+                item
+                for item in captured_store.sessions()
+                if item.id == captured_session_id
+            ),
+            None,
+        )
+
+        def target_is_current() -> bool:
+            if self._workspace._console_switcher_authority() != captured_profile:
+                return False
+            session = next(
+                (
+                    item
+                    for item in captured_store.sessions()
+                    if item.id == captured_session_id
+                ),
+                None,
+            )
+            return (
+                session is captured_session
+                and session is not None
+                and session.persisted_conversation_id == captured_conversation_id
+            )
+
+        def context_budget() -> tuple[int | None, int | None]:
+            state = self._console_context_control_state_for_session(captured_session_id)
+            return state.safe_input_ceiling_tokens, state.response_max_tokens
+
         inspector = ConsoleConversationInspector(
+            context_budget_provider=context_budget,
+            conversation_title=captured_session.title
+            if captured_session is not None
+            else "Conversation",
+            target_profile_key=str(captured_profile),
+            target_is_current=target_is_current,
             rows=rows,
             totals=totals,
             turns=turns,
@@ -18633,6 +18718,7 @@ class ChatScreen(BaseAppScreen):
                     self._current_console_rail_state()
                 )
             self._dispatch_console_rail_preference_prune()
+            self._session.schedule_manual_read_acknowledgement()
         except Exception:
             # Teardown-scoped ONLY. A tick that was mid-flight when the
             # screen was closed is querying widgets Textual has already
@@ -22537,6 +22623,24 @@ class ChatScreen(BaseAppScreen):
                 event.prevent_default()
                 return
         if self._realtime.handle_key(event.key):
+            event.stop()
+            event.prevent_default()
+            return
+        focused = self.focused
+        if (
+            event.key == "m"
+            and isinstance(focused, Button)
+            and focused.has_class("console-conversation-compact-row")
+        ):
+            index = str(focused.id).removeprefix("console-workspace-conversation-")
+            try:
+                opener = self.query_one(
+                    f"#console-conversation-actions-{index}", Button
+                )
+            except NoMatches:
+                return
+            opener.console_return_focus_id = focused.id
+            opener.press()
             event.stop()
             event.prevent_default()
             return

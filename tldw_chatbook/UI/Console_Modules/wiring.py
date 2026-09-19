@@ -913,7 +913,9 @@ def build_console_controllers(
     #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
-        notify_character_navigation=lambda message, severity: screen._notify(message, severity),
+        notify_character_navigation=lambda message, severity: screen._notify(
+            message, severity
+        ),
         app_instance=screen.app_instance,
         # Late-binding lambdas, not the bound methods directly -- same
         # staleness reason as `ConsoleDictationController`'s own wiring
@@ -1033,6 +1035,12 @@ def build_console_controllers(
         # visible-row cap (fill-the-space Workspaces/Chats sections);
         # late-binding like every sibling above.
         rail_body_height_accessor=lambda: screen._console_rail_body_height(),
+        begin_manual_read_visit=lambda *args, **kwargs: (
+            screen._session.begin_manual_read_visit(*args, **kwargs)
+        ),
+        complete_manual_read_visit=lambda *args: (
+            screen._session.complete_manual_read_visit(*args)
+        ),
         # task-15864 AC#2: session-open (the resume flow) is a wake retry
         # trigger -- late-binding like every sibling above.
         wake_retry_poke=lambda: screen._fleet._poke_console_wake_retry(),
@@ -1506,8 +1514,10 @@ def build_console_controllers(
             )
         ),
         refresh_effective_scope_and_sync=(
-            lambda session, **kwargs: screen._retrieval._refresh_console_effective_scope_and_sync(
-                session, **kwargs
+            lambda session, **kwargs: (
+                screen._retrieval._refresh_console_effective_scope_and_sync(
+                    session, **kwargs
+                )
             )
         ),
         session_surface_accessor=lambda: screen.console_session_surface,
@@ -1603,6 +1613,16 @@ def build_console_controllers(
                     expected,
                 )
             )
+        ),
+        painted_session_accessor=lambda: (
+            screen._last_native_transcript_session_id
+            if screen.is_current
+            and screen._last_native_transcript_session_id
+            == screen._console_visible_send_session_id()
+            else None
+        ),
+        refresh_manual_read_rows=lambda: (
+            screen._workspace._sync_console_workspace_context()
         ),
         workspace_display_name=(
             lambda workspace_id: screen._workspace._console_workspace_display_name(

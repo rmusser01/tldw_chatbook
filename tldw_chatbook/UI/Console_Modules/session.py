@@ -277,6 +277,10 @@ from ..character_display_text import sanitize_character_display_label
 from .reaction_preview import ConsoleReactionPreviewCoordinator
 
 if TYPE_CHECKING:
+    from ...Chat.conversation_local_marks_service import (
+        ConversationLocalMarksService,
+        ManualUnreadToken,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 # NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
@@ -711,6 +715,18 @@ def _visual_identity_options_for_db(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleManualReadVisit:
+    """A deliberate navigation, fenced to its owner and reminder revision."""
+
+    profile_key: str
+    marks: ConversationLocalMarksService
+    conversation_id: str
+    session_id: str
+    token: ManualUnreadToken | None
+    navigation_generation: int
+
+
 class ConsoleSessionController:
     """Owns the Console shell's native session lifecycle: start/activate/
     swap/promote/rename, per-session settings, the Ctrl+K switcher's choice
@@ -785,6 +801,8 @@ class ConsoleSessionController:
             bool,
         ],
         workspace_display_name: Callable[[str], str],
+        painted_session_accessor: Callable[[], str | None] = lambda: None,
+        refresh_manual_read_rows: Callable[[], None] = lambda: None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -917,6 +935,11 @@ class ConsoleSessionController:
                 token after the native async projection is synchronized.
         """
         self._screen = screen
+        self._painted_session_accessor = painted_session_accessor
+        self._refresh_manual_read_rows = refresh_manual_read_rows
+        self._manual_navigation_generation = 0
+        self._pending_manual_read_visit = None
+        self._manual_read_scheduled = False
         self.app_instance = app_instance
         self._chat_store_accessor = chat_store_accessor
         self._current_chat_store_accessor = current_chat_store_accessor
@@ -2512,6 +2535,132 @@ class ConsoleSessionController:
                 request.projection_pending = False
         await self._finish_opening_console_chat_fork(store, request)
 
+    def _manual_profile_key(self) -> str:
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        return str(
+            (
+                getattr(runtime, "profile_authority", ""),
+                getattr(runtime, "authority_token", ""),
+            )
+        )
+
+    async def begin_manual_read_visit(
+        self,
+        session_id: str,
+        conversation_id: str | None = None,
+        *,
+        allow_current: bool = False,
+    ) -> ConsoleManualReadVisit | None:
+        """Capture intent before navigation; same-conversation tabs are a no-op."""
+        self._manual_navigation_generation += 1
+        generation = self._manual_navigation_generation
+        self._pending_manual_read_visit = None
+        store = self._ensure_console_chat_store()
+        sessions = {item.id: item for item in store.sessions()}
+        target = sessions.get(session_id)
+        cid = conversation_id or (target.persisted_conversation_id if target else None)
+        current = sessions.get(store.active_session_id)
+        if not cid or (
+            not allow_current and current and current.persisted_conversation_id == cid
+        ):
+            return None
+        return await self._prepare_manual_read_visit(
+            session_id, conversation_id=cid, navigation_generation=generation
+        )
+
+    async def _prepare_manual_read_visit(
+        self, session_id: str, *, conversation_id: str, navigation_generation: int
+    ) -> ConsoleManualReadVisit | None:
+        marks = getattr(self.app_instance, "conversation_local_marks_service", None)
+        if not callable(getattr(marks, "unread_token", None)):
+            return None
+        profile = self._manual_profile_key()
+        try:
+            token = await asyncio.to_thread(marks.unread_token, conversation_id)
+        except Exception:  # noqa: BLE001 - reminder failure must not block navigation
+            return None
+        return ConsoleManualReadVisit(
+            profile, marks, conversation_id, session_id, token, navigation_generation
+        )
+
+    def complete_manual_read_visit(
+        self, visit: ConsoleManualReadVisit | None, session_id: str | None = None
+    ) -> None:
+        """Arm acknowledgement only after the explicit route reports success."""
+        if visit is None or visit.token is None:
+            return
+        if session_id is not None:
+            visit = replace(visit, session_id=session_id)
+        if visit.navigation_generation != self._manual_navigation_generation:
+            return
+        self._pending_manual_read_visit = visit
+        self.schedule_manual_read_acknowledgement()
+
+    def schedule_manual_read_acknowledgement(self) -> None:
+        if self._pending_manual_read_visit is None or self._manual_read_scheduled:
+            return
+        self._manual_read_scheduled = True
+        self._screen.call_after_refresh(self._finish_manual_read_after_paint)
+
+    def _finish_manual_read_after_paint(self) -> None:
+        self._manual_read_scheduled = False
+        visit = self._pending_manual_read_visit
+        if visit is not None:
+            self.run_worker(
+                self._acknowledge_manual_read_visit(visit),
+                group="console-manual-read",
+                exclusive=False,
+            )
+
+    async def _acknowledge_manual_read_visit(
+        self, visit: ConsoleManualReadVisit
+    ) -> bool:
+        store = self._ensure_console_chat_store()
+        active = next(
+            (item for item in store.sessions() if item.id == store.active_session_id),
+            None,
+        )
+        if (
+            visit.navigation_generation != self._manual_navigation_generation
+            or visit.profile_key != self._manual_profile_key()
+            or visit.marks
+            is not getattr(self.app_instance, "conversation_local_marks_service", None)
+            or active is None
+            or active.id != visit.session_id
+            or active.persisted_conversation_id != visit.conversation_id
+        ):
+            if self._pending_manual_read_visit is visit:
+                self._pending_manual_read_visit = None
+            return False
+        if self._painted_session_accessor() != visit.session_id:
+            return False
+        self._pending_manual_read_visit = None
+        if visit.token is None:
+            return False
+        try:
+            cleared = await asyncio.to_thread(
+                visit.marks.mark_read, visit.conversation_id, expected=visit.token
+            )
+        except Exception:  # noqa: BLE001 - reminder failure must not block navigation
+            self.app_instance.notify(
+                "Chat opened, but its unread reminder could not be cleared. Use Mark as read to retry.",
+                severity="warning",
+            )
+            return False
+        if cleared and visit.profile_key == self._manual_profile_key():
+            self._refresh_manual_read_rows()
+        return cleared
+
+    async def acknowledge_explicit_console_return(self) -> None:
+        """Only the app's successful destination-navigation route calls this."""
+        store = self._ensure_console_chat_store()
+        if store.active_session_id:
+            visit = await self.begin_manual_read_visit(
+                store.active_session_id, allow_current=True
+            )
+            await self._sync_native_console_chat_ui()
+            self.complete_manual_read_visit(visit)
+
     async def _activate_native_console_session(
         self, session_id: str, *, activate_if: Callable[[], bool] | None = None
     ) -> None:
@@ -2528,6 +2677,9 @@ class ConsoleSessionController:
             activate_if: Optional current-claim/screen guard checked before
                 activation and after each awaited refresh; absent for tab clicks.
         """
+        if activate_if is not None and not activate_if():
+            return
+        visit = await self.begin_manual_read_visit(session_id)
         if activate_if is not None and not activate_if():
             return
         controller = self._ensure_console_chat_controller()
@@ -2574,6 +2726,7 @@ class ConsoleSessionController:
         if activate_if is not None and not activate_if():
             return
         self._focus_console_composer_if_needed(force=True)
+        self.complete_manual_read_visit(visit)
 
     # -- Tab-strip press handling (wave-4 task 2) ---------------------------
     #
