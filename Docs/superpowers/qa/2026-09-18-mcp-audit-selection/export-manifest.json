@@ -1,0 +1,261 @@
+[
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/result.json",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/result.json",
+    "sha256": "b521356d496f2750a9d2a50a16497fbb40713670988704a1c9766f628970e846",
+    "source_sha256": "b521356d496f2750a9d2a50a16497fbb40713670988704a1c9766f628970e846",
+    "normalization": "none"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-combined-filters.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-combined-filters.svg",
+    "sha256": "aa0a7c3534e5cf6016931507042345eefceaa4175167c482a48fb9db2f8e83d7",
+    "source_sha256": "8d657f8fb6d43f1b418179cfa597cce59684b846ae87bb73513e6c1a1c9a1649",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-combined-filters.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-combined-filters.txt",
+    "sha256": "dfe5cc9829aa8c92c2115f069188ab6ce9f10517457666124ccc34e5a0f79da9",
+    "source_sha256": "dfe5cc9829aa8c92c2115f069188ab6ce9f10517457666124ccc34e5a0f79da9",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-exact-tool.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-exact-tool.svg",
+    "sha256": "dee46f94cb6032dfcd48331aca1ce27e8488fa0cb28a5561ac8e8d3ec63602bb",
+    "source_sha256": "e7535d9d72d3698746b4be43810c20b18207553336d8bf8068ab913d0094d3e1",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-exact-tool.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-exact-tool.txt",
+    "sha256": "ca280f718af5c38c5d7681a042942861c528d2bbc942d83ac64d09c863159b10",
+    "source_sha256": "ca280f718af5c38c5d7681a042942861c528d2bbc942d83ac64d09c863159b10",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-filtered.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-filtered.svg",
+    "sha256": "c9c481c97f5d877a53e00a05df2ba56bf424efa7c60d918e0391b6a8eece2d52",
+    "source_sha256": "334d21b73d8307e2641d2801bac4ff7c37a6ca735942e65412948665915c1a4f",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-filtered.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-filtered.txt",
+    "sha256": "4ba3539eb70dfe2311d17eff873d4ed761b5d81ad322540fab5b31c1a98088c0",
+    "source_sha256": "4ba3539eb70dfe2311d17eff873d4ed761b5d81ad322540fab5b31c1a98088c0",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-refreshed.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-refreshed.svg",
+    "sha256": "0f545426be8ed95135594094d85dd9505d533bb41c10bcd1ce75e2cdbfb99332",
+    "source_sha256": "5c0d017855d9271a8eccb114b24bf12f8bd9a235a138ffcacd7384088924fc37",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-refreshed.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-refreshed.txt",
+    "sha256": "ce189b91b574529b4ec34907491cf9345736e877d620188a2950f691a82ffe6c",
+    "source_sha256": "ce189b91b574529b4ec34907491cf9345736e877d620188a2950f691a82ffe6c",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-selected.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-selected.svg",
+    "sha256": "200aaf8442314577e73f28f738953c84da5e82c989fb0e3f9da99c3935d885c4",
+    "source_sha256": "172f2257c91f3259e51ea9202ad74e06c8d42d27569f30998792a5a95a77fd00",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-170x48-selected.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-170x48-selected.txt",
+    "sha256": "235bfeeaf14d41e5f7146248725c83bd01a16b962e4be64428f282a2e7698519",
+    "source_sha256": "235bfeeaf14d41e5f7146248725c83bd01a16b962e4be64428f282a2e7698519",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-combined-filters.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-combined-filters.svg",
+    "sha256": "7aa92167c3b0ba02794af771b86933dfd4ab1d97a595edf711b28c9e030b4839",
+    "source_sha256": "9e126c3564bdac22c8a7af5204eceaed3e34629eed9729b1349b5259d335fba8",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-combined-filters.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-combined-filters.txt",
+    "sha256": "908bc5c60c7be5c3dc0d1141cfb642e3690904d96e658c3a1ba39c55ebddcec3",
+    "source_sha256": "908bc5c60c7be5c3dc0d1141cfb642e3690904d96e658c3a1ba39c55ebddcec3",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-filtered.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-filtered.svg",
+    "sha256": "2e0a1ed28e0ec414a2d1443876f340a9022c93d24e1068446378b9dfbb118493",
+    "source_sha256": "d1cced08ea3561e1f8a994aa3e3aa4844ca6777d9bde308d1aa18d147212c35f",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-filtered.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-filtered.txt",
+    "sha256": "39bb89ec2611034749a0eaa6ff9543aff4452e7cca6de9743e8f02b4e93079f7",
+    "source_sha256": "39bb89ec2611034749a0eaa6ff9543aff4452e7cca6de9743e8f02b4e93079f7",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-refreshed.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-refreshed.svg",
+    "sha256": "20eef437b6ef42fd1a3576b9106420604a09ef7e399461fa0f3a697414356a4e",
+    "source_sha256": "abe7b64e833206520b83eb98642229c768e9f9d7c6cf98c0fbe7ff2c5cc2e532",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-refreshed.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-refreshed.txt",
+    "sha256": "cb14c677ae99408fdab7d2712667fa99ab845a330406b8d0ad4adf16115767c7",
+    "source_sha256": "cb14c677ae99408fdab7d2712667fa99ab845a330406b8d0ad4adf16115767c7",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-selected.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-selected.svg",
+    "sha256": "20056c85066586945baf7b29b10f1b8c459cc97eecea9eab6f0f48b0e4c0f999",
+    "source_sha256": "6ee4ffcee2b4fd4e4bb1328a8692c8e245ceed585da5dcf155f63fa6210ed3f4",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-dark-80x24-selected.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-dark-80x24-selected.txt",
+    "sha256": "1ae1ac33acb7cfd5dca6ef014b817397c2d67fd7275c6aebf64afe23a99aeb1c",
+    "source_sha256": "1ae1ac33acb7cfd5dca6ef014b817397c2d67fd7275c6aebf64afe23a99aeb1c",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-combined-filters.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-combined-filters.svg",
+    "sha256": "52441382b5abbbd871c32a07e2942d3ca20b0e16a47ef53926054a9d464625c7",
+    "source_sha256": "136a31c8b8bc2946e66f9f3279b943a658b652147a281cb51e415cf0958d2b8f",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-combined-filters.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-combined-filters.txt",
+    "sha256": "dfe5cc9829aa8c92c2115f069188ab6ce9f10517457666124ccc34e5a0f79da9",
+    "source_sha256": "dfe5cc9829aa8c92c2115f069188ab6ce9f10517457666124ccc34e5a0f79da9",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-exact-tool.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-exact-tool.svg",
+    "sha256": "d44c7fdfc1b20e6d5ec523b26b83f22d662235cb356b3bdfd7ed1d9f9157c0a0",
+    "source_sha256": "958607657266416938a5959b54c9d3e082e640dc4f64986c151d078f4033acdd",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-exact-tool.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-exact-tool.txt",
+    "sha256": "ca280f718af5c38c5d7681a042942861c528d2bbc942d83ac64d09c863159b10",
+    "source_sha256": "ca280f718af5c38c5d7681a042942861c528d2bbc942d83ac64d09c863159b10",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-filtered.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-filtered.svg",
+    "sha256": "f84bde9f814027c1987970295f2c55dd9b0d117e615b3c5cc38fc30400a00fca",
+    "source_sha256": "6f259d486ac88952d0e06faa2340608586e54140b653b40833dd1ad086b4ef03",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-filtered.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-filtered.txt",
+    "sha256": "ed985c8aee230e8a10fcab10d501805b70edd7735341be358496c2ddb868803c",
+    "source_sha256": "ed985c8aee230e8a10fcab10d501805b70edd7735341be358496c2ddb868803c",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-refreshed.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-refreshed.svg",
+    "sha256": "789ff18c8e028502994e60e9bff235e6cf41e8db571aab3e9c9cbd2c9e9d63d0",
+    "source_sha256": "a618958556cddb651823bb7b8fcf02535c8593803489ee97af77306ffb4215f5",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-refreshed.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-refreshed.txt",
+    "sha256": "585570b2ee471fdc0af3ba573cd05acf41949a5edcc54bc3bc1adca05a078f1c",
+    "source_sha256": "585570b2ee471fdc0af3ba573cd05acf41949a5edcc54bc3bc1adca05a078f1c",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-selected.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-selected.svg",
+    "sha256": "14628ac0843f26d91293c0ce00e027924768fc37e86396e7e39891c7baf4e8ae",
+    "source_sha256": "663e510aa410d405ca66be8d4f92808c9190f7f749397bb2796da504a4b8d23f",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-170x48-selected.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-170x48-selected.txt",
+    "sha256": "05aa6e5f3c64d564690533578e458775acc1daeae1da9825d0f0bb66b40adfa1",
+    "source_sha256": "05aa6e5f3c64d564690533578e458775acc1daeae1da9825d0f0bb66b40adfa1",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-combined-filters.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-combined-filters.svg",
+    "sha256": "4e099d6c243ea6b731693362b75231a1cd7282bce67c5cbb4003767d378dff00",
+    "source_sha256": "92fde1b424f35a9df2e38132acf8094140e1d89933349561bd601c156ea918a1",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-combined-filters.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-combined-filters.txt",
+    "sha256": "bb42c2668b130667ae233e9527089511a0ea91262eb5fbcc0564dbd4d5688c44",
+    "source_sha256": "bb42c2668b130667ae233e9527089511a0ea91262eb5fbcc0564dbd4d5688c44",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-filtered.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-filtered.svg",
+    "sha256": "d3241882b1ab545beb5a1554bf8b831d55323c9067ee5eef91a9eaa70db06172",
+    "source_sha256": "572fa46c7ef086bf0797e17d8a61649268443f9d1b3c5e029b9b9d1e11789bf6",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-filtered.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-filtered.txt",
+    "sha256": "cbb3c60086da7939ccf64be13dbed6835243a571fa8e27322bed589fdf620796",
+    "source_sha256": "cbb3c60086da7939ccf64be13dbed6835243a571fa8e27322bed589fdf620796",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-refreshed.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-refreshed.svg",
+    "sha256": "1625f3e8f996632e18d4b340131ff5056040a9d0f992c467b97d1b6f8accf915",
+    "source_sha256": "e4ad3290b47ed72c8e7ab5ca3cd2cc21f349740bc43e3108f5e4042bbe2e2d03",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-refreshed.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-refreshed.txt",
+    "sha256": "36aa95ccfd959f568bff709e1baa0960125c67aed0a615220c84b3f5d190950e",
+    "source_sha256": "36aa95ccfd959f568bff709e1baa0960125c67aed0a615220c84b3f5d190950e",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-selected.svg",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-selected.svg",
+    "sha256": "41a15650df6ea32a542b9863a8b37237db0101aca06a412ba261e5ba8e30ffe6",
+    "source_sha256": "efd5ed14f3f2becb34d316b1136c1d87c0e3e4b133efcb853608938ae0c4b806",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  },
+  {
+    "source": "/private/tmp/tldw-32834-native-001/evidence/textual-light-80x24-selected.txt",
+    "destination": "Docs/superpowers/qa/2026-09-18-mcp-audit-selection/native/textual-light-80x24-selected.txt",
+    "sha256": "fcf47439f2378e06d1876961c32fb19cc5ab086fb1ff1760937619aa055980fd",
+    "source_sha256": "fcf47439f2378e06d1876961c32fb19cc5ab086fb1ff1760937619aa055980fd",
+    "normalization": "rstrip trailing line whitespace and final newline"
+  }
+]

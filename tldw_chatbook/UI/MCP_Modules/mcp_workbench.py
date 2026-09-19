@@ -859,17 +859,13 @@ class MCPWorkbench(Container):
         # `show_tool(None)`, blanking the inspector instead of explaining
         # the row.
         self._last_builtin_effective: dict[tuple[str, str], EffectiveToolState] = {}
-        # T7 (MCP Hub Phase 5): the full (unfiltered) execution-log record
-        # list `_sync_audit_mode()` most recently pushed into `MCPAuditMode`
-        # -- `MCPAuditMode.EntrySelected.index` (a position in THAT SAME
-        # list) is looked up against this cache when the event arrives,
-        # rather than re-reading the log a second time.
+        # Last execution-log snapshot pushed into the Audit canvas. Selection
+        # messages carry their own rendered entry, not an index into this cache.
         self._last_audit_entries: list[dict[str, Any]] = []
         # T8 (MCP Hub Phase 5): the full findings list `_sync_audit_mode()`
         # most recently pushed into `MCPAuditMode` -- `MCPAuditMode.
         # FindingSelected.index` is looked up against this cache when the
-        # event arrives, mirroring `_last_audit_entries`/`EntrySelected`
-        # immediately above.
+        # event arrives.
         self._last_audit_findings: list[dict[str, Any]] = []
         # T8: this pass's server-source Audit-mode Findings fetch
         # (`_load_server_findings()`), cached by `(source, target)` --
@@ -4703,20 +4699,12 @@ class MCPWorkbench(Container):
     async def on_mcp_audit_mode_entry_selected(
         self, event: MCPAuditMode.EntrySelected
     ) -> None:
-        """Route an Audit-mode row selection to the inspector's audit-entry
-        detail view. `event.index` is looked up against `_last_audit_entries`
-        (the SAME list `_sync_audit_mode()` handed `MCPAuditMode` this pass)
-        -- an out-of-range index (a stale selection racing a background
-        resync that shrank the window) resolves to `None`, which
-        `show_audit_entry()` renders as "nothing selected" rather than
-        crashing.
-        """
+        """Display the execution captured by the latest visible selection."""
         event.stop()
-        entry = (
-            self._last_audit_entries[event.index]
-            if 0 <= event.index < len(self._last_audit_entries)
-            else None
-        )
+        canvas = self.query_one(MCPAuditMode)
+        if self.active_mode != "audit" or event.entry is not canvas.selected_entry:
+            return
+        entry = event.entry
         context = self._validate_profile_context(self._tool_policy_profile_context)
         if context is None:
             entry = None
