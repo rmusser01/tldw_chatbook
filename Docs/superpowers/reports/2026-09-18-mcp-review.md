@@ -1,5 +1,42 @@
 # MCP component review
 
+## PR2726 approved closeout — selector-budget repair
+
+The owner approved PR2726's integrated conflict choices and gallery. Qodo found
+zero issues on approved head `a4158a6a9a`. The Perf Guard then exposed three
+inherited wide-modal selectors from PR2742 (277/274). Class-qualified subjects
+preserve their exact targets and token values while restoring the unchanged
+ratchet. [203 passing targeted cases, seven guards and independent review](../qa/2026-09-18-mcp-audit-catalog-freshness/CLOSEOUT.md)
+verify the closeout; all twelve modal before/after captures and all eight
+approved Audit captures are pixel-identical. Final-head CI/review and fresh live
+dev inspection remain before the authorized merge. The header rendering race
+and remaining component reviews are separate follow-ups.
+
+
+## Current checkpoint — PR2724 merged; PR2726 integrated
+
+PR2724 merged at `cccf0acdad8e939a55cb003588ff1406cef5d1f4` after owner
+approval, current-head CI and Qodo closeout. Concurrent PR2742 changed the merge
+tree outside MCP; the actual merged app passed 32 Audit cases and its 24 native
+captures matched approved terminal content apart from synthetic timestamps.
+PR2707's continuation heartbeat stays paused.
+
+Existing draft PR2726 / TASK-32838 is rebased onto that verified merged state.
+Both report histories are retained. The source conflict combines the fresh
+same-ID lookup with dev's row-selection and post-selection profile checks.
+[Conflict choices, 168 targeted passes, seven guards, independent review and
+fresh native visuals](../qa/2026-09-18-mcp-audit-catalog-freshness/CURRENT-DEV-REVIEW.md)
+are ready for this PR's own final visual approval and current-head CI/review.
+No merge approval transfers from PR2724.
+
+An [intermittent painted Tools header mismatch](../qa/2026-09-18-mcp-audit-catalog-freshness/HEADER-FOLLOWUP.md)
+was observed in one native run and absent in the unchanged-source replay.
+Attribution needs baseline reproduction; this remains a bounded follow-up before
+Permissions restored roots. Already-open inspector refresh, connected-runtime
+journeys and the wider screen review remain open. Older pending/next statements
+below are historical checkpoints.
+
+
 This ledger separates qualified repairs from remaining destination behavior.
 Token migration alone does not qualify a complete workflow.
 
@@ -72,6 +109,25 @@ Next: tool-definition freshness when a catalog replaces a same-ID target during
 an in-flight drilldown. Missing rows are qualified here; catalog revisions,
 80×24 action reachability and connected-runtime behavior are separate bounds.
 This follow-up remains subject to current-head CI and final visual approval.
+
+## Post-merge Audit catalog freshness — TASK-32838
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`.
+Its unmerged closeout checkpoint below is historical; component review resumed
+on bounded follow-up branches and the resume heartbeat is paused.
+
+[62 targeted cases, seven preflight guards and eight inspected native captures](../qa/2026-09-18-mcp-audit-catalog-freshness/README.md)
+qualify both Audit drilldowns against same-ID catalog replacements, removals
+and pending publication. Navigation re-resolves under the existing publication
+lock before selecting/rendering detail; captured profile checks remain.
+The real private app uses a controlled collector replacement, without tool
+execution or policy mutation. It exited cleanly with defaults unchanged.
+
+PR #2724 separately saves retired-control identity and missing-row handling.
+This fresh-dev branch does not include that or the inspector refresh/layout/
+guidance follow-ups. Refresh of an already-open inspector, 80×24 reachability
+and connected-runtime qualification remain separate. Current-head CI and final
+visual approval still gate merging. Next: Permissions restored-roots review.
 
 ## Qualified
 

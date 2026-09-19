@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[replaced-tools]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[replaced-permissions]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[removed-tools]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[removed-permissions]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_waits_for_in_progress_catalog_publication[tools]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_waits_for_in_progress_catalog_publication[permissions]",
+      "status": "failure"
+    }
+  ]
+}

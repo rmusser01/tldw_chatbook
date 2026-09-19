@@ -1,0 +1,78 @@
+{
+  "pid": 89425,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_destinations_show_refreshed_definition": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_destinations_show_refreshed_definition": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_destinations_show_refreshed_definition": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "identity": [
+        "builtin:tldw_chatbook",
+        "chat_with_llm"
+      ],
+      "both_destinations_show_refreshed_definition": true
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "6d0e78e415b3c660ac67693fc95d9b8063166fd39673d9f75f65ac9dfd2478d9",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "4752f76897e0abac780e6b19ce45a1d517cede4d97b060eb54bb622d456db7b9",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c623a8bd25550d7a454aa06e98365656bd399673158f05e16cbc2304ef030711",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "410b2894a0c0fc64b989fb76dc4d65157b68e15314ea108f8bcb9a2be5d6d96b",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "27fb5d75be288993e555a64f41dd9712a656a35af38de97fa8dc27c833036ca5",
+    "tldw_chatbook/css/core/_variables.tcss": "167d1afebeaff48d6bc9f2ae57053909528092dbe45332f37e8b593a6130fb4d",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "fc46f9883511d563022d33a0c7635b1bedd10871cf283ab6aa15cb14b433d22c",
+    "tldw_chatbook/MCP/execution_log.py": "2103254e8a62bf671ed236ff36feff9363a443d42cea3b58b2dba9ded6105891",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86"
+  },
+  "runner_sha256": "d9344e33b4b11e680b702adcd2ca17ceb4f463119e1705d4c044a4331c7000c4",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "controlled_catalog_replacements": 8,
+  "permission_profiles_unchanged": true,
+  "record_count": 1,
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

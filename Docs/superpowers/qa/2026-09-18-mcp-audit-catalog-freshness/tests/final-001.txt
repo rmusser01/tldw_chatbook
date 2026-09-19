@@ -1,0 +1,40 @@
+..............................................................           [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1552d0c3-2e72-41ad-bded-f51540ac7fce/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1552d0c3-2e72-41ad-bded-f51540ac7fce/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1552d0c3-2e72-41ad-bded-f51540ac7fce
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1552d0c3-2e72-41ad-bded-f51540ac7fce'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+23.12s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+20.62s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+11.68s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-permissions]
+11.29s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-tools]
+9.07s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-permissions]
+8.90s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-tools]
+5.16s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.74s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]
+3.70s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-tools]
+3.58s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]
+3.58s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-permissions]
+3.45s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-tools]
+3.41s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[permissions]
+3.40s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-permissions]
+3.40s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[tools]
+2.63s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+2.44s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.30s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_clears_an_active_filter_to_reveal_a_hidden_target
+2.29s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_moves_cursor_to_matching_tool_row
+2.25s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 .5;]
+2.21s call     Tests/UI/test_component_pattern_governance.py::test_no_new_local_ds_fallbacks
+2.20s call     Tests/UI/test_mcp_permissions_mode.py::test_select_tool_row_returns_false_for_tool_not_in_matrix
+1.99s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[width: -1.5;]
+1.95s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[padding: $ds-space-1 0 0 0;]
+1.92s call     Tests/UI/test_component_pattern_governance.py::test_dimension_floor_and_pin_reject_every_numeric_slot[margin: $ds-space-stack 0;]
+62 passed, 2 warnings in 197.85s (0:03:17)

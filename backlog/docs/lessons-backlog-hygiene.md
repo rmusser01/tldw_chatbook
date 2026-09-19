@@ -1085,3 +1085,22 @@ be real crashes, not paperwork). The cost was luck, not process.
    `git ls-tree -r --name-only <ref> -- backlog` for every ref, immediately
    before each mint and again before pushing. When two tasks do collide, the
    older `created_date` keeps the id.
+
+
+## Verify the live target branch separately from PR base metadata
+
+On 2026-09-19, PR2724's `gh pr view --json baseRefOid` continued reporting
+`29b0a31df4` during closeout while `dev` had advanced to `e3ea3b42fb` through
+PR2742 (wide-modal rollout). Head-pinned merge succeeded at `cccf0acdad`, but
+the post-merge tree comparison caught sixteen concurrent base-file changes.
+The MCP modules were unchanged; 32 focused Audit tests and a new native replay
+on the actual merge passed, with all 24 terminal captures matching the approved
+views except fixture timestamps. The discrepancy was reported rather than
+claiming the merged tree equaled the reviewed head.
+
+Before merging, fetch the target and read `refs/heads/dev` with `git ls-remote`
+separately from PR metadata. Compare the candidate with that fetched commit.
+`--match-head-commit` pins the PR head only; it does not freeze the target branch.
+After merging, inspect the actual merge parents/tree and qualify any concurrent
+changes against the approved behavior. Do not treat a PR's `baseRefOid` alone
+as proof of the live target tip.
