@@ -16,6 +16,7 @@ import pytest
 import requests
 
 import tldw_chatbook.LLM_Calls.hosted_chat as hosted_chat
+import tldw_chatbook.LLM_Calls.recovery_review as recovery_review
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -1227,7 +1228,13 @@ def test_owned_sse_stream_transfers_ownership_and_closes_exactly_once(
             payload={"stream": True},
             streaming=True,
         )
-        assert isinstance(stream, OwnedSSEStream)
+        # TASK-32628's recovery admission retains every stream a provider
+        # call returns behind recovery_review._OpenAIStream; the transport
+        # guarantee this test pins is that the retained stream is an owned
+        # SSE stream, and the ownership/close assertions below run through
+        # the wrapper because that is what every consumer receives.
+        assert isinstance(stream, recovery_review._OpenAIStream)
+        assert isinstance(stream.iterator, OwnedSSEStream)
         assert sessions[0].close_calls == 0
         assert list(stream) == [
             SSERecord(event=None, data='{"ok":true}'),
@@ -1259,7 +1266,10 @@ def test_owned_sse_stream_does_not_retry_after_any_body_byte(
             payload={"stream": True},
             streaming=True,
         )
-        assert isinstance(stream, OwnedSSEStream)
+        # Same wrapper contract as the ownership test above: the read
+        # failure must surface through the retained owned stream.
+        assert isinstance(stream, recovery_review._OpenAIStream)
+        assert isinstance(stream.iterator, OwnedSSEStream)
         with pytest.raises(HostedSSEReadError):
             list(stream)
 

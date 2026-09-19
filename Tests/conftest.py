@@ -1034,10 +1034,21 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
     # Source-bound consumers retain the private profile selected at collection.
     # These MCP widget modules also use imported real config getters; their
     # per-case config fakes and database cleanup remain in the existing fixtures.
+    # The hosted-chat/QwenCloud transport contract tests (TASK-19642.10) are in
+    # the same class: owned_json_post/qwencloud build real sessions through
+    # create_default_session(), whose default-timeout and TLS-trust reads go
+    # through the config-participant admission (TASK-32628). Under the per-test
+    # env redirect the bound config selection no longer matches and admission
+    # fails closed with RecoveryRequired("raw_source_selection_changed"), so
+    # 20 transport contract nodes went red the day that admission landed. They
+    # fake the transport itself, not the config getters, so they keep the
+    # bootstrap profile like the MCP widgets do.
     keep_bootstrap_profile = (
         is_private_profile_child(request)
         or request.node.path.name in {
             "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
+            "test_hosted_chat.py", "test_qwencloud.py",
+            "test_groq_openrouter_migration_characterization.py",
         }
     )
     test_data_dir = (
