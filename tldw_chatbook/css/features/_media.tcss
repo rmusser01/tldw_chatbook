@@ -222,13 +222,6 @@ VerticalScroll.media-content-right-pane > Markdown {
     height: $ds-height-fill !important;
 }
 
-/* --- Media Details Widget --- */
-MediaDetailsWidget {
-    height: $ds-height-fill;
-    width: $ds-width-full;
-    layout: vertical;
-}
-
 .metadata-section {
     width: $ds-width-full;
     height: auto;
