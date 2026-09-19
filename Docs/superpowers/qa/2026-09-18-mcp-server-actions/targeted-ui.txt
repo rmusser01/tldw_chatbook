@@ -1,0 +1,29 @@
+........................................................................ [ 76%]
+......................                                                   [100%]
+============================= slowest 25 durations =============================
+8.80s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]
+8.73s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]
+8.65s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]
+8.28s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]
+3.04s call     Tests/UI/test_widget_css_consolidation.py::test_class_level_css_stays_within_the_allowlist
+2.85s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+2.73s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete]
+2.60s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[delete-confirm]
+2.44s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_action_cannot_run_in_hidden_mode_while_disarm_waits[disconnect]
+2.14s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-cancel]
+2.06s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[edit]
+2.01s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[connect]
+1.87s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[disconnect]
+1.84s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.82s call     Tests/UI/test_mcp_server_action_ownership.py::test_accepted_delete_keeps_its_target_across_toolbar_rebuild
+1.80s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[refresh]
+1.80s call     Tests/UI/test_mcp_server_action_ownership.py::test_hidden_server_toolbar_cannot_dispatch_while_edit_form_is_open
+1.80s call     Tests/UI/test_mcp_server_action_ownership.py::test_old_server_action_is_retired_before_first_detail_refresh_await
+1.77s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete]
+1.74s call     Tests/UI/test_mcp_server_action_ownership.py::test_queued_server_action_is_rejected_after_detail_replacement[delete-confirm]
+1.62s call     Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+1.59s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.56s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+1.56s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.55s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+94 passed in 102.99s (0:01:42)

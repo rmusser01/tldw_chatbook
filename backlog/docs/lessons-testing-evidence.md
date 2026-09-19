@@ -15966,3 +15966,16 @@ queues and retain native inputs; bypassing the production post_message boundary
 would bypass the fix and test a different path. The same task's native compact
 run found a focused recovery button below a padded callout; full-app compositor
 paint assertions caught what focus identity alone missed.
+
+
+## Accepted destructive intent must survive presentation awaits
+
+**TASK-32825, 2026-09-18.** An Alpha Confirm awaited toolbar rebuilding, then
+read the current detail after Beta selection and deleted Beta. Retired controls
+also dispatched against replacement details; checking only the inner detail's
+display missed the hidden Servers ancestor while Workbench disarming waited.
+Current widget-to-target associations now retire before the first replacement
+await, effective ancestor visibility rejects hidden actions, and an admitted
+confirmation captures its server key before presentation work. Queue regressions
+and a native real-store delay verify both rejection of stale controls and
+preservation of already-accepted Alpha intent while Beta remains selected.

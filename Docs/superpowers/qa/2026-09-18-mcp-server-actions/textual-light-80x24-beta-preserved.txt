@@ -1,0 +1,24 @@
+                                  ╭────────╮
+ ‹ ts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs    More ▾
+────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people
+ never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────╮╭──────────────────────────────────────────╮╭──────────────────╮
+│              ││   ← All servers  ○ Needs setup  beta     ││                  │
+│ Source       ││         Edit              Connect        ││ Inspector        │
+│ ▊▔▔▔▔▔▔▔▔▎   ││        Delete                            ││  ○ Needs setup   │
+│ ▊Local  ▼▎   ││  Not validated yet — connect or test to  ││  beta            │
+│ ▊▁▁▁▁▁▁▁▁▎   ││  discover tools.                         ││  Why · Not       │
+│              ││                                          ││  validated yet   │
+│ Servers      ││  Command · /usr/bin/false                ││  Connect         │
+│  ○ setup     ││  Tools · none                            ││  Check           │
+│  · ◦ off     ││                      ╭─────────────────────────────────────╮ │
+│  · ⌂         ││  Resources · none    │                                     │ │
+│  built-in    ││  Prompts · none      │ Deleted alpha.                      │ │
+│    All       ││                      │                                     │ │
+│  servers     ││                      ╰─────────────────────────────────────╯ │
+│  ◦ ⌂ t…     ▇▇ ││                                          ││                │
+╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
+  1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

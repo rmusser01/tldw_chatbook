@@ -3537,6 +3537,19 @@ Button.mcp-callout {
     border: none;
 }
 
+.mcp-compact #mcp-detail-toolbar {
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: $ds-size-1;
+}
+
+.mcp-compact #mcp-detail-toolbar .console-action-primary,
+.mcp-compact #mcp-detail-toolbar .console-action-secondary {
+    width: 1fr;
+    min-width: $ds-size-0;
+}
+
 
 #mcp-import-list {
     height: auto;

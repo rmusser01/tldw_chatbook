@@ -19,32 +19,52 @@ Token migration alone does not qualify a complete workflow.
 | Quiet table redraw and inspector clearing | TASK-32796, [275 distinct targeted cases and eight native captures](../qa/2026-09-18-mcp-table-selection/README.md) | Publication-time row/cell suppression, table-scoped gesture dedup and quiet external drills; real keyboard refresh/navigation, no schema/execution qualification |
 | Compact rail navigation | TASK-32812, [119 targeted cases and eight native captures](../qa/2026-09-18-mcp-rail-navigation/README.md) | Full All servers/Source paint, literal Unicode names/counts, ordinary-refresh/resize focus, exact row identity and scrollbars; structural catalog replacement focus is not qualified |
 | Complete tool-switch labels | TASK-32822, [37 targeted cases and eight native captures](../qa/2026-09-18-mcp-gate-labels/README.md) | All eleven gate labels, focus/scroll reveal, disabled dependencies and real private Deep research save/reversal; no broader save concurrency or execution qualification |
+| Selected-tool refresh, preview retirement and visible focus | TASK-32823, [353 distinct targeted cases and twelve native captures](https://github.com/rmusser01/tldw_chatbook/blob/80b2495e222a90ae0aa4f7c9a4691c96c68d01c5/Docs/superpowers/qa/2026-09-18-mcp-inspector-refresh/README.md) | Unchanged schema/raw drafts, changed/removed definitions, pending preview ownership, newer selection/focus and compact/wide control reachability; controlled catalog projection, no external server or tool execution |
 
-## PR #2707 closeout boundary
+| Server action identity and compact toolbar | TASK-32825, [109 distinct targeted cases and twelve native captures](../qa/2026-09-18-mcp-server-actions/README.md) | Retired/hidden controls, accepted exact-target deletion, safe Keep/Escape and full compact/wide actions; real private deletion, no external connection/execution |
 
-The owner approved moving remaining MCP reviews to follow-up PRs. TASK-32823
-is preserved on `codex/mcp-inspector-refresh-followup` at `135f226888`, outside
-PR #2707. Its inspector refresh prototype has an unresolved delayed-preview
-ownership race; it is not qualified or complete. Resume MCP lifecycle/inspector
-work from merged `dev` after the current PR receives final visual approval and
-its merge is confirmed.
+## Post-merge continuation
+
+PR #2707 merged at `149acda36b` after owner approval, current-dev integration,
+all ten Qodo findings resolved and eleven applicable Actions checks passed.
+TASK-32823 resumed from that dev state on `codex/mcp-inspector-refresh-review`,
+reusing preserved commit `135f226888`. The backup heartbeat is paused.
+
+The bounded follow-up repairs stale selected details and pending preview
+retirement, retains unchanged form/raw drafts, respects newer selection/focus,
+and gives the inspector a scrollable viewport for keyboard-reached controls.
+The bounded implementation is saved as [draft PR #2711](https://github.com/rmusser01/tldw_chatbook/pull/2711);
+TASK-32823 is Done. Four final dark/light compact/wide native cells pass, with twelve inspected
+captures and clean private-profile shutdown recorded in its receipt. Follow-up
+PR2711 currently has a selector-ratchet CI failure (275/274); its fast lane is still running. Owner visual approval remains a separate gate.
+Server lifecycles, connected execution and the other remaining items stay open.
+
+
+TASK-32825 continues on the independent branch `codex/mcp-server-action-ownership`
+from merged dev. [109 distinct targeted checks and twelve inspected native captures](../qa/2026-09-18-mcp-server-actions/README.md)
+qualify retired/hidden server controls, immutable accepted deletion targets,
+safe Keep/Escape and complete compact/wide toolbar paint. The native journey
+removes only the confirmed Alpha profile while Beta stays selected and persisted.
+All private lifecycle checks pass. The compact CSS rule uses existing action
+classes to preserve the unchanged 274 selector ceiling. Broader server connection,
+execution, recovery and other destination reviews remain open. Separate bounded
+draft PR creation is the final save step; no merge is authorized here.
 
 ## Remaining review
 
-- **Remote verification:** Fast Lane, CSS, latency, backlog and all platform GGUF
-  checks pass on saved head d7b4c10a7d. The derived-artifact aggregate is still
-  running at this checkpoint; checks on the next pushed head are separate.
-  TASK-32814 repaired the earlier rail ellipsis assertion failure.
+- **Remote verification:** All eleven applicable checks passed on PR2707 head
+  `2ac5d7aab6` before merging. New follow-up PR checks qualify their own head.
 - **Existing test debt:** four Audit CSS literal assertions fail against unchanged
   token-based CSS; two Speech harness cases failed during profile setup before UI
   creation. Both boundaries are recorded in TASK-32796 evidence. TASK-32812 also
   recorded 26 baseline CSS-consolidation ratchet offenders and a destination-tour
   profile-setup failure; TASK-32813 now closes those two boundaries with
   [computed-style, guard and native evidence](../qa/2026-09-18-css-consolidation/README.md).
-- **Inspector refresh and execution:** selected tool definition/currentness,
-  argument drafts across background refresh, diagnostic empty-state action routing,
-  disconnected/stale tools, schema/raw arguments, execution and inspector recovery.
-- **Servers:** source transitions, add/edit/remove and connection lifecycles,
+- **Inspector execution and recovery:** TASK-32823 qualifies selected definition
+  currentness, retained schema/raw drafts across unchanged catalog refresh and
+  retiring form previews. Diagnostic empty-state action routing, disconnected/stale
+  tools, argument validation, actual execution and post-execution recovery remain.
+- **Servers:** TASK-32825 qualifies toolbar action ownership, safe confirmation and compact paint. Source transitions, complete add/edit/remove and connection lifecycles,
   built-in enable/expose controls, errors and recovery. TASK-32822 repairs the
   compact non-master gate label clipping recorded in TASK-32793. The All servers
   rail clipping recorded in TASK-32796 is repaired by TASK-32812 above.
@@ -52,5 +72,4 @@ its merge is confirmed.
   restored roots, bulk actions, review/approval and connected-runtime journeys.
 
 The [component completion ledger](2026-09-17-design-system-completion-audit.md)
-retains other destinations. Draft PR2707 remains open and subject to its own
-visual review and merge approval.
+retains other destinations. PR2707 is merged; each follow-up PR retains its own visual review and merge gate.

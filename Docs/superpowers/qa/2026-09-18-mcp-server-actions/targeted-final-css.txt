@@ -1,0 +1,24 @@
+...................                                                      [100%]
+============================= slowest 25 durations =============================
+8.64s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-light]
+8.38s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-light]
+8.21s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size0-textual-dark]
+8.05s call     Tests/UI/test_mcp_server_action_ownership.py::test_server_toolbar_and_confirmation_are_fully_visible[size1-textual-dark]
+3.17s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+2.71s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.84s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.50s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+1.48s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.47s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+1.46s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+1.46s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.45s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+1.44s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.41s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+1.41s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+1.40s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.37s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.33s call     Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+
+(6 durations < 1s hidden.)
+19 passed in 59.45s
