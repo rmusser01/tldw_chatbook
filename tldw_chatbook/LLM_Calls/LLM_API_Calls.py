@@ -2436,6 +2436,48 @@ def _cohere_stream_event_index(event: dict, message_delta: dict, fallback: int) 
 
 
 @_provider_recovery.unqualified
+def _cohere_usage_to_openai(usage):
+    """Cohere v2 message-end usage -> OpenAI usage block (task-32805.2).
+
+    Prefers the actual ``tokens`` counts over ``billed_units``.
+    """
+    if not isinstance(usage, dict):
+        return None
+    block = usage.get("tokens") or usage.get("billed_units") or {}
+    if not isinstance(block, dict):
+        return None
+    prompt = block.get("input_tokens")
+    completion = block.get("output_tokens")
+    if prompt is None and completion is None:
+        return None
+    prompt = int(prompt or 0)
+    completion = int(completion or 0)
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+
+
+def _gemini_usage_to_openai(usage_metadata):
+    """Gemini streaming usageMetadata -> OpenAI usage block (task-32805.2)."""
+    if not isinstance(usage_metadata, dict):
+        return None
+    prompt = usage_metadata.get("promptTokenCount")
+    completion = usage_metadata.get("candidatesTokenCount")
+    total = usage_metadata.get("totalTokenCount")
+    if prompt is None and completion is None and total is None:
+        return None
+    prompt = int(prompt or 0)
+    completion = int(completion or 0)
+    total = int(total) if total is not None else prompt + completion
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+    }
+
+
 def chat_with_cohere(
     input_data: List[Dict[str, Any]],
     model: Optional[str] = None,
@@ -2772,6 +2814,7 @@ def chat_with_cohere(
                         message_delta = delta.get("message") or {}
                         sse_delta: Dict[str, Any] = {}
                         finish_reason = None
+                        chunk_usage = None
 
                         if event_type == "content-delta":
                             text_chunk = (message_delta.get("content") or {}).get(
@@ -2844,6 +2887,9 @@ def chat_with_cohere(
                                 if raw_finish_reason
                                 else "stop",
                             )
+                            chunk_usage = _cohere_usage_to_openai(
+                                delta.get("usage") or cohere_event.get("usage") or {}
+                            )
                             logger.info(
                                 f"Cohere stream: 'message-end' event. Finish: {raw_finish_reason} "
                                 f"(Mapped: {finish_reason}). Fragments: {len(accumulated_text_for_log)}"
@@ -2874,6 +2920,8 @@ def chat_with_cohere(
                                 "model": final_model,
                                 "choices": [sse_choice_payload],
                             }
+                            if chunk_usage:
+                                sse_chunk["usage"] = chunk_usage
                             yield f"data: {json.dumps(sse_chunk)}\n\n"
                             if (
                                 event_type == "message-end"
@@ -3824,6 +3872,9 @@ def chat_with_google(
                             try:
                                 data_chunk_outer = json.loads(json_str)
                                 openai_sse_choice = None
+                                chunk_usage = _gemini_usage_to_openai(
+                                    data_chunk_outer.get("usageMetadata")
+                                )
                                 candidates = data_chunk_outer.get("candidates", [])
                                 if candidates:
                                     candidate = candidates[0]
@@ -3913,7 +3964,11 @@ def chat_with_google(
                                         "model": current_model,
                                         "choices": [openai_sse_choice],
                                     }
+                                    if chunk_usage:
+                                        sse_chunk["usage"] = chunk_usage
                                     yield f"data: {json.dumps(sse_chunk)}\n\n"
+                                elif chunk_usage:
+                                    yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_ts, 'model': current_model, 'choices': [], 'usage': chunk_usage})}\n\n"
                             except json.JSONDecodeError:
                                 logger.warning(
                                     f"Google Gemini: Could not decode JSON line: {json_str}"
