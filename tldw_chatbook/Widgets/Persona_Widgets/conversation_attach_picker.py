@@ -44,7 +44,7 @@ class ConversationAttachPicker(ModalScreen[str | None]):
         self._filter_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(classes="conversation-attach-body"):
             yield Label("Attach to conversation", markup=False)
             yield Input(placeholder="Search conversations…", id="conversation-attach-search")
             yield ListView(id="conversation-attach-list")

@@ -1,0 +1,29 @@
+............                                                             [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8d988ab5-7353-4aa5-b006-c7c3fc83a5ba/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8d988ab5-7353-4aa5-b006-c7c3fc83a5ba/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8d988ab5-7353-4aa5-b006-c7c3fc83a5ba
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8d988ab5-7353-4aa5-b006-c7c3fc83a5ba'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+9.28s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-permissions]
+8.72s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-tools]
+8.67s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-tools]
+8.49s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-permissions]
+3.54s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-permissions]
+3.52s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[permissions]
+3.41s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[replaced-tools]
+3.41s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]
+3.38s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]
+3.35s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[tools]
+3.29s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-tools]
+3.28s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-permissions]
+
+(13 durations < 1s hidden.)
+12 passed, 2 warnings in 64.94s (0:01:04)

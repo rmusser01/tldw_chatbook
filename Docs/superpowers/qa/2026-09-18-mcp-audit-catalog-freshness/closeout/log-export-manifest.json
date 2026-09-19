@@ -1,0 +1,227 @@
+{
+  "normalization": "Text logs/SVG exports strip trailing line whitespace and end with one newline; originals remain in private profiles.",
+  "files": [
+    {
+      "source": "/private/tmp/tldw-2726-modal-before-002/evidence/result.json",
+      "export": "closeout/modal-before/result.json",
+      "source_sha256": "cc92baefa7dd8235ea3d48b76095817ef86bb174fa620b0f0007865fff536b2b",
+      "export_sha256": "cc92baefa7dd8235ea3d48b76095817ef86bb174fa620b0f0007865fff536b2b"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-before-002/lifecycle.json",
+      "export": "closeout/modal-before/lifecycle.json",
+      "source_sha256": "738ffbdfd29f299f478c0b2899a28f9cc56834e452eaecdd131db2b436b168b9",
+      "export_sha256": "738ffbdfd29f299f478c0b2899a28f9cc56834e452eaecdd131db2b436b168b9"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/result.json",
+      "export": "closeout/modal-after/result.json",
+      "source_sha256": "5bb63ee8a1498d762b6345dce07478af75d285973d640511690c91304210ff28",
+      "export_sha256": "5bb63ee8a1498d762b6345dce07478af75d285973d640511690c91304210ff28"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/lifecycle.json",
+      "export": "closeout/modal-after/lifecycle.json",
+      "source_sha256": "3f0d68a9f8b213c6f6b8f5a9aa9022e8cddfbaf82d242d739a882adb6ed730ff",
+      "export_sha256": "3f0d68a9f8b213c6f6b8f5a9aa9022e8cddfbaf82d242d739a882adb6ed730ff"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-170x48-dictionary.svg",
+      "export": "closeout/modal-after/textual-light-170x48-dictionary.svg",
+      "source_sha256": "30c6eb4c51ca9190febe54e8961707bd2a2c394659b2fc190fef5a645f23394a",
+      "export_sha256": "78e5311df35b2bfa221b3b9d56ba0643d07cc4fdc1c643f0f612e2e353491630"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-120x40-extraction.svg",
+      "export": "closeout/modal-after/textual-light-120x40-extraction.svg",
+      "source_sha256": "2b1b52b497fbe360ed7fd48a8bbc060ad8ac828866dd80deb7f2903b9af22640",
+      "export_sha256": "9e34bb51640944ea37bf84582956f821d9bc469401236a957c1938da6e9f1663"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-120x40-dictionary.svg",
+      "export": "closeout/modal-after/textual-light-120x40-dictionary.svg",
+      "source_sha256": "523f0bfe285cb7da5e1348e420a8330212e5b3dc1d9f0809eb0a2b09b1bcfca6",
+      "export_sha256": "f66604df9d494ec2073939585b47b255ce01f7b176bbf2a4f7ae9bcccc7240e4"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-120x40-conversation.svg",
+      "export": "closeout/modal-after/textual-light-120x40-conversation.svg",
+      "source_sha256": "523f0bfe285cb7da5e1348e420a8330212e5b3dc1d9f0809eb0a2b09b1bcfca6",
+      "export_sha256": "f66604df9d494ec2073939585b47b255ce01f7b176bbf2a4f7ae9bcccc7240e4"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-170x48-extraction.svg",
+      "export": "closeout/modal-after/textual-light-170x48-extraction.svg",
+      "source_sha256": "acd5c83c8450c892350612c746b87838260dd424d1751bb839c65d389b52964f",
+      "export_sha256": "2b8396b640ff94d51c5024cb56b0ce68cc40b6dbbbdb62edea57132eff25176f"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-120x40-conversation.svg",
+      "export": "closeout/modal-after/textual-dark-120x40-conversation.svg",
+      "source_sha256": "0006f0b313400debcdd27f947ce6c3addc2b667647bda3c06a82dc8a46e83c04",
+      "export_sha256": "54737081976ea27eb40c61e298d85f9771bab04b9d8570a55f97d8bac9f0771d"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-170x48-conversation.svg",
+      "export": "closeout/modal-after/textual-light-170x48-conversation.svg",
+      "source_sha256": "30c6eb4c51ca9190febe54e8961707bd2a2c394659b2fc190fef5a645f23394a",
+      "export_sha256": "78e5311df35b2bfa221b3b9d56ba0643d07cc4fdc1c643f0f612e2e353491630"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-170x48-dictionary.svg",
+      "export": "closeout/modal-after/textual-dark-170x48-dictionary.svg",
+      "source_sha256": "cd85c7b5f5fc64e11fb8f88f14e97dccea9401d22c277b550aa5da5062c7617d",
+      "export_sha256": "46753a44217318bc0d1ad3aadce3dadd818d02264371ac58815b7d9132038d64"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-170x48-conversation.svg",
+      "export": "closeout/modal-after/textual-dark-170x48-conversation.svg",
+      "source_sha256": "cd85c7b5f5fc64e11fb8f88f14e97dccea9401d22c277b550aa5da5062c7617d",
+      "export_sha256": "46753a44217318bc0d1ad3aadce3dadd818d02264371ac58815b7d9132038d64"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-120x40-extraction.svg",
+      "export": "closeout/modal-after/textual-dark-120x40-extraction.svg",
+      "source_sha256": "8e36ad11b6726ee3381309866d1ead92adc10e8baa2eff7f18c752a1fb2cf187",
+      "export_sha256": "f5cb62c44b322db6e57ca6f14a580fb046d6c4d790c6d57859540e0bdfd2a2ce"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-120x40-dictionary.svg",
+      "export": "closeout/modal-after/textual-dark-120x40-dictionary.svg",
+      "source_sha256": "a63eccd926e0bf1af0e9588cd081b99c11cbe3253fff8056fa4dee2689484887",
+      "export_sha256": "2b3d5475d6f7bc2b231dbed05f9f20a9dae65a4c2c64ab99627a9859b336d2fe"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-170x48-extraction.svg",
+      "export": "closeout/modal-after/textual-dark-170x48-extraction.svg",
+      "source_sha256": "80a2231f9d7b28ed548870bd87bb3d78363c15e0c49d973bcf252ebd2e9b466a",
+      "export_sha256": "abcfa0d069012855816e779aec1f029bb6acb022683b8d0c69d15bd5bbc25f4c"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-120x40-extraction.txt",
+      "export": "closeout/modal-after/textual-light-120x40-extraction.txt",
+      "source_sha256": "a2bc90594c2e59798c4939e517f7d39b40470f34c9198f93209d700e68314ec9",
+      "export_sha256": "a2bc90594c2e59798c4939e517f7d39b40470f34c9198f93209d700e68314ec9"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-170x48-dictionary.txt",
+      "export": "closeout/modal-after/textual-light-170x48-dictionary.txt",
+      "source_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f",
+      "export_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-120x40-conversation.txt",
+      "export": "closeout/modal-after/textual-dark-120x40-conversation.txt",
+      "source_sha256": "fd224725ed0fc30dc2f01b7580617b7a8899639d3da3a6f15695f32d68bf5bf3",
+      "export_sha256": "fd224725ed0fc30dc2f01b7580617b7a8899639d3da3a6f15695f32d68bf5bf3"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-170x48-extraction.txt",
+      "export": "closeout/modal-after/textual-light-170x48-extraction.txt",
+      "source_sha256": "18d06191f6a3d83fbdbd3c6a0dc1710ddcb98eed822ef047082f32297bb95cdc",
+      "export_sha256": "18d06191f6a3d83fbdbd3c6a0dc1710ddcb98eed822ef047082f32297bb95cdc"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-120x40-conversation.txt",
+      "export": "closeout/modal-after/textual-light-120x40-conversation.txt",
+      "source_sha256": "fd224725ed0fc30dc2f01b7580617b7a8899639d3da3a6f15695f32d68bf5bf3",
+      "export_sha256": "fd224725ed0fc30dc2f01b7580617b7a8899639d3da3a6f15695f32d68bf5bf3"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-120x40-dictionary.txt",
+      "export": "closeout/modal-after/textual-light-120x40-dictionary.txt",
+      "source_sha256": "fd224725ed0fc30dc2f01b7580617b7a8899639d3da3a6f15695f32d68bf5bf3",
+      "export_sha256": "fd224725ed0fc30dc2f01b7580617b7a8899639d3da3a6f15695f32d68bf5bf3"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-120x40-extraction.txt",
+      "export": "closeout/modal-after/textual-dark-120x40-extraction.txt",
+      "source_sha256": "6f843ad96beeb35b4fe0db09fc010c07b57ad0d9ab2572b3bd85ee013c3865dc",
+      "export_sha256": "6f843ad96beeb35b4fe0db09fc010c07b57ad0d9ab2572b3bd85ee013c3865dc"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-170x48-dictionary.txt",
+      "export": "closeout/modal-after/textual-dark-170x48-dictionary.txt",
+      "source_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f",
+      "export_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-170x48-conversation.txt",
+      "export": "closeout/modal-after/textual-dark-170x48-conversation.txt",
+      "source_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f",
+      "export_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-light-170x48-conversation.txt",
+      "export": "closeout/modal-after/textual-light-170x48-conversation.txt",
+      "source_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f",
+      "export_sha256": "4928be187722ee2ff93c2d1612f2f9d770ffd6febae51e67b40cf224b9acc57f"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-170x48-extraction.txt",
+      "export": "closeout/modal-after/textual-dark-170x48-extraction.txt",
+      "source_sha256": "18d06191f6a3d83fbdbd3c6a0dc1710ddcb98eed822ef047082f32297bb95cdc",
+      "export_sha256": "18d06191f6a3d83fbdbd3c6a0dc1710ddcb98eed822ef047082f32297bb95cdc"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-after-001/evidence/textual-dark-120x40-dictionary.txt",
+      "export": "closeout/modal-after/textual-dark-120x40-dictionary.txt",
+      "source_sha256": "37894be38fa4b1001d98a36954a5d030f4226337e10b17049cb4a5de57a179f8",
+      "export_sha256": "37894be38fa4b1001d98a36954a5d030f4226337e10b17049cb4a5de57a179f8"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-audit-closeout-001/evidence/result.json",
+      "export": "closeout/audit-replay/result.json",
+      "source_sha256": "eb6f34fe9fd506c1edf80e014d39eed95ea7c5b34f84094a8e21de063b6ab003",
+      "export_sha256": "eb6f34fe9fd506c1edf80e014d39eed95ea7c5b34f84094a8e21de063b6ab003"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-audit-closeout-001/lifecycle.json",
+      "export": "closeout/audit-replay/lifecycle.json",
+      "source_sha256": "b1188967f4cd2e10b52d8fc332c5f25650a7ec09863f374b0bc9ad56aa691b4a",
+      "export_sha256": "b1188967f4cd2e10b52d8fc332c5f25650a7ec09863f374b0bc9ad56aa691b4a"
+    },
+    {
+      "source": "/private/tmp/2726-modal-paint-comparison.json",
+      "export": "closeout/modal-terminal-comparison.json",
+      "source_sha256": "65b8524116e1bd1fbd59ea92b8846591532db5624f6765e1ccd37667c6be97f9",
+      "export_sha256": "65b8524116e1bd1fbd59ea92b8846591532db5624f6765e1ccd37667c6be97f9"
+    },
+    {
+      "source": "/private/tmp/2726-modal-pixel-comparison.json",
+      "export": "closeout/modal-pixel-comparison.json",
+      "source_sha256": "768a9c992665e97a277afecc55a5971371ad2152ef6911eaf70fd90860b8dff9",
+      "export_sha256": "768a9c992665e97a277afecc55a5971371ad2152ef6911eaf70fd90860b8dff9"
+    },
+    {
+      "source": "/private/tmp/2726-audit-closeout-comparison.json",
+      "export": "closeout/audit-terminal-comparison.json",
+      "source_sha256": "cd8756b16457674006e294f0b8d45d9709fe0a7281fbd7e2de494103c05f7f72",
+      "export_sha256": "cd8756b16457674006e294f0b8d45d9709fe0a7281fbd7e2de494103c05f7f72"
+    },
+    {
+      "source": "/private/tmp/2726-closeout-static.json",
+      "export": "closeout/static-analysis.json",
+      "source_sha256": "9b9be1ef65a2e106018d8c30a80533954a99b1d05d00c129fb7b6e1206bffa81",
+      "export_sha256": "9b9be1ef65a2e106018d8c30a80533954a99b1d05d00c129fb7b6e1206bffa81"
+    },
+    {
+      "source": "/private/tmp/2726-closeout-preflight.txt",
+      "export": "closeout/preflight.txt",
+      "source_sha256": "83856cdc99341ba52a83717e8e9b797b9a64ce4dcb852e346979212d6e5aa3f0",
+      "export_sha256": "83856cdc99341ba52a83717e8e9b797b9a64ce4dcb852e346979212d6e5aa3f0"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-modal-geometry-before-001/pytest.log",
+      "export": "closeout/geometry-before-tests.txt",
+      "source_sha256": "65f760b026da4fd404ad9f93ede3953a552d7f749b8c94dd8073a4936a72f605",
+      "export_sha256": "65f760b026da4fd404ad9f93ede3953a552d7f749b8c94dd8073a4936a72f605"
+    },
+    {
+      "source": "/private/tmp/tldw-2726-closeout-green-001/pytest.log",
+      "export": "closeout/final-tests.txt",
+      "source_sha256": "cc2f3807a0b430ae24ca953ed3bc03ccd82bacc0bd38b55656460473e576c691",
+      "export_sha256": "cc2f3807a0b430ae24ca953ed3bc03ccd82bacc0bd38b55656460473e576c691"
+    }
+  ]
+}

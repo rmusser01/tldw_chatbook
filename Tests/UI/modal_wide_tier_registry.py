@@ -76,7 +76,6 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConsoleModelPopover": "ships its own per-surface wide tier (PR #2672)",
     "ConsoleSessionSwitcherModal": "imperative inline width via set_styles outranks every CSS rule",
     "ConsoleImageViewerModal": "content-fit auto geometry, nothing to scale",
-    "TemplateSelectorDialog": "no base width rule to override",
     "ProjectInstructionNoticeModal": "notice-style modal, inventory section-B exclusion",
     "DeleteConfirmDialog": "tiny media delete confirm (inventory section B)",
     # -- stragglers verified against the tree 2026-09-19 (not inventoried) --
@@ -91,6 +90,11 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConfirmDisableDialog": "tiny confirm (deprecated legacy settings window)",
     "_VllmProfileDeleteConfirmationDialog": "tiny delete confirm (LLM screen)",
     "_SettlingGuardedConfirmationDialog": "tiny wizard confirmation",
+    # -- wave 2 (2026-09-19): skills_screen left the module skip list when
+    # SkillRecoveryReviewModal joined the tier; the passphrase dialogs stay
+    # tiny-by-design (PasswordDialog family, base width 64) --
+    "SkillTrustPassphraseModal": "single-input passphrase dialog (base width 64), PasswordDialog family",
+    "SkillTrustBootstrapModal": "two-input passphrase bootstrap dialog (base width 64), PasswordDialog family",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:
@@ -99,13 +103,9 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
 #: they are documented gaps queued for a second wide-tier pass, not verdicts
 #: that they never need scaling.
 MODAL_WIDE_TIER_SKIPPED_MODULES: dict[str, str] = {
-    "UI/ChatbookCreationWindow.py": "Chatbook work window (base cap 120) -- follow-up wave",
-    "UI/ChatbookExportManagementWindow.py": "Chatbook work window (base cap 120) -- follow-up wave",
-    "UI/ChatbookTemplatesWindow.py": "Chatbook work window (base cap 100) -- follow-up wave",
     "UI/Chunking_Lab_Modules/dialogs.py": "chunking-lab dev dialogs -- follow-up wave",
     "UI/CodeRepoCopyPasteWindow.py": "full-viewport paste surface, no width rule",
     "UI/Library_Modules/library_character_repair_controller.py": "repair dialog (base width 76) -- follow-up wave",
-    "UI/Library_Modules/prompt_collection_manager_modal.py": "collection manager (base width 96) -- follow-up wave",
     "UI/Library_Modules/skill_import_choice_modal.py": "choice dialog (base width 88) -- follow-up wave",
     "UI/Navigation/character_conversation_navigation.py": "navigation dialogs (base 72) -- follow-up wave",
     "UI/Navigation/nav_overflow_menu.py": "fixed-column overflow menu",
@@ -120,7 +120,6 @@ MODAL_WIDE_TIER_SKIPPED_MODULES: dict[str, str] = {
     "UI/Screens/scheduling/forms/automation_definition_form.py": "scheduling form (base width 84) -- follow-up wave",
     "UI/Screens/scheduling/forms/new_task_choice_modal.py": "choice modal (base width 64) -- follow-up wave",
     "UI/Screens/scheduling/forms/reminder_form.py": "scheduling form (base width 80) -- follow-up wave",
-    "UI/Screens/skills_screen.py": "skills trust/recovery modals (base up to 110) -- follow-up wave",
     "UI/Screens/trajectory_screen.py": "full-viewport trajectory viewer",
     "UI/Screens/video_player_screen.py": "full-viewport video player",
     "UI/Speech/speech_settings_pane.py": "tiny leave confirmation",
@@ -136,7 +135,6 @@ MODAL_WIDE_TIER_SKIPPED_MODULES: dict[str, str] = {
     "UI/Wizards/FirstRunSetupWizard.py": "tiny wizard confirmation",
     "UI/Wizards/first_run_recovery_dialog.py": "recovery dialog (base width 72) -- follow-up wave",
     "UI/stts_profile_library.py": "STTS profile library modals (base caps 64-76) -- follow-up wave",
-    "Widgets/Library/notes_recovery_dialog.py": "recovery browser (base cap 100) -- missed by inventory, follow-up wave",
     "Widgets/workspace_create_modal.py": "workspace create form (base width 72) -- follow-up wave",
     "Widgets/workspace_persona_default.py": "assistant-defaults form (base width 68) -- follow-up wave",
 }
@@ -156,32 +154,71 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # cap 196 -- the shipped Conversation settings tier, unchanged (PR #2670)
     ("#console-settings-modal", 196, "Widgets/Console/console_settings_modal.py"),
     # cap 170 -- base width >= 104
-    ("#console-inspector-modal", 170, "Widgets/Console/console_conversation_inspector.py"),
+    (
+        "#console-inspector-modal",
+        170,
+        "Widgets/Console/console_conversation_inspector.py",
+    ),
     ("#console-workspace-files-modal", 170, "css/features/_console.tcss"),
-    ("#file-notes-conflict-dialog", 170, "Widgets/Library/library_file_notes_workspace.py"),
+    (
+        "#file-notes-conflict-dialog",
+        170,
+        "Widgets/Library/library_file_notes_workspace.py",
+    ),
     ("#console-run-log-modal", 170, "css/features/_console_panels.tcss"),
     ("#console-citation-sources-modal", 170, "css/features/_console.tcss"),
     ("#console-side-chat-modal", 170, "Widgets/Console/console_side_chat_modal.py"),
-    ("#console-edit-message-modal", 170, "Widgets/Console/console_edit_message_modal.py"),
-    ("#console-edit-thinking-modal", 170, "Widgets/Console/console_edit_message_modal.py"),
+    (
+        "#console-edit-message-modal",
+        170,
+        "Widgets/Console/console_edit_message_modal.py",
+    ),
+    (
+        "#console-edit-thinking-modal",
+        170,
+        "Widgets/Console/console_edit_message_modal.py",
+    ),
     ("#console-prompts-modal", 170, "Widgets/Console/console_prompts_modal.py"),
     ("#agent-history-dialog", 170, "css/components/_agentic_terminal.tcss"),
     ("#agent-progress-dialog", 170, "css/components/_agentic_terminal.tcss"),
     ("#worktree-recovery-dialog", 170, "css/features/_console_panels.tcss"),
-    ("#internal-prompt-editor-modal", 170, "Widgets/settings_internal_prompts_editor_modal.py"),
+    (
+        "#internal-prompt-editor-modal",
+        170,
+        "Widgets/settings_internal_prompts_editor_modal.py",
+    ),
     # cap 170 -- PR #2742 review: missed by the 2026-09-13 inventory (base 140)
     ("#speech-voice-profile-picker", 170, "UI/STTS_Window.py"),
+    # cap 170 -- wave 2 (2026-09-19): skip-list follow-ups the triage report
+    # named (base caps 100-120 the ladder relaxes at wide viewports)
+    ("#notes-recovery-dialog", 170, "Widgets/Library/notes_recovery_dialog.py"),
+    ("#skills-recovery-review", 170, "UI/Screens/skills_screen.py"),
+    ("ChatbookCreationWindow > Container", 170, "UI/ChatbookCreationWindow.py"),
+    ("ChatbookExportManagementWindow > Container", 170, "UI/ChatbookExportManagementWindow.py"),
+    ("ChatbookTemplatesWindow > Container", 170, "UI/ChatbookTemplatesWindow.py"),
     # cap 150 -- base width 84-96
     ("#personal-context-review-modal", 150, "css/components/_profile_interview.tcss"),
     ("#console-scope-picker-modal", 150, "css/features/_console_panels.tcss"),
-    ("#console-prompt-comparison-modal", 150, "Widgets/Console/console_prompt_comparison_modal.py"),
+    (
+        "#console-prompt-comparison-modal",
+        150,
+        "Widgets/Console/console_prompt_comparison_modal.py",
+    ),
     ("#buddy-conversation", 150, "Widgets/Persona_Widgets/buddy_conversation_modal.py"),
-    ("#actor-pack-import-review", 150, "Widgets/Persona_Widgets/actor_pack_import_review.py"),
+    (
+        "#actor-pack-import-review",
+        150,
+        "Widgets/Persona_Widgets/actor_pack_import_review.py",
+    ),
     ("#personal-context-link-modal", 150, "css/components/_profile_interview.tcss"),
     ("#console-system-prompt-modal", 150, "css/features/_console_panels.tcss"),
     ("#server-switch-modal", 150, "Widgets/Settings_Widgets/server_switch_modal.py"),
     ("#buddy-inbox", 150, "Widgets/Persona_Widgets/buddy_workspace_modal.py"),
-    ("FileExtractionDialog > Vertical", 150, "Widgets/file_extraction_dialog.py"),
+    (
+        "FileExtractionDialog > Vertical.file-extraction-body",
+        150,
+        "Widgets/file_extraction_dialog.py",
+    ),
     ("EmojiPickerScreen #dialog", 150, "Widgets/emoji_picker.py"),
     # cap 150 -- PR #2742 review: persona-management + tool-pack review
     # surfaces missed by the 2026-09-13 inventory (bases 86-96)
@@ -191,23 +228,57 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#tool-pack-import-options", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
     ("#tool-pack-import-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
     ("#tool-profile-bind-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
+    # cap 150 -- wave 2 (2026-09-19): skip-list follow-up (base width 96)
+    ("#prompt-collection-manager", 150, "UI/Library_Modules/prompt_collection_manager_modal.py"),
     # cap 120 -- base width <= 80
-    ("NoteCreationModal > Container", 120, "Widgets/Note_Widgets/note_creation_modal.py"),
+    (
+        "NoteCreationModal > Container",
+        120,
+        "Widgets/Note_Widgets/note_creation_modal.py",
+    ),
     # PR #2742 review: persona-management surface missed by the inventory (base 78)
     ("#buddy-management", 120, "Widgets/Persona_Widgets/buddy_management_modal.py"),
-    ("#conversation-selection-container", 120, "Widgets/conversation_selection_dialog.py"),
+    (
+        "#conversation-selection-container",
+        120,
+        "Widgets/conversation_selection_dialog.py",
+    ),
     ("#note-selection-container", 120, "Widgets/Note_Widgets/note_selection_dialog.py"),
-    ("AudioTroubleshootingDialog .dialog-container", 120, "Widgets/audio_troubleshooting_dialog.py"),
-    ("#file-notes-push-auth-dialog", 120, "Widgets/Library/library_file_notes_git_panel.py"),
+    (
+        "AudioTroubleshootingDialog .dialog-container",
+        120,
+        "Widgets/audio_troubleshooting_dialog.py",
+    ),
+    (
+        "#file-notes-push-auth-dialog",
+        120,
+        "Widgets/Library/library_file_notes_git_panel.py",
+    ),
     ("#trace-export-dialog", 120, "Widgets/Console/trace_export_dialog.py"),
     ("#console-library-access", 120, "css/features/_console_panels.tcss"),
     ("#capture-policy-dialog", 120, "Widgets/Console/console_capture_policy_dialog.py"),
     ("#trace-privacy-dialog", 120, "Widgets/Console/console_capture_policy_dialog.py"),
     ("#exchange-export-dialog", 120, "css/components/_agentic_terminal.tcss"),
-    ("#console-prompt-queue-dialog", 120, "Widgets/Console/console_prompt_queue_modal.py"),
-    ("#console-reaction-picker-modal", 120, "Widgets/Console/console_reaction_picker_modal.py"),
-    ("#console-review-notes-modal", 120, "Widgets/Console/console_review_notes_modal.py"),
-    ("#console-endpoint-template-modal", 120, "Widgets/Console/console_endpoint_template_modal.py"),
+    (
+        "#console-prompt-queue-dialog",
+        120,
+        "Widgets/Console/console_prompt_queue_modal.py",
+    ),
+    (
+        "#console-reaction-picker-modal",
+        120,
+        "Widgets/Console/console_reaction_picker_modal.py",
+    ),
+    (
+        "#console-review-notes-modal",
+        120,
+        "Widgets/Console/console_review_notes_modal.py",
+    ),
+    (
+        "#console-endpoint-template-modal",
+        120,
+        "Widgets/Console/console_endpoint_template_modal.py",
+    ),
     ("#console-rewind-modal", 120, "Widgets/Console/console_rewind_modal.py"),
     ("#video-capacity-dialog", 120, "Widgets/Console/console_video_capacity_modal.py"),
     ("#project-skills-modal", 120, "Widgets/project_skills_import_modal.py"),
@@ -215,36 +286,115 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#console-style-picker-modal", 120, "css/features/_console.tcss"),
     (".model-install-modal", 120, "Widgets/ModelArtifacts/install_modal.py"),
     (".local-gguf-import-modal", 120, "Widgets/ModelArtifacts/local_gguf_import.py"),
-    ("#file-notes-push-endpoint-details-dialog", 120, "Widgets/Library/library_file_notes_git_panel.py"),
-    ("#file-notes-root-details-dialog", 120, "Widgets/Library/library_file_notes_workspace.py"),
-    ("#console-project-setup-modal", 120, "Widgets/Console/console_project_instructions.py"),
+    (
+        "#file-notes-push-endpoint-details-dialog",
+        120,
+        "Widgets/Library/library_file_notes_git_panel.py",
+    ),
+    (
+        "#file-notes-root-details-dialog",
+        120,
+        "Widgets/Library/library_file_notes_workspace.py",
+    ),
+    (
+        "#console-project-setup-modal",
+        120,
+        "Widgets/Console/console_project_instructions.py",
+    ),
     ("#console-fork-chat-modal", 120, "Widgets/Console/console_fork_chat_modal.py"),
-    ("#console-character-picker", 120, "Widgets/Console/console_character_picker_modal.py"),
+    (
+        "#console-character-picker",
+        120,
+        "Widgets/Console/console_character_picker_modal.py",
+    ),
     ("#console-save-as-modal", 120, "Widgets/Console/console_save_as_modal.py"),
-    ("#console-terminal-session-modal", 120, "Widgets/Console/console_terminal_session_modal.py"),
-    ("#global-full-confirmation", 120, "Widgets/Console/console_capture_policy_dialog.py"),
-    ("#console-generate-image-modal", 120, "Widgets/Console/console_generate_image_modal.py"),
+    (
+        "#console-terminal-session-modal",
+        120,
+        "Widgets/Console/console_terminal_session_modal.py",
+    ),
+    (
+        "#global-full-confirmation",
+        120,
+        "Widgets/Console/console_capture_policy_dialog.py",
+    ),
+    (
+        "#console-generate-image-modal",
+        120,
+        "Widgets/Console/console_generate_image_modal.py",
+    ),
     ("EncryptionSetupDialog > Container", 120, "Widgets/password_dialog.py"),
-    ("#character-tts-collision-dialog", 120, "Widgets/Persona_Widgets/character_tts_portability_dialogs.py"),
-    ("#character-tts-existing-dialog", 120, "Widgets/Persona_Widgets/character_tts_portability_dialogs.py"),
-    (".settings-speech-credential-modal", 120, "Widgets/Settings_Widgets/speech_tts_settings_panel.py"),
-    ("DocumentGenerationModal > Container", 120, "Widgets/document_generation_modal.py"),
-    ("#console-auto-speak-consent-modal", 120, "Widgets/Console/console_auto_speak_consent.py"),
+    (
+        "#character-tts-collision-dialog",
+        120,
+        "Widgets/Persona_Widgets/character_tts_portability_dialogs.py",
+    ),
+    (
+        "#character-tts-existing-dialog",
+        120,
+        "Widgets/Persona_Widgets/character_tts_portability_dialogs.py",
+    ),
+    (
+        ".settings-speech-credential-modal",
+        120,
+        "Widgets/Settings_Widgets/speech_tts_settings_panel.py",
+    ),
+    (
+        "DocumentGenerationModal > Container",
+        120,
+        "Widgets/document_generation_modal.py",
+    ),
+    (
+        "#console-auto-speak-consent-modal",
+        120,
+        "Widgets/Console/console_auto_speak_consent.py",
+    ),
     ("#console-rag-settings", 120, "Widgets/Console/console_rag_settings_modal.py"),
-    ("#console-summarize-preview-modal", 120, "Widgets/Console/console_summarize_preview_modal.py"),
-    ("#console-workspace-switcher-modal", 120, "Widgets/Console/console_workspace_switcher_modal.py"),
-    ("#prompt-delete-modal", 120, "Widgets/Library/prompt_delete_confirmation_modal.py"),
-    ("#persona-visual-custom-dialog", 120, "Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py"),
-    ("#console-save-markdown-box", 120, "Widgets/Console/console_save_markdown_modal.py"),
+    (
+        "#console-summarize-preview-modal",
+        120,
+        "Widgets/Console/console_summarize_preview_modal.py",
+    ),
+    (
+        "#console-workspace-switcher-modal",
+        120,
+        "Widgets/Console/console_workspace_switcher_modal.py",
+    ),
+    (
+        "#prompt-delete-modal",
+        120,
+        "Widgets/Library/prompt_delete_confirmation_modal.py",
+    ),
+    (
+        "#persona-visual-custom-dialog",
+        120,
+        "Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py",
+    ),
+    (
+        "#console-save-markdown-box",
+        120,
+        "Widgets/Console/console_save_markdown_modal.py",
+    ),
     ("#profile-interview-cancel-modal", 120, "css/components/_profile_interview.tcss"),
     ("#dictionary-picker-dialog", 120, "Widgets/Persona_Widgets/dictionary_picker.py"),
     ("#world-book-picker-dialog", 120, "Widgets/Persona_Widgets/world_book_picker.py"),
-    ("DictionaryAttachPicker > Vertical", 120, "Widgets/Persona_Widgets/dictionary_attach_picker.py"),
-    ("ConversationAttachPicker > Vertical", 120, "Widgets/Persona_Widgets/conversation_attach_picker.py"),
+    (
+        "DictionaryAttachPicker > Vertical.dictionary-attach-body",
+        120,
+        "Widgets/Persona_Widgets/dictionary_attach_picker.py",
+    ),
+    (
+        "ConversationAttachPicker > Vertical.conversation-attach-body",
+        120,
+        "Widgets/Persona_Widgets/conversation_attach_picker.py",
+    ),
     ("#profile-dialog-container", 120, "Widgets/voice_profile_dialog.py"),
     ("FeedbackDialog > Container", 120, "Widgets/feedback_dialog.py"),
     ("#console-composer-menu", 120, "Widgets/Console/console_composer_menu_modal.py"),
     ("#prompt-variables-dialog", 120, "Widgets/Console/prompt_variables_dialog.py"),
+    # cap 120 -- wave 2 (2026-09-19): base-width-rule gap closed (dialog had
+    # no width rule at all; base geometry shipped with this wave)
+    ("TemplateSelectorDialog .template-selector-dialog", 120, "Widgets/template_selector.py"),
 )
 
 #: Cap -> one representative anchor pinned by a live geometry test.

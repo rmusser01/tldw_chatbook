@@ -1,0 +1,10 @@
+{
+  "textual-light-120x40-tools.txt": true,
+  "textual-light-170x48-tools.txt": false,
+  "textual-dark-170x48-permissions.txt": true,
+  "textual-dark-120x40-permissions.txt": true,
+  "textual-dark-120x40-tools.txt": true,
+  "textual-dark-170x48-tools.txt": true,
+  "textual-light-120x40-permissions.txt": true,
+  "textual-light-170x48-permissions.txt": true
+}
