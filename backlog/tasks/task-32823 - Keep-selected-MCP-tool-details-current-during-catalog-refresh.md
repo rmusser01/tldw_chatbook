@@ -1,11 +1,11 @@
 ---
 id: TASK-32823
 title: Keep selected MCP tool details current during catalog refresh
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-18 21:46'
-updated_date: '2026-09-19 00:24'
+updated_date: '2026-09-19 00:26'
 labels:
   - mcp
   - ui
@@ -24,7 +24,7 @@ A refreshed Tools catalog must not leave obsolete selected-tool metadata or test
 <!-- AC:BEGIN -->
 - [x] #1 Catalog refresh updates the selected tool details and clears removed tools without selecting a replacement.
 - [x] #2 Unchanged definitions preserve the mounted argument draft and focus; changed definitions retire old test controls and permission previews with visible guidance.
-- [ ] #3 Targeted refresh, selection and prepared-test regressions plus bounded native evidence qualify the behavior; review ledgers and the draft PR record remaining scope.
+- [x] #3 Targeted refresh, selection and prepared-test regressions plus bounded native evidence qualify the behavior; review ledgers and the draft PR record remaining scope.
 - [x] #4 Selected-tool details, argument controls and refresh guidance remain keyboard-reachable and visibly scroll into view at compact and wide sizes.
 <!-- AC:END -->
 
@@ -52,5 +52,5 @@ Native verification exposed and repaired inspector scrolling, narrow button widt
 
 Validation: 353 distinct targeted cases pass across the final 320-case inspector/token/bundle run, 42-case ownership run and two CSS budget/ratchet guards. No introduced production Ruff diagnostics; new tests and native runner pass lint/format, changed production ranges pass formatting. Seven preflight derived-artifact checks passed before final layout repairs; affected CSS/token/budget guards passed afterward. Independent review found no remaining blocker. No full repository suite was requested or run.
 
-Modified MCPInspector/MCPWorkbench, generated widget CSS, focused regressions, QA receipts, review ledgers and incident lessons. Existing ADR-161/170 apply; no new ADR is required. Evidence: Docs/superpowers/qa/2026-09-18-mcp-inspector-refresh/README.md. Broader server lifecycles, connected tools, argument validation and actual execution remain subsequent bounded reviews. Draft PR creation and its remote CI/visual approval are still pending.
+Modified MCPInspector/MCPWorkbench, generated widget CSS, focused regressions, QA receipts, review ledgers and incident lessons. Existing ADR-161/170 apply; no new ADR is required. Evidence: Docs/superpowers/qa/2026-09-18-mcp-inspector-refresh/README.md. Broader server lifecycles, connected tools, argument validation and actual execution remain subsequent bounded reviews. Saved as draft PR #2711 against dev: https://github.com/rmusser01/tldw_chatbook/pull/2711. Current-head remote CI, accumulated review and owner visual approval remain PR merge gates; the bounded implementation and local qualification are complete.
 <!-- SECTION:NOTES:END -->

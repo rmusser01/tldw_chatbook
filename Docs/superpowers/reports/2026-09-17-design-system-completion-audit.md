@@ -35,7 +35,9 @@ and the remaining destinations retain their separate gates.
 TASK-32823 now has 353 distinct targeted passing cases and four final native
 theme/size journeys with twelve inspected captures. Its [QA receipt](../qa/2026-09-18-mcp-inspector-refresh/README.md)
 records retained drafts, current details, retired previews, visible focus and
-clean private-profile shutdown. Follow-up PR CI and visual approval remain open.
+clean private-profile shutdown. TASK-32823 is Done and saved in
+[draft PR #2711](https://github.com/rmusser01/tldw_chatbook/pull/2711). Follow-up PR
+CI and visual approval remain open.
 
 ## PR #2707 scope boundary — 2026-09-18
 

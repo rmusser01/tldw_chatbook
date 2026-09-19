@@ -31,7 +31,8 @@ reusing preserved commit `135f226888`. The backup heartbeat is paused.
 The bounded follow-up repairs stale selected details and pending preview
 retirement, retains unchanged form/raw drafts, respects newer selection/focus,
 and gives the inspector a scrollable viewport for keyboard-reached controls.
-Four final dark/light compact/wide native cells pass, with twelve inspected
+The bounded implementation is saved as [draft PR #2711](https://github.com/rmusser01/tldw_chatbook/pull/2711);
+TASK-32823 is Done. Four final dark/light compact/wide native cells pass, with twelve inspected
 captures and clean private-profile shutdown recorded in its receipt. Follow-up
 PR CI and owner visual approval remain separate gates.
 Server lifecycles, connected execution and the other remaining items stay open.

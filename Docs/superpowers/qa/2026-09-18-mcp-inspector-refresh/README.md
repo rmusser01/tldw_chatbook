@@ -2,6 +2,7 @@
 
 Resumed from merged `dev` (`149acda36b`, PR #2707) on
 `codex/mcp-inspector-refresh-review`, reusing the preserved investigation.
+Saved as [draft PR #2711](https://github.com/rmusser01/tldw_chatbook/pull/2711) against `dev`.
 This bounded change reconciles selected-tool details with the refreshed catalog.
 An unchanged definition/context keeps its mounted form, argument draft, preview
 and focus. A changed definition retires the form and preview with visible
