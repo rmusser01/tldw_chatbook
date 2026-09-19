@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
+from tldw_chatbook.Utils.input_validation import (
+    StrictJSONError,
+    strict_json_loads,
+)
 
 import re
 import json
@@ -630,10 +634,6 @@ def owned_json_post(
     raise _transport_error(config.provider, "request attempts were exhausted")
 
 
-def _reject_json_constant(_value: str) -> Never:
-    raise ValueError
-
-
 def _json_shape_is_safe(value: object) -> bool:
     stack: list[tuple[object, int]] = [(value, 1)]
     scheduled_nodes = 1
@@ -671,11 +671,17 @@ def _json_shape_is_safe(value: object) -> bool:
 
 
 def _strict_json_loads(value: str) -> object:
+    # task-32805.5: delegate to the one shared strict loader. This family
+    # used to accept duplicate keys (last-wins) while the storage family
+    # (provider_continuation) rejected them, so a dup-key tool argument
+    # accepted here raised an uncaught error when its checkpoint was built.
+    # Both now reject duplicate keys.
     try:
-        decoded = json.loads(value, parse_constant=_reject_json_constant)
-    except (RecursionError, TypeError, ValueError):
+        return strict_json_loads(
+            value, max_depth=_MAX_JSON_DEPTH, max_nodes=_MAX_JSON_NODES
+        )
+    except StrictJSONError:
         return _JSON_DECODE_FAILED
-    return decoded if _json_shape_is_safe(decoded) else _JSON_DECODE_FAILED
 
 
 def _required_metadata(value: object, label: str) -> str:

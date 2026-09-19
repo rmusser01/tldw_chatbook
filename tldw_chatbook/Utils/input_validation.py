@@ -3,13 +3,14 @@ Input validation utilities for secure user input handling.
 """
 
 import ipaddress
+import json
 import math
 import re
 import time
 import unicodedata
 from collections.abc import Mapping
 from itertools import islice
-from typing import Any, Literal, Optional, TypeVar, Union
+from typing import Any, Literal, NoReturn, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
 import regex
@@ -478,6 +479,124 @@ def validate_canvas_bridge_wire(value: object) -> CanvasBridgeWireInput:
         else:
             reason = "Canvas bridge request fields are invalid"
         raise ValueError(reason) from None
+
+
+#: Default structural caps for :func:`strict_json_loads`. Family A of the three
+#: strict-JSON families the core review found (hosted_chat/qwencloud) used these.
+STRICT_JSON_MAX_DEPTH = 128
+STRICT_JSON_MAX_NODES = 1_000_000
+
+
+class StrictJSONError(ValueError):
+    """Raised by :func:`strict_json_loads` on any strict-JSON violation.
+
+    A single exception type so every boundary can catch one thing; callers that
+    need a boundary-specific error (a sentinel, ``_InvalidContinuation``, a
+    protocol error) wrap this and translate it.
+    """
+
+
+def _strict_json_within_limits(value: object, *, max_depth: int, max_nodes: int) -> bool:
+    """Iteratively enforce depth/node caps, str-only keys and finite floats.
+
+    Mirrors the family-A shape check (hosted_chat ``_json_shape_is_safe``); kept
+    iterative so a hostile document cannot blow the recursion limit here.
+    """
+    stack: list[tuple[object, int]] = [(value, 1)]
+    scheduled_nodes = 1
+    try:
+        while stack:
+            node, depth = stack.pop()
+            if depth > max_depth:
+                return False
+            if type(node) is dict:
+                for key, child in node.items():  # type: ignore[union-attr]
+                    if not isinstance(key, str):
+                        return False
+                    scheduled_nodes += 1
+                    if scheduled_nodes > max_nodes:
+                        return False
+                    stack.append((child, depth + 1))
+                continue
+            if type(node) is list:
+                for child in node:  # type: ignore[union-attr]
+                    scheduled_nodes += 1
+                    if scheduled_nodes > max_nodes:
+                        return False
+                    stack.append((child, depth + 1))
+                continue
+            if node is None or isinstance(node, (str, bool)):
+                continue
+            if isinstance(node, int) and not isinstance(node, bool):
+                continue
+            if isinstance(node, float) and math.isfinite(node):
+                continue
+            return False
+    except (RecursionError, TypeError, ValueError):
+        return False
+    return True
+
+
+def strict_json_loads(
+    text: str,
+    *,
+    max_depth: int = STRICT_JSON_MAX_DEPTH,
+    max_nodes: int = STRICT_JSON_MAX_NODES,
+    reject_duplicate_keys: bool = True,
+) -> object:
+    """Parse JSON under one strict contract for every wire and storage boundary.
+
+    Rejects non-finite constants (``NaN``/``Infinity``), enforces a depth and
+    node-count cap plus str-only object keys and finite floats, and -- by
+    default -- rejects duplicate object keys. Any violation raises
+    :class:`StrictJSONError`.
+
+    This is the single home the core review (TASK-32805.5) names for the three
+    drifted strict-JSON families. The wire family (hosted_chat/qwencloud) and the
+    storage family (provider_continuation/thinking_blocks) both delegate here, so
+    a tool-call argument accepted on the wire can no longer be refused when its
+    continuation checkpoint is built: both now reject duplicate keys.
+
+    Args:
+        text: The raw JSON text.
+        max_depth: Maximum nesting depth.
+        max_nodes: Maximum total number of container children.
+        reject_duplicate_keys: When True (default), a repeated object key is a
+            violation rather than last-wins.
+
+    Returns:
+        The decoded JSON value.
+
+    Raises:
+        StrictJSONError: On malformed JSON, a non-finite constant, a duplicate
+            key, a non-str key, a non-finite float, or a shape past the caps.
+    """
+
+    def _reject_constant(_value: str) -> "NoReturn":
+        raise StrictJSONError("non-finite JSON constant")
+
+    object_pairs_hook = None
+    if reject_duplicate_keys:
+
+        def object_pairs_hook(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, item in pairs:
+                if key in result:
+                    raise StrictJSONError("duplicate JSON key")
+                result[key] = item
+            return result
+
+    try:
+        decoded = json.loads(
+            text, parse_constant=_reject_constant, object_pairs_hook=object_pairs_hook
+        )
+    except StrictJSONError:
+        raise
+    except (RecursionError, TypeError, ValueError) as exc:
+        raise StrictJSONError("invalid JSON") from exc
+    if not _strict_json_within_limits(decoded, max_depth=max_depth, max_nodes=max_nodes):
+        raise StrictJSONError("JSON shape exceeds strict limits")
+    return decoded
 
 
 def _validate_strict_json_value(

@@ -21,6 +21,10 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
 from tldw_chatbook.model_capabilities import (
     moonshot_model_returns_reasoning_content,
 )
+from tldw_chatbook.Utils.input_validation import (
+    StrictJSONError,
+    strict_json_loads,
+)
 
 
 ContinuationProvider = Literal["moonshot", "zai", "deepseek"]
@@ -202,22 +206,12 @@ def _fail() -> None:
 
 
 def _strict_json_loads(value: str) -> object:
-    def reject_constant(_value: str) -> None:
+    # task-32805.5: delegate to the one shared strict loader (dup-key +
+    # non-finite rejection, now with a depth/node cap too).
+    try:
+        return strict_json_loads(value)
+    except StrictJSONError:
         _fail()
-
-    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, item in pairs:
-            if key in result:
-                _fail()
-            result[key] = item
-        return result
-
-    return json.loads(
-        value,
-        parse_constant=reject_constant,
-        object_pairs_hook=unique_object,
-    )
 
 
 def _exact_mapping(value: object, keys: frozenset[str]) -> Mapping[str, object]:
