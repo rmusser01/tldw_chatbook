@@ -31057,6 +31057,40 @@ class LibraryScreen(BaseAppScreen):
             return set(ids)
         return live
 
+    def _active_review_set_snapshot(self):
+        """Return ``(review_set, live_ids)`` for the active set, or ``None``.
+
+        TASK-32804.4: the footer/banner readers each loaded the whole active
+        set (header + up to REVIEW_SET_CAP=500 items) plus a liveness query,
+        synchronously on the event loop, once per key resolution and render.
+        This caches the pair keyed on ``service.revision`` (bumped by every
+        ReviewSetService write, so a done-mark/create/activate/dismiss
+        invalidates it without a per-gesture call), exactly as
+        ``_decorate_library_media_reviewed`` caches its map. The revision is
+        read BEFORE the load, so a write committing mid-load stamps LOW (one
+        extra read) rather than caching stale under a current revision.
+
+        Returns:
+            ``(review_set, live_ids)`` when a set is active, else ``None``.
+            Raises on a storage error; callers keep their fail-closed handling.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return None
+        revision = service.revision
+        cached = getattr(self, "_active_review_set_cache", None)
+        if cached is not None and cached[0] == revision:
+            return cached[1]
+        review_set = service.get_active_review_set()
+        snapshot = None
+        if review_set is not None:
+            live_ids = self._review_set_live_ids(
+                item.backing_media_id for item in review_set.items
+            )
+            snapshot = (review_set, live_ids)
+        self._active_review_set_cache = (revision, snapshot)
+        return snapshot
+
     def _walk_active_review_set(self, direction: int) -> bool:
         """Walk the active review set one step; return ``True`` if it handled it.
 
@@ -31214,20 +31248,15 @@ class LibraryScreen(BaseAppScreen):
             The live :class:`ReviewProgress` when a set is active, else
             ``None``.
         """
-        service = self._review_set_service()
-        if service is None:
+        snapshot = self._active_review_set_snapshot()
+        if snapshot is None:
             return None
-        review_set = service.get_active_review_set()
-        if review_set is None:
-            return None
+        review_set, live_ids = snapshot
         # Lazy: review sets are one Reader mode.
         from tldw_chatbook.Library.review_set_state import (
             review_progress,
         )
 
-        live_ids = self._review_set_live_ids(
-            item.backing_media_id for item in review_set.items
-        )
         is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
         return review_progress(
             review_set.items,
@@ -31249,12 +31278,10 @@ class LibraryScreen(BaseAppScreen):
             True only when a set is active, the Reader holds one of its
             live items, and that item is the last of them.
         """
-        service = self._review_set_service()
-        if service is None:
+        snapshot = self._active_review_set_snapshot()
+        if snapshot is None:
             return False
-        review_set = service.get_active_review_set()
-        if review_set is None:
-            return False
+        review_set, live_ids = snapshot
         loaded_backing = self._media_state.reader_session.loaded_backing_id
         try:
             loaded_backing = (
@@ -31264,9 +31291,6 @@ class LibraryScreen(BaseAppScreen):
             return False
         if loaded_backing is None:
             return False
-        live_ids = self._review_set_live_ids(
-            item.backing_media_id for item in review_set.items
-        )
         live_items = sorted(
             (item for item in review_set.items if item.backing_media_id in live_ids),
             key=lambda item: item.position,
@@ -31286,20 +31310,14 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             The banner line, or ``None``.
         """
-        service = self._review_set_service()
-        if service is None:
-            return None
         try:
-            review_set = service.get_active_review_set()
-            if review_set is None:
+            snapshot = self._active_review_set_snapshot()
+            if snapshot is None:
                 return None
+            review_set, live_ids = snapshot
             from tldw_chatbook.Library.review_set_state import (
                 format_review_progress,
                 review_progress,
-            )
-
-            live_ids = self._review_set_live_ids(
-                item.backing_media_id for item in review_set.items
             )
             progress = format_review_progress(
                 review_progress(
@@ -31350,11 +31368,8 @@ class LibraryScreen(BaseAppScreen):
         screen and a notice here would toast-storm. The keys degrade to
         browse traversal; the explicit gesture paths carry the notices.
         """
-        service = self._review_set_service()
-        if service is None:
-            return False
         try:
-            return service.get_active_review_set() is not None
+            return self._active_review_set_snapshot() is not None
         except Exception:
             logger.opt(exception=True).warning(
                 "review-set active-check failed; gating fails closed"
