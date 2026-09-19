@@ -297,14 +297,24 @@ class LocalMCPControlService:
         if connected is False:
             raise RuntimeError(f"Failed to connect profile: {profile.profile_id}")
 
-        snapshot = await client.describe_server(profile.profile_id)
-        if not self._has_capabilities(snapshot):
-            await self._disconnect_best_effort(client, profile.profile_id)
-            raise RuntimeError(
-                f"Connected profile '{profile.profile_id}' returned no discoverable capabilities"
-            )
-        self.store.save_discovery_snapshot(profile.profile_id, snapshot)
-        return snapshot
+        session = getattr(client, "sessions", {}).get(profile_id)
+        try:
+            snapshot = await client.describe_server(profile.profile_id)
+            if not self._has_capabilities(snapshot):
+                raise RuntimeError(
+                    f"Connected profile '{profile.profile_id}' returned no discoverable capabilities"
+                )
+            self.store.save_discovery_snapshot(profile.profile_id, snapshot)
+            return snapshot
+        except BaseException:
+            # Only clean up the connection this call established, never a
+            # different caller's pending connection or replacement session.
+            if (
+                session is not None
+                and getattr(client, "sessions", {}).get(profile_id) is session
+            ):
+                await self._disconnect_best_effort(client, profile_id)
+            raise
 
     @producer_call
     async def disconnect_profile(self, profile_id: str) -> bool:
@@ -368,7 +378,13 @@ class LocalMCPControlService:
     @guarded
     async def refresh_external_profile(self, profile_id: str) -> dict[str, Any]:
         self._require_allowed("mcp.external_profiles.observe.local")
-        return await self._describe_profile(profile_id, keep_connected=True)
+        client = self._get_client()
+        was_connected = profile_id in getattr(client, "sessions", {})
+        # describe_server reads cached discovery; reconnect to refresh it.
+        snapshot = await self.connect_profile(profile_id)
+        if not was_connected:
+            await self._disconnect_best_effort(client, profile_id)
+        return snapshot
 
     def delete_external_profile(self, profile_id: str) -> bool:
         self._require_allowed("mcp.external_profiles.configure.local")

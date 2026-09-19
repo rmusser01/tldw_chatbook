@@ -301,3 +301,28 @@ The initial compact failures and harness-only native selection failure remain
 in the receipt. This closes the label clipping retained by TASK-32793; broader
 MCP server lifecycles, execution and remaining destination review stay open.
 PR2707 remains draft/unmerged, subject to its own visual approval.
+
+
+## Post-merge MCP continuation
+
+PR2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`; older
+open/draft statements above are historical checkpoints. The post-merge heartbeat
+is paused. Inspector refresh (PR2711), server-action ownership (PR2712), and
+cancellation (PR2713) are separate draft reviews, still awaiting their merge gates.
+
+TASK-32830 repairs connected Refresh tools returning cached discovery without
+contacting the server. [Fifteen distinct targeted cases and sixteen inspected
+native captures](../qa/2026-09-18-mcp-connection-refresh/README.md) verify real local
+stdio discovery, changed tools/resources/prompts, truthful failure/retry,
+initial connection-state preservation, observe/launch gates, and ownership-safe
+cleanup. Four native dark/light compact/wide journeys terminate all twenty fixture
+children, release the app lock, preserve defaults, and leave healthy private DBs.
+All seven preflight guards pass; scoped static analysis adds no diagnostics.
+No new ADR is needed; ADR-161 and ADR-111 apply. There are no token/CSS changes.
+
+The branch starts independently from merged dev; it does not include PR2711–2713.
+Compact inspector actions/status are qualified, while the separately repaired
+toolbar clipping and below-fold compact catalog access remain outside this claim.
+Connected tool execution, inspector argument/schema recovery, source transitions,
+Audit/permission journeys and other destinations remain in the component review.
+Owner visual approval is still required before merging follow-up drafts.
