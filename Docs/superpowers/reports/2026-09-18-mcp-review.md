@@ -227,6 +227,26 @@ runtime use. Next review: post-review catalog repopulation/status guidance,
 then bulk permission actions and approval workflows. Current-head CI and final
 visual approval still gate merging this draft.
 
+## Post-merge continuation: Console approval actions
+
+PR2707 has merged; its closeout statements below are historical checkpoints.
+The continuation heartbeat is paused. TASK-32841 is an independent bounded
+follow-up from merged dev, separate from draft PR2727/PR2728.
+
+Queued Console Approve all, Deny all and Submit actions now retain their displayed
+batch identity, and each batch can submit only once. Unchanged resyncs preserve
+choices; changed/cleared/finishing batches invalidate old actions and fresh rounds
+remain usable. [123 passing targeted cases, 19 identical baseline failures and
+eight inspected native captures](../qa/2026-09-19-approval-action-ownership/README.md)
+cover the existing controls. All seven derived guards pass, including a separate
+Canvas input-fetch retry. Native uses synthetic pending calls with the real
+controller and never dispatches a tool. No connected-runtime claim is made.
+
+The proposed MCP permission-matrix bulk-actions ADR is not implemented here.
+Next: session-grant review/revocation and remaining approval/connected-runtime
+journeys. This draft requires current-head CI/review and final visual approval
+before merge; the wider component review remains open.
+
 ## Qualified
 
 | Surface | Evidence | Bounds |
