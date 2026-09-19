@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size0-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size0-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size1-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size1-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size2-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size2-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size3-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_filter_values_and_full_selector_labels_paint[size3-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_filter_layout::test_keyboard_filters_and_table_remain_visible_after_resize[textual-dark]",
+      "status": "failure"
+    }
+  ]
+}

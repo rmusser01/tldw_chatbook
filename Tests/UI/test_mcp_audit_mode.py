@@ -26,68 +26,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import (
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
-_AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
-
-
-def _assert_rule_pinned_in_bundle_source_and_bundle(
-    selector: str, expected_declarations: tuple[str, ...]
-) -> None:
-    """Shared pin-test body (T9, MCP Hub Phase 5): asserts ``selector``'s
-    block carries every one of ``expected_declarations`` in BOTH the
-    bundle-source component file (`_agentic_terminal.tcss`) and the
-    generated bundle (`tldw_cli_modular.tcss`) -- the latter also proves
-    `build_css.py` was re-run after the source edit. Mirrors
-    `test_tools_table_height_rule_pinned_in_bundle_source_and_bundle` /
-    `test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle`
-    in test_mcp_tools_mode.py, factored into a helper since T9 adds several
-    of these pins at once (audit table, findings table, sub-view strip,
-    both filter Selects)."""
-    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
-    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
-
-    for text, label in (
-        (agentic_terminal, "_agentic_terminal.tcss"),
-        (bundled_stylesheet, "tldw_cli_modular.tcss"),
-    ):
-        start = text.find(selector)
-        assert start != -1, f"{label} is missing {selector!r}"
-        end = text.find("}", start)
-        block = text[start:end]
-        for declaration in expected_declarations:
-            assert declaration in block, (
-                f"{label}'s {selector!r} block is missing {declaration!r}"
-            )
-
-
-def _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
-    selector: str, expected_declarations: tuple[str, ...]
-) -> None:
-    """T9 (MCP Hub Phase 5): Extended assertion that checks ``selector``'s
-    block carries every one of ``expected_declarations`` in THREE places:
-    the MCPAuditMode.BUNDLED_CSS source, the bundle-source component file
-    (_agentic_terminal.tcss), and the generated bundle (tldw_cli_modular.tcss).
-    This prevents the three layers from silently drifting -- if DEFAULT_CSS
-    is ever changed, both bundle layers must also change to match."""
-    from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
-
-    default_css = MCPAuditMode.BUNDLED_CSS
-    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
-    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
-
-    for text, label in (
-        (default_css, "MCPAuditMode.BUNDLED_CSS"),
-        (agentic_terminal, "_agentic_terminal.tcss"),
-        (bundled_stylesheet, "tldw_cli_modular.tcss"),
-    ):
-        start = text.find(selector)
-        assert start != -1, f"{label} is missing {selector!r}"
-        end = text.find("}", start)
-        block = text[start:end]
-        for declaration in expected_declarations:
-            assert declaration in block, (
-                f"{label}'s {selector!r} block is missing {declaration!r}"
-            )
 
 
 def _entry(
@@ -765,72 +704,65 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
         assert initiator_select.size.height > 0, (
             "filter-initiator Select collapsed to zero height under bundled CSS"
         )
-        # T9: id-scoped bundle-layer width pins (`#mcp-audit-filter-
-        # decision`/`#mcp-audit-filter-initiator`) must win outright over
-        # `_conversations.tcss`'s bare `Select { width: 100%; }` rule,
-        # matching their own slot widths exactly (24/20) rather than
-        # merely "some nonzero value" -- a stronger check than the
-        # nonzero-only assertions above.
-        assert decision_select.size.width == 24, (
-            f"filter-decision Select width {decision_select.size.width} != pinned 24"
+        # Compare border boxes: Input's own border/padding reduces its content
+        # size, while Select delegates the visible border to SelectCurrent.
+        bar = app.query_one("#mcp-audit-filter-bar")
+        for control in (text_input, decision_select, initiator_select):
+            assert control.region.width == bar.content_region.width
+            assert control.region.x == bar.content_region.x
+        assert text_input.region.bottom <= decision_select.region.y
+        assert decision_select.region.bottom <= initiator_select.region.y
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("subview", ["executions", "findings"])
+async def test_audit_tables_keep_their_viewport_height_cap(subview):
+    """Check the loaded layout, not token spellings in generated stylesheets."""
+    app = AuditModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        if subview == "executions":
+            await canvas.update_entries(
+                [_entry(tool_name=f"tool_{i}") for i in range(100)]
+            )
+            table = canvas.query_one("#mcp-audit-table", DataTable)
+        else:
+            await canvas.update_findings(
+                [{"message": f"Finding {i}"} for i in range(100)], source="server"
+            )
+            await pilot.click("#mcp-audit-subview-findings")
+            table = canvas.query_one("#mcp-audit-findings-table", DataTable)
+        await pilot.pause()
+        view = canvas.query_one(f"#mcp-audit-{subview}-view")
+        assert table.row_count == 100
+        assert 0 < table.size.height <= view.content_size.height * 0.7
+
+
+@pytest.mark.asyncio
+async def test_subview_strip_hugs_its_buttons():
+    app = AuditModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        strip = app.query_one("#mcp-audit-subview-strip")
+        buttons = list(strip.query(Button))
+        assert (
+            0
+            < strip.size.height
+            <= max(button.outer_size.height for button in buttons)
+            + strip.styles.gutter.height
         )
-        assert initiator_select.size.width == 20, (
-            f"filter-initiator Select width {initiator_select.size.width} != pinned 20"
-        )
 
 
-def test_audit_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """T9 (MCP Hub Phase 5): `#mcp-audit-table` gets `height: auto;
-    max-height: 70%;` in `MCPAuditMode.BUNDLED_CSS` alone -- mirrors
-    `#mcp-servers-table`/`#mcp-tools-table`/`#mcp-perm-table`'s own
-    established lockstep bundle-source copies (test_mcp_servers_mode.py /
-    test_mcp_tools_mode.py / test_mcp_permissions_mode.py) so app-loaded
-    CSS cascading on top of DEFAULT_CSS can't silently reintroduce the
-    `height: 1fr` ballooning regression those fixed."""
-    _assert_rule_pinned_in_bundle_source_and_bundle(
-        "#mcp-audit-table {", ("height: auto;", "max-height: 70%;")
-    )
-
-
-def test_findings_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """T9: same fix, same rationale, for the T8 Findings sub-view table."""
-    _assert_rule_pinned_in_bundle_source_and_bundle(
-        "#mcp-audit-findings-table {", ("height: auto;", "max-height: 70%;")
-    )
-
-
-def test_subview_strip_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """T9: `#mcp-audit-subview-strip` is a Horizontal, which defaults to
-    `height: 1fr` -- without this pin it would expand to compete with the
-    table below it for the canvas's remaining space instead of hugging its
-    own two-button content, same bug class as `#mcp-perm-preview`/
-    `#mcp-detail-builtin-toggles`/`#mcp-import-list`."""
-    _assert_rule_pinned_in_bundle_source_and_bundle(
-        "#mcp-audit-subview-strip {", ("height: auto;",)
-    )
-
-
-def test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """T9: Defect-1 Select-width lesson (`_conversations.tcss`'s bare
-    `Select { width: 100%; }` rule always beats DEFAULT_CSS regardless of
-    source order) applies to `#mcp-audit-filter-decision` too -- an
-    id-scoped bundle rule directly on the Select's own id, matching its
-    slot's width (24), pins it defensively even if the slot wrapper were
-    ever removed or the Select mounted outside it. Checks DEFAULT_CSS,
-    bundle-source, and bundle to prevent silent drift between layers."""
-    _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
-        "#mcp-audit-filter-decision {", ("width: 24;",)
-    )
-
-
-def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
-    None
-):
-    """T9: same fix, same rationale, as the decision Select above.
-    Checks DEFAULT_CSS, bundle-source, and bundle to prevent silent drift."""
-    _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
-        "#mcp-audit-filter-initiator {", ("width: 20;",)
-    )
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["decision", "initiator"])
+async def test_filter_select_fills_its_slot(name):
+    app = AuditModeAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        slot = app.query_one(f"#mcp-audit-filter-{name}-slot")
+        control = app.query_one(f"#mcp-audit-filter-{name}", Select)
+        assert control.size.width == slot.content_size.width > 0
+        assert control.region.x == slot.content_region.x
 
 
 # -- T8 (MCP Hub Phase 5): sub-view strip --------------------------------

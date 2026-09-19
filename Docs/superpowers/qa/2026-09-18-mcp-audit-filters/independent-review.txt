@@ -1,0 +1,15 @@
+Read-only review by /root/mcp_server_action_review, TASK-32835.
+Base: cef6bd2a3e3f0b8de0e166146acb4900ca7ea2b6; working branch codex/mcp-audit-filter-layout.
+
+Production/CSS review: no concrete blockers. The full-width column is scoped to
+Audit; execution-pane scrolling accommodates the taller controls. Deferred
+callbacks use current focus and preserve the cursor, matching Permissions.
+
+Final test review: no concrete coverage gaps or unjustified weakening. Comparing
+control border boxes with the filter bar content region correctly handles Input
+and Select geometry. Rendered checks retain full-width, alignment, non-overlap,
+table-height and toolbar-height guarantees. Real-app tests add label painting,
+Tab order, focus and cursor visibility across sizes.
+
+Reviewer did not run tests or apps and made no file changes. Primary-agent
+verification is recorded separately.

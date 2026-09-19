@@ -1,5 +1,21 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2720 merged; compact Audit filters resumed — 2026-09-21
+
+PR2720 merged as `7a758b8196` after owner approval and resolved Qodo review.
+CI passed 1,152 main and 123 admission cases (one expected failure). A performance
+PR landed eight seconds before merge; the actual tree was separately qualified
+with 382 targeted passes, all nine artifact guards, independent integration review
+and twenty approved-equivalent native captures. Five upstream size-budget failures
+are documented separately; Audit introduces none. TASK-32834 is Done.
+[Exact closeout](../qa/2026-09-18-mcp-audit-selection/merge-closeout/README.md).
+
+Saved PR2721 / TASK-32835 resumes from that merged state on a fresh branch.
+Both documentation histories are retained; product and source CSS merge cleanly.
+Current tests, native qualification and its own visual approval remain before its
+merge. Earlier filter evidence below is historical. PR2722 guidance ownership and
+other component reviews remain separate; the heartbeat remains paused.
+
 ## PR2769 merged; integration repair complete — 2026-09-21
 
 [PR2769](https://github.com/rmusser01/tldw_chatbook/pull/2769) merged as
@@ -402,6 +418,19 @@ Bounded MCP reviews have resumed. TASK-32834 records [Audit selection and exact
 drilldown evidence](../qa/2026-09-18-mcp-audit-selection/README.md); compact Audit
 filter readability is next. The historical PR #2707 scope boundary below does
 not hold this continuation open or grant merge approval to its follow-up PRs.
+
+## Saved filter checkpoint — 2026-09-18 (historical)
+
+Current continuation: PR #2707 merged on 2026-09-18 at
+`149acda36be8939fe8cd5e589bf77d13462257e7`; its open-PR checkpoints below are
+historical. MCP follow-up reviews have resumed and the backup heartbeat is paused.
+TASK-32835 repairs readable/reachable Audit filters on a fresh branch from
+`dev` (`cef6bd2a3e3f0b8de0e166146acb4900ca7ea2b6`), with
+[targeted and native evidence](../qa/2026-09-18-mcp-audit-filters/README.md).
+The separate Audit selection repair remains saved in
+[draft PR #2720](https://github.com/rmusser01/tldw_chatbook/pull/2720).
+Next is inspector guidance ownership. Follow-up merges still require final
+visual approval; the wider feature/component review remains open.
 
 Saved work: [PR #2704](https://github.com/rmusser01/tldw_chatbook/pull/2704)
 merged into `dev` at `e89f28d751bc8a5b4f4545b8894b87437252c657`

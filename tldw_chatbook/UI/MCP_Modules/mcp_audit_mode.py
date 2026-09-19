@@ -19,6 +19,7 @@ from typing import Any
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
@@ -327,60 +328,27 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
         height: 100%;
         min-height: 0;
     }
+    /* Each filter has its own row: even the medium triad leaves too little
+       canvas width for three readable controls side by side. */
     #mcp-audit-filter-bar {
+        layout: vertical;
         height: auto;
-        min-height: 0;
+        min-height: $ds-size-0;
     }
-    #mcp-audit-filter-text {
-        width: 1fr;
-    }
-    /* T7 (MCP Hub Phase 5) note for T9's bundle pass: the Phase 3/4
-    Select-width lesson (`#mcp-tools-filter-server-slot Select`,
-    mcp_tools_mode.py / _agentic_terminal.tcss) applies here too --
-    `_conversations.tcss`'s bare `Select { width: 100%; }` rule always wins
-    over ANY rule targeting a `Select` in this widget's own BUNDLED_CSS
-    once the real app bundle is loaded (CSS_PATH always beats DEFAULT_CSS,
-    regardless of selector specificity) -- so styling
-    `#mcp-audit-filter-decision`/`#mcp-audit-filter-initiator` directly
-    would be silently overridden under the real app exactly like Tools
-    mode's server Select was (Defect 1, QA round mcp-hub-phase3-2026-07).
-    Unlike that fix (a bundle-layer override, T9's job here, not this
-    task's), these two Selects are each wrapped in their own small
-    FIXED-width slot container instead -- the bundle has no competing rule
-    for an arbitrarily-IDed Vertical, so `width: 24`/`width: 20` below
-    fully controls each slot's own size, and the bundle's `Select { width:
-    100%; }` then resolves against THAT definite width (never `width:
-    auto`, which is what caused the original 0x0 collapse -- a percentage
-    child inside an auto-sized parent) instead of the whole filter bar,
-    leaving real, non-overlapping space for the sibling text Input's own
-    `1fr`. Verified empirically against the bundled-CSS harness below
-    (`test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css`,
-    test_mcp_audit_mode.py) before landing this shape -- an earlier version
-    without the slots left the Input at literal 0 width under the real
-    bundle. */
-    #mcp-audit-filter-decision-slot {
-        width: 24;
-        height: auto;
-    }
-    #mcp-audit-filter-initiator-slot {
-        width: 20;
-        height: auto;
-    }
-    /* T9 (Phase 5): defensive, EXPLICIT width pins directly on the two
-    Selects' own ids, matching their slots' widths (24/20) exactly --
-    ADDITIONAL to the slot rules above, not a replacement for them. The
-    slot approach alone already avoids the 0x0 collapse (see the comment
-    above), but nothing before this pinned a width on the Select's own id
-    -- its rendered width came solely from the bundle's bare `Select {
-    width: 100%; }` rule resolving against the slot's definite size. These
-    two rules keep this layer in lockstep with T9's bundle-layer copy in
-    _agentic_terminal.tcss (same id selectors, same values) so both layers
-    agree even if a Select were ever mounted outside its slot. */
-    #mcp-audit-filter-decision {
-        width: 24;
-    }
+    #mcp-audit-filter-text,
+    #mcp-audit-filter-decision-slot,
+    #mcp-audit-filter-initiator-slot,
+    #mcp-audit-filter-decision,
     #mcp-audit-filter-initiator {
-        width: 20;
+        width: $ds-width-full;
+    }
+    #mcp-audit-filter-decision-slot,
+    #mcp-audit-filter-initiator-slot {
+        height: auto;
+    }
+    #mcp-audit-executions-view {
+        overflow-y: auto;
+        overflow-x: hidden;
     }
     #mcp-audit-table {
         height: auto;
@@ -551,6 +519,27 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
         findings_table.add_columns(*_FINDINGS_TABLE_COLUMNS)
         self._render_findings()
         self._apply_subview_display()
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Reveal the current control after focus scrolling and layout settle."""
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def on_resize(self, event: Resize) -> None:
+        """Keep retained keyboard focus reachable in the resized pane."""
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def _reveal_focused_control(self) -> None:
+        if (
+            not self.is_attached
+            or not self.display
+            or self.app.screen is not self.screen
+        ):
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            focused.scroll_visible(animate=False, immediate=True)
+            if isinstance(focused, DataTable) and focused.row_count:
+                focused._scroll_cursor_into_view(animate=False)
 
     # -- data ---------------------------------------------------------------
 

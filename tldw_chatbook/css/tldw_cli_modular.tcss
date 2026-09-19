@@ -3653,11 +3653,10 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 }
 
 
-#mcp-audit-filter-decision {
-    width: $ds-size-24;
-}
+#mcp-audit-filter-text,
+#mcp-audit-filter-decision,
 #mcp-audit-filter-initiator {
-    width: $ds-size-20;
+    width: $ds-width-full;
 }
 
 

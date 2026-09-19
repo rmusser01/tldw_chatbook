@@ -1,5 +1,21 @@
 # MCP component review
 
+## PR2720 merged; compact Audit filters resumed — 2026-09-21
+
+PR2720 merged as `7a758b8196` after owner approval and resolved Qodo review.
+CI passed 1,152 main and 123 admission cases (one expected failure). A performance
+PR landed eight seconds before merge; the actual tree was separately qualified
+with 382 targeted passes, all nine artifact guards, independent integration review
+and twenty approved-equivalent native captures. Five upstream size-budget failures
+are documented separately; Audit introduces none. TASK-32834 is Done.
+[Exact closeout](../qa/2026-09-18-mcp-audit-selection/merge-closeout/README.md).
+
+Saved PR2721 / TASK-32835 resumes from that merged state on a fresh branch.
+Both documentation histories are retained; product and source CSS merge cleanly.
+Current tests, native qualification and its own visual approval remain before its
+merge. Earlier filter evidence below is historical. PR2722 guidance ownership and
+other component reviews remain separate; the heartbeat remains paused.
+
 ## PR2769 merged; integration repair complete — 2026-09-21
 
 [PR2769](https://github.com/rmusser01/tldw_chatbook/pull/2769) merged as
@@ -552,6 +568,29 @@ guidance ownership: built-in readiness guidance remains above a selected local
 execution/tool. The separate inspector reachability repair is saved in PR #2718.
 These open visual issues are not qualified by the selection repair.
 
+## Saved filter checkpoint — 2026-09-18 (historical)
+
+## Current continuation — TASK-32835
+
+PR #2707 merged into `dev` at `149acda36be8939fe8cd5e589bf77d13462257e7`
+on 2026-09-18. Its closeout notes below are historical. The post-merge review
+has resumed; the backup heartbeat remains paused. Follow-up PRs retain their
+own current-head checks and final visual approval before merge.
+
+TASK-32835 repairs Audit filter readability and keyboard reachability from
+fresh `dev` (`cef6bd2a3e3f0b8de0e166146acb4900ca7ea2b6`). Full-width stacked
+filters and execution-pane scrolling keep labels and focused controls visible;
+resize also reveals the retained table cursor. The
+[targeted checks and native gallery](../qa/2026-09-18-mcp-audit-filters/README.md)
+record the evidence and limitations. Rendered-layout assertions replace the
+obsolete Audit CSS literal pins recorded by TASK-32796.
+
+This branch does not include the separate Audit selection repair saved in
+[draft PR #2720](https://github.com/rmusser01/tldw_chatbook/pull/2720).
+Next bounded review: inspector guidance ownership, where built-in readiness
+guidance appears above unrelated local Audit/tool details. Remaining connected
+runtime, server lifecycle, permission and destination work is still open.
+
 ## Qualified
 
 | Surface | Evidence | Bounds |
@@ -584,9 +623,10 @@ its merge is confirmed.
   checks pass on saved head d7b4c10a7d. The derived-artifact aggregate is still
   running at this checkpoint; checks on the next pushed head are separate.
   TASK-32814 repaired the earlier rail ellipsis assertion failure.
-- **Existing test debt:** four Audit CSS literal assertions fail against unchanged
-  token-based CSS; two Speech harness cases failed during profile setup before UI
-  creation. Both boundaries are recorded in TASK-32796 evidence. TASK-32812 also
+- **Existing test debt:** TASK-32835 replaces the obsolete Audit CSS literal
+  assertions with rendered geometry checks. Two Speech harness cases failed
+  during profile setup before UI creation; that boundary remains recorded in
+  TASK-32796 evidence. TASK-32812 also
   recorded 26 baseline CSS-consolidation ratchet offenders and a destination-tour
   profile-setup failure; TASK-32813 now closes those two boundaries with
   [computed-style, guard and native evidence](../qa/2026-09-18-css-consolidation/README.md).
