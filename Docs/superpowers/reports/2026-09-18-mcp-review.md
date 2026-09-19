@@ -3,7 +3,21 @@
 This ledger separates qualified repairs from remaining destination behavior.
 Token migration alone does not qualify a complete workflow.
 
-## Current closeout checkpoint
+## Current checkpoint — PR2724 integration
+
+PR2731 (session revocation), PR2734 (permission rule actions) and PR2740
+(permission navigation) have merged. PR2707's continuation heartbeat remains
+paused. Existing draft PR2724 / TASK-32837 is rebased onto dev
+`29b0a31df4701160a3c805e1bf490c76b9353964`, preserving all three merged repairs.
+Only this ledger and the completion report conflicted; both histories were kept.
+[Exact conflict choices and fresh visuals](../qa/2026-09-18-mcp-audit-navigation/CURRENT-DEV-REVIEW.md)
+cover the integration and rejection of queued Audit controls whose owning view
+has become unavailable. Current-head CI and PR2724's own final visual approval
+remain required. Same-ID catalog freshness is saved separately in PR2726;
+connected-runtime journeys and the wider destination review remain open.
+All pending/next statements below are historical checkpoints.
+
+## Earlier closeout checkpoint
 
 PR2707 is merged and its heartbeat remains paused. The owner approved the
 PR2731/PR2734 continuation and visual evidence. Both follow-ups are ready, with
@@ -32,6 +46,32 @@ The follow-up remains draft pending current-head CI/review and owner visual
 approval. Exact-input rule removal, Re-allow and other permission actions remain
 next; connected external runtime journeys and the wider destination review stay
 open.
+
+## Post-merge continuation
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`
+on 2026-09-18. The closeout checkpoint below is historical. Component review
+has resumed on independent, bounded follow-up branches; the resume heartbeat
+is paused. Separate draft PRs preserve Audit selection (#2720), filter layout
+(#2721), and inspector guidance (#2722). PR #2722 checks pass on saved head
+`4b77c4b33c21affd1f258b7c084490cd65e566c3`; that result does not qualify this
+branch. None of those changes is included in this fresh-dev follow-up.
+Current-head CI and final visual approval are required before its merge.
+
+## Audit navigation ownership — TASK-32837
+
+[64 targeted cases, seven preflight guards and 16 native captures](../qa/2026-09-18-mcp-audit-navigation/README.md)
+qualify mounted Audit action identity, profile capture, destination-filter
+reveal and missing-row handling. Retired controls cannot target replacement
+records; vanished destinations warn with detail cleared. Dark/light journeys
+at 120×40 and 170×48 use the real private catalog and two synthetic metadata
+records, without execution or policy mutation. Independent review found no
+blocker; the private app exited cleanly with defaults unchanged.
+
+Next: tool-definition freshness when a catalog replaces a same-ID target during
+an in-flight drilldown. Missing rows are qualified here; catalog revisions,
+80×24 action reachability and connected-runtime behavior are separate bounds.
+This follow-up remains subject to current-head CI and final visual approval.
 
 ## Qualified
 
@@ -122,3 +162,15 @@ That existing draft currently conflicts with dev and still requires integration
 review. Other saved MCP drafts, connected-runtime journeys and remaining screen
 reviews stay open. This new repair is a separate draft against dev and requires
 current-head CI/review plus its own final owner visual approval before merge.
+
+
+### PR2724 approved closeout follow-up
+
+The owner approved PR2724's current-dev conflict choices and gallery. Qodo's
+five findings are addressed: structured method docs, test import grouping, and
+serialization of both destination row checks with the existing publication lock.
+The final targeted run passes 147 cases; all seven guards pass and independent
+review finds no blockers. The fresh native replay matches all 24 approved terminal
+captures except fixture timestamps. PR2724 is ready for review and awaits
+current-head CI/review before its authorized merge. Same-ID definition freshness
+remains in PR2726.

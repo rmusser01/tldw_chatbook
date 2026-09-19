@@ -1406,12 +1406,14 @@ class MCPInspector(Vertical):
         self._current_permission_goto = False
         # T7 (MCP Hub Phase 5): the raw execution-log entry dict
         # `#mcp-inspector-audit` currently describes, or `None` when
-        # hidden -- set by `show_audit_entry()`, the single writer. Read by
-        # the "Open tool"/"Adjust permission" button press handlers below
-        # to know which `(server_key, tool_name)` to post without
-        # re-querying the workbench.
+        # hidden -- set by `show_audit_entry()`, the single writer. Actions
+        # bind the rendered identity to their own controls instead of reading
+        # this mutable entry when a delayed press is delivered.
         self._current_audit_entry: dict[str, Any] | None = None
         self._current_audit_profile_context: PermissionProfileContext | None = None
+        self._audit_action_targets: dict[
+            Button, tuple[str, str, PermissionProfileContext | None]
+        ] = {}
         # T8 (MCP Hub Phase 5): the raw finding dict `#mcp-inspector-
         # finding` currently describes, or `None` when hidden -- set by
         # `show_finding()`, the single writer. No action buttons read this
@@ -2531,9 +2533,15 @@ class MCPInspector(Vertical):
         metadata-only public schema. It contains categories, types, counts,
         and registered argument names, never argument values, result excerpts,
         or exception text.
+
+        Args:
+            entry: Metadata-only execution record to display, or None to clear it.
+            profile_context: Permission profile captured for this record's actions.
         """
         async with self._refresh_lock:
             container = self.query_one("#mcp-inspector-audit", Vertical)
+            # Invalidate retired controls before pruning yields to another task.
+            self._audit_action_targets.clear()
             await container.remove_children()
             if entry is None:
                 container.display = False
@@ -2579,6 +2587,11 @@ class MCPInspector(Vertical):
                     tooltip="Switch to Permissions mode and select this tool's row.",
                 ),
             ]
+            self._audit_action_targets = {
+                widget: (server_key, tool_name, profile_context)
+                for widget in widgets
+                if isinstance(widget, Button)
+            }
             await container.mount_all(widgets)
 
     async def show_finding(
@@ -3691,6 +3704,11 @@ class MCPInspector(Vertical):
             self.query_one("#mcp-adv-result", Static).update("")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch inspector actions, validating control ownership where required.
+
+        Args:
+            event: Button press carrying the actual control that issued the action.
+        """
         button_id = event.button.id or ""
         if button_id == "mcp-inspector-advanced-reveal":
             event.stop()
@@ -3823,29 +3841,25 @@ class MCPInspector(Vertical):
             # Navigation stays retryable; each live press gets a fresh message.
             self.post_message(self.ChangeInPermissionsRequested(*target))
             return
-        if button_id == "mcp-audit-open-tool":
+        if button_id in {"mcp-audit-open-tool", "mcp-audit-adjust-permission"}:
             event.stop()
-            entry = self._current_audit_entry
-            if entry is not None:
-                self.post_message(
-                    self.AuditOpenToolRequested(
-                        str(entry.get("server_key") or ""),
-                        str(entry.get("tool_name") or ""),
-                        self._current_audit_profile_context,
-                    )
-                )
-            return
-        if button_id == "mcp-audit-adjust-permission":
-            event.stop()
-            entry = self._current_audit_entry
-            if entry is not None:
-                self.post_message(
-                    self.AuditAdjustPermissionRequested(
-                        str(entry.get("server_key") or ""),
-                        str(entry.get("tool_name") or ""),
-                        self._current_audit_profile_context,
-                    )
-                )
+            target = self._audit_action_targets.get(event.button)
+            if (
+                target is None
+                or not event.button.is_attached
+                or not event.button.display
+                or not event.button.visible
+                or any(not parent.display for parent in event.button.ancestors)
+                or event.button.is_disabled
+                or event.button.screen is not self.app.screen
+            ):
+                return
+            request = (
+                self.AuditOpenToolRequested
+                if button_id == "mcp-audit-open-tool"
+                else self.AuditAdjustPermissionRequested
+            )
+            self.post_message(request(*target))
             return
         if button_id.startswith("mcp-finding-action-"):
             event.stop()
