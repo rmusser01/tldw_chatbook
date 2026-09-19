@@ -21567,7 +21567,20 @@ UPDATE db_schema_version
                     updated_at = CURRENT_TIMESTAMP, version = version + 1
                 WHERE id = ?
             """,
-                (interval, repetitions, ease_factor, next_review.isoformat(), card_id),
+                (
+                    interval,
+                    repetitions,
+                    ease_factor,
+                    # TASK-32803.2: store the SAME shape SQLite's
+                    # CURRENT_TIMESTAMP uses -- space separator, no `T`, no
+                    # offset, no microseconds -- so the lexical `<=` in the
+                    # due queries is a real time comparison. `.isoformat()`
+                    # wrote `2026-09-19T02:13:11.35+00:00`, whose `T` (0x54)
+                    # sorts AFTER a space (0x20), so a card due at 02:13
+                    # today read as not-due until the UTC day rolled over.
+                    next_review.strftime("%Y-%m-%d %H:%M:%S"),
+                    card_id,
+                ),
             )
 
             # Add review history
@@ -21590,7 +21603,7 @@ UPDATE db_schema_version
             JOIN decks d ON d.id = f.deck_id
             WHERE f.is_deleted = 0 AND f.is_suspended = 0
                 AND d.is_deleted = 0
-                AND (f.next_review IS NULL OR f.next_review <= CURRENT_TIMESTAMP)
+                AND (f.next_review IS NULL OR datetime(f.next_review) <= datetime('now'))
         """
         params = []
 
@@ -21620,7 +21633,7 @@ UPDATE db_schema_version
             SELECT COUNT(*) AS cnt FROM flashcards f
             JOIN decks d ON d.id = f.deck_id
             WHERE f.is_deleted = 0 AND f.is_suspended = 0 AND d.is_deleted = 0
-              AND (f.next_review IS NULL OR f.next_review <= CURRENT_TIMESTAMP)
+              AND (f.next_review IS NULL OR datetime(f.next_review) <= datetime('now'))
         """
         cursor = self.execute_query(query)
         row = cursor.fetchone()
