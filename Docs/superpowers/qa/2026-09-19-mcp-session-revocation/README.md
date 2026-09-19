@@ -9,8 +9,9 @@ listing. The existing session lifetime, permission policy and layout are preserv
 Independent branch `codex/mcp-session-revocation-review` starts from dev
 `d6e2a46384`, separate from drafts PR2727/2728/2730. No new ADR: this routine UI
 ownership repair follows ADR-032 permission boundaries and ADR-150 design language.
-Keep the follow-up draft/unmerged pending current-head CI, accumulated review and
-owner visual approval.
+The owner approved continuation and the PR is ready for review. Current-head CI
+and accumulated review remain merge gates. [Qodo follow-up](qodo-followup/README.md)
+records runner hardening and fresh native replay without changing the approved UI.
 
 ## Verification
 

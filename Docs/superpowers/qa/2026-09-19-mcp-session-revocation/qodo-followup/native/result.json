@@ -1,0 +1,71 @@
+{
+  "pid": 32851,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "real_service_revoke": true,
+      "runtime_gate_asks_again": true,
+      "other_tool_and_profile_preserved": true,
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "real_service_revoke": true,
+      "runtime_gate_asks_again": true,
+      "other_tool_and_profile_preserved": true,
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "real_service_revoke": true,
+      "runtime_gate_asks_again": true,
+      "other_tool_and_profile_preserved": true,
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "real_service_revoke": true,
+      "runtime_gate_asks_again": true,
+      "other_tool_and_profile_preserved": true,
+      "tool_dispatches": 0
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "7e38eb92e9abd5cf0b2725fbf4cd19299cacdec811a345fb42ba216f072fee11",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "4866510ec6007f92494fec6d7f591dbca7e55e2df6e6a70d7a79b97e860bade0",
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": "bb16957eb6a1190659acf2bee0d9264cc6e38edd0df00e37cc5f727627a95ba1",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/Agents/builtin_tool_gate.py": "ea9b8f1384e3319e1a483a2db90748dfada31857dfc89c00b67d138a1c8f0155",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "2e86d1be0adfeab0ef3b38551f594c600a08224ce677d0077b4b2134bdcc31da",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "2d5387eb572fbb82d53de4e3766ce72ac80378677a5aeda36df9a52902fc2322",
+    "tldw_chatbook/css/core/_variables.tcss": "134124fb32a187c7279ac6b02ceed338e85bbb4a64b56d6617063b23c538f709"
+  },
+  "runner_sha256": "c42b675a18bcc41eb4f01df49311ac6697e936be9fe007e5b428284ce4ebdf06",
+  "fixture_scope": "Disposable in-memory grants use the real permission store, service, inspector, workbench and builtin gate. The gate is checked before and after revocation; no tool executes.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

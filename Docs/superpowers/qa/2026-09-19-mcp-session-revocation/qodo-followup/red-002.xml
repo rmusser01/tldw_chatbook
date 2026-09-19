@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="0.662" timestamp="2026-09-19T09:26:51.131227-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_tmux_names_reject_trailing_newlines[names0]" time="0.585"><failure message="Failed: DID NOT RAISE &lt;class 'SystemExit'&gt;">prepared_profile = (PosixPath('/private/tmp/mcp-qa-args-ie0uzvl4/profile'), PosixPath('/private/tmp/mcp-qa-args-ie0uzvl4/tmux'))
+names = ('socket\n', 'review')
+
+    @pytest.mark.parametrize("names", [("socket\n", "review"), ("socket", "review\n")])
+    def test_tmux_names_reject_trailing_newlines(prepared_profile, names):
+        root, _ = prepared_profile
+&gt;       with pytest.raises(SystemExit) as error:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE &lt;class 'SystemExit'&gt;
+
+Tests/Utils/test_mcp_native_qa_args.py:80: Failed</failure></testcase><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_tmux_names_reject_trailing_newlines[names1]" time="0.004"><failure message="Failed: DID NOT RAISE &lt;class 'SystemExit'&gt;">prepared_profile = (PosixPath('/private/tmp/mcp-qa-args-18fs78w3/profile'), PosixPath('/private/tmp/mcp-qa-args-18fs78w3/tmux'))
+names = ('socket', 'review\n')
+
+    @pytest.mark.parametrize("names", [("socket\n", "review"), ("socket", "review\n")])
+    def test_tmux_names_reject_trailing_newlines(prepared_profile, names):
+        root, _ = prepared_profile
+&gt;       with pytest.raises(SystemExit) as error:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE &lt;class 'SystemExit'&gt;
+
+Tests/Utils/test_mcp_native_qa_args.py:80: Failed</failure></testcase></testsuite></testsuites>

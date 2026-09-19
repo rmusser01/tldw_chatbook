@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││                               │
+│ Source                       ││  Tool                           State               ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  n_sources                                          ││  Why · Off — enable it to     │
+│ ▊  Local                ▼  ▎ ││    web_crawl                    Ask                 ││  let MCP clients use          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││    web_fetch                    Ask                 ││  chatbook's tools.            │
+│                              ││    web_search                   Ask                 ││  Add server                   │
+│ Servers                      ││  Server default — Virtual CLI   Ask                 ││  calculator — Built-in        │
+│  ◦ off · ⌂ built-in          ││  (read-only)                                        ││  (agent runtime)              │
+│    All servers               ││    cat                          Ask                 ││  Permission: Ask              │
+│  ◦ ⌂ tldw_chatbook (bu…      ││    find                         Ask               ▁ ││                               │
+│                              ││    git_blame                    Ask                 ││  From this tool's override.   │
+│                              ││    git_branches                 Ask                 ││                               │
+│                              ││    git_diff                     Ask                 ││  Session approvals            │
+│                              ││    git_log                      Ask                 ││                               │
+│                              ││    git_status                   Ask                 ││  agent:builtin · calculator   │
+│                              ││    grep                         Ask                 ││                               │
+│                              ││    ls                           Ask             ▆▆  ││      Revoke                   │
+│                              ││    stat                         Ask                 ││  agent:builtin ·              │
+│                              ││  Server default — Built-in      Allow               ││  get_current_datetime         │
+│                              ││  (agent runtime)                                    ││      Revoke                   │
+│                              ││    calculator                   Ask • (session) ▂▂  ││    Advanced…                  │
+│                              ││                                         ▌           ││                               │
+│                              ││ tldw_chatbook: 0 allow · 30 ask · 0 off — global    ││                               │
+│                              ││ default: ask                                        ││                               │
+│                              ││ • override · ⚠ definition changed · ⚑ high-risk     ││                               │
+│                              ││ floor · ≡ exact-input allows · (session) approved   ││                               │
+│                              ││ until Chatbook exits · Space cycles Inherit → Ask   ││                               │
+│                              ││ → Allow → Off                                       ││                               │
+│                              ││ 9 tool gate(s) are off. Configure the workspace,    ││                               │
+│                              ││ web, and Watchlists master switch in Tools mode;    ││                               │
+│                              ││ other registration gates are under MCP ▸ Servers ▸▅ ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 · F6 · Ctrl+P · Ctrl+Q
