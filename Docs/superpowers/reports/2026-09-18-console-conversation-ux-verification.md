@@ -49,6 +49,62 @@ A fresh read-only branch review found no Critical issues and two Important issue
 
 Ruling: shared unread, row and menu changes were implemented together because their projections and controls overlap. Legacy nested-expander DOM tests were replaced with section/detail behavior tests while retaining privacy, export, recovery, identity and accounting coverage. The existing session-close `session_id` use-before-assignment was repaired after baseline reproduction because it blocked navigation verification.
 
+## Linux SSH verification
+
+The user authorized verification on their Debian 13 host. Ran the real Textual
+8.2.8 application under Python 3.12.8 in a dedicated tmux session, with committed
+source from `b9106e2722`, a temporary virtual environment and a disposable profile.
+The configuration parsed successfully and resolved its data path inside that
+profile. No real conversations, provider credentials or model requests were used.
+
+Terminal-driver keyboard and SGR pointer events exercised:
+
+- Opening saved chats through Ctrl+K History; one-line rows and the right action
+  target; the combined menu and its existing appearance picker.
+- Marking the current conversation unread: the custom lightbulb became an envelope
+  while the transcript remained open. SQLite confirmed the durable mark. A full
+  process restart preserved both reminders; explicitly reopening one conversation
+  cleared only its mark and restored its saved icon.
+- Context, Usage & cost and Exchange history at 160x48, plus Context resizing at
+  120x40 and 80x24. The narrow reader retained Back, payload controls and Close;
+  Shift+Tab then Enter returned to the section list. Widening restored the split
+  layout. Escape dismissed the modal.
+- Estimated versus unpriced usage, and selection of a synthetic legacy capture
+  with request/response details masked by the Safe viewer. Captures were seeded
+  after opening the fixture because initial fixture captures were no longer
+  present after the earlier startup/resume sequence; this does not qualify capture
+  creation or retention across restart.
+- ASCII row indicators, `m` menu access on both the flat list and workspace tree,
+  and the workspace unread action.
+
+Three live defects were corrected and rechecked:
+
+1. The appearance menu label clipped to “Change icon and”. Shortened it to
+   “Icon and colour…”, which fits the existing menu.
+2. `str(ConsoleMessageRole.ASSISTANT)` exposed an internal enum name and counted
+   estimated assistant tokens at the input rate. Normalize the enum value before
+   estimation, pricing and display. The new enum regression failed before the fix;
+   live rows now show `assistant`, zero estimated input and nonzero output.
+3. Textual's non-CSS line padding clipped ASCII attention labels inside their
+   nine-cell action target. Clear that padding without widening the shared token.
+   A production-style painted-cell regression reproduced `[approv` and now checks
+   every attention label fits in full.
+
+Final targeted regression after all three fixes: **155 passed** in 132.64 seconds.
+The suites cover cost accounting, conversation actions, Inspector presentation and
+workflow, rendered menu indicators, and the flat-list owner. Changed-line Ruff
+reported zero diagnostics; touched-range formatting and `git diff --check` passed.
+The final three remote implementation files matched local SHA-256 hashes.
+
+```sh
+PYTHONPATH="$PWD" python -m pytest Tests/Chat/test_console_cost_tracker.py Tests/Chat/test_console_conversation_actions.py Tests/Chat/test_console_inspector_presentation.py Tests/UI/test_console_inspector_workflow.py Tests/UI/test_console_conversation_action_menu.py Tests/UI/test_console_workspace_context_rail.py -q
+```
+
+Plain and ANSI tmux captures and fixture database observations were saved in the
+remote temporary evidence directory. These establish terminal-driver behavior and
+server-side cell rendering; they are not screenshots of a terminal emulator and
+cannot establish client font, pixel, hover or physical pointer behavior.
+
 ## Outstanding qualification
 
 Native terminal verification is **not complete**. Computer-use access to iTerm was explicitly rejected as disallowed, and no Windows Terminal environment was available. Headless geometry/screenshots are not presented as native glyph, pointer, or restart evidence. The Backlog tasks remain In Progress under the approved plans until that qualification is completed. No merge or push was performed.

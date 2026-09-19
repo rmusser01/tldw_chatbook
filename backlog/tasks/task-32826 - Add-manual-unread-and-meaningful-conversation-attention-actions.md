@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 01:04'
-updated_date: '2026-09-19 03:56'
+updated_date: '2026-09-19 05:37'
 labels: []
 dependencies: []
 documentation:
@@ -55,4 +55,6 @@ Verification: final focused qualification 131 passed; broad feature regression 6
 Remains In Progress: required native terminal qualification is unavailable because computer-use access to iTerm was denied and Windows Terminal is not available. Headless production-style checks are not claimed as native evidence.
 
 Final flat-list owner/recompose qualification: 58 passed. Final focused qualification: 131 passed. New files pass Ruff; modified legacy code has no changed-line diagnostics. See the linked verification report for the exact baseline exclusions and native-check limitation.
+
+Linux SSH follow-up: real Debian 13/Textual 8.2.8 terminal-driver checks verified current-chat marking, SQLite persistence across process restart, selective clearing on explicit reopen, custom icon restoration, keyboard menus and workspace unread. Fixed clipped ASCII action labels using Textual line_pad=0; painted-cell regression covers every attention label. Final targeted regression: 155 passed. See the verification report for scope and remaining iTerm/Windows client-rendering limitations.
 <!-- SECTION:NOTES:END -->

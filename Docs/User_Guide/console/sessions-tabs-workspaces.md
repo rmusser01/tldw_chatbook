@@ -57,7 +57,7 @@ one owner; starring is a property and action, not a duplicate Starred group.
 
 Conversation rows use the same compact rhythm as workspace rows. Their right-hand
 icon opens the action menu; focus a row and press `m` for the same menu. Escape
-returns focus to that row. **Change icon and colour…** lives in this menu beside
+returns focus to that row. **Icon and colour…** lives in this menu beside
 Favourite, status, rename, and other existing actions.
 
 Choose **Mark as unread** on a saved chat to keep a local reminder. It remains

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 01:05'
-updated_date: '2026-09-19 03:56'
+updated_date: '2026-09-19 05:37'
 labels: []
 dependencies:
   - TASK-32826
@@ -54,4 +54,6 @@ Verification: final focused qualification 131 passed; broad feature regression 6
 Remains In Progress: required native terminal qualification is unavailable because computer-use access to iTerm was denied and Windows Terminal is not available. Headless production-style checks are not claimed as native evidence.
 
 Final flat-list owner/recompose qualification: 58 passed. Final focused qualification: 131 passed. New files pass Ruff; modified legacy code has no changed-line diagnostics. See the linked verification report for the exact baseline exclusions and native-check limitation.
+
+Linux SSH follow-up verified compact flat/workspace rows, m menus, appearance-picker routing, Unicode and ASCII indicators. Fixed clipped appearance menu copy and non-CSS line padding in the fixed action target. Final targeted regression: 155 passed; final remote source hashes match local. iTerm/Windows client rendering remains unverified; details in the verification report.
 <!-- SECTION:NOTES:END -->

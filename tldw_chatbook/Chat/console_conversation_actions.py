@@ -254,7 +254,7 @@ def _root_page(
         ),
         ConversationMenuItem(
             action_id=ACTION_CHANGE_APPEARANCE,
-            label="Change icon and colour…",
+            label="Icon and colour…",
             enabled=saved,
             disabled_reason="" if saved else _UNSAVED_REASON,
         ),

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 01:05'
-updated_date: '2026-09-19 03:56'
+updated_date: '2026-09-19 05:37'
 labels: []
 dependencies: []
 documentation:
@@ -56,4 +56,6 @@ Verification: final focused qualification 131 passed; broad feature regression 6
 Remains In Progress: required native terminal qualification is unavailable because computer-use access to iTerm was denied and Windows Terminal is not available. Headless production-style checks are not claimed as native evidence.
 
 Final flat-list owner/recompose qualification: 58 passed. Final focused qualification: 131 passed. New files pass Ruff; modified legacy code has no changed-line diagnostics. See the linked verification report for the exact baseline exclusions and native-check limitation.
+
+Linux SSH follow-up exercised Context at 160x48, 120x40 and 80x24, keyboard Back, resizing, Escape, usage rows, and Safe-masked synthetic historical call detail. Fixed real ConsoleMessageRole enum conversion that exposed internal names and assigned assistant estimates to input. Enum regression failed before correction; final targeted regression: 155 passed. No Inspector sidebar changes. iTerm/Windows client rendering remains unverified; see the verification report.
 <!-- SECTION:NOTES:END -->

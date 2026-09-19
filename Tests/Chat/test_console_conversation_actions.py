@@ -47,7 +47,7 @@ def test_root_menu_offers_read_and_appearance_with_existing_actions():
         "Archive",
         "Rename…",
         "Copy as",
-        "Change icon and colour…",
+        "Icon and colour…",
         "More",
     ]
 

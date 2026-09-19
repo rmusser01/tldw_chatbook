@@ -7,7 +7,10 @@ display time from usage rows via the pricing catalog.
 
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Chat import console_cost_tracker as tracker
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostRow,
@@ -462,18 +465,25 @@ def test_build_cost_rows_prices_a_usage_row():
     assert row.cost_usd is not None and row.cost_usd > 0
 
 
-def test_build_cost_rows_estimates_row_without_usage_role_aware():
+@pytest.mark.parametrize(
+    "user_role,assistant_role",
+    [("user", "assistant"), (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT)],
+)
+def test_build_cost_rows_estimates_row_without_usage_role_aware(
+    user_role, assistant_role
+):
     content = "x" * 400
     rows = build_cost_rows(
         [
-            _msg(content=content, usage=None, role="user"),
-            _msg(content=content, usage=None, role="assistant"),
+            _msg(content=content, usage=None, role=user_role),
+            _msg(content=content, usage=None, role=assistant_role),
         ],
         provider="anthropic",
         model="claude-sonnet-4-6",
     )
     assert len(rows) == 2
     user_row, assistant_row = rows
+    assert user_row.role == "user" and assistant_row.role == "assistant"
     assert user_row.estimated is True and assistant_row.estimated is True
     # user tokens land in uncached_input, assistant tokens land in output --
     # never double-counted across buckets.

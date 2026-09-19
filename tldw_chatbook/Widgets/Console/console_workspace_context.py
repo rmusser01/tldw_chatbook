@@ -2139,6 +2139,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.set_styles(height=None)
             menu_button.add_class("h-1")
             menu_button.styles.min_height = 1
+            # Textual line padding is not expressible in TCSS. Preserve all
+            # nine label cells in the fixed ASCII attention target.
+            menu_button.styles.line_pad = 0
             menu_button.set_class(ascii_glyph_mode(), "conversation-actions-ascii")
             menu_button.tooltip = Text(
                 f"{title} · {presentation.summary or 'Conversation'} — conversation actions"

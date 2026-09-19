@@ -70,7 +70,7 @@ async def test_asterisk_opens_the_menu_with_the_expected_entries() -> None:
             "Archive",
             "Rename…",
             "Copy as ▸",
-            "Change icon and colour…",
+            "Icon and colour…",
             "More ▸",
         ]
 
@@ -605,3 +605,25 @@ async def test_fold_helper_dismisses_both_registries_without_focus_restore() -> 
         assert pilot.app.focused is composer, (
             "fold restored opener focus instead of honouring the press"
         )
+
+
+@pytest.mark.asyncio
+async def test_ascii_attention_indicators_fit_painted_action_cells() -> None:
+    from rich.text import Text
+    from textual.geometry import Region
+
+    from tldw_chatbook.Workspaces.conversation_attention import ATTENTION_PRESENTATIONS
+
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        control = _opener(pilot.app.screen)
+        control.add_class("conversation-actions-ascii")
+        for _unicode, ascii_icon, _status in ATTENTION_PRESENTATIONS.values():
+            control.label = Text(ascii_icon)
+            await pilot.pause()
+            painted = "".join(
+                strip.text
+                for strip in control.render_lines(
+                    Region(0, 0, control.size.width, control.size.height)
+                )
+            )
+            assert ascii_icon in painted, (ascii_icon, painted)
