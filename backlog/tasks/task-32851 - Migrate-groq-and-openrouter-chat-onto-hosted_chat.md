@@ -37,3 +37,9 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-19/report.md`.
 - [ ] #5 Metrics name the right provider, and any consumer keying on the old (wrong) labels is identified and updated in the same PR
 - [ ] #6 Both providers are covered by the provider-neutral contract suite and existing per-provider tests pass
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Prep landed 2026-09-19 on branch `fix/cascade-prep` (worktree `tldw-cascades`, commit `533c8ef84f`): `Tests/LLM_Calls/test_groq_openrouter_migration_characterization.py` — 7 pins of CURRENT behavior, each defect pin annotated with what this task must flip. Verified beyond the review's claims while writing them: (a) every normally-completed groq stream ends with a DUPLICATE `data: [DONE]` (the provider's own relayed sentinel, then the synthetic one from the `finally` yield) — consumers tolerate it today, the engine path emits exactly one; (b) groq's EFFECTIVE default temperature is 0.7 (the default config template overrides the code literal 0.2 — two defaults for one knob; the profile should name one); (c) the relayed-line contract is newline-terminated raw lines, which any engine shim must preserve or migrate consumers in the same PR. The blocking dependency is clear: TASK-19642.10 is Done — the engine's contract suite is green (248/248).
+<!-- SECTION:NOTES:END -->
