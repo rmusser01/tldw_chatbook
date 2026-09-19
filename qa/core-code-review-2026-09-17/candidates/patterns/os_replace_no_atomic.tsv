@@ -1,0 +1,13 @@
+tldw_chatbook/Agents/local_tool_provider.py	466	
+tldw_chatbook/Chat/trajectory_export.py	1319	
+tldw_chatbook/MCP/permission_store.py	956	
+tldw_chatbook/RAG_Search/config_profiles.py	833	
+tldw_chatbook/Tools/local_tool_impls.py	649	
+tldw_chatbook/UI/Console_Modules/video.py	700	
+tldw_chatbook/Utils/atomic_file_ops.py	110	
+tldw_chatbook/Utils/atomic_file_ops.py	184	
+tldw_chatbook/Utils/atomic_file_ops.py	284	
+tldw_chatbook/Utils/private_paths.py	1000	
+tldw_chatbook/Utils/private_paths.py	1156	
+tldw_chatbook/Utils/tls_trust.py	200	
+tldw_chatbook/emergency_stop.py	92	

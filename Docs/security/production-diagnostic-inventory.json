@@ -386,8 +386,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 90,
-      "diagnostic_digest": "646987a2fa19970e083a",
+      "call_count": 92,
+      "diagnostic_digest": "0d9682e0ebb4133935c4",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_store.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -814,7 +814,7 @@
     },
     {
       "call_count": 345,
-      "diagnostic_digest": "bdf40a2b56dc69c6d1c5",
+      "diagnostic_digest": "ad055d26393ae00396ac",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -835,7 +835,7 @@
     },
     {
       "call_count": 129,
-      "diagnostic_digest": "bbb5e1418bd268e51b7f",
+      "diagnostic_digest": "dd350b39092e1b5a2dd2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Prompts_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2696,6 +2696,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 4,
+      "diagnostic_digest": "17e465f16a454cab4eec",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Console_Modules/terminal.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 16,
       "diagnostic_digest": "374b587d3a9d81e40307",
       "owner": "TASK-494",
@@ -2843,8 +2850,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 9,
-      "diagnostic_digest": "3b405f866ec2ced2ff8a",
+      "call_count": 10,
+      "diagnostic_digest": "518732dea7eecb1d8a6c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11512,11 +11519,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 608,
+    "owner_files": 609,
     "path_privacy_candidate_calls": 701,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
-    "task_492_calls": 1407,
-    "task_494_calls": 7760
+    "task_492_calls": 1409,
+    "task_494_calls": 7765
   }
 }

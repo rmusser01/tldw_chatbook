@@ -5030,9 +5030,17 @@ class ConsoleChatController:
                     loop = asyncio.get_running_loop()
 
                     def run_repository_call() -> None:
+                        # TASK-32801.4: this body runs on a bare thread, so the
+                        # thread-local handle ``replace`` opens stays in the
+                        # quiescence registry for the life of the process --
+                        # one leaked fd and WAL reader per conversation-level
+                        # Capture change. The helper retires only a handle this
+                        # call opened; on the inline branch below it borrows the
+                        # loop thread's existing handle and leaves it alone.
                         try:
                             repository_result.append(
-                                repository.replace(
+                                self._run_owned_chat_db_operation(
+                                    repository.replace,
                                     before.conversation_id,
                                     detail,
                                 )
@@ -14180,10 +14188,26 @@ class ConsoleChatController:
             state["summary_fired"] = True
             if not needs:
                 return
+        # TASK-32801.4: the tail is read from the store, and the store is
+        # owned by this thread (``store mutation always runs on the thread
+        # that owns the store``). Reading it here rather than in the worker
+        # keeps ``messages_for_session`` -- which folds buffered chunks and
+        # can persist a pending row -- off the raw thread entirely. The
+        # worker is left with the network call alone.
+        try:
+            from tldw_chatbook.Chat.permission_summary_service import (
+                build_messages_tail,
+            )
+
+            tail = build_messages_tail(
+                self._summary_tail_messages(payload), resolution.tail_max_chars
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            tail = []
         try:
             threading.Thread(
                 target=self._permission_summary_worker,
-                args=(round_id, payload, resolution),
+                args=(round_id, payload, resolution, tail),
                 daemon=True,
                 name=f"permission-summary-{round_id}",
             ).start()
@@ -14193,24 +14217,28 @@ class ConsoleChatController:
             logger.debug("permission summary thread spawn failed")
 
     def _permission_summary_worker(
-        self, round_id: str, payload: dict[str, Any], resolution: object
+        self,
+        round_id: str,
+        payload: dict[str, Any],
+        resolution: object,
+        tail: list,
     ) -> None:
         """Worker THREAD: run the advisory call, deliver on the UI thread.
 
         The approval wait loop is never blocked and the round's deadline is
         unaffected; a slow call that outlives the round is dropped on
         delivery. Content-free failures only (ADR-090).
+
+        ``tail`` arrives already built: it is store-derived, and the store
+        belongs to the thread that spawned this one (TASK-32801.4). Nothing
+        here may touch ``self.store``.
         """
         from tldw_chatbook.Chat.permission_summary_service import (
-            build_messages_tail,
             pending_calls_info_from_payload,
             summarize_pending_round,
         )
 
         try:
-            tail = build_messages_tail(
-                self._summary_tail_messages(payload), resolution.tail_max_chars
-            )
             info = pending_calls_info_from_payload(payload.get("calls") or [])
             text = summarize_pending_round(resolution, tail, info)
         except Exception:  # noqa: BLE001 -- advisory only

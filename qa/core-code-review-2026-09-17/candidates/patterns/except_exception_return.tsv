@@ -1,0 +1,546 @@
+tldw_chatbook/Agents/agent_lesson_promotion.py	555	return ToolResult.blocked(MANAGED_SKILL_
+tldw_chatbook/Agents/agent_runtime.py	143	return datetime.now(timezone.utc).strfti
+tldw_chatbook/Agents/agent_runtime.py	696	return False
+tldw_chatbook/Agents/agent_runtime.py	1183	return None
+tldw_chatbook/Agents/agent_runtime.py	1222	return failed_tool_record_projection(
+  
+tldw_chatbook/Agents/agent_runtime.py	1231	return "{}"
+tldw_chatbook/Agents/agent_runtime.py	1439	return False
+tldw_chatbook/Agents/agent_runtime.py	1480	return False
+tldw_chatbook/Agents/agent_runtime.py	1491	return False
+tldw_chatbook/Agents/agent_runtime.py	1507	return continuation_error()
+tldw_chatbook/Agents/agent_runtime.py	2135	return continuation_error()
+tldw_chatbook/Agents/agent_service.py	831	return ()
+tldw_chatbook/Agents/agent_service.py	982	return discovery
+tldw_chatbook/Agents/agent_service.py	1193	return "Exception"
+tldw_chatbook/Agents/agent_service.py	1676	return flat
+tldw_chatbook/Agents/agent_service.py	1684	return flat
+tldw_chatbook/Agents/agent_service.py	1710	return baseline
+tldw_chatbook/Agents/agent_service.py	2624	return 0
+tldw_chatbook/Agents/agent_service.py	2668	return False
+tldw_chatbook/Agents/agent_service.py	4016	return 0
+tldw_chatbook/Agents/agent_service.py	4066	return None
+tldw_chatbook/Agents/agent_service.py	5315	return False
+tldw_chatbook/Agents/agent_service.py	7195	return ToolResult(ok=False, error=f"skil
+tldw_chatbook/Agents/agent_service.py	7332	return ToolResult(ok=False, error=f"Cros
+tldw_chatbook/Agents/agent_service.py	7749	return None
+tldw_chatbook/Agents/agent_service.py	7942	return False
+tldw_chatbook/Agents/automatic_work_runtime.py	104	return True
+tldw_chatbook/Agents/canvas_tool_provider.py	499	return False
+tldw_chatbook/Agents/canvas_tool_provider.py	507	return False
+tldw_chatbook/Agents/canvas_tool_provider.py	633	return _dependency_error(exc)
+tldw_chatbook/Agents/canvas_tool_provider.py	1233	return _error("operation_failed")
+tldw_chatbook/Agents/fleet_coordinator.py	797	return False
+tldw_chatbook/Agents/local_tool_provider.py	941	return False
+tldw_chatbook/Agents/local_tool_provider.py	1973	return LocalToolInvocationResult(
+      
+tldw_chatbook/Agents/local_tool_provider.py	2087	return ToolResult.blocked(LOCAL_AUTHORIT
+tldw_chatbook/Agents/local_tool_provider.py	2139	return ToolResult.blocked(PROMOTION_STAL
+tldw_chatbook/Agents/local_tool_provider.py	2191	return ToolResult.blocked(PROMOTION_STAL
+tldw_chatbook/Agents/local_tool_provider.py	2202	return ToolResult(ok=False, error=str(er
+tldw_chatbook/Agents/local_tool_provider.py	2462	return False
+tldw_chatbook/Agents/mcp_tool_provider.py	898	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Agents/mcp_tool_provider.py	990	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Agents/mcp_tool_provider.py	1038	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Agents/mcp_tool_provider.py	1426	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Agents/model_retry.py	125	return 1.0
+tldw_chatbook/Agents/profile_tool_provider.py	166	return None
+tldw_chatbook/Agents/profile_tool_provider.py	214	return False
+tldw_chatbook/Agents/profile_tool_provider.py	311	return self._failure(ToolResultStatus.RE
+tldw_chatbook/Agents/raw_shell_tool_provider.py	202	return False
+tldw_chatbook/Agents/raw_shell_tool_provider.py	322	return None
+tldw_chatbook/Agents/raw_shell_tool_provider.py	394	return
+tldw_chatbook/Agents/raw_shell_tool_provider.py	497	return ToolResult.blocked(RAW_SHELL_DENY
+tldw_chatbook/Agents/raw_shell_tool_provider.py	554	return
+tldw_chatbook/Agents/run_log.py	149	return default
+tldw_chatbook/Agents/run_webhooks.py	394	return "<unparseable-url>"
+tldw_chatbook/Agents/tool_catalog.py	1458	return ToolResult(ok=False, error=f"perm
+tldw_chatbook/Agents/tool_catalog.py	1488	return ToolResult(
+                ok=Fa
+tldw_chatbook/Agents/tool_catalog.py	1766	return False
+tldw_chatbook/Agents/tool_catalog.py	1810	return False
+tldw_chatbook/Agents/tool_catalog.py	2057	return False
+tldw_chatbook/Agents/tool_catalog.py	2107	return args
+tldw_chatbook/Agents/tool_catalog.py	2211	return ToolExecutionPolicy.BOUNDED_ABAND
+tldw_chatbook/Agents/tool_catalog.py	2252	return None
+tldw_chatbook/Agents/virtual_cli_provider.py	326	return False
+tldw_chatbook/Agents/virtual_cli_provider.py	337	return None
+tldw_chatbook/Agents/virtual_cli_provider.py	526	return ToolResult.blocked(LOCAL_AUTHORIT
+tldw_chatbook/Agents/virtual_cli_provider.py	562	return ApprovalStamp("timeout")
+tldw_chatbook/Agents/virtual_cli_provider.py	599	return False
+tldw_chatbook/Agents/virtual_cli_provider.py	605	return False
+tldw_chatbook/Agents/virtual_cli_provider.py	611	return True
+tldw_chatbook/Agents/virtual_cli_provider.py	619	return False
+tldw_chatbook/Chat/citation_artifact_ownership.py	384	return ArtifactReconciliationResult(
+   
+tldw_chatbook/Chat/citation_repair.py	391	return False
+tldw_chatbook/Chat/citation_trace_repository.py	509	return False
+tldw_chatbook/Chat/console_agent_bridge.py	544	return ()
+tldw_chatbook/Chat/console_agent_bridge.py	600	return DEFAULT_CONSOLE_RUN_BUDGET
+tldw_chatbook/Chat/console_agent_bridge.py	606	return default
+tldw_chatbook/Chat/console_agent_bridge.py	613	return default
+tldw_chatbook/Chat/console_agent_bridge.py	912	return DEFAULT_CONSOLE_TOOL_RESULT_DISPL
+tldw_chatbook/Chat/console_agent_bridge.py	2721	return False
+tldw_chatbook/Chat/console_agent_bridge.py	6212	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Chat/console_agent_bridge.py	6216	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Chat/console_agent_bridge.py	6241	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Chat/console_agent_bridge.py	6285	return ToolResult(ok=False, error=str(ex
+tldw_chatbook/Chat/console_agent_bridge.py	6291	return ToolResult(ok=False, error=f"run_
+tldw_chatbook/Chat/console_agent_bridge.py	6369	return ToolResult(ok=False, error=f"run_
+tldw_chatbook/Chat/console_agent_bridge.py	9605	return ""
+tldw_chatbook/Chat/console_agent_bridge.py	10605	return ToolResult(ok=False, error=f"exec
+tldw_chatbook/Chat/console_assistant_defaults.py	97	return replace(
+            plain,
+     
+tldw_chatbook/Chat/console_capture_policy_repository.py	91	return CapturePolicyReadResult(
+        
+tldw_chatbook/Chat/console_capture_policy_repository.py	157	return CapturePolicyWriteResult(CaptureP
+tldw_chatbook/Chat/console_capture_policy_repository.py	239	return CapturePolicyWriteResult(CaptureP
+tldw_chatbook/Chat/console_chat_controller.py	1244	return _empty_local_skill_context()
+tldw_chatbook/Chat/console_chat_controller.py	1282	return {}
+tldw_chatbook/Chat/console_chat_controller.py	3587	return None
+tldw_chatbook/Chat/console_chat_controller.py	3713	return main_resolution
+tldw_chatbook/Chat/console_chat_controller.py	3727	return main_resolution
+tldw_chatbook/Chat/console_chat_controller.py	4738	return "fleet_state_unavailable"
+tldw_chatbook/Chat/console_chat_controller.py	5866	return True
+tldw_chatbook/Chat/console_chat_controller.py	6579	return False
+tldw_chatbook/Chat/console_chat_controller.py	6594	return False
+tldw_chatbook/Chat/console_chat_controller.py	6772	return False
+tldw_chatbook/Chat/console_chat_controller.py	6803	return saved
+tldw_chatbook/Chat/console_chat_controller.py	7114	return self._prepared_action_refusal(
+  
+tldw_chatbook/Chat/console_chat_controller.py	7157	return self._handle_durable_trace_proven
+tldw_chatbook/Chat/console_chat_controller.py	7265	return self._prepared_action_refusal(
+  
+tldw_chatbook/Chat/console_chat_controller.py	7682	return self._prepared_action_refusal(
+  
+tldw_chatbook/Chat/console_chat_controller.py	7817	return None
+tldw_chatbook/Chat/console_chat_controller.py	7819	return None
+tldw_chatbook/Chat/console_chat_controller.py	7835	return True, None, release_callback
+tldw_chatbook/Chat/console_chat_controller.py	11150	return self._handle_durable_trace_proven
+tldw_chatbook/Chat/console_chat_controller.py	14104	return []
+tldw_chatbook/Chat/console_chat_controller.py	15609	return None, None
+tldw_chatbook/Chat/console_chat_controller.py	15744	return None, None
+tldw_chatbook/Chat/console_chat_controller.py	15769	return True
+tldw_chatbook/Chat/console_chat_controller.py	18211	return
+tldw_chatbook/Chat/console_chat_controller.py	18873	return self._summarize_block(
+          
+tldw_chatbook/Chat/console_chat_controller.py	19055	return None
+tldw_chatbook/Chat/console_chat_controller.py	19327	return self._summarize_block(
+          
+tldw_chatbook/Chat/console_chat_controller.py	19376	return self._summarize_block(
+          
+tldw_chatbook/Chat/console_chat_controller.py	20421	return _empty_profile_context_snapshot()
+tldw_chatbook/Chat/console_chat_controller.py	20466	return _empty_profile_context_snapshot()
+tldw_chatbook/Chat/console_chat_controller.py	20501	return None
+tldw_chatbook/Chat/console_chat_controller.py	20512	return None
+tldw_chatbook/Chat/console_chat_controller.py	20538	return None
+tldw_chatbook/Chat/console_chat_controller.py	20655	return None
+tldw_chatbook/Chat/console_chat_controller.py	20684	return None
+tldw_chatbook/Chat/console_chat_controller.py	20700	return None
+tldw_chatbook/Chat/console_chat_controller.py	21957	return provider_messages
+tldw_chatbook/Chat/console_chat_controller.py	22047	return provider_messages
+tldw_chatbook/Chat/console_chat_controller.py	22778	return None
+tldw_chatbook/Chat/console_chat_controller.py	23442	return None
+tldw_chatbook/Chat/console_chat_controller.py	23757	return False, "The active provider could
+tldw_chatbook/Chat/console_chat_controller.py	26660	return False
+tldw_chatbook/Chat/console_chat_models.py	430	return console_pending_round_copy(())
+tldw_chatbook/Chat/console_chat_store.py	19725	return False
+tldw_chatbook/Chat/console_chat_store.py	20815	return ContinuationDurabilityResult(
+   
+tldw_chatbook/Chat/console_chat_store.py	21078	return None
+tldw_chatbook/Chat/console_exchange_capture.py	386	return value
+tldw_chatbook/Chat/console_expression_state.py	81	return idle
+tldw_chatbook/Chat/console_fleet_wake.py	531	return False
+tldw_chatbook/Chat/console_fleet_wake.py	603	return
+tldw_chatbook/Chat/console_fleet_wake.py	1216	return
+tldw_chatbook/Chat/console_library_policy_repository.py	54	return normalize_policy_read(exc)
+tldw_chatbook/Chat/console_library_policy_repository.py	113	return self._unavailable_write()
+tldw_chatbook/Chat/console_library_policy_repository.py	180	return self._unavailable_write()
+tldw_chatbook/Chat/console_message_actions.py	509	return False
+tldw_chatbook/Chat/console_provider_gateway.py	3590	return
+tldw_chatbook/Chat/console_raw_cli.py	761	return False
+tldw_chatbook/Chat/console_raw_cli.py	777	return
+tldw_chatbook/Chat/console_references.py	334	return Path.cwd()
+tldw_chatbook/Chat/console_runtime.py	496	return snapshot
+tldw_chatbook/Chat/console_runtime.py	553	return text
+tldw_chatbook/Chat/console_runtime.py	610	return text
+tldw_chatbook/Chat/console_runtime.py	2837	return False
+tldw_chatbook/Chat/console_runtime.py	3785	return True
+tldw_chatbook/Chat/console_save_targets.py	77	return None
+tldw_chatbook/Chat/console_session_settings.py	1920	return ConsoleSettingsContextEstimate(
+ 
+tldw_chatbook/Chat/console_settings_defaults.py	1310	return ConsoleDefaultMutationOutcome(
+  
+tldw_chatbook/Chat/console_trace_final_values.py	832	return unavailable(
+            TraceOmi
+tldw_chatbook/Chat/console_trace_final_values.py	940	return unavailable(
+            TraceOmi
+tldw_chatbook/Chat/console_trace_final_values.py	1162	return False
+tldw_chatbook/Chat/console_trace_maintenance.py	542	return
+tldw_chatbook/Chat/console_trace_maintenance.py	625	return
+tldw_chatbook/Chat/console_trace_maintenance.py	686	return
+tldw_chatbook/Chat/console_trace_projection.py	247	return field_name
+tldw_chatbook/Chat/console_trace_redaction.py	309	return PIIDetectionResult(
+             
+tldw_chatbook/Chat/console_trace_redaction.py	440	return PIIValueRedactionResult(
+        
+tldw_chatbook/Chat/console_trace_redaction.py	578	return CredentialSanitizationResult(
+   
+tldw_chatbook/Chat/console_trace_service.py	413	return False
+tldw_chatbook/Chat/console_trace_service.py	463	return False
+tldw_chatbook/Chat/console_trace_service.py	497	return None
+tldw_chatbook/Chat/console_trace_service.py	1955	return "unknown"
+tldw_chatbook/Chat/console_trace_settlement.py	824	return omitted
+tldw_chatbook/Chat/console_voice_attempts.py	249	return False
+tldw_chatbook/Chat/console_voice_attempts.py	389	return False
+tldw_chatbook/Chat/console_worktree_recovery.py	135	return None
+tldw_chatbook/Chat/library_preparation.py	301	return getattr(obj, name, default)
+tldw_chatbook/Chat/local_server_discovery.py	445	return None, f"No models endpoint at {di
+tldw_chatbook/Chat/permission_summary_service.py	289	return None
+tldw_chatbook/Chat/provider_continuation.py	584	return SafeContinuationRead(
+           
+tldw_chatbook/Chat/provider_failures.py	29	return ""
+tldw_chatbook/Chat/provider_setup_persistence.py	1086	return ConfigMutationResult(False, False
+tldw_chatbook/Chat/provider_test_evidence.py	1242	return None
+tldw_chatbook/Chat/scope_picker_listers.py	161	return {}
+tldw_chatbook/Chat/scope_picker_listers.py	187	return []
+tldw_chatbook/Chat/scope_picker_listers.py	234	return ScopeListPage(items=(), total_mat
+tldw_chatbook/Chat/scope_picker_listers.py	272	return ScopeListPage(items=(), total_mat
+tldw_chatbook/Chat/scope_picker_listers.py	298	return ()
+tldw_chatbook/Chat/scope_picker_listers.py	357	return []
+tldw_chatbook/Chat/scope_picker_listers.py	362	return []
+tldw_chatbook/Chat/scope_picker_listers.py	388	return {}
+tldw_chatbook/Chat/scope_picker_listers.py	467	return counts
+tldw_chatbook/Chat/thinking_blocks.py	363	return ThinkingEnvelopeRead(
+           
+tldw_chatbook/DB/AgentRuns_DB.py	397	return
+tldw_chatbook/DB/RAG_Indexing_DB.py	251	return
+tldw_chatbook/DB/Workspace_DB.py	474	return
+tldw_chatbook/DB/character_conversation_search.py	1227	return CharacterKeywordIndexStatus.FAILE
+tldw_chatbook/DB/character_conversation_search.py	1302	return CharacterKeywordIndexStatus.FAILE
+tldw_chatbook/DB/sql_logging.py	96	return "<unrepr-able params>"
+tldw_chatbook/Event_Handlers/Chat_Events/chat_image_events.py	269	return False
+tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py	627	return None
+tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py	227	return False
+tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py	75	return True
+tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py	207	return False
+tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py	422	return None
+tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py	547	return False
+tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py	777	return None
+tldw_chatbook/Event_Handlers/STTS_Events/stts_events.py	1280	return None
+tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py	328	return False
+tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py	793	return False
+tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py	1879	return False
+tldw_chatbook/Event_Handlers/eval_db_operations.py	323	return "N/A"
+tldw_chatbook/LLM_Calls/Summarization_General_Lib.py	275	return str(input_data)
+tldw_chatbook/LLM_Calls/pricing_catalog.py	429	return None
+tldw_chatbook/LLM_Calls/qwencloud_streaming.py	129	return _MAPPING_COPY_FAILED
+tldw_chatbook/LLM_Calls/qwencloud_streaming.py	984	return _STREAM_TRANSLATION_FAILED
+tldw_chatbook/LLM_Calls/qwencloud_streaming.py	997	return _STREAM_TRANSLATION_FAILED
+tldw_chatbook/LLM_Calls/qwencloud_streaming.py	1006	return _STREAM_READ_FAILED
+tldw_chatbook/MCP/local_control_service.py	882	return
+tldw_chatbook/MCP/local_server_tools.py	234	return False
+tldw_chatbook/MCP/permission_store.py	2205	return ""
+tldw_chatbook/MCP/prompts.py	102	return _prompt_failure()
+tldw_chatbook/MCP/prompts.py	160	return _prompt_failure()
+tldw_chatbook/MCP/prompts.py	235	return _prompt_failure()
+tldw_chatbook/MCP/prompts.py	293	return _prompt_failure()
+tldw_chatbook/MCP/prompts.py	364	return _prompt_failure()
+tldw_chatbook/MCP/server_request_handlers.py	265	return JsonRpcError(_REQUEST_DECLINED, f
+tldw_chatbook/MCP/server_unified_service.py	3208	return status
+tldw_chatbook/MCP/unified_control_plane_service.py	2918	return self._hub_test_stale(public, reas
+tldw_chatbook/MCP/unified_control_plane_service.py	3103	return ToolTestAdmissionStale(
+         
+tldw_chatbook/MCP/unified_control_plane_service.py	3307	return _synthetic(
+                    "
+tldw_chatbook/MCP/unified_control_plane_service.py	3342	return _synthetic(
+                    "
+tldw_chatbook/MCP/unified_control_plane_service.py	3412	return _synthetic(
+                "erro
+tldw_chatbook/MCP/unified_control_plane_service.py	3595	return _synthetic(
+                    "
+tldw_chatbook/RAG_Search/fusion.py	297	return DEFAULT_RRF_K
+tldw_chatbook/RAG_Search/parent_child_adapter.py	190	return ChunkType.TEXT
+tldw_chatbook/RAG_Search/recovery.py	466	return ProjectionObservation(issues=(_fa
+tldw_chatbook/Tools/raw_cli_executor.py	542	return -1
+tldw_chatbook/Tools/raw_cli_executor.py	1124	return False
+tldw_chatbook/Tools/watchlists_command_service.py	113	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	373	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	429	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	453	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	495	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	520	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	610	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	662	return self._unavailable()
+tldw_chatbook/Tools/watchlists_command_service.py	733	return self._unavailable()
+tldw_chatbook/Tools/workspace_file_roots.py	174	return _NOTE_UNAVAILABLE
+tldw_chatbook/Tools/workspace_tool_executor.py	650	return False
+tldw_chatbook/Tools/workspace_tool_executor.py	689	return False
+tldw_chatbook/UI/Console_Modules/character.py	247	return None
+tldw_chatbook/UI/Console_Modules/character_context.py	1263	return
+tldw_chatbook/UI/Console_Modules/image.py	807	return False
+tldw_chatbook/UI/Console_Modules/image.py	848	return False
+tldw_chatbook/UI/Console_Modules/image.py	912	return False
+tldw_chatbook/UI/Console_Modules/image.py	1009	return
+tldw_chatbook/UI/Console_Modules/left_rail.py	1698	return None
+tldw_chatbook/UI/Console_Modules/message.py	442	return False
+tldw_chatbook/UI/Console_Modules/message.py	451	return True
+tldw_chatbook/UI/Console_Modules/message.py	1097	return
+tldw_chatbook/UI/Console_Modules/message.py	1178	return False
+tldw_chatbook/UI/Console_Modules/message.py	1345	return False
+tldw_chatbook/UI/Console_Modules/message.py	2733	return None
+tldw_chatbook/UI/Console_Modules/prompts.py	747	return ConsolePromptsApplyOutcome(
+     
+tldw_chatbook/UI/Console_Modules/raw_cli.py	270	return self._refuse(
+                ses
+tldw_chatbook/UI/Console_Modules/raw_cli.py	292	return self._refuse(
+                ses
+tldw_chatbook/UI/Console_Modules/raw_cli.py	882	return False
+tldw_chatbook/UI/Console_Modules/review_selection.py	364	return None
+tldw_chatbook/UI/Console_Modules/review_selection.py	376	return None
+tldw_chatbook/UI/Console_Modules/send_price.py	145	return True
+tldw_chatbook/UI/Console_Modules/send_price.py	226	return UNAVAILABLE_PRICE
+tldw_chatbook/UI/Console_Modules/session.py	2316	return False
+tldw_chatbook/UI/Console_Modules/session.py	2890	return False
+tldw_chatbook/UI/Console_Modules/session.py	2976	return False
+tldw_chatbook/UI/Console_Modules/session.py	3113	return
+tldw_chatbook/UI/Console_Modules/session.py	3938	return None
+tldw_chatbook/UI/Console_Modules/session.py	3949	return False
+tldw_chatbook/UI/Console_Modules/session.py	3995	return False
+tldw_chatbook/UI/Console_Modules/status_row.py	98	return False
+tldw_chatbook/UI/Console_Modules/terminal.py	141	return False
+tldw_chatbook/UI/Console_Modules/terminal.py	298	return False
+tldw_chatbook/UI/Console_Modules/terminal.py	317	return False
+tldw_chatbook/UI/Console_Modules/terminal.py	328	return False
+tldw_chatbook/UI/Console_Modules/terminal.py	345	return False
+tldw_chatbook/UI/Console_Modules/terminal.py	366	return False
+tldw_chatbook/UI/Console_Modules/terminal.py	428	return
+tldw_chatbook/UI/Console_Modules/terminal.py	481	return None
+tldw_chatbook/UI/Console_Modules/terminal.py	500	return None
+tldw_chatbook/UI/Console_Modules/wiring.py	338	return True
+tldw_chatbook/UI/Console_Modules/wiring.py	522	return False
+tldw_chatbook/UI/Console_Modules/wiring.py	531	return False
+tldw_chatbook/UI/Console_Modules/workspace.py	1051	return None
+tldw_chatbook/UI/Console_Modules/workspace.py	1652	return _MEMBERSHIP_UNKNOWN
+tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py	513	return self._finish_mutation_error(fence
+tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py	542	return self._finish_mutation_error(fence
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	2450	return False
+tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py	388	return
+tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py	466	return self._failure(skill_name, exc)
+tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py	541	return self._failure(self._safe_name(fil
+tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py	595	return self._failure(
+                se
+tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py	642	return None
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	1588	return ""
+tldw_chatbook/UI/Library_Modules/library_snapshot_cache.py	83	return None
+tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py	470	return
+tldw_chatbook/UI/Library_Modules/screen_helpers.py	51	return True
+tldw_chatbook/UI/Library_Modules/screen_helpers.py	93	return False
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	206	return "<error redacted>"
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	896	return str(payload)
+tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py	1118	return
+tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py	233	return
+tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py	595	return False
+tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py	1125	return None
+tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py	1136	return None
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	836	return None
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	939	return
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5047	return "no_tool"
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5071	return None
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5241	return False
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5898	return None
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5977	return None
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	6077	return None
+tldw_chatbook/UI/Navigation/buddy_conversation.py	92	return False
+tldw_chatbook/UI/Navigation/buddy_management.py	543	return "Unavailable"
+tldw_chatbook/UI/Navigation/buddy_management.py	564	return "Unavailable (new conversations u
+tldw_chatbook/UI/Navigation/main_navigation.py	557	return
+tldw_chatbook/UI/Navigation/main_navigation.py	637	return
+tldw_chatbook/UI/Navigation/main_navigation.py	641	return
+tldw_chatbook/UI/Navigation/main_navigation.py	788	return
+tldw_chatbook/UI/Navigation/main_navigation.py	803	return
+tldw_chatbook/UI/Navigation/main_navigation.py	860	return None
+tldw_chatbook/UI/Navigation/main_navigation.py	889	return
+tldw_chatbook/UI/Navigation/main_navigation.py	902	return
+tldw_chatbook/UI/Navigation/main_navigation.py	978	return
+tldw_chatbook/UI/Navigation/main_navigation.py	1079	return
+tldw_chatbook/UI/Navigation/main_navigation.py	1133	return
+tldw_chatbook/UI/Navigation/nav_overflow_menu.py	121	return
+tldw_chatbook/UI/Screens/chat_screen.py	1172	return
+tldw_chatbook/UI/Screens/chat_screen.py	3199	return False
+tldw_chatbook/UI/Screens/chat_screen.py	3314	return ProviderGenerationProbeResult("fa
+tldw_chatbook/UI/Screens/chat_screen.py	3532	return False
+tldw_chatbook/UI/Screens/chat_screen.py	3545	return not self._console_settings_modal_
+tldw_chatbook/UI/Screens/chat_screen.py	3650	return False
+tldw_chatbook/UI/Screens/chat_screen.py	3692	return False
+tldw_chatbook/UI/Screens/chat_screen.py	4983	return False
+tldw_chatbook/UI/Screens/chat_screen.py	6989	return False
+tldw_chatbook/UI/Screens/chat_screen.py	6998	return False
+tldw_chatbook/UI/Screens/chat_screen.py	7688	return None
+tldw_chatbook/UI/Screens/chat_screen.py	7697	return
+tldw_chatbook/UI/Screens/chat_screen.py	7706	return
+tldw_chatbook/UI/Screens/chat_screen.py	7715	return
+tldw_chatbook/UI/Screens/chat_screen.py	7724	return
+tldw_chatbook/UI/Screens/chat_screen.py	12619	return 0
+tldw_chatbook/UI/Screens/chat_screen.py	12623	return 0
+tldw_chatbook/UI/Screens/chat_screen.py	16012	return False
+tldw_chatbook/UI/Screens/chat_screen.py	18117	return ()
+tldw_chatbook/UI/Screens/library_screen.py	6447	return
+tldw_chatbook/UI/Screens/library_screen.py	16130	return tuple(items)
+tldw_chatbook/UI/Screens/library_screen.py	21585	return
+tldw_chatbook/UI/Screens/library_screen.py	26696	return None
+tldw_chatbook/UI/Screens/library_screen.py	30946	return set(ids)
+tldw_chatbook/UI/Screens/library_screen.py	33296	return
+tldw_chatbook/UI/Screens/library_screen.py	35469	return
+tldw_chatbook/UI/Screens/library_screen.py	35477	return
+tldw_chatbook/UI/Screens/personas_screen.py	862	return _DrainedTaskResult(error=exc, can
+tldw_chatbook/UI/Screens/personas_screen.py	2723	return False
+tldw_chatbook/UI/Screens/personas_screen.py	2744	return False
+tldw_chatbook/UI/Screens/personas_screen.py	3590	return None
+tldw_chatbook/UI/Screens/personas_screen.py	6061	return
+tldw_chatbook/UI/Screens/personas_screen.py	6072	return
+tldw_chatbook/UI/Screens/personas_screen.py	6212	return
+tldw_chatbook/UI/Screens/personas_screen.py	6223	return
+tldw_chatbook/UI/Screens/personas_screen.py	9736	return False
+tldw_chatbook/UI/Screens/personas_screen.py	14006	return ""
+tldw_chatbook/UI/Screens/personas_screen.py	15850	return
+tldw_chatbook/UI/Screens/settings_screen.py	3499	return False
+tldw_chatbook/UI/Screens/settings_screen.py	10862	return (
+                validation_resu
+tldw_chatbook/UI/Screens/settings_screen.py	10914	return f"Config validation: invalid - {r
+tldw_chatbook/UI/Screens/settings_screen.py	10924	return f"Config reload: failed - {redact
+tldw_chatbook/UI/Screens/settings_screen.py	10930	return f"Config reload: failed - {redact
+tldw_chatbook/UI/Screens/settings_screen.py	19749	return None
+tldw_chatbook/UI/Screens/settings_screen.py	19773	return []
+tldw_chatbook/UI/Screens/settings_screen.py	23047	return
+tldw_chatbook/UI/Screens/settings_screen.py	23507	return
+tldw_chatbook/Utils/app_shutdown.py	353	return DEFAULT_SHUTDOWN_GRACE_SECONDS
+tldw_chatbook/Utils/db_upgrade_notice.py	82	return False
+tldw_chatbook/Utils/doctor.py	84	return DoctorCheck(
+            "databas
+tldw_chatbook/Utils/file_extraction.py	917	return f"Invalid Pipfile (TOML format): 
+tldw_chatbook/Utils/file_extraction.py	928	return f"Invalid Cargo.toml: {str(e)}"
+tldw_chatbook/Utils/file_handlers.py	379	return f"[Error reading CSV: {e}]"
+tldw_chatbook/Utils/github_api_client.py	221	return
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py	484	return str(arguments or {})[:_ARGS_SUMMA
+tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py	611	return "chat-approval-card"
+tldw_chatbook/Widgets/Console/console_agent_steering_bar.py	193	return
+tldw_chatbook/Widgets/Console/console_agent_steering_bar.py	210	return
+tldw_chatbook/Widgets/Console/console_agent_steering_bar.py	237	return
+tldw_chatbook/Widgets/Console/console_auto_speak_consent.py	280	return
+tldw_chatbook/Widgets/Console/console_auto_speak_consent.py	413	return False
+tldw_chatbook/Widgets/Console/console_auto_speak_consent.py	439	return None
+tldw_chatbook/Widgets/Console/console_auto_speak_consent.py	457	return None
+tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py	521	return None
+tldw_chatbook/Widgets/Console/console_citation_sources_modal.py	346	return False
+tldw_chatbook/Widgets/Console/console_composer_bar.py	1987	return True
+tldw_chatbook/Widgets/Console/console_composer_bar.py	2005	return self.SEND_PRICE_UNAVAILABLE_TOOLT
+tldw_chatbook/Widgets/Console/console_composer_bar.py	2036	return False
+tldw_chatbook/Widgets/Console/console_conversation_inspector.py	734	return "Future exchange capture: unavail
+tldw_chatbook/Widgets/Console/console_image_viewer_modal.py	163	return "pixels"
+tldw_chatbook/Widgets/Console/console_selection_menu.py	618	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	163	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	350	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	406	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	415	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	656	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	763	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	780	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	806	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	833	return
+tldw_chatbook/Widgets/Console/console_session_surface.py	841	return
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py	575	return
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py	799	return ConsoleSwitcherHistoryPage(
+     
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py	822	return CharacterConversationPage(
+      
+tldw_chatbook/Widgets/Console/console_settings_modal.py	4387	return False, "Conversation compaction f
+tldw_chatbook/Widgets/Console/console_setup_modal.py	444	return
+tldw_chatbook/Widgets/Console/console_setup_modal.py	472	return
+tldw_chatbook/Widgets/Console/console_setup_modal.py	499	return
+tldw_chatbook/Widgets/Console/console_terminal_workspace.py	119	return Style(
+            bold=style.bol
+tldw_chatbook/Widgets/Console/console_transcript.py	4237	return self._speech_states
+tldw_chatbook/Widgets/Console/console_transcript.py	5868	return None
+tldw_chatbook/Widgets/Console/console_transcript.py	5886	return
+tldw_chatbook/Widgets/Console/console_transcript.py	8219	return False
+tldw_chatbook/Widgets/Console/console_transcript.py	8227	return False
+tldw_chatbook/Widgets/Console/console_transcript.py	8332	return
+tldw_chatbook/Widgets/Console/console_video_preview.py	408	return
+tldw_chatbook/Widgets/Console/console_video_preview.py	428	return
+tldw_chatbook/Widgets/Console/console_workspace_switcher_modal.py	57	return None
+tldw_chatbook/Widgets/Library/library_ingest_canvas.py	1965	return
+tldw_chatbook/Widgets/Library/library_ingest_canvas.py	1996	return
+tldw_chatbook/Widgets/Library/library_media_trash_canvas.py	204	return
+tldw_chatbook/Widgets/Library/library_media_trash_canvas.py	232	return
+tldw_chatbook/Widgets/Library/library_media_viewer.py	1295	return None
+tldw_chatbook/Widgets/Library/library_note_import_canvas.py	688	return
+tldw_chatbook/Widgets/Library/library_note_import_canvas.py	715	return
+tldw_chatbook/Widgets/Library/library_notes_canvas.py	1653	return False
+tldw_chatbook/Widgets/Library/library_notes_canvas.py	1659	return False
+tldw_chatbook/Widgets/Library/library_search_rag_panel.py	113	return
+tldw_chatbook/Widgets/Library/library_search_rag_panel.py	144	return
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1080	return
+tldw_chatbook/Widgets/Media/media_viewer_panel.py	1098	return
+tldw_chatbook/Widgets/Persona_Widgets/actor_pack_import_review.py	240	return None
+tldw_chatbook/Widgets/Persona_Widgets/persona_buddy_widget.py	1253	return
+tldw_chatbook/Widgets/Persona_Widgets/persona_buddy_widget.py	1268	return
+tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py	213	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_dictionaries.py	182	return None
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py	1088	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py	1112	return ""
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py	1156	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py	1167	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py	1175	return ""
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py	1182	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_character_world_books.py	177	return None
+tldw_chatbook/Widgets/Persona_Widgets/personas_dictionary_detail.py	491	return None
+tldw_chatbook/Widgets/Persona_Widgets/personas_dictionary_detail.py	521	return None
+tldw_chatbook/Widgets/Persona_Widgets/personas_dictionary_detail.py	592	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_dictionary_detail.py	604	return None
+tldw_chatbook/Widgets/Persona_Widgets/personas_inspector_pane.py	1209	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_lore_detail.py	363	return None
+tldw_chatbook/Widgets/Persona_Widgets/personas_lore_detail.py	413	return None
+tldw_chatbook/Widgets/Persona_Widgets/personas_policy_rules_editor.py	121	return
+tldw_chatbook/Widgets/Persona_Widgets/personas_policy_rules_editor.py	159	return
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py	247	return
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py	987	return False
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	902	return True
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	921	return None
+tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py	199	return
+tldw_chatbook/Widgets/Tamagotchi/validators.py	277	return False, f"Validation error: {str(e
+tldw_chatbook/Widgets/Writing/writing_outline_tree.py	145	return
+tldw_chatbook/Widgets/activity_log.py	366	return
+tldw_chatbook/Widgets/emoji_picker.py	83	return []
+tldw_chatbook/Widgets/enhanced_file_picker.py	900	return
+tldw_chatbook/Widgets/enhanced_file_picker.py	1682	return
+tldw_chatbook/Widgets/enhanced_file_picker.py	1758	return
+tldw_chatbook/Widgets/enhanced_file_picker.py	1782	return
+tldw_chatbook/Widgets/model_search_picker.py	236	return None
+tldw_chatbook/Widgets/prune_safe_select.py	90	return "unknown"
+tldw_chatbook/Widgets/recompose_capture_guard.py	75	return False
+tldw_chatbook/Widgets/recompose_capture_guard.py	81	return
+tldw_chatbook/Widgets/settings_internal_prompts_panel.py	194	return False
+tldw_chatbook/Widgets/settings_splash_screen_viewer.py	403	return
+tldw_chatbook/Widgets/settings_theme_editor.py	449	return False
+tldw_chatbook/Widgets/settings_theme_editor.py	1077	return "#808080"
+tldw_chatbook/app.py	2418	return -1
+tldw_chatbook/app.py	2482	return ()
+tldw_chatbook/app.py	5660	return None
+tldw_chatbook/app.py	7459	return ExternalReferenceAvailability(
+  
+tldw_chatbook/app.py	7494	return ExternalReferenceAvailability(
+  
+tldw_chatbook/app.py	12312	return
+tldw_chatbook/app.py	12321	return
+tldw_chatbook/app.py	12330	return
+tldw_chatbook/app.py	12358	return
+tldw_chatbook/app.py	12438	return False
+tldw_chatbook/app.py	12471	return False
+tldw_chatbook/app.py	13779	return self.screen
+tldw_chatbook/app.py	14477	return False
+tldw_chatbook/app.py	17659	return
+tldw_chatbook/app.py	17857	return False
+tldw_chatbook/model_capabilities.py	882	return {}
+tldw_chatbook/runtime_policy/server_context.py	714	return False

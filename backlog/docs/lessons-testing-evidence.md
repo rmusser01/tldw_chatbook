@@ -15974,3 +15974,18 @@ queues and retain native inputs; bypassing the production post_message boundary
 would bypass the fix and test a different path. The same task's native compact
 run found a focused recovery button below a padded callout; full-app compositor
 paint assertions caught what focus identity alone missed.
+
+## An RLock probe built on `acquire` reports a re-entrant hold as free
+
+**TASK-32801.4, 2026-09-18.** Removing a lock that was held across a database
+transaction needed a test that fails immediately when the lock is held, because
+the alternative -- a two-thread deadlock test -- can only fail by timing out
+(16 s here) and reads as flake. The first probe asked
+`lock.acquire(blocking=False)` and treated success as "not held". It passed
+against the unfixed code. `threading.RLock` grants a non-blocking acquire to
+the thread that already owns it, which is exactly the thread under test, so the
+probe reported every genuine re-entrant hold as free. `_is_owned()` for an
+RLock and `locked()` for a plain `Lock` are the honest questions; the rewritten
+probe went red against the old shape and green against the new one. A
+concurrency probe that never fails against the defect is worse than no probe:
+it launders the defect as tested.
