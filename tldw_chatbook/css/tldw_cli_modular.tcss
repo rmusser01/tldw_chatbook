@@ -191,6 +191,9 @@ $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
+
+$ds-size-150: 150;
+$ds-size-170: 170;
 $ds-percent-34: 34%;
 
 $ds-percent-25: 25%;
@@ -4004,6 +4007,357 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 #agent-progress-body { height: auto; }
 #agent-progress-actions { height: $ds-size-3; align-horizontal: right; }
 #agent-progress-actions Button { min-width: $ds-size-10; margin-left: $ds-space-1; }
+
+
+
+
+
+
+App.-wide-viewport #console-settings-modal {
+    width: $ds-percent-85;
+    max-width: $ds-console-settings-wide-max-width;
+}
+
+
+App.-wide-viewport #console-inspector-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-workspace-files-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #file-notes-conflict-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-run-log-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-citation-sources-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-side-chat-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-edit-message-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-edit-thinking-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-prompts-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #agent-history-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #agent-progress-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #worktree-recovery-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #internal-prompt-editor-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+
+App.-wide-viewport #speech-voice-profile-picker {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+
+
+App.-wide-viewport #personal-context-review-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #console-scope-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #console-prompt-comparison-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #buddy-conversation {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #actor-pack-import-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #personal-context-link-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #console-system-prompt-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #server-switch-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #buddy-inbox {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport FileExtractionDialog > Vertical {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport EmojiPickerScreen #dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+
+App.-wide-viewport #buddy-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #petdex-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-export-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-import-options {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-import-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-profile-bind-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+
+
+
+App.-wide-viewport #buddy-management {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport NoteCreationModal > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #conversation-selection-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #note-selection-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport AudioTroubleshootingDialog .dialog-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #file-notes-push-auth-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #trace-export-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-library-access {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #capture-policy-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #trace-privacy-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #exchange-export-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-prompt-queue-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-reaction-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-review-notes-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-endpoint-template-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-rewind-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #video-capacity-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #project-skills-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-prompt-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-style-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport .model-install-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport .local-gguf-import-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #file-notes-push-endpoint-details-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #file-notes-root-details-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-project-setup-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-fork-chat-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-character-picker {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-save-as-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-terminal-session-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #global-full-confirmation {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-generate-image-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport EncryptionSetupDialog > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #character-tts-collision-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #character-tts-existing-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport .settings-speech-credential-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport DocumentGenerationModal > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-auto-speak-consent-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-rag-settings {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-summarize-preview-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-workspace-switcher-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #prompt-delete-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #persona-visual-custom-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-save-markdown-box {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #profile-interview-cancel-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #dictionary-picker-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #world-book-picker-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport DictionaryAttachPicker > Vertical {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport ConversationAttachPicker > Vertical {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #profile-dialog-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport FeedbackDialog > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-composer-menu {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #prompt-variables-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
 
 /* ===== MODULE: components/_workbench.tcss ===== */
 
