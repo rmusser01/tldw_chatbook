@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,20 @@ from Tests.UI.modal_wide_tier_registry import (
     WIDE_TIER_WIDTH_PERCENT,
     WIDE_VIEWPORT_COLUMNS,
 )
+from tldw_chatbook.Library.library_prompts_state import (
+    begin_prompt_collection_catalog,
+)
 from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
+from tldw_chatbook.Skills_Interop.recovery_activation import RecoveryReview
+from tldw_chatbook.UI.ChatbookCreationWindow import ChatbookCreationWindow
+from tldw_chatbook.UI.ChatbookExportManagementWindow import (
+    ChatbookExportManagementWindow,
+)
+from tldw_chatbook.UI.ChatbookTemplatesWindow import ChatbookTemplatesWindow
+from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
+    PromptCollectionManagerModal,
+)
+from tldw_chatbook.UI.Screens.skills_screen import SkillRecoveryReviewModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
@@ -47,6 +61,7 @@ from tldw_chatbook.Widgets.Library.notes_recovery_dialog import NotesRecoveryDia
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
     BuddyManagementModal,
 )
+from tldw_chatbook.Widgets.template_selector import TemplateSelectorDialog
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CSS_ROOT = REPO_ROOT / "tldw_chatbook/css"
@@ -320,6 +335,10 @@ try:  # The real toggle, from the app module (heavy import, done once).
 
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
+        # ChatbookCreationWindow.on_mount reads self.app.config_data (the
+        # real TldwCli carries one); the empty dict is the no-user-name path.
+        config_data: dict = {}  # noqa: RUF012 - class-level default is the point
+
     def test_real_app_carries_the_wide_viewport_toggle() -> None:
         """TldwCli inherits the shared toggle, not just the test harness."""
         assert WideViewportTierMixin in TldwCli.__mro__
@@ -330,7 +349,7 @@ except ImportError:  # RED phase: mixin not shipped yet.
         pytest.fail("WideViewportTierMixin not importable from tldw_chatbook.app")
 
 
-def _build_prompts_modal() -> ConsolePromptsModal:
+def _build_prompts_modal(_app: object) -> ConsolePromptsModal:
     return ConsolePromptsModal(
         capabilities=lambda _source: object(),
         list_page=lambda _source, _page: [],
@@ -340,7 +359,7 @@ def _build_prompts_modal() -> ConsolePromptsModal:
     )
 
 
-def _build_system_prompt_modal() -> ConsoleSystemPromptModal:
+def _build_system_prompt_modal(_app: object) -> ConsoleSystemPromptModal:
     async def _save_to_library(_name: str, _text: str) -> str:
         return "saved"
 
@@ -350,15 +369,15 @@ def _build_system_prompt_modal() -> ConsoleSystemPromptModal:
     )
 
 
-def _build_reaction_picker_modal() -> ConsoleReactionPickerModal:
+def _build_reaction_picker_modal(_app: object) -> ConsoleReactionPickerModal:
     return ConsoleReactionPickerModal(options=[])
 
 
-def _build_buddy_management_modal() -> BuddyManagementModal:
+def _build_buddy_management_modal(_app: object) -> BuddyManagementModal:
     return BuddyManagementModal()
 
 
-def _build_notes_recovery_modal() -> NotesRecoveryDialog:
+def _build_notes_recovery_modal(_app: object) -> NotesRecoveryDialog:
     async def approve(_review: object) -> None:
         return None
 
@@ -373,19 +392,129 @@ def _build_notes_recovery_modal() -> NotesRecoveryDialog:
     return NotesRecoveryDialog(review, current=lambda: True, approve=approve)
 
 
+def _build_skills_recovery_modal(_app: object) -> SkillRecoveryReviewModal:
+    review = RecoveryReview("fixture", (), ("/tmp", 0, 0), (), (), (), "fixture")
+    return SkillRecoveryReviewModal(review, Path("/tmp"), lambda: True)
+
+
+def _build_prompt_collection_modal(_app: object) -> PromptCollectionManagerModal:
+    async def load(**_kwargs: object) -> object:
+        return begin_prompt_collection_catalog(query="", request_token=1)
+
+    async def create(_name: str) -> object:
+        return begin_prompt_collection_catalog(query="", request_token=2)
+
+    async def rename(_collection_id: int, _name: str) -> object:
+        return begin_prompt_collection_catalog(query="", request_token=3)
+
+    return PromptCollectionManagerModal(
+        mode="browse",
+        selected_collection_id=None,
+        staged_collection_ids=(),
+        load_catalog=load,
+        create_collection=create,
+        rename_collection=rename,
+    )
+
+
+class _MountedCreationWindow(ChatbookCreationWindow):
+    """Shipped window minus its constructor bug.
+
+    ``ChatbookCreationWindow.__init__`` assigns ``self.app = app_instance``,
+    but ``Widget.app`` is a read-only property, so every construction of the
+    shipped class raises ``AttributeError`` (only call site:
+    ``UI/Tools_Settings_Window.py``). The ``app`` class attribute here
+    shadows the property so the assignment stores the REAL harness app
+    normally (Textual's own screen registration reads ``self.app`` too);
+    CSS, compose and ``on_mount`` are the shipped class's. Drop this
+    subclass when the constructor is fixed (documented in
+    .superpowers/wave2-report.md).
+    """
+
+    app = None
+
+
+def _build_chatbook_creation_modal(app: object) -> _MountedCreationWindow:
+    # Two constructor dependencies load the CLI config, which trips this
+    # machine's pre-existing ``RecoveryRequired: raw_source_selection_changed``
+    # profile condition when config first loads mid-test-session (see
+    # .superpowers/wide-tier-rollout-report.md, environment note). Both are
+    # stubbed just around __init__ and the window only stores the results:
+    # get_chatbook_database_paths -> paths that do not exist (the fresh-
+    # install empty-database branch on_mount reads from self.db_paths), and
+    # ChatbookCreator -> None (self.creator is only touched by the create
+    # button's action, never on the mount/geometry path).
+    import tldw_chatbook.UI.ChatbookCreationWindow as creation_module
+
+    empty_dir = Path(tempfile.mkdtemp(prefix="tldw-wide-tier-spot-"))
+    real_paths = creation_module.get_chatbook_database_paths
+    real_creator = creation_module.ChatbookCreator
+    creation_module.get_chatbook_database_paths = lambda: {
+        "ChaChaNotes": str(empty_dir / "chachanotes.db"),
+        "Prompts": str(empty_dir / "prompts.db"),
+        "Media": str(empty_dir / "media.db"),
+    }
+    creation_module.ChatbookCreator = lambda *_args, **_kwargs: None
+    try:
+        return _MountedCreationWindow(app)  # type: ignore[arg-type]
+    finally:
+        creation_module.get_chatbook_database_paths = real_paths
+        creation_module.ChatbookCreator = real_creator
+
+
+def _build_chatbook_export_modal(app: object) -> ChatbookExportManagementWindow:
+    # app_instance is only stored; every mount-path read goes through
+    # getattr-with-defaults, so the harness app exercises the empty-list
+    # fallbacks. get_private_chatbooks_dir is stubbed around __init__ for
+    # the same config-load reason as the creation window above; the empty
+    # temp dir is the no-exports-yet branch.
+    import tldw_chatbook.UI.ChatbookExportManagementWindow as export_module
+
+    empty_dir = Path(tempfile.mkdtemp(prefix="tldw-wide-tier-spot-"))
+    real_dir = export_module.get_private_chatbooks_dir
+    export_module.get_private_chatbooks_dir = lambda: empty_dir
+    try:
+        return ChatbookExportManagementWindow(app)  # type: ignore[arg-type]
+    finally:
+        export_module.get_private_chatbooks_dir = real_dir
+
+
+def _build_chatbook_templates_modal(app: object) -> ChatbookTemplatesWindow:
+    return ChatbookTemplatesWindow(app)  # type: ignore[arg-type]
+
+
+def _build_template_selector_modal(_app: object) -> TemplateSelectorDialog:
+    # on_mount's get_eval_templates import failure is pre-existing and
+    # swallowed by the widget (existing logger.error, empty template list);
+    # the dialog mounts either way.
+    return TemplateSelectorDialog()
+
+
 #: One representative per cap tier: anchor -> (cap, base width rule).
 #: Base geometry is pinned here so the tier provably leaves it untouched:
 #: prompts ``90% / 104``, system prompt ``84 / 95%``, reaction ``76 / 100%``.
 #: ``#buddy-management`` (PR #2742 review addition) additionally pins one of
 #: the newly registered surfaces: ``78 / 96%`` base, 120 cap.
-#: ``#notes-recovery-dialog`` (wave 2) pins one of the skip-list follow-up
-#: surfaces: ``85% / 100`` base, 170 cap.
+#: The wave-2 entries pin every surface that wave registered (PR #2748
+#: review: committed spot-mount coverage for all of them, not just one):
+#: ``#notes-recovery-dialog`` ``85% / 100`` base, 170 cap;
+#: ``#skills-recovery-review`` ``90% / 110``, 170; the three Chatbook work
+#: windows ``90% / 120`` and ``80% / 100``, 170;
+#: ``#prompt-collection-manager`` fixed ``96``, 150;
+#: ``TemplateSelectorDialog .template-selector-dialog`` (base rule shipped
+#: with wave 2) ``95% / 76``, 120.
 SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     WIDE_TIER_CAPS[170]: (170, (104, 90)),  # base max-width, base percent
     WIDE_TIER_CAPS[150]: (150, (84, 95)),
     WIDE_TIER_CAPS[120]: (120, (76, 100)),
     "#buddy-management": (120, (78, 96)),
     "#notes-recovery-dialog": (170, (100, 85)),
+    "#skills-recovery-review": (170, (110, 90)),
+    "ChatbookCreationWindow > Container": (170, (120, 90)),
+    "ChatbookExportManagementWindow > Container": (170, (120, 90)),
+    "ChatbookTemplatesWindow > Container": (170, (100, 80)),
+    "#prompt-collection-manager": (150, (96, None)),
+    "TemplateSelectorDialog .template-selector-dialog": (120, (76, 95)),
 }
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
@@ -393,6 +522,12 @@ SPOT_BUILDERS = {
     WIDE_TIER_CAPS[120]: _build_reaction_picker_modal,
     "#buddy-management": _build_buddy_management_modal,
     "#notes-recovery-dialog": _build_notes_recovery_modal,
+    "#skills-recovery-review": _build_skills_recovery_modal,
+    "ChatbookCreationWindow > Container": _build_chatbook_creation_modal,
+    "ChatbookExportManagementWindow > Container": _build_chatbook_export_modal,
+    "ChatbookTemplatesWindow > Container": _build_chatbook_templates_modal,
+    "#prompt-collection-manager": _build_prompt_collection_modal,
+    "TemplateSelectorDialog .template-selector-dialog": _build_template_selector_modal,
 }
 
 
@@ -425,7 +560,7 @@ async def test_spot_modal_geometry_per_tier(anchor: str, size: tuple[int, int]) 
     """A representative per cap tier scales up wide and holds base narrow."""
     cap, (base_max, base_percent) = SPOT_REPRESENTATIVES[anchor]
     app = WideTierHarness()
-    modal = SPOT_BUILDERS[anchor]()
+    modal = SPOT_BUILDERS[anchor](app)
 
     async with app.run_test(size=size) as pilot:
         await app.push_screen(modal)
@@ -460,7 +595,7 @@ async def test_spot_modal_wide_tier_tracks_live_resize(
     """An open modal re-syncs its tier when the viewport crosses the breakpoint."""
     cap, (base_max, base_percent) = SPOT_REPRESENTATIVES[anchor]
     app = WideTierHarness()
-    modal = SPOT_BUILDERS[anchor]()
+    modal = SPOT_BUILDERS[anchor](app)
 
     async with app.run_test(size=start_size) as pilot:
         await app.push_screen(modal)
