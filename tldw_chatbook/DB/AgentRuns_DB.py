@@ -270,7 +270,13 @@ class AgentRunsDB(BaseDB):
     #: persistence path; a recently-used held connection is known-good.
     _LIVENESS_PING_IDLE_SECONDS = 30.0
 
-    def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str = "default",
+        *,
+        reconcile_on_init: bool = True,
+    ) -> None:
         self._thread_local = threading.local()
         self.receipt_capability_available = False
         super().__init__(db_path, client_id)
@@ -281,10 +287,15 @@ class AgentRunsDB(BaseDB):
         # memory DBs and against re-sweeping a path already swept this
         # process, so a later explicit call is also a no-op (see its
         # docstring).
-        try:
-            self.reconcile_orphaned_runs()
-        except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
-            logger.warning(f"AgentRunsDB reconcile skipped: {exc}")
+        # TASK-32804.10 AC#3: a compose-path construction (the Agents
+        # settings panel) passes reconcile_on_init=False and runs the
+        # (idempotent) sweep on a worker thread, so the BEGIN IMMEDIATE
+        # scan never blocks the Textual event loop.
+        if reconcile_on_init:
+            try:
+                self.reconcile_orphaned_runs()
+            except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
+                logger.warning(f"AgentRunsDB reconcile skipped: {exc}")
 
     @cached_property
     def automatic_work(self) -> AutomaticWorkLedger:
@@ -2390,17 +2401,18 @@ class AgentRunsDB(BaseDB):
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
         with self.transaction() as conn:
+            # TASK-32804.10: step payloads for the terminal-row scan are
+            # hydrated once through the class's chunked batch hydrate
+            # (no N+1) and memoised here, instead of one SELECT +
+            # json.loads per run inside the sweep.
+            _observation_steps: dict[str, list[dict]] = {}
 
             def run_observations(run_id: str) -> tuple[list[dict], int, str]:
-                parsed: list[dict] = []
-                for step_row in conn.execute(
-                    "SELECT payload FROM agent_run_steps WHERE run_id = ?",
-                    (run_id,),
-                ).fetchall():
-                    try:
-                        parsed.append(json.loads(step_row["payload"]))
-                    except (TypeError, json.JSONDecodeError):
-                        continue
+                if run_id not in _observation_steps:
+                    _observation_steps[run_id] = self._batch_hydrate_steps(
+                        conn, [run_id]
+                    ).get(run_id, [])
+                parsed = _observation_steps[run_id]
                 ordered = [
                     step
                     for step in parsed
@@ -2506,6 +2518,15 @@ class AgentRunsDB(BaseDB):
                 "SELECT id, status FROM agent_runs WHERE status != 'running' "
                 "AND agent_kind IN ('primary', 'subagent')"
             ).fetchall()
+            # Pre-load the whole scan's step payloads in one batched read so
+            # run_observations below never queries per row (TASK-32804.10).
+            _hydrated_terminal = self._batch_hydrate_steps(
+                conn, [row["id"] for row in terminal_rows]
+            )
+            for _terminal_row in terminal_rows:
+                _observation_steps.setdefault(
+                    _terminal_row["id"], _hydrated_terminal.get(_terminal_row["id"], [])
+                )
             split_rows = 0
             repaired_orphans = set(orphan_ids)
             for row in terminal_rows:
