@@ -1,0 +1,18 @@
+......                                                                   [100%]
+- generated xml file: /private/tmp/tldw-2726-modal-geometry-before-001/results.xml -
+============================= slowest 25 durations =============================
+3.12s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-dictionary]
+3.11s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-dictionary]
+3.11s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-conversation]
+3.08s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-conversation]
+3.06s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-dark-extraction]
+3.02s call     Tests/UI/test_wide_modal_selector_geometry.py::test_wide_modal_preserves_geometry_through_threshold_and_resize[textual-light-extraction]
+
+(12 durations < 1s hidden.)
+6 passed in 20.26s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-91c85888-f472-4865-9c89-e8757ae39786/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-91c85888-f472-4865-9c89-e8757ae39786/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-91c85888-f472-4865-9c89-e8757ae39786
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-91c85888-f472-4865-9c89-e8757ae39786'
+  warnings.warn(

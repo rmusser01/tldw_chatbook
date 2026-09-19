@@ -1,0 +1,30 @@
+{
+  "compared_to": "/private/tmp/tldw-32837-native-current-002/evidence",
+  "equal_except_timestamps": [
+    "textual-dark-120x40-missing-permissions.txt",
+    "textual-dark-120x40-missing-tools.txt",
+    "textual-dark-120x40-permissions.txt",
+    "textual-dark-120x40-source-permissions.txt",
+    "textual-dark-120x40-source-tools.txt",
+    "textual-dark-120x40-tools.txt",
+    "textual-dark-170x48-missing-permissions.txt",
+    "textual-dark-170x48-missing-tools.txt",
+    "textual-dark-170x48-permissions.txt",
+    "textual-dark-170x48-source-permissions.txt",
+    "textual-dark-170x48-source-tools.txt",
+    "textual-dark-170x48-tools.txt",
+    "textual-light-120x40-missing-permissions.txt",
+    "textual-light-120x40-missing-tools.txt",
+    "textual-light-120x40-permissions.txt",
+    "textual-light-120x40-source-permissions.txt",
+    "textual-light-120x40-source-tools.txt",
+    "textual-light-120x40-tools.txt",
+    "textual-light-170x48-missing-permissions.txt",
+    "textual-light-170x48-missing-tools.txt",
+    "textual-light-170x48-permissions.txt",
+    "textual-light-170x48-source-permissions.txt",
+    "textual-light-170x48-source-tools.txt",
+    "textual-light-170x48-tools.txt"
+  ],
+  "total": 24
+}

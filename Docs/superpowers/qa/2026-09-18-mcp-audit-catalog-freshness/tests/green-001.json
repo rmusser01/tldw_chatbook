@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[replaced-tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[replaced-permissions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[removed-tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_resolves_catalog_published_while_clearing[removed-permissions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_waits_for_in_progress_catalog_publication[tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_audit_waits_for_in_progress_catalog_publication[permissions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-dark-tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-dark-permissions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-light-tools]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_real_app_audit_action_renders_refreshed_definition[textual-light-permissions]",
+      "status": "passed"
+    }
+  ]
+}

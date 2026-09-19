@@ -1,0 +1,37 @@
+........................................................................ [ 42%]
+........................................................................ [ 85%]
+........................                                                 [100%]
+-- generated xml file: /private/tmp/tldw-32838-current-final-001/results.xml ---
+============================= slowest 25 durations =============================
+20.31s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+17.74s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+14.00s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-tools]
+11.73s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-dark-permissions]
+11.01s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-tools]
+10.55s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_real_app_audit_action_renders_refreshed_definition[textual-light-permissions]
+10.47s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]
+9.29s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]
+9.27s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]
+8.55s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]
+4.45s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+4.37s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[permissions]
+4.21s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_waits_for_in_progress_catalog_publication[tools]
+4.01s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-open-tool-AuditOpenToolRequested]
+3.86s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_catalog_navigation_rejects_profile_change_during_row_selection[tools]
+3.77s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+3.75s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-permissions]
+3.71s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-tools]
+3.68s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_catalog_navigation_rejects_profile_change_during_row_selection[permissions]
+3.65s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[disconnected-permissions]
+3.63s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[tool]
+3.63s call     Tests/UI/test_mcp_audit_catalog_freshness.py::test_audit_resolves_catalog_published_while_clearing[removed-tools]
+3.60s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[permission]
+3.60s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]
+3.56s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]
+168 passed in 376.85s (0:06:16)
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8387f046-a0ef-4513-b757-f4f901bec6f9/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8387f046-a0ef-4513-b757-f4f901bec6f9/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8387f046-a0ef-4513-b757-f4f901bec6f9
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8387f046-a0ef-4513-b757-f4f901bec6f9'
+  warnings.warn(
