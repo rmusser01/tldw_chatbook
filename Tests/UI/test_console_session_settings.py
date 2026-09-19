@@ -6629,6 +6629,374 @@ async def test_provider_picker_selection_message_switches_entry_without_crash() 
         assert modal._draft.settings.provider == "custom-ep:gpu-box"
 
 
+async def _reachable_two_model_tester(
+    _identity: ProviderDraftIdentity,
+) -> ProviderProbeResult:
+    """Offline entry-discovery seam: reachable, two served models."""
+    return ProviderProbeResult("reachable", ("model-a", "model-b"))
+
+
+async def _drain_entry_probe(pilot, modal) -> None:  # type: ignore[no-untyped-def]
+    """Pump until a deferred entry probe starts, then until it settles."""
+    for _ in range(40):
+        await pilot.pause(0.05)
+        if modal._active_connection_probe_token is not None:
+            break
+    for _ in range(40):
+        await pilot.pause(0.05)
+        if modal._active_connection_probe_token is None:
+            return
+
+
+def _discovery_status_text(modal: ConsoleSettingsModal) -> str:
+    status = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+    return str(getattr(status.renderable, "plain", status.renderable))
+
+
+def _readiness_text(modal: ConsoleSettingsModal) -> str:
+    readiness = modal.query_one("#console-settings-readiness", Static)
+    return str(getattr(readiness.renderable, "plain", readiness.renderable))
+
+
+@pytest.mark.asyncio
+async def test_entry_draft_has_entry_scoped_discovery_identity() -> None:
+    """TASK-32566: custom-ep drafts must carry a real discovery identity.
+
+    The fencing identity is scoped to the ENTRY -- family execution key as
+    the provider, the entry's persisted URL as the connection identity, and
+    the dashed entry id -- mirroring how provider-level identities are
+    built. Pre-fix ``_current_draft_discovery_identity`` returned None for
+    every custom-ep draft, so no discovery evidence could ever settle
+    (qodo PR-2668 finding 4).
+    """
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu-box", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        identity = modal._current_draft_discovery_identity()
+        assert identity is not None
+        assert identity.provider_key == "llama_cpp"
+        assert identity.connection_identity == canonical_connection_identity(
+            "llama_cpp", "http://192.168.1.9:8080"
+        )
+        assert identity.entry_id == "custom-ep:gpu-box"
+
+        probe_identity = modal._current_connection_probe_identity()
+        assert probe_identity is not None
+        assert probe_identity.provider_key == "llama_cpp"
+        assert probe_identity.connection_identity == identity.connection_identity
+
+
+@pytest.mark.asyncio
+async def test_provider_level_discovery_identity_has_no_entry_scope() -> None:
+    """TASK-32566 companion: provider-level discovery is unaffected.
+
+    Built-in provider drafts keep their exact provider-level identity and
+    carry no entry scope.
+    """
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", base_url="http://127.0.0.1:9099"
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        identity = modal._current_draft_discovery_identity()
+        assert identity is not None
+        assert identity.provider_key == "llama_cpp"
+        assert identity.entry_id is None
+        assert modal._current_connection_probe_identity() is not None
+
+
+@pytest.mark.asyncio
+async def test_endpoint_created_entry_discovery_settles_and_surfaces() -> None:
+    """TASK-32566: the post-Create entry probe must settle, not vanish.
+
+    Pre-fix the follow-up probe reported status but the anti-stale fencing
+    discarded the result because the custom-ep draft identity was None; the
+    evidence store never settled and the readiness panel kept showing
+    "Endpoint · Not tested" (UAT re-run R2 discovery-evidence note).
+    """
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app, modal = _registry_rebase_harness(
+        connection_tester=_reachable_two_model_tester
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.post_message(
+            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
+        )
+        await _drain_entry_probe(pilot, modal)
+
+        assert modal._active_provider == "custom-ep:gpu-box"
+        identity = modal._current_connection_probe_identity()
+        assert identity is not None
+        evidence = modal._connection_evidence_store.evidence_for(identity)
+        assert evidence is not None
+        assert evidence.endpoint == "reachable"
+        assert tuple(evidence.model_ids) == ("model-a", "model-b")
+        assert "2 models listed" in _discovery_status_text(modal)
+        assert "Endpoint · Reachable" in _readiness_text(modal)
+        assert modal._discovered_model_ids.get("custom-ep:gpu-box") == (
+            "model-a",
+            "model-b",
+        )
+
+
+@pytest.mark.asyncio
+async def test_endpoint_created_entry_discovery_settles_failure() -> None:
+    """TASK-32566: a failed entry probe settles as an honest failure.
+
+    Settling is not only for success: an unreachable entry endpoint must
+    land in the evidence store (readiness "Endpoint · Unreachable") instead
+    of being silently discarded by the draft fencing.
+    """
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app, modal = _registry_rebase_harness(
+        connection_tester=_unreachable_connection_tester
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.post_message(
+            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
+        )
+        await _drain_entry_probe(pilot, modal)
+
+        assert modal._active_provider == "custom-ep:gpu-box"
+        identity = modal._current_connection_probe_identity()
+        assert identity is not None
+        evidence = modal._connection_evidence_store.evidence_for(identity)
+        assert evidence is not None
+        assert evidence.endpoint == "unreachable"
+        assert "Connection failed" in _discovery_status_text(modal)
+        assert "Endpoint · Unreachable" in _readiness_text(modal)
+
+
+@pytest.mark.asyncio
+async def test_entry_discovery_survives_manual_discover_press() -> None:
+    """TASK-32566: the manual Discover affordance works for entry drafts.
+
+    Pre-fix ``_provider_supports_model_discovery`` resolved the raw entry id
+    through ``provider_config_key`` (never a URL-based key), so the button
+    was hidden for entries; with an entry-scoped identity the press settles
+    evidence against the entry's family contract and its own URL.
+    """
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu-box", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                connection_tester=_reachable_two_model_tester,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        assert modal._provider_supports_model_discovery("custom-ep:gpu-box") is True
+        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        assert discover.display is True
+        assert discover.disabled is False
+
+        discover.press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_connection_probe_token is None:
+                break
+
+        identity = modal._current_connection_probe_identity()
+        assert identity is not None
+        evidence = modal._connection_evidence_store.evidence_for(identity)
+        assert evidence is not None
+        assert evidence.endpoint == "reachable"
+        assert "2 models listed" in _discovery_status_text(modal)
+        assert "Endpoint · Reachable" in _readiness_text(modal)
+
+
+def _two_entry_registry_app_config() -> dict:
+    """Registry config with two same-family entries sharing one URL."""
+    app_config = _registry_app_config()
+    app_config["custom_endpoints"]["relay"] = {
+        "display_name": "Relay",
+        "family": "llama_cpp",
+        "base_url": "http://192.168.1.9:8080",
+        "models": ["model-a"],
+    }
+    return app_config
+
+
+@pytest.mark.asyncio
+async def test_entry_switch_discards_stale_discovery_evidence() -> None:
+    """TASK-32566 fencing: a different entry id or URL is a different draft.
+
+    Two entries of one family sharing the same URL must not reuse each
+    other's settled evidence: the dashed entry id scopes the identity, and
+    editing the selected entry's URL changes the connection identity, so
+    stale results are discarded in both directions.
+    """
+    app = ModalHarness()
+    app.app_config = _two_entry_registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu-box", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                connection_tester=_reachable_two_model_tester,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_connection_probe_token is None:
+                break
+
+        identity_a = modal._current_connection_probe_identity()
+        assert identity_a is not None
+        assert (
+            modal._connection_evidence_store.evidence_for(identity_a) is not None
+        )
+
+        # Switch to the sibling entry: same family, same URL, different id.
+        modal._switch_provider("custom-ep:relay")
+        await pilot.pause()
+        identity_b = modal._current_connection_probe_identity()
+        assert identity_b is not None
+        assert identity_b != identity_a
+        assert identity_b.connection_identity == identity_a.connection_identity
+        assert modal._connection_evidence_store.evidence_for(identity_b) is None
+        assert "custom-ep:gpu-box" not in modal._discovered_model_ids
+
+        # Editing the selected entry's URL is a new connection identity.
+        app.app_config["custom_endpoints"]["relay"]["base_url"] = (
+            "http://192.168.1.9:9090"
+        )
+        identity_c = modal._current_draft_discovery_identity()
+        assert identity_c is not None
+        assert identity_c.connection_identity != identity_b.connection_identity
+        assert (
+            modal._connection_evidence_store.evidence_for(
+                modal._current_connection_probe_identity()
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_switching_away_from_entry_cancels_inflight_discovery_worker() -> None:
+    """TASK-32566: the entry probe worker sits in the cancellable group.
+
+    The pre-fix entry probe ran in group ``console-model-discovery`` while
+    ``_cancel_connection_probe`` cancels ``console-settings-model-discovery``,
+    so switching providers left the entry probe worker running uncancelled.
+    """
+    cancelled: list[bool] = []
+
+    async def hanging_tester(_identity: ProviderDraftIdentity) -> ProviderProbeResult:
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+        return ProviderProbeResult("reachable", ())
+
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    settings = ConsoleSessionSettings(
+        provider="custom-ep:gpu-box", model="model-a", base_url=None
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                connection_tester=hanging_tester,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if modal._active_connection_probe_token is not None:
+                break
+        assert modal._active_connection_probe_token is not None
+
+        modal._switch_provider("llama_cpp")
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if cancelled:
+                break
+        assert cancelled == [True]
+
+
 def test_suspended_draft_snapshot_accepts_registry_provider_identity() -> None:
     """CE-001 (snapshot layer): a suspended draft captured while a registry
     entry is selected must validate -- the dashed ``custom-ep:<slug>`` id is
