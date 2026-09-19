@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[audit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_all_guidance_stays_hidden_through_refresh_then_restores[finding]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_guidance_returns_only_after_last_detail_clears",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size0-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size0-textual-light]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size1-textual-dark]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector_guidance::test_real_workbench_detail_owns_guidance_visibility[size1-textual-light]",
+      "status": "passed"
+    }
+  ]
+}
