@@ -51,7 +51,7 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-19/report.md`.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Landed 2026-09-19, commit `7b78a6da57` on `fix/cascade-prep` (branch rebased onto `origin/dev` `cccf0acdad` first — dev's 22 intervening commits touch none of this branch's files). TDD red→green: 4 pins failed for the right reasons pre-implementation, all 16 green after.
+PR: #2747 (wave 2, stacked on #2746). Landed 2026-09-19, commit `7b78a6da57` on `fix/cascade-prep` (branch rebased onto `origin/dev` `cccf0acdad` first — dev's 22 intervening commits touch none of this branch's files). TDD red→green: 4 pins failed for the right reasons pre-implementation, all 16 green after.
 
 - **Shared shim first:** `tldw_chatbook/LLM_Calls/legacy_line_stream.py` — the ~60-line line-relay shim extracted from the two identical per-provider classes; groq.py/openrouter.py refactored onto it and their own copies deleted (verified green before the new providers).
 - **Profiles:** `deepseek.py` (331 lines) and `mistral.py` (324) on the established pattern. Mistral's specifics preserved and pinned: `random_seed`/`safe_prompt` keys, `Accept: application/json` via `extra_headers`, system-message dedup, `mistralai` endpoint key, no stop/penalties/top_k forwarded. deepseek is the standard OpenAI payload.
