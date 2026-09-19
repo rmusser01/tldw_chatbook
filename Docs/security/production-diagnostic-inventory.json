@@ -4033,31 +4033,10 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "1e67452b57a601b52aaa",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/file_list_item_enhanced.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 2,
       "diagnostic_digest": "886acbd53a6db54b57e1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/file_picker_dialog.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 9,
-      "diagnostic_digest": "9781ad97e8c13f80ba44",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/lazy_widgets.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 22,
-      "diagnostic_digest": "4462244f55936fa4e376",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/media_details_widget.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10551,20 +10530,6 @@
     {
       "candidates": [
         {
-          "call_digest": "ee06db7f0ef8255f",
-          "method": "error",
-          "path_expressions": [
-            "self.file_path"
-          ],
-          "scope": "FileListItemEnhanced._get_file_metadata",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Widgets/file_list_item_enhanced.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "a4b45cd8afed1e99",
           "method": "error",
           "path_expressions": [
@@ -11512,11 +11477,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 608,
-    "path_privacy_candidate_calls": 701,
+    "owner_files": 605,
+    "path_privacy_candidate_calls": 700,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
     "task_492_calls": 1407,
-    "task_494_calls": 7760
+    "task_494_calls": 7728
   }
 }
