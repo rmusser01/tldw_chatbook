@@ -77,6 +77,13 @@ MAX_LIST_ENTRIES = 200
 #: ``max_entries`` display cap ever applies.
 MAX_SCAN_ENTRIES = 10_000
 MAX_READ_CHARS = 32 * 1024  # provider byte-fits too; core caps content meaningfully
+
+#: TASK-32806.6: `read_file` output is capped at MAX_READ_CHARS, but it
+#: still `read_text()`s the WHOLE file first -- a 150 MB single-line file
+#: cost ~390 MB RSS and ~2.8 s to return 32 KB. Bound the source too, on
+#: `st_size` before materialising it. Well above any real source file the
+#: 32 KB window would show.
+MAX_READ_FILE_BYTES = 10 * 1024 * 1024
 MAX_GLOB_RESULTS = 100
 MAX_GREP_RESULTS = 100
 _MAX_GREP_FILE_BYTES = 2 * 1024 * 1024  # skip huge files
@@ -336,6 +343,12 @@ def _read_relative_file(
         relative, workspace, sensitive_exclusions, is_directory=False
     ) or not target.is_file():
         raise LocalToolError(f"file not found: {display_path or relative}")
+    file_size = target.stat().st_size
+    if file_size > MAX_READ_FILE_BYTES:
+        raise LocalToolError(
+            f"'{display_path or relative}' is too large to read "
+            f"({file_size} bytes; maximum {MAX_READ_FILE_BYTES})"
+        )
     with open(target, "rb") as fh:
         sniff = fh.read(8192)
     if b"\x00" in sniff:
@@ -853,7 +866,18 @@ def _edit_relative_file(
         raise LocalToolError(
             f"new_string is not UTF-8 encodable (lone surrogate?): {exc}"
         ) from exc
-    target.write_bytes(data)
+    # TASK-32806.6: route the write through the same O_EXCL-temp + fsync +
+    # os.replace path fs_write uses, instead of a plain in-place
+    # `write_bytes` (truncate-then-write, no fsync, follows a symlink at the
+    # target). The file exists here -- we just read it -- so it is a replace,
+    # not a create.
+    _atomic_write_target(
+        target,
+        data,
+        shown=shown,
+        expected_sha256=None,
+        expected_absent=False,
+    )
     n = count if replace_all else 1
     return f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
 

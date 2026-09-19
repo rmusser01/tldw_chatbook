@@ -56,6 +56,13 @@ __all__ = [
 ]
 
 
+#: TASK-32806.6: the picker offers an "All Files" filter, so the trace is a
+#: user-picked file of any size. It was read whole and then parsed whole,
+#: with no ceiling. A trace is small structured JSON; 25 MB is far above any
+#: real one and far below anything that hurts.
+_MAX_TRACE_FILE_BYTES = 25 * 1024 * 1024
+
+
 class TrajectoryImportError(TrajectoryExportError):
     """A trace file that could not be read, parsed, validated, or mapped.
 
@@ -88,10 +95,28 @@ def _read_document(source: Path | str | Mapping) -> dict:
         return dict(source)
     path = Path(source)
     try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise TrajectoryImportError(
+            f"Cannot read trajectory trace file '{path}': {exc.strerror or exc}"
+        ) from exc
+    if size > _MAX_TRACE_FILE_BYTES:
+        raise TrajectoryImportError(
+            f"'{path}' is too large to import "
+            f"({size} bytes; maximum {_MAX_TRACE_FILE_BYTES})"
+        )
+    try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise TrajectoryImportError(
             f"Cannot read trajectory trace file '{path}': {exc.strerror or exc}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        # TASK-32806.6: the seam only caught OSError, so a non-UTF-8 file
+        # escaped it as a bare UnicodeDecodeError. It is an invalid trace,
+        # so it surfaces as this seam's own error type like the others.
+        raise TrajectoryImportError(
+            f"'{path}' is not a valid trajectory trace: not UTF-8 text"
         ) from exc
     try:
         document = json.loads(text)
@@ -99,6 +124,11 @@ def _read_document(source: Path | str | Mapping) -> dict:
         raise TrajectoryImportError(
             f"'{path}' is not a valid trajectory trace: not valid JSON "
             f"(line {exc.lineno}, column {exc.colno}: {exc.msg})"
+        ) from exc
+    except RecursionError as exc:
+        # Deeply nested JSON overflows the decoder's recursion. Same seam.
+        raise TrajectoryImportError(
+            f"'{path}' is not a valid trajectory trace: nested too deeply"
         ) from exc
     if not isinstance(document, dict):
         raise TrajectoryImportError(
