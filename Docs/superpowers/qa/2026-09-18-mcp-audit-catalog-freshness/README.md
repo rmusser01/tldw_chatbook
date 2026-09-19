@@ -1,78 +1,78 @@
-# Audit catalog freshness — TASK-32838
+# Audit catalog freshness — TASK-32838 / PR2726
 
-Audit drilldowns kept the tool object captured before their clearing awaits.
-A completed catalog refresh could therefore leave a current row next to an old
-description, schema or connection state, or show detail for a removed tool.
-Both destinations now acquire the existing catalog publication lock, validate
-the profile and resolve the current identity before selecting/rendering detail.
-The lock remains held through inspector waits, with the existing workbench to
-inspector ordering. A vanished identity clears detail and warns.
+Audit navigation can wait while the catalog replaces the selected tool. Both
+drilldowns now resolve that identity again under the existing publication lock,
+then select the row and render its current description, schema and availability.
+Removed identities clear detail and warn. Merged row-selection checks, control
+ownership and post-selection profile validation remain intact.
 
-This repairs existing workbench synchronization under ADR-150/161. No new ADR,
-interface, persistence, permission policy, CSS or token change is introduced.
+PR2724 merged at `cccf0acdad8e939a55cb003588ff1406cef5d1f4`. This existing
+PR2726 draft is rebased onto that commit. [Conflict choices and visual review](CURRENT-DEV-REVIEW.md)
+cover the combined implementation; [original evidence](ORIGINAL-README.md)
+is retained as historical qualification against the earlier base.
 
-## Verification
+ADR required: no. Existing ADR-150/161 apply. This repairs existing publication
+synchronization without changing permission policy, persistence, interfaces,
+styles or token values.
 
-[62 distinct targeted cases pass](qualified-cases.json): 12 new cases, 24 adjacent
-inspector/workbench/table cases and 26 design/component governance checks.
-[Exact cases](selected-cases.txt) and [final output](tests/final-001.txt) record
-the scope. No full suite ran. Two warnings concern unrelated old pytest temporary
-folder cleanup; there are no test failures.
+## Current verification
 
-The initial [eight focused cases failed as intended](tests/red-001.txt): old
-descriptions, retained removed tools, and navigation finishing before a paused
-catalog publication. The [12 new cases then passed](tests/green-001.txt).
-They exercise the real catalog derivation and publication path for same-ID
-replacement, disconnection and removal, a publication paused after Tools rows
-but before permission state, and actual Audit actions in a dark/light real app.
-Adjacent cases preserve profile-change rejection and shared permission jumps.
+[168 distinct targeted cases pass](current-dev/final-cases.json): 14 catalog
+freshness, 32 Audit navigation, 23 permission navigation, 49 native launcher
+argument checks and 50 adjacent/governance cases. [Exact cases](current-dev/selected-cases.txt)
+and [output](current-dev/final-tests.txt) define the scope; no full suite ran.
+Two warnings concern cleanup of unrelated old pytest temporary directories.
 
-All [seven preflight guards](preflight.txt) pass. [Static analysis](static-analysis.json)
-adds no diagnostics; the workbench retains its 65 baseline diagnostics and new
-files are clean. New files and [changed production ranges](formatting.txt) pass
-formatting. Only formatting changed after the final test run started.
-[Independent review](independent-review.txt) found no concrete blockers.
+The two new profile-switch tests change the active profile during destination
+row selection. Both [fail when the preserved post-selection checks are removed](current-dev/profile-negative-tests.txt)
+and pass with the exact integrated source restored. The original replacement,
+removal, disconnection and incomplete-publication regressions remain covered.
+[All seven preflight guards](current-dev/preflight.txt) pass. [Ruff](current-dev/static-analysis.json)
+adds no diagnostics; workbench/inspector retain their 65/13 baseline findings.
+New files and [changed production ranges](current-dev/formatting.json) are
+formatted. [Independent review](current-dev/independent-review.txt) found no
+blockers in the navigation integration or QA refresh.
 
-## Native visual evidence
+## Native evidence and limits
 
-The real TldwCli runs with LinuxDriver and TTY streams inside a fresh private
-HOME, USERPROFILE, XDG and TLDW profile validated before imports. One synthetic
-metadata record identifies the real built-in `chat_with_llm` tool. The runner
-wraps the catalog collector to supply a controlled same-ID replacement during
-the action's Audit-clear await, then invokes the real catalog publication path.
-The replacement changes the label to `Refreshed catalog`, description to
-`Catalog refreshed during Audit navigation.`, and schema to a `review_query`
-field. This is controlled UI publication evidence, not a connected server
-changing its discovery output.
+The [current gallery](GALLERY.md) contains eight rendered and inspected captures
+from a real TldwCli/LinuxDriver terminal, dark/light at 120×40 and 170×48.
+Shared argument validation precedes application imports and output writes.
+The runner uses a fresh private HOME/USERPROFILE/XDG/TLDW profile, the supported
+terminal warm-up, grouped deferred imports and an outbound network guard.
+Keyboard-activated controls must be fully visible, painted and own their hit
+position. Paths and tmux names are validated; output reuse is rejected.
 
-In each dark/light × 120×40/170×48 cell, direct focus plus Enter activates the
-real Audit row and both action buttons. Full visibility of activated controls
-is asserted. Each journey starts from the original catalog, publishes its
-replacement during navigation, and verifies the selected identity, refreshed
-label/description/schema and exact destination row. Both destinations visibly
-use `Refreshed catalog` in the [eight inspected captures](GALLERY.md). Tools
-also shows the refreshed description. Schema, disconnection/removal, and a
-partially published catalog are covered by targeted tests; no tool executes.
+One synthetic metadata record targets the real built-in `chat_with_llm` tool.
+A controlled collector replacement publishes `Refreshed catalog`, a new
+description and `review_query` schema while each Audit action clears its source
+panel. Both destinations select the exact row and use the fresh definition.
+This is controlled UI publication evidence, not connected-server qualification.
+No tool executes and no permissions change.
 
-The [receipt](native/result.json) and [lifecycle check](lifecycle.json) record
-eight controlled replacements across four passing cells, unchanged permission
-profiles, normal App.run return, exit 0, absent process, released lock, ten
-healthy private databases, zero conversations/messages, unchanged default
-config/UI state/runtime policy and no app errors or faulthandler output. Eleven
-source hashes and the runner hash match final source. [Export hashes](export-manifest.json)
-distinguish originals from copies normalized only for trailing whitespace.
+Both private journeys pass these behavioral assertions. The replay [receipt](current-dev/native/result.json)
+and [lifecycle check](current-dev/lifecycle.json) record eight replacements,
+zero network attempts, one metadata record, unchanged permission profiles,
+normal App.run return, exit 0, absent process, released instance lock, ten
+healthy databases, zero conversations/messages and unchanged user-default files.
+All eleven application source hashes and both QA script hashes match.
 
-## Bounds and next review
+The first run exposed an intermittent light-wide Tools header misalignment;
+the selected row and fresh detail were correct. An unchanged-source replay
+shows aligned headers. [Both views and the investigation boundary](HEADER-FOLLOWUP.md)
+are retained: the replay does not prove the layout issue fixed. ToolsMode is
+unchanged from merged dev; a matching Textual header-cache hazard was found,
+but baseline reproduction is still needed to establish attribution. This PR
+qualifies catalog-current navigation, not general table-header reliability.
 
-This independent branch starts at dev `cef6bd2a3e3f0b8de0e166146acb4900ca7ea2b6`.
-PR #2724 separately repairs retired Audit controls and missing destination rows;
-its changes are not included here. Existing inspector-refresh, compact layout
-and guidance follow-ups remain separate. This repair covers navigation against
-pending publication; ongoing refresh of an already-open inspector remains with
-that earlier inspector-refresh follow-up. The 80×24 inspector, connected-runtime
-journeys and the wider component review are not qualified by this slice.
+[Export hashes](current-dev/export-manifest.json) and [normalization receipts](current-dev/log-export-manifest.json)
+identify the saved evidence. The [replay launch note](current-dev/replay-launch-note.txt)
+records a rejected reused-profile wrapper before the corrected private replay.
 
-Next: Permissions restored-roots review. Current-head CI and final visual
-approval remain required before merging this draft. [Allocation](allocation-census.json),
-[fresh census](precommit-census.json) and [sole ownership](allocation-owner-check.json)
-checks cover the task ID.
+## Remaining work
+
+PR2726 still requires current-head CI/review and its own owner visual approval.
+PR2724's approval does not authorize this merge. The header race is a bounded
+follow-up before Permissions restored-roots review. Already-open inspector
+refresh, 80×24 inspector reachability, connected-runtime journeys and the wider
+component workstream remain open in the [MCP ledger](../../reports/2026-09-18-mcp-review.md).

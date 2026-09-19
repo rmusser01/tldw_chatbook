@@ -1,0 +1,15 @@
+{
+  "distinct_cases": 2,
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_catalog_navigation_rejects_profile_change_during_row_selection[tools]",
+      "status": "failed",
+      "seconds": 3.796
+    },
+    {
+      "id": "Tests.UI.test_mcp_audit_catalog_freshness::test_catalog_navigation_rejects_profile_change_during_row_selection[permissions]",
+      "status": "failed",
+      "seconds": 3.139
+    }
+  ]
+}

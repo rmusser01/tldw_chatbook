@@ -1,5 +1,29 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2724 merged; PR2726 integrated
+
+PR2724 merged at `cccf0acdad8e939a55cb003588ff1406cef5d1f4` after owner
+approval, current-head CI and Qodo closeout. Concurrent PR2742 changed the merge
+tree outside MCP; the actual merged app passed 32 Audit cases and its 24 native
+captures matched approved terminal content apart from synthetic timestamps.
+PR2707's continuation heartbeat stays paused.
+
+Existing draft PR2726 / TASK-32838 is rebased onto that verified merged state.
+Both report histories are retained. The source conflict combines the fresh
+same-ID lookup with dev's row-selection and post-selection profile checks.
+[Conflict choices, 168 targeted passes, seven guards, independent review and
+fresh native visuals](../qa/2026-09-18-mcp-audit-catalog-freshness/CURRENT-DEV-REVIEW.md)
+are ready for this PR's own final visual approval and current-head CI/review.
+No merge approval transfers from PR2724.
+
+An [intermittent painted Tools header mismatch](../qa/2026-09-18-mcp-audit-catalog-freshness/HEADER-FOLLOWUP.md)
+was observed in one native run and absent in the unchanged-source replay.
+Attribution needs baseline reproduction; this remains a bounded follow-up before
+Permissions restored roots. Already-open inspector refresh, connected-runtime
+journeys and the wider screen review remain open. Older pending/next statements
+below are historical checkpoints.
+
+
 The token/component migration is implemented. The user's subsequent request to
 review each feature/component remains active. This ledger separates those two
 contracts so that another successful bounded review cannot accidentally close

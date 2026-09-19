@@ -18,6 +18,8 @@ from Tests.UI.test_mcp_workbench import (
 from Tests.UI.test_tool_profile_review_lifetime import _wait
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
@@ -203,3 +205,45 @@ async def test_real_app_audit_action_renders_refreshed_definition(
         table = workbench.query_one("#" + table_id, DataTable)
         key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
         assert key.value == "local:docs::search"
+
+
+@pytest.mark.parametrize("destination", ["tools", "permissions"])
+@private_profile_test
+async def test_catalog_navigation_rejects_profile_change_during_row_selection(
+    request, monkeypatch, destination
+):
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        inspector = app.query_one(MCPInspector)
+        tool = workbench._tool_for("local:docs", "search")
+        context = workbench._tool_policy_profile_context
+
+        def change_profile():
+            workbench._tool_policy_profile_id = "other"
+            workbench._tool_policy_selector_generation += 1
+            workbench._tool_policy_profile_context = None
+
+        if destination == "tools":
+            canvas = workbench.query_one(MCPToolsMode)
+            select = canvas.select_tool_row
+
+            async def select_then_switch(tool_id):
+                selected = await select(tool_id)
+                change_profile()
+                return selected
+        else:
+            canvas = workbench.query_one(MCPPermissionsMode)
+            select = canvas.select_tool_row
+
+            def select_then_switch(server_key, tool_name):
+                selected = select(server_key, tool_name)
+                change_profile()
+                return selected
+
+        monkeypatch.setattr(canvas, "select_tool_row", select_then_switch)
+        await _navigate(workbench, destination, tool, context)
+        await pilot.pause()
+        assert inspector.current_tool is None
+        assert inspector.current_permission_tool is None

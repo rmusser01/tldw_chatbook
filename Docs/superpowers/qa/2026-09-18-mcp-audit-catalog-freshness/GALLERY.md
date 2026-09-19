@@ -1,59 +1,62 @@
-# Audit catalog freshness native gallery
+# PR2726 current-dev native gallery
 
-All eight captures were rendered and inspected. See [scope and lifecycle](README.md).
+All eight replay captures were rendered and inspected. See [scope and lifecycle](README.md) and [conflict choices](CURRENT-DEV-REVIEW.md).
+
+The first run had an intermittent light-wide table header mismatch. Review the
+[affected capture and replay](HEADER-FOLLOWUP.md) too; the replay does not close that follow-up.
 
 ## Dark · 120x40
 
 ### Open tool after catalog replacement
 
-![dark 120x40 Open tool after catalog replacement](native/textual-dark-120x40-tools.svg)
+![dark 120x40 Open tool after catalog replacement](current-dev/native/textual-dark-120x40-tools.svg)
 
-[Terminal text](native/textual-dark-120x40-tools.txt)
+[Terminal text](current-dev/native/textual-dark-120x40-tools.txt)
 
 ### Adjust permission after catalog replacement
 
-![dark 120x40 Adjust permission after catalog replacement](native/textual-dark-120x40-permissions.svg)
+![dark 120x40 Adjust permission after catalog replacement](current-dev/native/textual-dark-120x40-permissions.svg)
 
-[Terminal text](native/textual-dark-120x40-permissions.txt)
+[Terminal text](current-dev/native/textual-dark-120x40-permissions.txt)
 
 ## Dark · 170x48
 
 ### Open tool after catalog replacement
 
-![dark 170x48 Open tool after catalog replacement](native/textual-dark-170x48-tools.svg)
+![dark 170x48 Open tool after catalog replacement](current-dev/native/textual-dark-170x48-tools.svg)
 
-[Terminal text](native/textual-dark-170x48-tools.txt)
+[Terminal text](current-dev/native/textual-dark-170x48-tools.txt)
 
 ### Adjust permission after catalog replacement
 
-![dark 170x48 Adjust permission after catalog replacement](native/textual-dark-170x48-permissions.svg)
+![dark 170x48 Adjust permission after catalog replacement](current-dev/native/textual-dark-170x48-permissions.svg)
 
-[Terminal text](native/textual-dark-170x48-permissions.txt)
+[Terminal text](current-dev/native/textual-dark-170x48-permissions.txt)
 
 ## Light · 120x40
 
 ### Open tool after catalog replacement
 
-![light 120x40 Open tool after catalog replacement](native/textual-light-120x40-tools.svg)
+![light 120x40 Open tool after catalog replacement](current-dev/native/textual-light-120x40-tools.svg)
 
-[Terminal text](native/textual-light-120x40-tools.txt)
+[Terminal text](current-dev/native/textual-light-120x40-tools.txt)
 
 ### Adjust permission after catalog replacement
 
-![light 120x40 Adjust permission after catalog replacement](native/textual-light-120x40-permissions.svg)
+![light 120x40 Adjust permission after catalog replacement](current-dev/native/textual-light-120x40-permissions.svg)
 
-[Terminal text](native/textual-light-120x40-permissions.txt)
+[Terminal text](current-dev/native/textual-light-120x40-permissions.txt)
 
 ## Light · 170x48
 
 ### Open tool after catalog replacement
 
-![light 170x48 Open tool after catalog replacement](native/textual-light-170x48-tools.svg)
+![light 170x48 Open tool after catalog replacement](current-dev/native/textual-light-170x48-tools.svg)
 
-[Terminal text](native/textual-light-170x48-tools.txt)
+[Terminal text](current-dev/native/textual-light-170x48-tools.txt)
 
 ### Adjust permission after catalog replacement
 
-![light 170x48 Adjust permission after catalog replacement](native/textual-light-170x48-permissions.svg)
+![light 170x48 Adjust permission after catalog replacement](current-dev/native/textual-light-170x48-permissions.svg)
 
-[Terminal text](native/textual-light-170x48-permissions.txt)
+[Terminal text](current-dev/native/textual-light-170x48-permissions.txt)

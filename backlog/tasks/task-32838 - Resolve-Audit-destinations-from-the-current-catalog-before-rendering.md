@@ -1,11 +1,11 @@
 ---
 id: TASK-32838
 title: Resolve Audit destinations from the current catalog before rendering
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 05:54'
-updated_date: '2026-09-19 20:07'
+updated_date: '2026-09-19 20:22'
 labels: []
 dependencies: []
 ---
@@ -37,5 +37,5 @@ Reason: routine integration of existing catalog-publication and inspector contra
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Both Audit drilldowns now resolve the current identity under the existing catalog publication lock and retain that lock through row selection and inspector rendering. Pending refreshes cannot combine a captured definition with new rows or permissions; removed identities clear detail and warn, and profile-change checks remain. Added 12 regressions covering same-ID description/schema replacement, disconnection, removal, incomplete publication and real-app action routing. All 62 targeted cases, seven preflight guards, static-diagnostic baseline checks and changed-range formatting pass. Independent read-only review found no blocker. Eight inspected native dark/light captures at 120x40 and 170x48 use controlled collector replacement in a real private app; clean exit, healthy databases and unchanged default profile, with no tool execution or permission mutation. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/README.md. ADR-150/161 apply; no new ADR needed. Updated both review ledgers. PR2724 row/control ownership and ongoing refresh of already-open inspectors remain separate; next review is Permissions restored roots. Current-head CI and final visual approval are required before merge.
+Rebased PR2726 onto merged dev cccf0acdad, retaining both report histories, row-selection failures and post-selection profile validation. Both Audit destinations re-resolve current definitions under the existing publication lock. Fourteen catalog regressions include two profile-switch negative controls; all 168 targeted cases and seven preflight guards pass. New files and changed ranges are formatted, diagnostic baselines unchanged, independent review found no blockers. Shared validated native bootstrap and two private dark/light compact/wide journeys verify exact identity/current metadata with no execution, network or permission changes; clean lifecycle and source hashes pass. Eight replay captures and exact conflict choices are ready for separate owner approval. The first run exposed an intermittent painted header mismatch, absent on unchanged-source replay; retained in HEADER-FOLLOWUP.md for separate baseline reproduction and repair, not claimed fixed. ADR-150/161 apply; no new ADR. Both ledgers and the PR2724 actual-merge verification receipt are updated. Evidence: Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/README.md. Current-head CI/review and PR2726 visual approval remain merge gates.
 <!-- SECTION:NOTES:END -->

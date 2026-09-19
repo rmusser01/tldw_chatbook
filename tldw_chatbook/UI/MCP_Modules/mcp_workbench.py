@@ -4875,7 +4875,9 @@ class MCPWorkbench(Container):
             if current is None:
                 await inspector.show_tool(None)
                 self.app.notify(
-                    _toast(f"{tool.server_key}::{tool.name}: tool no longer available."),
+                    _toast(
+                        f"{tool.server_key}::{tool.name}: tool no longer available."
+                    ),
                     severity="warning",
                 )
                 return
@@ -5011,7 +5013,9 @@ class MCPWorkbench(Container):
             current = self._tool_for(tool.server_key, tool.name)
             if current is None:
                 self.app.notify(
-                    _toast(f"{tool.server_key}::{tool.name}: tool no longer available."),
+                    _toast(
+                        f"{tool.server_key}::{tool.name}: tool no longer available."
+                    ),
                     severity="warning",
                 )
                 return
