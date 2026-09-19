@@ -726,7 +726,7 @@ class FileProcessor:
         return name
 
 
-def _format_size_bytes(size_bytes: int) -> str:
+def format_size_bytes(size_bytes: int) -> str:
     """Return ``size_bytes`` as a human-readable B/KB/MB/GB string."""
     if size_bytes < 1024:
         return f"{size_bytes} B"
@@ -738,6 +738,11 @@ def _format_size_bytes(size_bytes: int) -> str:
         return f"{size_mb:.1f} MB"
     size_gb = size_mb / 1024
     return f"{size_gb:.1f} GB"
+
+
+#: Back-compat private alias (TASK-32808.1: this is now the package's one
+#: public byte-size formatter; new callers import format_size_bytes).
+_format_size_bytes = format_size_bytes
 
 
 def get_formatted_file_size(file_path: Path) -> Optional[str]:

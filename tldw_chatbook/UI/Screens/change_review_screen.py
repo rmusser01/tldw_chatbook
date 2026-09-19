@@ -335,17 +335,13 @@ class AgentRunsChangeReviewProvider:
                 get_cli_setting,
             )
 
-            value = get_cli_setting("change_review", "git_actions", True)
-            if value is None:
-                # `coerce_bool_setting(None, ...)` returns None unchanged,
-                # which would read as falsy and silently disable a feature
-                # that ships ON.
-                return True
-            # Qodo #2 (PR #1914): `bool(value)` left the switch ON for a
-            # hand-edited `git_actions = "false"` -- every non-empty string
-            # is truthy. `coerce_bool_setting` is the repo's standard
-            # coercion and understands the usual string/number spellings.
-            return coerce_bool_setting(value, True)
+            # coerce_bool_setting now returns the default for a None value
+            # (TASK-32808.4), so the former None workaround is gone. It also
+            # handles hand-edited spellings like "false" that bool(value)
+            # got wrong (Qodo #2, PR #1914).
+            return coerce_bool_setting(
+                get_cli_setting("change_review", "git_actions", True), True
+            )
         except Exception:  # noqa: BLE001 -- a bad config never breaks review
             return True
 
