@@ -226,9 +226,7 @@ def test_fleet_unseen_mark_type_is_allowed_and_independent_of_starring(tmp_path)
 def test_fleet_receipt_fallback_mark_is_durable_and_independent(tmp_path):
     db = _db(tmp_path)
     first = ConversationLocalMarksService(db)
-    first.set_mark(
-        "conv-a", ConversationLocalMarksService.FLEET_RECEIPT_FALLBACK
-    )
+    first.set_mark("conv-a", ConversationLocalMarksService.FLEET_RECEIPT_FALLBACK)
 
     second = ConversationLocalMarksService(db)
 
@@ -471,9 +469,7 @@ def test_console_unseen_prefix_queries_are_uncached_and_exact(tmp_path):
         )
 
     assert service.has_console_unseen_marks() is True
-    assert service.list_console_unseen_marks() == (
-        ("conv-a", _RECEIPT_A),
-    )
+    assert service.list_console_unseen_marks() == (("conv-a", _RECEIPT_A),)
 
 
 def test_acknowledge_console_unseen_deletes_only_the_exact_receipt(tmp_path):
@@ -545,3 +541,125 @@ def test_console_terminal_outcome_companion_rejects_nonterminal_or_body_values(
                 created_at="2026-08-28T00:00:00Z",
                 updated_at="2026-08-28T00:00:00Z",
             )
+
+
+def test_reapplied_unread_survives_stale_visit_with_same_clock(tmp_path, monkeypatch):
+    service = ConversationLocalMarksService(_db(tmp_path))
+    monkeypatch.setattr(service, "_now", lambda: "2026-09-18T12:00:00Z")
+    old = service.mark_unread("conv-a")
+    newer = service.mark_unread("conv-a")
+    assert old != newer
+    assert service.mark_read("conv-a", expected=old) is False
+    assert service.unread_ids_for(["conv-a"]) == frozenset({"conv-a"})
+    assert service.mark_read("conv-a", expected=newer) is True
+
+
+def test_manual_unread_batch_restart_and_independent_marks(tmp_path):
+    db = _db(tmp_path)
+    service = ConversationLocalMarksService(db)
+    ids = [f"conv-{i}" for i in range(550)]
+    for cid in ids:
+        service.mark_unread(cid)
+    service.star_conversation(ids[0])
+    service.set_mark(ids[0], service.FLEET_UNSEEN)
+    service.set_mark(ids[0], service.console_unseen_mark_type(_RECEIPT_A))
+    assert service.unread_ids_for([]) == frozenset()
+    assert service.unread_ids_for([*ids, ids[0], "missing"]) == frozenset(ids)
+    fresh = ConversationLocalMarksService(db)
+    token = fresh.unread_token(ids[0])
+    assert token is not None
+    assert fresh.mark_read(ids[0], expected=token)
+    assert not fresh.mark_read(ids[0])
+    assert fresh.is_starred(ids[0])
+    assert fresh.has_mark(ids[0], service.FLEET_UNSEEN)
+    assert fresh.list_console_unseen_marks() == ((ids[0], _RECEIPT_A),)
+    assert fresh.unread_ids_for(ids) == frozenset(ids[1:])
+
+
+def test_manual_tokens_reject_other_service_conversation_and_recreation(tmp_path):
+    service = ConversationLocalMarksService(_db(tmp_path))
+    old = service.mark_unread("a")
+    other = service.mark_unread("b")
+    assert not service.mark_read("a", expected=other)
+    fresh = ConversationLocalMarksService(service.db)
+    assert not fresh.mark_read("a", expected=old)
+    service.clear_mark("a", service.MANUAL_UNREAD)
+    service.set_mark("a", service.MANUAL_UNREAD)
+    assert not service.mark_read("a", expected=old)
+    assert service.unread_token("a") != old
+    with service.db.transaction() as cursor:
+        with pytest.raises(ValueError, match="requires mark_unread"):
+            service.set_mark_with_cursor(
+                cursor, "a", service.MANUAL_UNREAD, created_at="now", updated_at="now"
+            )
+
+
+def test_failed_manual_write_does_not_publish_revision(tmp_path, monkeypatch):
+    service = ConversationLocalMarksService(_db(tmp_path))
+    old = service.mark_unread("a")
+    original = service._set_mark_with_cursor
+
+    def fail_after_write(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("failed transaction")
+
+    monkeypatch.setattr(service, "_set_mark_with_cursor", fail_after_write)
+    with pytest.raises(RuntimeError, match="failed transaction"):
+        service.mark_unread("a")
+    assert service.unread_token("a") == old
+    assert service.mark_read("a", expected=old)
+
+
+def test_manual_compare_delete_serializes_with_remark(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+
+    service = ConversationLocalMarksService(_db(tmp_path))
+    old = service.mark_unread("a")
+    in_delete = threading.Event()
+    writer_started = threading.Event()
+    release_delete = threading.Event()
+    original = service.db.transaction
+
+    @contextmanager
+    def paused_transaction(*args, **kwargs):
+        with original(*args, **kwargs) as cursor:
+            yield cursor
+            if threading.current_thread().name.startswith("reader"):
+                in_delete.set()
+                assert release_delete.wait(5)
+
+    monkeypatch.setattr(service.db, "transaction", paused_transaction)
+
+    def remark():
+        writer_started.set()
+        return service.mark_unread("a")
+
+    with ThreadPoolExecutor(1, thread_name_prefix="reader") as reader:
+        with ThreadPoolExecutor(1, thread_name_prefix="writer") as writer:
+            clearing = reader.submit(service.mark_read, "a", expected=old)
+            assert in_delete.wait(5)
+            writing = writer.submit(remark)
+            assert writer_started.wait(5)
+            assert not writing.done()
+            release_delete.set()
+            assert clearing.result(5)
+            newer = writing.result(5)
+    assert service.unread_token("a") == newer
+    assert not service.mark_read("a", expected=old)
+
+
+def test_manual_unread_does_not_sync_or_change_conversation_metadata(tmp_path):
+    db = _db(tmp_path)
+    conversations = ChatConversationService(db)
+    cid = conversations.create_conversation(title="Reminder")
+    before = conversations.get_conversation_metadata(cid)
+    with db.transaction() as cursor:
+        cursor.execute("DELETE FROM sync_log")
+    service = ConversationLocalMarksService(db)
+    service.mark_unread(cid)
+    service.mark_read(cid)
+    assert conversations.get_conversation_metadata(cid) == before
+    with db.transaction() as cursor:
+        assert cursor.execute("SELECT * FROM sync_log").fetchall() == []
