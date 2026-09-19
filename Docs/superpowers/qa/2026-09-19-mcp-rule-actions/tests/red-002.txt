@@ -1,0 +1,309 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_reallow_refuses_a_definition_changed_since_rendering[description] ____
+
+self = <Coroutine test_reallow_refuses_a_definition_changed_since_rendering[description]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'drift': 'description', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10c5003e0>, 'request': <FixtureRe...ivate/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0')}
+request = <FixtureRequest for <Coroutine test_reallow_refuses_a_definition_changed_since_rendering[description]>>
+work = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0/private-profile-process')
+profile = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 120.0
+report = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0/private-profile-process/pytest.xml')
+log = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ____ test_reallow_refuses_a_definition_changed_since_rendering[description] ____
+E
+E           request = <FixtureRequest for <Coroutine test_reallow_refuses_a_definition_changed_since_rendering[description]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0/private-profile-process/pytest/test_reallow_refuses_a_definit0')
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e0b4a10>
+E           drift = 'description'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("drift", ["description", "schema"])
+E               @private_profile_test
+E               async def test_reallow_refuses_a_definition_changed_since_rendering(request, tmp_path, monkeypatch, drift):
+E                   app = PermissionsApp(tmp_path / "permissions.json")
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       workbench, inspector, tool = await open_permissions(app, pilot)
+E                       event = held_press(app.query_one(SELECTORS["reallow"], Button), monkeypatch)
+E                       if drift == "description":
+E                           changed = replace(tool, description="A newly changed definition")
+E                           workbench._last_hub_tools = [changed if t.tool_id == tool.tool_id else t for t in workbench._last_hub_tools]
+E                       else:
+E                           tool.input_schema["description"] = "A newly changed schema"
+E                       before = app.unified_mcp_service.permission_store.load()
+E                       inspector.post_message(event)
+E                       await pilot.pause()
+E           >           assert app.unified_mcp_service.permission_store.load() == before
+E           E           AssertionError: assert {'kill_switch...1:59.491661Z'} == {'kill_switch...1:59.100214Z'}
+E           E
+E           E             Omitting 2 identical items, use -vv to show
+E           E             Differing items:
+E           E             {'profiles': {'default': {'global_default': 'ask', 'servers': {'local:docs': {'tools': {'search': {...}}}}}}} != {'profiles': {'default': {'global_default': 'ask', 'servers': {'local:docs': {'tools': {'search': {...}}}}}}}
+E           E             {'updated_at': '2026-09-19T15:51:59.491661Z'} != {'updated_at': '2026-09-19T15:51:59.100214Z'}
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_permission_action_ownership.py:133: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:51:58.059 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-19 08:51:58.097 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:51:58.104 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-19 08:51:58.105 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-19 08:51:58.218 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:51:58.445 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-19 08:51:58.942 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'PermissionsHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           1.32s call     Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[description]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[description]
+E           1 failed in 2.49s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-19 08:51:57.169 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-19 08:51:57.204 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-19 08:51:57.211 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-19 08:51:57.212 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+______ test_reallow_refuses_a_definition_changed_since_rendering[schema] _______
+
+self = <Coroutine test_reallow_refuses_a_definition_changed_since_rendering[schema]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'drift': 'schema', 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10d993680>, 'request': <FixtureRequest...ivate/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1')}
+request = <FixtureRequest for <Coroutine test_reallow_refuses_a_definition_changed_since_rendering[schema]>>
+work = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1/private-profile-process')
+profile = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 120.0
+report = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1/private-profile-process/pytest.xml')
+log = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ______ test_reallow_refuses_a_definition_changed_since_rendering[schema] _______
+E
+E           request = <FixtureRequest for <Coroutine test_reallow_refuses_a_definition_changed_since_rendering[schema]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1/private-profile-process/pytest/test_reallow_refuses_a_definit0')
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c0a05f0>
+E           drift = 'schema'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("drift", ["description", "schema"])
+E               @private_profile_test
+E               async def test_reallow_refuses_a_definition_changed_since_rendering(request, tmp_path, monkeypatch, drift):
+E                   app = PermissionsApp(tmp_path / "permissions.json")
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       workbench, inspector, tool = await open_permissions(app, pilot)
+E                       event = held_press(app.query_one(SELECTORS["reallow"], Button), monkeypatch)
+E                       if drift == "description":
+E                           changed = replace(tool, description="A newly changed definition")
+E                           workbench._last_hub_tools = [changed if t.tool_id == tool.tool_id else t for t in workbench._last_hub_tools]
+E                       else:
+E           >               tool.input_schema["description"] = "A newly changed schema"
+E                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           E               TypeError: 'NoneType' object does not support item assignment
+E
+E           Tests/UI/test_mcp_permission_action_ownership.py:129: TypeError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 08:52:01.081 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-19 08:52:01.117 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 08:52:01.124 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-19 08:52:01.125 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-19 08:52:01.235 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 08:52:01.455 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-19 08:52:01.936 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'PermissionsHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-7/test_reallow_refuses_a_definit1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[schema]
+E           1 failed in 2.04s
+
+Tests/private_profile.py:84: Failed
+------- generated xml file: /private/tmp/tldw-32866-red-002/results.xml --------
+============================= slowest 25 durations =============================
+3.01s call     Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[description]
+2.60s call     Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[schema]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[description]
+FAILED Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[schema]
+2 failed, 22 deselected in 6.39s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-bf39fae7-fed9-423c-be7d-4f3ad3fc69ec/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-bf39fae7-fed9-423c-be7d-4f3ad3fc69ec/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-bf39fae7-fed9-423c-be7d-4f3ad3fc69ec
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-bf39fae7-fed9-423c-be7d-4f3ad3fc69ec'
+  warnings.warn(

@@ -1,0 +1,71 @@
+{
+  "pid": 34615,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "real_service_remove": true,
+      "real_service_reallow": true,
+      "other_profile_preserved": true,
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "real_service_remove": true,
+      "real_service_reallow": true,
+      "other_profile_preserved": true,
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "real_service_remove": true,
+      "real_service_reallow": true,
+      "other_profile_preserved": true,
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "real_service_remove": true,
+      "real_service_reallow": true,
+      "other_profile_preserved": true,
+      "tool_dispatches": 0
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "57a2bbce122b107e71f99cba220d8165e2d5aee3228e07bd598046bb52308885",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "53612933a7e9fc84025eee21317584f988f8cfd7b79bad96d85726e6286ead99",
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": "bb16957eb6a1190659acf2bee0d9264cc6e38edd0df00e37cc5f727627a95ba1",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/Agents/builtin_tool_gate.py": "ea9b8f1384e3319e1a483a2db90748dfada31857dfc89c00b67d138a1c8f0155",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "2e86d1be0adfeab0ef3b38551f594c600a08224ce677d0077b4b2134bdcc31da",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "2d5387eb572fbb82d53de4e3766ce72ac80378677a5aeda36df9a52902fc2322",
+    "tldw_chatbook/css/core/_variables.tcss": "134124fb32a187c7279ac6b02ceed338e85bbb4a64b56d6617063b23c538f709"
+  },
+  "runner_sha256": "bce146764b8929bcd4b1fba8d0aa69ea55c6beafe9a0d7fc2049a5e1336592a1",
+  "fixture_scope": "Disposable disconnected discovery fixture, real local store, permission store, service, inspector and workbench. Both actions persist through the normal keyboard handlers. No server connects or tool executes.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

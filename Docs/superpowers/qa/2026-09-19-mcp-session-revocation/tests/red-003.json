@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_failed_revoke_can_be_retried_without_reselecting_the_tool",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_older_revoke_refresh_preserves_a_newer_profiles_listing",
+      "status": "failure"
+    }
+  ]
+}

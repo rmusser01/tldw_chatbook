@@ -285,6 +285,11 @@ $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
+/* Modal wide-tier caps (2026-09-19 rollout): the 150/170 rungs of the
+   cap ladder in the repo-wide tier block in
+   components/_agentic_terminal.tcss (120 already on the scale). */
+$ds-size-150: 150;
+$ds-size-170: 170;
 $ds-percent-34: 34%;
 /* task 11 (ADR-161 §3.10): 25%/30%/40%/50% join the scale -- cross-sheet
    recurring fills/caps (coding/embeddings/ingest, conversations/sidebars/
@@ -471,3 +476,13 @@ $ds-theme-preview-invalid: #808080;
 
 /* Wide Conversation settings dialog preserved from upstream. */
 $ds-console-settings-wide-max-width: 196;
+
+/* Conversation Inspector: readable split-pane geometry (ADR-171). */
+$ds-inspector-modal-width: 120;
+$ds-inspector-modal-height: 42;
+$ds-inspector-section-width: 28;
+$ds-inspector-recovery-max-height: 6;
+$ds-conversation-action-width: 4;
+$ds-conversation-action-ascii-width: 9;
+$ds-inspector-usage-list-width: 60;
+$ds-conversation-menu-width: 30;

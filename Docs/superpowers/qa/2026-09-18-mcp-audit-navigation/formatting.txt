@@ -1,0 +1,23 @@
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:1389-1392
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:1394-1397
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2429-2431
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:2476-2481
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:3759-3760
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py:3761-3770
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4865-4872
+1 file already formatted
+
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py:4985-4993
+1 file already formatted

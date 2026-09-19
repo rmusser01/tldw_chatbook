@@ -1,0 +1,2 @@
+mcp_inspector.py: AST comparison against pre-follow-up HEAD, removing only module/class/function docstrings, is identical. No executable production change.
+QA/test files: Ruff check and format check pass. Existing inspector/workbench diagnostics unchanged at 13/65.

@@ -85,27 +85,56 @@ class ConsoleProviderPicker(Widget):
     ) -> None:
         """Initialize the controlled picker from the modal's known options."""
         super().__init__(**kwargs)
+        (
+            self._options,
+            self._known_provider_ids,
+            self._display_names,
+            self._provider_groups,
+        ) = self._index_options(provider_options)
+        current = str(current_provider or "").strip()
+        self._value = current if current in self._known_provider_ids else None
+        self._visible_provider_ids: tuple[str, ...] = ()
+        self._row_provider_ids: list[str | None] = []
+        self._suppress_input_events = False
+        self._preserve_committed_on_next_input_focus = False
+
+    @classmethod
+    def _index_options(
+        cls, provider_options: Sequence[ConsoleSettingsOption]
+    ) -> tuple[
+        tuple[ConsoleSettingsOption, ...],
+        frozenset[str],
+        dict[str, str],
+        dict[str, str],
+    ]:
+        """Index option rows into the picker's lookup structures.
+
+        Args:
+            provider_options: Builder-ordered options; blank and duplicate
+                values are dropped (first occurrence wins).
+
+        Returns:
+            The deduplicated option tuple, known-id set, display-name map,
+            and group map.
+        """
         options_by_value: dict[str, ConsoleSettingsOption] = {}
         for option in provider_options:
             value = str(option.value or "").strip()
             if value and value not in options_by_value:
                 options_by_value[value] = option
-        self._options = tuple(options_by_value.values())
-        self._known_provider_ids = frozenset(options_by_value)
-        self._display_names = {
-            option.value: self._display_name_for_option(option)
-            for option in self._options
+        options = tuple(options_by_value.values())
+        display_names = {
+            option.value: cls._display_name_for_option(option) for option in options
         }
-        self._provider_groups = {
-            option.value: self._classify_provider(option.value)
-            for option in self._options
+        provider_groups = {
+            option.value: cls._classify_provider(option.value) for option in options
         }
-        current = str(current_provider or "").strip()
-        self._value = current if current in options_by_value else None
-        self._visible_provider_ids: tuple[str, ...] = ()
-        self._row_provider_ids: list[str | None] = []
-        self._suppress_input_events = False
-        self._preserve_committed_on_next_input_focus = False
+        return (
+            options,
+            frozenset(options_by_value),
+            display_names,
+            provider_groups,
+        )
 
     @property
     def value(self) -> str | None:
@@ -152,6 +181,33 @@ class ConsoleProviderPicker(Widget):
         self._set_input_value(self._display_name(self._value))
         self._hide_results()
         self._set_status(self._selected_status())
+
+    def set_options(self, provider_options: Sequence[ConsoleSettingsOption]) -> None:
+        """Replace the known options, keeping a still-known selection.
+
+        The option snapshot is taken at compose time, but the registry can
+        grow while the modal is open (endpoint creation reports back into
+        the same session). Without this refresh the new entry id is never
+        ``_known_provider_ids`` member, so a switch onto it renders blank
+        and the dropdown cannot list it (CE-006).
+
+        Args:
+            provider_options: Replacement options in builder order; the
+                committed value survives only when still present among
+                them, mirroring the state adapter's own option rebuild.
+        """
+        (
+            self._options,
+            self._known_provider_ids,
+            self._display_names,
+            self._provider_groups,
+        ) = self._index_options(provider_options)
+        if self._value is not None and self._value not in self._known_provider_ids:
+            self._value = None
+        if self.is_mounted:
+            self._set_input_value(self._display_name(self._value))
+            self._hide_results()
+            self._set_status(self._selected_status())
 
     @staticmethod
     def _classify_provider(provider: str) -> str:

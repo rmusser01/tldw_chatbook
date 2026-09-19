@@ -1,0 +1,27 @@
+..........                                                               [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d4e38018-7a68-414a-b383-c1b6bfb5a315/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d4e38018-7a68-414a-b383-c1b6bfb5a315/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d4e38018-7a68-414a-b383-c1b6bfb5a315
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d4e38018-7a68-414a-b383-c1b6bfb5a315'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+2.77s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_failed_revoke_can_be_retried_without_reselecting_the_tool
+2.53s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_older_revoke_refresh_preserves_a_newer_profiles_listing
+1.96s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_invalid_as_soon_as_permission_replacement_starts
+1.93s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[reorder]
+1.92s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant
+1.88s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[same]
+1.87s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[profile]
+1.87s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[replace]
+1.83s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]
+1.79s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[clear]
+
+(15 durations < 1s hidden.)
+10 passed, 2 warnings in 21.52s

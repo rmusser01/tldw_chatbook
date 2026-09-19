@@ -1,0 +1,1 @@
+Independent read-only review identified a trailing-newline exception in the shared username validator. Two prepared-profile tests reproduced it; the local whitespace guard now rejects both names. Reviewer confirmed no remaining blockers. No application behavior or UI style changes.

@@ -1,0 +1,136 @@
+{
+  "distinct_cases": 26,
+  "qualification": "10 new mounted ownership/retry/profile-completion cases and 16 existing service/runtime-gate cases. Formatter-only edits to the new test followed green; production sources match the native run. No full suite.",
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[reorder]",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[replace]",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[profile]",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[clear]",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[same]",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_invalid_as_soon_as_permission_replacement_starts",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_failed_revoke_can_be_retried_without_reselecting_the_tool",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_older_revoke_refresh_preserves_a_newer_profiles_listing",
+      "status": "passed",
+      "run": "green-001"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_session_approvals_are_isolated_by_exact_profile_id",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_session_approvals_can_be_listed",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_revoking_a_session_approval_makes_the_next_call_ask_again",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_revoking_an_unheld_session_approval_reports_false",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_session_approval_revalidates_profile_digest_under_fence",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_bridge::test_session_approval_set_check_clear",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_bridge::test_session_approvals_are_per_instance_not_persisted",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_unified_control_plane_service::test_session_approval_listing_survives_concurrent_grants_and_revokes",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.MCP.test_unified_control_plane_service::test_clearing_one_profiles_session_approvals_keeps_the_same_set_object",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_session_approval_permits_without_a_stamp",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_approve_session_records_a_session_approval",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_named_profile_is_used_for_resolution_and_session_approval",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_effective_deny_wins_over_live_session_approval",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_gate_lists_and_revokes_its_own_session_approval",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_gate_lists_only_builtin_approvals_from_its_own_profile",
+      "status": "passed",
+      "run": "adjacent-001"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_service_less_gate_has_nothing_to_list_or_revoke",
+      "status": "passed",
+      "run": "adjacent-001"
+    }
+  ]
+}

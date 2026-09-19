@@ -10,6 +10,7 @@ from .conversation_browser_state import (
     console_conversation_starred_recency_sort_key,
 )
 from .models import DEFAULT_WORKSPACE_ID
+from .conversation_attention import ConversationAttentionFact
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,10 @@ class WorkspaceTreeConversation:
     run_marker: str
     star_enabled: bool = True
     progress_count: int = 0
+    icon: str = ""
+    color: str = ""
+    attention: tuple[ConversationAttentionFact, ...] = ()
+    manual_unread: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,9 +131,18 @@ def build_workspace_tree_state(
                         updated_sort=str(row.updated_sort or ""),
                         selected=bool(row.selected),
                         run_marker=str(row.run_marker or ""),
+                        icon=row.icon,
+                        color=row.color,
+                        attention=row.attention,
+                        manual_unread=row.manual_unread,
                         star_enabled=bool(row.star_enabled),
                         progress_count=max(
-                            0, int((progress_counts or {}).get(row.native_session_id or "", 0))
+                            0,
+                            int(
+                                (progress_counts or {}).get(
+                                    row.native_session_id or "", 0
+                                )
+                            ),
                         ),
                     )
                     for row in sorted(

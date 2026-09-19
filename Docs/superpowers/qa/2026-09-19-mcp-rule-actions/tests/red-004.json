@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[retry]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_action_ownership::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[session]",
+      "status": "failure"
+    }
+  ]
+}

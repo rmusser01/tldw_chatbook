@@ -1,0 +1,42 @@
+{
+  "Tests/UI/modal_wide_tier_registry.py": {
+    "baseline": 1,
+    "current": 1,
+    "introduced": []
+  },
+  "Tests/UI/test_wide_modal_selector_geometry.py": {
+    "baseline": 0,
+    "current": 0,
+    "introduced": []
+  },
+  "Tests/Utils/test_mcp_native_qa_args.py": {
+    "baseline": 0,
+    "current": 0,
+    "introduced": []
+  },
+  "tldw_chatbook/Widgets/file_extraction_dialog.py": {
+    "baseline": 13,
+    "current": 13,
+    "introduced": []
+  },
+  "tldw_chatbook/Widgets/Persona_Widgets/dictionary_attach_picker.py": {
+    "baseline": 0,
+    "current": 0,
+    "introduced": []
+  },
+  "tldw_chatbook/Widgets/Persona_Widgets/conversation_attach_picker.py": {
+    "baseline": 0,
+    "current": 0,
+    "introduced": []
+  },
+  "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/modal_check.py": {
+    "baseline": 0,
+    "current": 0,
+    "introduced": []
+  },
+  "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/modal_journey.py": {
+    "baseline": 0,
+    "current": 0,
+    "introduced": []
+  }
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "classname": "Tests.UI.test_mcp_inspector",
+    "name": "test_profile_scoped_inspector_requests_preserve_captured_context",
+    "outcome": "passed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_inspector",
+    "name": "test_audit_actions_preserve_captured_profile_context[mcp-audit-open-tool-AuditOpenToolRequested]",
+    "outcome": "passed"
+  },
+  {
+    "classname": "Tests.UI.test_mcp_inspector",
+    "name": "test_audit_actions_preserve_captured_profile_context[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]",
+    "outcome": "passed"
+  }
+]

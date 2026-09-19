@@ -1,0 +1,179 @@
+{
+  "normalization": "UTF-8 exports strip trailing line whitespace and end with one newline. Originals remain in private profiles. Case census derives from JUnit XML.",
+  "files": [
+    {
+      "source": "/private/tmp/tldw-32865-red-002/pytest.log",
+      "export": "tests/red-002.txt",
+      "source_sha256": "cdc49886ab16d739ea04bccb5fea13aef64a3823a835f44fd264ad5ef3acaa83",
+      "export_sha256": "1cc491a307eb3a27a38c7c5f8046691805340d3f45ce87f07dc3fc7aea731191"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-red-003/pytest.log",
+      "export": "tests/red-003.txt",
+      "source_sha256": "d9d49e3366a7b735c3f896787e7542590207b68f4370156f7c7794444370ee36",
+      "export_sha256": "6defde49fd99c31f44b6611f478ed1769c65cb627afa918f0593f3c01a167ec1"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-green-001/pytest.log",
+      "export": "tests/green-001.txt",
+      "source_sha256": "6fc3bb22b0568c158a5a8ba39884b1ab05e492e4393f90ff0e6ed728ee743b72",
+      "export_sha256": "6fc3bb22b0568c158a5a8ba39884b1ab05e492e4393f90ff0e6ed728ee743b72"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-adjacent-001/pytest.log",
+      "export": "tests/adjacent-001.txt",
+      "source_sha256": "00cc30bc69367aae19f03c032db78f18c47ca34915e8f847823679727d7faf79",
+      "export_sha256": "00cc30bc69367aae19f03c032db78f18c47ca34915e8f847823679727d7faf79"
+    },
+    {
+      "source": "/private/tmp/32865-format.txt",
+      "export": "formatting.txt",
+      "source_sha256": "3bc53bf3e981a98a34a852e175bf9b77af841edea74fca595d9aedcbaf9a4938",
+      "export_sha256": "3bc53bf3e981a98a34a852e175bf9b77af841edea74fca595d9aedcbaf9a4938"
+    },
+    {
+      "source": "/private/tmp/32865-static.json",
+      "export": "static-analysis.json",
+      "source_sha256": "7abe411d102ab00a0d6a08bdd8d3cb586e70c471952ed49988858ba4dc086aec",
+      "export_sha256": "7abe411d102ab00a0d6a08bdd8d3cb586e70c471952ed49988858ba4dc086aec"
+    },
+    {
+      "source": "/private/tmp/32865-review.txt",
+      "export": "independent-review.txt",
+      "source_sha256": "10e17becb258abf89cfd022a09014393b6f111107f8c5c1f5d6596f995293870",
+      "export_sha256": "10e17becb258abf89cfd022a09014393b6f111107f8c5c1f5d6596f995293870"
+    },
+    {
+      "source": "/private/tmp/32865-preflight.txt",
+      "export": "preflight.txt",
+      "source_sha256": "a1841eba09d96a3248e54a1a42df7fe2d1681a33af00d9e78fce6cea384866bd",
+      "export_sha256": "a1841eba09d96a3248e54a1a42df7fe2d1681a33af00d9e78fce6cea384866bd"
+    },
+    {
+      "source": "/private/tmp/mcp-session-revocation-allocation.json",
+      "export": "allocation-census.json",
+      "source_sha256": "621c867b0a2b94d7fe9b9e9e7d2432444229747f2285dc6009a7dd3be9eb9191",
+      "export_sha256": "621c867b0a2b94d7fe9b9e9e7d2432444229747f2285dc6009a7dd3be9eb9191"
+    },
+    {
+      "source": "/private/tmp/mcp-session-revocation-precommit-census.json",
+      "export": "precommit-census.json",
+      "source_sha256": "4a361353d7ddec05b326d96e0aecd51d10873d4531a9cf4c38738c0aa113b753",
+      "export_sha256": "4a361353d7ddec05b326d96e0aecd51d10873d4531a9cf4c38738c0aa113b753"
+    },
+    {
+      "source": "/private/tmp/32865-allocation-note.txt",
+      "export": "allocation-note.txt",
+      "source_sha256": "214ab09b8998a6bd0e5a0c538e02c4da70811d671ae320b68a07afe053697174",
+      "export_sha256": "214ab09b8998a6bd0e5a0c538e02c4da70811d671ae320b68a07afe053697174"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/result.json",
+      "export": "native/result.json",
+      "source_sha256": "60a67b25bc89e17eb051b0f682b3037f6e1dacc125076afa19fd18a391ad6fbc",
+      "export_sha256": "60a67b25bc89e17eb051b0f682b3037f6e1dacc125076afa19fd18a391ad6fbc"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-120x40-after-revoke.svg",
+      "export": "native/textual-dark-120x40-after-revoke.svg",
+      "source_sha256": "44d3f912ab90ae829c314120d28fdf105bffa4c8b017a2516203da93842654c9",
+      "export_sha256": "d7f01f37131d146faf38e7f318765e52937befb7f2e42d3bf4a1ef2fbca2f8fd"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-120x40-after-revoke.txt",
+      "export": "native/textual-dark-120x40-after-revoke.txt",
+      "source_sha256": "341ea1343e3fbab68f6a24415a0d7bd3d0e78a517df180113a63a6fd0af840e7",
+      "export_sha256": "341ea1343e3fbab68f6a24415a0d7bd3d0e78a517df180113a63a6fd0af840e7"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-120x40-before-revoke.svg",
+      "export": "native/textual-dark-120x40-before-revoke.svg",
+      "source_sha256": "78777d3c46a9c31d8a7c04759f1c1fd4f8eb9337f620fe98850b4b955e7a1c3c",
+      "export_sha256": "f7e044be616fa2468ca73a65c75a329c5c348291e527f39849bb2479f74d38f1"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-120x40-before-revoke.txt",
+      "export": "native/textual-dark-120x40-before-revoke.txt",
+      "source_sha256": "8c77d97e5a8a4e68818c8a114dda416f0bc54873817139b3579a48b65b50858d",
+      "export_sha256": "8c77d97e5a8a4e68818c8a114dda416f0bc54873817139b3579a48b65b50858d"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-170x48-after-revoke.svg",
+      "export": "native/textual-dark-170x48-after-revoke.svg",
+      "source_sha256": "06eb7a7a8861a59acfc085b6563f368c8ad755dbc1c03980e0f647efc8a21597",
+      "export_sha256": "5a841aca534cc7f9761e2d73ef080b1da97f0886cfc740da1c8bec489e58af0a"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-170x48-after-revoke.txt",
+      "export": "native/textual-dark-170x48-after-revoke.txt",
+      "source_sha256": "fcd6de36ed5bed28f5430964a12342809794bdad0199534f40ac471dbcf59f7f",
+      "export_sha256": "fcd6de36ed5bed28f5430964a12342809794bdad0199534f40ac471dbcf59f7f"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-170x48-before-revoke.svg",
+      "export": "native/textual-dark-170x48-before-revoke.svg",
+      "source_sha256": "a85904b21593d8731bc8060317e363ce577f48904da8d78a1fe88f1814a01e93",
+      "export_sha256": "d180b11f02c08c434afbd8e61219c0e569036a2321844fe60976104a3cf7a2d2"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-dark-170x48-before-revoke.txt",
+      "export": "native/textual-dark-170x48-before-revoke.txt",
+      "source_sha256": "b60266ab4867a6a9581d9a477df7e0e819f9b278c8150ff9bc520ee2692b67dc",
+      "export_sha256": "b60266ab4867a6a9581d9a477df7e0e819f9b278c8150ff9bc520ee2692b67dc"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-120x40-after-revoke.svg",
+      "export": "native/textual-light-120x40-after-revoke.svg",
+      "source_sha256": "df04affbe3337e31ac38a23a3c5fb5055d8b89ef5a93a81a13b466f94bd8f3b6",
+      "export_sha256": "c5f9b430f840e81e26848cc67255c636b837baaa5c34f1175b441813a15cf8d9"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-120x40-after-revoke.txt",
+      "export": "native/textual-light-120x40-after-revoke.txt",
+      "source_sha256": "e68c05e78a639d57f1b42943153e8983267a0be8f484242e5b28b680a870c090",
+      "export_sha256": "e68c05e78a639d57f1b42943153e8983267a0be8f484242e5b28b680a870c090"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-120x40-before-revoke.svg",
+      "export": "native/textual-light-120x40-before-revoke.svg",
+      "source_sha256": "7a42aa09dbab2201356f5854555c8e8223aa3c9269251499dfabe1b4c7a9797e",
+      "export_sha256": "11a9caa0b87802a37b4eca34ccb2c0452d204ccdd276cb481f4dfe94760ed38a"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-120x40-before-revoke.txt",
+      "export": "native/textual-light-120x40-before-revoke.txt",
+      "source_sha256": "eda613febaa44c9a6b9c92f123c080eadb11b131e39bcc2557d101f04b9e3886",
+      "export_sha256": "eda613febaa44c9a6b9c92f123c080eadb11b131e39bcc2557d101f04b9e3886"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-170x48-after-revoke.svg",
+      "export": "native/textual-light-170x48-after-revoke.svg",
+      "source_sha256": "f4418a8ad1439e135c29bc0a3069f0f0eff7d046310cd5c7264346109df695f8",
+      "export_sha256": "f1180c7f546da847d3ff18840f2c9a71e711842dbb6147dcd43d0dee26c9d622"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-170x48-after-revoke.txt",
+      "export": "native/textual-light-170x48-after-revoke.txt",
+      "source_sha256": "fcd6de36ed5bed28f5430964a12342809794bdad0199534f40ac471dbcf59f7f",
+      "export_sha256": "fcd6de36ed5bed28f5430964a12342809794bdad0199534f40ac471dbcf59f7f"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-170x48-before-revoke.svg",
+      "export": "native/textual-light-170x48-before-revoke.svg",
+      "source_sha256": "4911f8ceb7841efc6a11a8802a51fef4caf5c1122f6e223d403e43af973c0c31",
+      "export_sha256": "f10b5ef1f2b74a4c3d7324e641e1786ba8c164936fa16ffd03fcd61d23239aad"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/evidence/textual-light-170x48-before-revoke.txt",
+      "export": "native/textual-light-170x48-before-revoke.txt",
+      "source_sha256": "b60266ab4867a6a9581d9a477df7e0e819f9b278c8150ff9bc520ee2692b67dc",
+      "export_sha256": "b60266ab4867a6a9581d9a477df7e0e819f9b278c8150ff9bc520ee2692b67dc"
+    },
+    {
+      "source": "/private/tmp/tldw-32865-native-001/lifecycle.json",
+      "export": "lifecycle.json",
+      "source_sha256": "21ff0f70d7a720abcc1fe617781784b82dc01dce9912d21f01ede3ac63568a7a",
+      "export_sha256": "21ff0f70d7a720abcc1fe617781784b82dc01dce9912d21f01ede3ac63568a7a"
+    }
+  ]
+}

@@ -12,6 +12,24 @@ from tldw_chatbook.Chat.console_agent_bridge import FleetDrained, SettledChild
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+def test_unseen_snapshot_does_not_initialize_lazy_receipts(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_runtime import _LazyConsoleActivityReceiptService
+
+    service = _LazyConsoleActivityReceiptService(object(), None)
+
+    def unexpected_initialization():
+        raise AssertionError("a row snapshot must not initialize receipt storage")
+
+    monkeypatch.setattr(service, "_get_delegate", unexpected_initialization)
+    assert service.unseen_snapshot() == ()
+
+    receipts = (object(),)
+    service._delegate = SimpleNamespace(unseen_snapshot=lambda: receipts)
+    assert service.unseen_snapshot() is receipts
+
+
 class RecordingMarks:
     FLEET_UNSEEN = "fleet_unseen"
     FLEET_RECEIPT_FALLBACK = "fleet_receipt_fallback"

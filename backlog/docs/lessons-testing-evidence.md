@@ -12892,6 +12892,14 @@ both resolved to white. Switching this local host to the existing
 the combined targeted gate then passed635. No production styling changed. Extending
 the shared authority does not repair local hosts that continue to bypass it.
 
+Recurrence, TASK-32828 (2026-09-18): the Inspector modal's default-only harness
+kept its footer visible while production TabPane/ContentSwitcher height rules
+pushed it below the viewport. Loading `list(APP_STYLESHEETS)` exposed the error;
+scoped fractional heights and retained list/detail readers passed the 80x24,
+120x40, and 160x48 geometry checks. A Textual `CSS_PATH` sequence must be a list,
+not a tuple. Headless screenshots remain separate evidence from native terminal
+rendering, which was unavailable in this session.
+
 ## A "settled geometry" assertion bounded by WALL CLOCK is load-sensitive — run the base arm N times before blaming a diff (TASK-31663, 2026-09-05)
 
 The covering batch for TASK-31663 failed intermittently on the branch —
@@ -15966,3 +15974,14 @@ queues and retain native inputs; bypassing the production post_message boundary
 would bypass the fix and test a different path. The same task's native compact
 run found a focused recovery button below a padded callout; full-app compositor
 paint assertions caught what focus identity alone missed.
+
+## Keep review fingerprints stable across cached UI refreshes (TASK-32866)
+
+The MCP Re-allow ownership review first blocked schema drift between rendering
+and clicking, but internal review found that failure retry, session-list refresh
+and successful Remove completion recomputed the hash from a mutable cached tool.
+Holding the refresh await, changing the schema and clicking the rebuilt control
+reproduced an unintended Allow write in all three paths. The fix retains the
+original fingerprint until a fresh selection and checks completion ownership
+under the inspector lock. A direct stale-click test alone did not establish this
+contract: cached refresh and retry need the same drift test.

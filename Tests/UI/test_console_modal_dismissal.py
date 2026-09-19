@@ -259,6 +259,9 @@ def _inspector_factory() -> ConsoleConversationInspector:
     launch target -- both entry points now push this instead (see
     ``chat_screen.py``'s ``_push_console_inspector``)."""
     return ConsoleConversationInspector(
+        conversation_title="Test chat",
+        target_profile_key="test-profile",
+        target_is_current=lambda: True,
         rows=[],
         totals=ConsoleCostRowTotals(0, 0.0, False, 0),
         turns=[],

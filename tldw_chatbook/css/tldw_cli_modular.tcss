@@ -191,6 +191,9 @@ $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
 $ds-size-120: 120;
+
+$ds-size-150: 150;
+$ds-size-170: 170;
 $ds-percent-34: 34%;
 
 $ds-percent-25: 25%;
@@ -323,6 +326,16 @@ $ds-theme-preview-invalid: #808080;
 
 
 $ds-console-settings-wide-max-width: 196;
+
+
+$ds-inspector-modal-width: 120;
+$ds-inspector-modal-height: 42;
+$ds-inspector-section-width: 28;
+$ds-inspector-recovery-max-height: 6;
+$ds-conversation-action-width: 4;
+$ds-conversation-action-ascii-width: 9;
+$ds-inspector-usage-list-width: 60;
+$ds-conversation-menu-width: 30;
 
 /* ===== MODULE: core/_reset.tcss ===== */
 
@@ -3994,6 +4007,357 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 #agent-progress-body { height: auto; }
 #agent-progress-actions { height: $ds-size-3; align-horizontal: right; }
 #agent-progress-actions Button { min-width: $ds-size-10; margin-left: $ds-space-1; }
+
+
+
+
+
+
+App.-wide-viewport #console-settings-modal {
+    width: $ds-percent-85;
+    max-width: $ds-console-settings-wide-max-width;
+}
+
+
+App.-wide-viewport #console-inspector-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-workspace-files-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #file-notes-conflict-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-run-log-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-citation-sources-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-side-chat-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-edit-message-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-edit-thinking-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #console-prompts-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #agent-history-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #agent-progress-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #worktree-recovery-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+App.-wide-viewport #internal-prompt-editor-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+
+App.-wide-viewport #speech-voice-profile-picker {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
+}
+
+
+App.-wide-viewport #personal-context-review-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #console-scope-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #console-prompt-comparison-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #buddy-conversation {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #actor-pack-import-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #personal-context-link-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #console-system-prompt-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #server-switch-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #buddy-inbox {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport FileExtractionDialog > Vertical.file-extraction-body {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport EmojiPickerScreen #dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+
+App.-wide-viewport #buddy-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #petdex-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-export-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-import-options {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-pack-import-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+App.-wide-viewport #tool-profile-bind-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-150;
+}
+
+
+
+App.-wide-viewport #buddy-management {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport NoteCreationModal > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #conversation-selection-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #note-selection-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport AudioTroubleshootingDialog .dialog-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #file-notes-push-auth-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #trace-export-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-library-access {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #capture-policy-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #trace-privacy-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #exchange-export-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-prompt-queue-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-reaction-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-review-notes-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-endpoint-template-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-rewind-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #video-capacity-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #project-skills-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-prompt-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-style-picker-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport .model-install-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport .local-gguf-import-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #file-notes-push-endpoint-details-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #file-notes-root-details-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-project-setup-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-fork-chat-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-character-picker {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-save-as-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-terminal-session-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #global-full-confirmation {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-generate-image-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport EncryptionSetupDialog > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #character-tts-collision-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #character-tts-existing-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport .settings-speech-credential-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport DocumentGenerationModal > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-auto-speak-consent-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-rag-settings {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-summarize-preview-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-workspace-switcher-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #prompt-delete-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #persona-visual-custom-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-save-markdown-box {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #profile-interview-cancel-modal {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #dictionary-picker-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #world-book-picker-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport DictionaryAttachPicker > Vertical.dictionary-attach-body {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport ConversationAttachPicker > Vertical.conversation-attach-body {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #profile-dialog-container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport FeedbackDialog > Container {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #console-composer-menu {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
+App.-wide-viewport #prompt-variables-dialog {
+    width: $ds-percent-85;
+    max-width: $ds-size-120;
+}
 
 /* ===== MODULE: components/_workbench.tcss ===== */
 
@@ -9908,6 +10272,109 @@ WorktreeRecoveryDialog {
     height: auto;
     margin-bottom: $ds-space-section;
 }
+
+
+.console-conversation-compact-row {
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+.console-conversation-actions {
+    width: $ds-conversation-action-width;
+    min-width: $ds-conversation-action-width;
+    max-width: $ds-conversation-action-width;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    border: none;
+    text-align: center;
+}
+.console-conversation-actions.conversation-actions-ascii {
+    width: $ds-conversation-action-ascii-width;
+    min-width: $ds-conversation-action-ascii-width;
+    max-width: $ds-conversation-action-ascii-width;
+}
+
+.conversation-attention-approval-required { color: $ds-status-approval-required; }
+
+.conversation-attention-blocked { color: $ds-status-blocked; }
+
+.conversation-attention-error { color: $ds-status-error-readable; }
+
+.conversation-attention-running { color: $ds-status-running; }
+
+.conversation-attention-paused { color: $ds-status-paused; }
+
+.conversation-attention-info { color: $ds-status-info; }
+
+.conversation-attention-ready { color: $ds-status-ready; }
+
+    ConsoleConversationActionMenu .conversation-menu-summary {
+        height: $ds-control-height-compact;
+        color: $ds-text-muted;
+        text-overflow: ellipsis;
+        text-wrap: nowrap;
+    }
+
+    ConsoleWorkspaceTree .conversation-attention-approval-required { color: $ds-status-approval-required; }
+    ConsoleWorkspaceTree .conversation-attention-blocked { color: $ds-status-blocked; }
+    ConsoleWorkspaceTree .conversation-attention-error { color: $ds-status-error-readable; }
+    ConsoleWorkspaceTree .conversation-attention-running { color: $ds-status-running; }
+    ConsoleWorkspaceTree .conversation-attention-paused { color: $ds-status-paused; }
+    ConsoleWorkspaceTree .conversation-attention-info { color: $ds-status-info; }
+    ConsoleWorkspaceTree .conversation-attention-ready { color: $ds-status-ready; }
+
+
+ConsoleInspectorDetailPane { height: $ds-height-fill; min-height: $ds-size-0; }
+.inspector-detail-body { height: $ds-height-fill; min-height: $ds-size-0; }
+.inspector-section-list { width: $ds-inspector-section-width; min-width: $ds-size-0; height: $ds-height-fill; border: none; }
+.inspector-detail-reader { width: $ds-width-fill; min-width: $ds-size-0; height: $ds-height-fill; }
+.inspector-detail-title { height: $ds-control-height-compact; text-style: $ds-text-strong; text-wrap: nowrap; text-overflow: ellipsis; }
+.inspector-detail-text { height: $ds-height-fill; min-height: $ds-size-0; border: solid $ds-grid-line; }
+.inspector-detail-back { height: $ds-control-height-compact; min-height: $ds-control-height-compact; border: none; padding: $ds-space-0 $ds-space-inline; }
+.inspector-detail-narrow .inspector-section-list { width: $ds-width-fill; }
+
+
+ConsoleConversationInspector #console-inspector-modal {
+    width: $ds-inspector-modal-width;
+    height: $ds-inspector-modal-height;
+    max-width: $ds-width-full;
+    max-height: $ds-height-full;
+    border: solid $ds-grid-line;
+    padding: $ds-space-0 $ds-space-inline;
+}
+ConsoleConversationInspector #console-inspector-header { height: $ds-control-height-compact; text-style: $ds-text-strong; text-wrap: nowrap; text-overflow: ellipsis; }
+ConsoleConversationInspector #console-inspector-tabs { margin-top: $ds-space-0; min-height: $ds-size-0; }
+ConsoleConversationInspector TabPane { padding: $ds-space-0; }
+ConsoleConversationInspector #console-inspector-next-send-pane { min-height: $ds-size-0; }
+ConsoleConversationInspector #console-inspector-next-send-header { color: $ds-text-muted; }
+ConsoleConversationInspector #console-inspector-next-send-warning { color: $ds-status-warning; }
+ConsoleConversationInspector #console-inspector-project-recovery { height: auto; max-height: $ds-inspector-recovery-max-height; }
+ConsoleConversationInspector #console-inspector-actions,
+ConsoleConversationInspector #console-inspector-next-send-actions { height: $ds-control-height-compact; margin: $ds-space-0; }
+.inspector-modal-control { height: $ds-control-height-compact; min-height: $ds-control-height-compact; border: none; padding: $ds-space-0 $ds-space-inline; min-width: $ds-size-0; }
+ConsoleConversationInspector #console-inspector-costs-totals { margin: $ds-space-0; }
+ConsoleConversationInspector #console-inspector-exchange-caveat { margin: $ds-space-0; max-height: $ds-size-2; color: $ds-text-muted; }
+ConsoleConversationInspector .inspector-view-note { height: auto; color: $ds-text-muted; }
+ConsoleConversationInspector #console-inspector-tabs,
+ConsoleConversationInspector #console-inspector-tabs > ContentSwitcher,
+ConsoleConversationInspector #console-inspector-tabs > ContentSwitcher > TabPane {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+.inspector-usage-detail .inspector-section-list {
+    width: $ds-inspector-usage-list-width;
+}
+ConsoleConversationInspector #console-inspector-tabs > ContentTabs {
+    height: $ds-control-height-compact;
+}
+
+.inspector-usage-detail.inspector-detail-narrow .inspector-section-list { width: $ds-width-fill; }
+ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 
 /* ===== MODULE: features/_library.tcss ===== */
 

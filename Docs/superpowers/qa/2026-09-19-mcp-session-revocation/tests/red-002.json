@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[reorder]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[replace]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[profile]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[clear]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_queued_revoke_cannot_target_a_replacement_view[same]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.UI.test_mcp_session_revoke_ownership::test_revoke_is_invalid_as_soon_as_permission_replacement_starts",
+      "status": "failure"
+    }
+  ]
+}

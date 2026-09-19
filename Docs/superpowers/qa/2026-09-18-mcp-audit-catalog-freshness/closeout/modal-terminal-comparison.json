@@ -1,0 +1,14 @@
+{
+  "textual-light-120x40-extraction.txt": true,
+  "textual-light-170x48-dictionary.txt": true,
+  "textual-dark-120x40-conversation.txt": true,
+  "textual-light-170x48-extraction.txt": true,
+  "textual-light-120x40-conversation.txt": true,
+  "textual-light-120x40-dictionary.txt": true,
+  "textual-dark-120x40-extraction.txt": true,
+  "textual-dark-170x48-dictionary.txt": true,
+  "textual-dark-170x48-conversation.txt": true,
+  "textual-light-170x48-conversation.txt": true,
+  "textual-dark-170x48-extraction.txt": true,
+  "textual-dark-120x40-dictionary.txt": true
+}
