@@ -1,0 +1,16 @@
+{
+  "worktrees": 34,
+  "history": [],
+  "copies": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+      "path": "backlog/tasks/task-32841 - Keep-queued-Console-approval-actions-tied-to-their-displayed-batch.md"
+    },
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library",
+      "path": "backlog/tasks/task-32841 - Keep-queued-Console-approval-actions-tied-to-their-displayed-batch.md"
+    }
+  ],
+  "one_logical_task": true,
+  "note": "The original unstaged task was preserved when concurrent edits and branch switching required a new isolated checkout. Only this branch stages the copied task. No different title or prior committed allocation exists. CLI originally selected stale 32829; only the newly created unstaged task was renamed to census-selected 32841 before implementation."
+}

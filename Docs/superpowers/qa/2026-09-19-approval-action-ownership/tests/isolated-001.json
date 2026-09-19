@@ -1,0 +1,648 @@
+{
+  "cases": [
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_summarize_arguments_redacts_secret_looking_values",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_set_batch_redacts_secret_arguments_in_rendered_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_legacy_single_approval_api_was_removed",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_card_never_renders_the_retired_single_approval_buttons",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_set_batch_renders_one_row_per_unique_name_with_tooltips",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_raw_shell_row_shows_complete_command_and_danger_context",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_raw_shell_command_view_has_bounded_scrollable_geometry",
+      "status": "failure",
+      "message": "AssertionError: _agentic_terminal.tcss's '.approval-row-full-command' block is missing 'width: 1fr'",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:87: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_reason_badges_carry_a_visible_why_line_not_a_tooltip",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid_default",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_bulk_approve_and_deny_all_are_row_aware_and_never_raise",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_bulk_actions_flag_a_row_they_could_not_apply_to",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_changing_a_flagged_rows_select_clears_needs_decision",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_unrelated_select_changed_does_not_touch_batch_rows",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approve_all_and_deny_all_bulk_set_every_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_prefix",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_submit_posts_approval_decided_with_per_row_decisions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_submit_echoes_back_the_round_id_stamped_by_set_batch",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_set_batch_with_no_calls_hides_the_card",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_set_batch_remount_does_not_duplicate_rows",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_identical_approval_round_sync_preserves_mounted_controls",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_changed_ordinary_one_row_reuses_only_noncommitting_widgets",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_queued_old_select_event_cannot_change_the_new_round",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_back_to_back_changed_rounds_leave_only_latest_controls",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_single_row_batch_renders_fast_approve_and_deny_buttons",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_multi_row_batch_omits_fast_buttons",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_fast_approve_button_submits_approve_once_immediately",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_fast_deny_button_submits_deny_immediately",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_stale_generation_fast_button_press_is_a_noop",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_fast_approve_button_disables_after_press_to_prevent_double_submit",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_new_batch_reenables_submit_after_a_prior_round_disabled_it",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_descriptor_effects_reach_the_mounted_production_approval_card",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approved_definitive_tool_stays_mounted_until_real_terminal[success]",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approved_definitive_tool_stays_mounted_until_real_terminal[crash]",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_run_terminal_sweeps_approved_undispatched_row_after_base_exception[system-exit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_run_terminal_sweeps_approved_undispatched_row_after_base_exception[cancelled-error]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_local_same_name_finishing_rows_complete_by_call_id_out_of_order",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_finishing_card_is_not_counted_and_keyboard_focuses_the_card",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_console_binds_alt_a_to_review_pending_approval",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_alt_a_focuses_the_pending_approval_decision_select",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_alt_a_notifies_when_nothing_is_pending",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle",
+      "status": "failure",
+      "message": "AssertionError: _agentic_terminal.tcss's '.approval-row-decision {' block is missing 'width: 27;'",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:87: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approval_row_height_rule_pinned_in_bundle_source_and_bundle",
+      "status": "failure",
+      "message": "AssertionError: _agentic_terminal.tcss's '.approval-row {' block is missing 'width: 1fr;'",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:87: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approval_batch_rows_height_rule_pinned_in_bundle_source_and_bundle",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_round_trip_resolves_from_ui_thread",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_routes_one_decision_to_duplicate_names",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_preserves_native_call_ids_as_verdict_keys",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_run_terminal_clears_approved_definitive_row_never_dispatched",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_close_session_discards_its_approved_definitive_row[approval]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_close_session_discards_its_approved_definitive_row[finishing]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_cancellation_denies_undecided",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_active_cancel_event_denies_undecided",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_unrelated_session_stop_does_not_cross_cancel",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_switch_session_parks_rather_than_denies_a_pending_approval_round",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_parks_for_a_non_active_session",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_badge_up",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_round",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_own_session_cancel_event_denies_the_round",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_switch",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_evict_the_newer_ones_payload",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_teardown",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_for_the_same_session",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_resolve_pending_approval_without_active_round_is_a_noop",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_resolve_pending_approval_without_round_id_fails_closed_and_leaves_round_pending",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_with_no_pending_calls_returns_empty_and_never_surfaces_card",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_chat_screen_forwards_approval_decided_to_controller",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_chat_screen_approval_decided_handler_tolerates_no_controller",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_survives_marshal_failure_during_teardown",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_call_id_keyed_decision_still_stamps_the_builtin_gate",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_collapsed_row_discloses_every_target_in_the_rendered_row",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_armed_deadline_is_visible_on_the_mounted_card",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_the_deadline_countdown_ticks_and_stops_on_clear_or_timeout",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_refusing_one_call_does_not_get_overwritten_by_approving_another",
+      "status": "failure",
+      "message": "AssertionError: approving spec.md must still let it run: {'read_file': 'proceed', 'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved')}",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:3873: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_mcp_rows_carry_their_call_id_so_two_targets_are_two_decisions",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_the_broadest_approval_scope_for_a_tool_survives_collapsing",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revoking_a_run_denies_its_rounds_and_leaves_another_runs_untouched",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revoking_a_run_unblocks_its_waiting_thread_and_clears_the_card",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revoking_an_unknown_run_is_a_zero_return_noop",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_decision_landing_after_a_revoke_cannot_reopen_the_round",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_revoked_childs_card_can_no_longer_execute_its_tool",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_the_next_turns_stop_does_not_deny_an_earlier_turns_survivors_card",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_round_armed_between_turns_is_not_deniable_by_a_later_turns_stop",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_the_owning_turns_own_stop_still_denies_its_round",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_shutdown_still_denies_a_survivors_round",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_marks_human_input_wait_while_round_armed",
+      "status": "failure",
+      "message": "AssertionError",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:4652: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_without_ui_fails_closed_immediately",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_mcp_approval_timeout_default_is_no_deadline",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_human_prompt_defaults_pin_no_deadline",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_no_app_round_reports_every_key_as_unanswered",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook",
+      "status": "failure",
+      "message": "AssertionError",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:4770: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_the_approval_route_reaches_a_pending_skill_install_card",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_route_with_nothing_pending_can_decline_to_warn",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_post_revoke_arm_denies_without_mounting[approval]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_post_revoke_arm_denies_without_mounting[skill_script]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_empty_run_owner_warns_once_without_payload_content[approval]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_empty_run_owner_warns_once_without_payload_content[skill_script]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revoke_after_result_snapshot_but_before_unregister_returns_cached_allow",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revoke_before_result_snapshot_returns_deny",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_local_provider_refuses_write_after_revoke_then_arm",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revoked_arm_is_refused_before_configuration_read[approval]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revoked_arm_is_refused_before_configuration_read[skill_script]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_revocation_cannot_split_a_batch_snapshot",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_sibling_payload_remounts_after_round_ends[revoke-approval]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_sibling_payload_remounts_after_round_ends[revoke-skill_script]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_sibling_payload_remounts_after_round_ends[teardown-approval]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_sibling_payload_remounts_after_round_ends[teardown-skill_script]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_repeated_submit_decides_the_batch_only_once[submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_repeated_submit_decides_the_batch_only_once[fast-approve]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_queued_repeated_submit_decides_the_batch_only_once[fast-deny]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_unchanged_resync_keeps_a_queued_toolbar_action_valid[approve-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_unchanged_resync_keeps_a_queued_toolbar_action_valid[deny-all]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_unchanged_resync_keeps_a_queued_toolbar_action_valid[submit]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_approval_action_ownership::test_submitted_round_stays_inert_but_a_fresh_round_can_submit",
+      "status": "passed"
+    }
+  ]
+}

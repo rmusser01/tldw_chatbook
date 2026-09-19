@@ -301,3 +301,22 @@ The initial compact failures and harness-only native selection failure remain
 in the receipt. This closes the label clipping retained by TASK-32793; broader
 MCP server lifecycles, execution and remaining destination review stay open.
 PR2707 remains draft/unmerged, subject to its own visual approval.
+
+## Post-merge continuation: Console approval action ownership
+
+PR2707 is now merged; earlier open-PR statements are historical. The continuation
+heartbeat remains paused. TASK-32841 is an independent follow-up from dev, separate
+from draft PR2727/PR2728. Queued bulk and submit gestures cannot affect a later
+approval batch, duplicate submissions are suppressed, and fresh rounds remain
+actionable without changing existing layout or decision scopes.
+
+[123 passing targeted cases and eight inspected native captures](../qa/2026-09-19-approval-action-ownership/README.md)
+qualify the bounded repair. Nineteen broader-module failures match unchanged dev
+exactly and remain documented debt. All seven derived guards pass; native normal
+exit, released lock, healthy private databases and unchanged defaults are verified.
+The exact isolated source was retested after concurrent changes appeared in the
+original checkout. No tool/provider calls were dispatched.
+
+The draft remains subject to current-head CI/review and final visual approval.
+MCP session-grant review/revocation, other approval journeys and connected-runtime
+coverage remain next; the wider destination review is not complete.
