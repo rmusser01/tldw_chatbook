@@ -21611,13 +21611,15 @@ UPDATE db_schema_version
             query += " AND f.deck_id = ?"
             params.append(deck_id)
 
-        query += " ORDER BY f.next_review ASC LIMIT ?"
+        # TASK-32803.2 / Qodo #5: order by the NORMALIZED time, matching the
+        # WHERE clause. Sorting the raw text placed a legacy T-separated row
+        # after a same-date space-separated row, so get_next_review_candidate
+        # (limit=1) could serve a chronologically-later card first.
+        query += " ORDER BY datetime(f.next_review) ASC LIMIT ?"
         params.append(limit)
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-
+        # Qodo #3: use the standard read path like count_due_flashcards.
+        cursor = self.execute_query(query, tuple(params))
         return [dict(row) for row in cursor.fetchall()]
 
     def count_due_flashcards(self) -> int:

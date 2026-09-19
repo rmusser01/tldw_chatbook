@@ -21,7 +21,11 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 @pytest.fixture
 def db():
-    return CharactersRAGDB(":memory:", "flashcard-due-test")
+    # Qodo #1: yield + close so the in-memory connection is torn down
+    # deterministically instead of leaking to GC.
+    database = CharactersRAGDB(":memory:", "flashcard-due-test")
+    yield database
+    database.close_connection()
 
 
 def _card(db) -> str:
@@ -101,3 +105,24 @@ def test_the_real_review_write_stores_the_canonical_shape(db):
     with db.transaction() as cursor:
         parsed = cursor.execute("SELECT datetime(?)", (stored,)).fetchone()[0]
     assert parsed == stored
+
+
+def test_mixed_format_same_date_cards_are_served_chronologically(db):
+    """Qodo #5: a legacy T-separated row and a new space-separated row on the
+    SAME date must be ordered by their normalized time, not raw text. With
+    limit=1, the chronologically-earliest due card must win -- raw ordering
+    (' ' 0x20 < 'T' 0x54) would place the space-separated (later) card first."""
+    deck_id = db.create_deck("Chrono", "order check")
+    earlier = db.create_flashcard(
+        {"deck_id": deck_id, "front": "Q1", "back": "A1", "type": "basic"}
+    )
+    later = db.create_flashcard(
+        {"deck_id": deck_id, "front": "Q2", "back": "A2", "type": "basic"}
+    )
+    _set_next_review(db, earlier, "2020-01-01T01:00:00")   # legacy T-format, 01:00
+    _set_next_review(db, later, "2020-01-01 05:00:00")     # new space format, 05:00
+
+    due = db.get_due_flashcards(limit=1)
+
+    assert len(due) == 1
+    assert due[0]["id"] == earlier, "due cards were not ordered chronologically"
