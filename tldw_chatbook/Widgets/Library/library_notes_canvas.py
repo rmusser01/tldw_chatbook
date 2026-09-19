@@ -3404,9 +3404,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # compose time too, so the staleness comparison below has to be
         # against the SAME rendered source -- comparing the raw body would
         # re-render every sync on any note carrying a link or a callout.
-        preview_source = render_preview_source(snapshot.body, title=snapshot.title)
-        if show_preview and preview_body.source != preview_source:
-            preview_body.update(preview_source)
+        # TASK-32804.11: compute the (link/callout-rewritten) preview source
+        # ONLY when Preview is the active surface. It ran on every sync --
+        # including every keystroke while Preview was hidden -- exactly the
+        # hidden-render backlog the comment above says to avoid.
+        if show_preview:
+            preview_source = render_preview_source(
+                snapshot.body, title=snapshot.title
+            )
+            if preview_body.source != preview_source:
+                preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(
             state.status_line or "Saved",
             NOTES_AUTHORITY_PREFIX,
