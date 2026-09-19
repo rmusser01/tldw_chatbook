@@ -775,15 +775,26 @@ class ConsoleSettingsResult:
 
 @dataclass(frozen=True, slots=True)
 class ConsoleModelDiscoveryIdentity:
-    """One model-list request bound to the exact mutable modal draft."""
+    """One model-list request bound to the exact mutable modal draft.
+
+    Args:
+        provider_key: Config-level provider the request resolves through;
+            registry-entry drafts borrow their entry's family execution key.
+        connection_identity: Canonical ``(provider_key, url)`` endpoint pair
+            the request probes; excluded from the repr.
+        draft_generation: Model-discovery generation captured when the
+            request began. Any later draft transition advances it, fencing
+            the result as stale.
+        entry_id: Registry entry the draft addresses (TASK-32566). Entry
+            drafts carry the dashed ``custom-ep:<slug>`` id so switching
+            entries (or editing one's URL) invalidates results even when
+            two drafts share a family execution key; provider-level drafts
+            leave it None.
+    """
 
     provider_key: str
     connection_identity: tuple[str, str] = field(repr=False)
     draft_generation: int
-    #: Registry entry the draft addresses (TASK-32566). Provider-level drafts
-    #: leave it None; entry drafts scope the fencing identity to the exact
-    #: entry so switching entries (or editing one's URL) invalidates results
-    #: even when two drafts share a family execution key.
     entry_id: str | None = None
 
 
@@ -1322,6 +1333,13 @@ class ConsoleSettingsModal(
         self._current_model_discovery_identity: (
             ConsoleModelDiscoveryIdentity | None
         ) = None
+        # True while discovery owns the controls-vs-draft model gap (a probe
+        # is in flight or a listing published without a user model edit
+        # since), so the readiness debounce must not "repair" it (qodo
+        # PR-2736 finding 4: identity equality alone cannot distinguish the
+        # listing's mechanical auto-selection from a genuine user edit,
+        # because user edits re-bind the identity to keep the listing).
+        self._discovery_owns_model_gap = False
         self._current_discovered_model_ids: tuple[str, ...] = ()
         self._unverified_model_decision: ConsoleUnverifiedModelDecision | None = None
         self._base_provenance_options: dict[
@@ -5357,8 +5375,25 @@ class ConsoleSettingsModal(
             else:
                 # The switch never landed: a probe now could never pass the
                 # draft fencing, so drop the follow-up instead of firing a
-                # doomed request.
+                # doomed request. Restore both adapters to the still-active
+                # provider (the same suppression the sentinel flow uses) so
+                # the failed selection does not render as the session
+                # provider; the refreshed option set stays, keeping the
+                # created entry selectable for a manual retry (qodo PR-2736
+                # finding 5).
                 self._pending_entry_discovery = None
+                provider_adapter = self.query_one(
+                    "#console-settings-provider", Select
+                )
+                with provider_adapter.prevent(Select.Changed):
+                    provider_adapter.value = self._active_provider or Select.NULL
+                try:
+                    self.query_one(
+                        "#console-settings-provider-picker", ConsoleProviderPicker
+                    ).set_provider(self._active_provider)
+                except (NoMatches, QueryError):
+                    pass
+                self._sync_endpoint_new_button(self._active_provider)
             return
         self._cancel_connection_probe()
         self._invalidate_model_discovery_for_provider(self._active_provider)
@@ -5480,13 +5515,16 @@ class ConsoleSettingsModal(
         if (
             self._draft_rebaser is not None
             and not self._updating_controls
-            # A discovery listing that still matches the current draft means
-            # the controls/draft model gap is the listing's own mechanical
-            # sole-model auto-selection (already fenced by its generation);
-            # rebasing here would re-project the draft and wipe the listing
-            # status for nothing. Genuine user model edits always advance the
-            # generation first, so they keep rebasing.
-            and not self._current_model_discovery_matches_current_draft()
+            # Discovery owns the controls/draft model gap only while a probe
+            # is in flight or a published listing has seen no user model
+            # edit since: that gap is the listing's own mechanical
+            # sole-model auto-selection (already fenced by its generation),
+            # and rebasing here would re-project the draft and wipe the
+            # listing status for nothing. Genuine user model edits clear
+            # the flag, so they keep rebasing even though they re-bind the
+            # discovery identity to preserve the listing (qodo PR-2736
+            # finding 4).
+            and not self._discovery_owns_model_gap
             and (self._active_provider, model)
             != (self._draft.settings.provider, self._draft.settings.model)
         ):
@@ -5878,6 +5916,9 @@ class ConsoleSettingsModal(
         if connection_identity is None:
             raise ValueError("model discovery requires a valid endpoint")
         self._advance_model_discovery_generation(clear_status=False, force=True)
+        # A probe is in flight: until it settles, any controls/draft model
+        # gap predates the request and must not be "repaired" mid-probe.
+        self._discovery_owns_model_gap = True
         return ConsoleModelDiscoveryIdentity(
             provider_key=provider_key,
             connection_identity=connection_identity,
@@ -5906,6 +5947,9 @@ class ConsoleSettingsModal(
         self._model_discovery_generation += 1
         self._unverified_model_decision = None
         self._current_model_discovery_identity = None
+        # Invalidation drops discovery's claim on the model gap: whatever
+        # transitioned the draft (a user edit, a switch) now owns it.
+        self._discovery_owns_model_gap = False
         self._current_discovered_model_ids = ()
         self._invalidate_model_discovery_for_provider(self._active_provider)
         if clear_status:
@@ -6594,6 +6638,11 @@ class ConsoleSettingsModal(
                 identity = rebound
             self._current_model_discovery_identity = identity
             self._current_discovered_model_ids = model_ids
+            # The published listing (including its mechanical sole-model
+            # auto-selection) owns any controls/draft model gap until the
+            # user edits the model; the readiness debounce must not rebase
+            # over it (qodo PR-2736 finding 4).
+            self._discovery_owns_model_gap = True
             self._promote_current_discovery_options()
         self._sync_readiness_display()
         self._sync_generation_control_support()

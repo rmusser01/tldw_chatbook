@@ -6638,14 +6638,29 @@ async def _reachable_two_model_tester(
     return ProviderProbeResult("reachable", ("model-a", "model-b"))
 
 
+async def _reachable_sole_model_tester(
+    _identity: ProviderDraftIdentity,
+) -> ProviderProbeResult:
+    """Offline entry-discovery seam: reachable, exactly one served model."""
+    return ProviderProbeResult("reachable", ("only-model",))
+
+
+# Shared polling policy for the entry-discovery tests (qodo PR-2736 finding
+# 3): one named place to tune the worker-settlement allowance instead of
+# scattered 20 x 0.05s literals. The drain helper waits through two phases
+# (probe start, then settle), so it budgets double the pauses.
+_PROBE_POLL_PAUSE_SECONDS = 0.05
+_PROBE_POLL_MAX_PAUSES = 20
+
+
 async def _drain_entry_probe(pilot, modal) -> None:  # type: ignore[no-untyped-def]
     """Pump until a deferred entry probe starts, then until it settles."""
-    for _ in range(40):
-        await pilot.pause(0.05)
+    for _ in range(2 * _PROBE_POLL_MAX_PAUSES):
+        await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
         if modal._active_connection_probe_token is not None:
             break
-    for _ in range(40):
-        await pilot.pause(0.05)
+    for _ in range(2 * _PROBE_POLL_MAX_PAUSES):
+        await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
         if modal._active_connection_probe_token is None:
             return
 
@@ -6852,8 +6867,8 @@ async def test_entry_discovery_survives_manual_discover_press() -> None:
         assert discover.disabled is False
 
         discover.press()
-        for _ in range(20):
-            await pilot.pause(0.05)
+        for _ in range(_PROBE_POLL_MAX_PAUSES):
+            await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
             if modal._active_connection_probe_token is None:
                 break
 
@@ -6864,6 +6879,163 @@ async def test_entry_discovery_survives_manual_discover_press() -> None:
         assert evidence.endpoint == "reachable"
         assert "2 models listed" in _discovery_status_text(modal)
         assert "Endpoint · Reachable" in _readiness_text(modal)
+
+
+def _registry_entry_rebase_modal_harness(
+    connection_tester,  # type: ignore[no-untyped-def]
+) -> tuple[ModalHarness, ConsoleSettingsModal]:
+    """Mounted ENTRY draft wired with the real controller rebaser.
+
+    ``_registry_rebase_harness`` mounts a provider-level llama_cpp draft;
+    the entry-discovery flows here need the dashed ``custom-ep:gpu-box``
+    draft with the same production rebase path (CE-001 wiring).
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    controller = ConsoleChatController.__new__(ConsoleChatController)
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(
+            provider="custom-ep:gpu-box", model="model-a", base_url=None
+        ),
+        app_config=app.app_config,
+        providers_models={"llama_cpp": ["model-a"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        draft_rebaser=controller.rebase_console_settings_draft,
+        connection_tester=connection_tester,
+    )
+    return app, modal
+
+
+@pytest.mark.asyncio
+async def test_custom_model_edit_after_listing_rebases_controller_draft() -> None:
+    """qodo PR-2736 finding 4: genuine custom-model edits after a listing
+    must still reach the controller rebaser.
+
+    The readiness-debounce guard keyed on discovery-identity equality
+    mistook user typing for the listing's mechanical auto-selection: user
+    edits re-bind the identity (``_advance_model_generation_preserving_
+    current_listing``), so the debounced ``_rebase_to`` was skipped and
+    ``_draft.settings.model`` kept the pre-typing model until submission's
+    late repair.
+    """
+    app, modal = _registry_entry_rebase_modal_harness(_reachable_two_model_tester)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _drain_entry_probe(pilot, modal)
+        assert "2 models listed" in _discovery_status_text(modal)
+        assert modal._draft.settings.model == "model-a"
+
+        # Genuine custom-model edit AFTER the listing published.
+        picker = modal.query_one("#console-settings-model-picker", ModelSearchPicker)
+        picker.set_custom_value("model-z")
+        modal._model_picker_value_changed(
+            ModelSearchPicker.ModelValueChanged("model-z", custom=True)
+        )
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
+
+        assert modal._current_model_value() == "model-z"
+        assert modal._draft.settings.model == "model-z"
+
+
+@pytest.mark.asyncio
+async def test_listing_auto_selection_survives_debounced_readiness_sync() -> None:
+    """TASK-32566 guard (qodo PR-2736 finding 4 counterweight): a debounce
+    scheduled before a listing lands must not re-project the draft over the
+    listing's sole-model auto-selection once it fires."""
+    app, modal = _registry_entry_rebase_modal_harness(_reachable_sole_model_tester)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        # A stale debounce is pending (scheduled by an earlier edit), then
+        # the listing lands and auto-selects the sole served model.
+        modal._schedule_readiness_sync()
+        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _drain_entry_probe(pilot, modal)
+        assert modal._current_model_value() == "only-model"
+
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
+
+        # The mechanical auto-selection stands: the debounce neither
+        # reverted the picker nor wiped the listing status.
+        assert modal._current_model_value() == "only-model"
+        assert "1 model listed" in _discovery_status_text(modal)
+        assert modal._draft.settings.model == "model-a"
+
+
+@pytest.mark.asyncio
+async def test_endpoint_created_failed_rebase_restores_provider_adapters() -> None:
+    """qodo PR-2736 finding 5: a failed post-Create rebase must not render
+    the never-activated entry as the selected provider.
+
+    ``_endpoint_created`` teaches both adapters the new entry before the
+    switch lands; when the controller rebase rejects the switch, the
+    Select/picker must fall back to the still-active provider while the
+    refreshed option set keeps the entry retryable.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    app = ModalHarness()
+    app.app_config = _registry_app_config()
+    controller = ConsoleChatController.__new__(ConsoleChatController)
+    real_rebase = controller.rebase_console_settings_draft
+
+    def rejecting_new_entry(  # type: ignore[no-untyped-def]
+        source, **kwargs
+    ):
+        if kwargs.get("provider") == "custom-ep:gpu-box":
+            raise RuntimeError("rebase rejected")
+        return real_rebase(source, **kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=ConsoleSessionSettings(
+                    provider="llama_cpp", model="model-a"
+                ),
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                draft_rebaser=rejecting_new_entry,
+                connection_tester=_unreachable_connection_tester,
+            )
+        )
+        await pilot.pause()
+        modal = app.screen
+
+        modal.post_message(
+            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        provider_select = modal.query_one("#console-settings-provider", Select)
+        picker = modal.query_one(
+            "#console-settings-provider-picker", ConsoleProviderPicker
+        )
+        # The switch never landed: the session still addresses llama_cpp.
+        assert modal._active_provider == "llama_cpp"
+        assert modal._draft.settings.provider == "llama_cpp"
+        assert provider_select.value == "llama_cpp"
+        assert picker.value == "llama_cpp"
+        assert modal._pending_entry_discovery is None
+        # The refreshed option set stays so the created entry remains
+        # selectable for a manual retry.
+        assert "custom-ep:gpu-box" in picker._known_provider_ids
 
 
 def _two_entry_registry_app_config() -> dict:
@@ -6909,8 +7081,8 @@ async def test_entry_switch_discards_stale_discovery_evidence() -> None:
 
         discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         discover.press()
-        for _ in range(20):
-            await pilot.pause(0.05)
+        for _ in range(_PROBE_POLL_MAX_PAUSES):
+            await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
             if modal._active_connection_probe_token is None:
                 break
 
@@ -6985,15 +7157,15 @@ async def test_switching_away_from_entry_cancels_inflight_discovery_worker() -> 
 
         discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         discover.press()
-        for _ in range(20):
-            await pilot.pause(0.05)
+        for _ in range(_PROBE_POLL_MAX_PAUSES):
+            await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
             if modal._active_connection_probe_token is not None:
                 break
         assert modal._active_connection_probe_token is not None
 
         modal._switch_provider("llama_cpp")
-        for _ in range(20):
-            await pilot.pause(0.05)
+        for _ in range(_PROBE_POLL_MAX_PAUSES):
+            await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
             if cancelled:
                 break
         assert cancelled == [True]
