@@ -1,0 +1,216 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success] _
+
+self = <Coroutine test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10a3b73b0>, 'refresh': 'success', 'request': <FixtureRequ...vate/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0')}
+request = <FixtureRequest for <Coroutine test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]>>
+work = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0/private-profile-process')
+profile = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0/private-profile-process/profile')
+environment = {'BUN_INSTALL': '/Users/macbook-dev/.bun', 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/b507bb60-436f-4f1a-a669-62329d01e853.sock', 'CODEX_CI': '1', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE': 'Codex Desktop', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 120.0
+report = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0/private-profile-process/pytest.xml')
+log = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success] _
+E
+E           request = <FixtureRequest for <Coroutine test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]>>
+E           tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0/private-profile-process/pytest/test_cached_permission_refresh0')
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a15f080>
+E           refresh = 'success'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("refresh", ["retry", "session", "success"])
+E               @private_profile_test
+E               async def test_cached_permission_refresh_does_not_reapprove_an_unseen_definition(
+E                   request, tmp_path, monkeypatch, refresh
+E               ):
+E                   app = PermissionsApp(tmp_path / "permissions.json")
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       workbench, inspector, tool = await open_permissions(app, pilot)
+E                       service = app.unified_mcp_service
+E                       before = service.permission_store.load()
+E                       container = app.query_one("#mcp-inspector-permission")
+E                       original_remove = container.remove_children
+E                       entered, release = asyncio.Event(), asyncio.Event()
+E
+E                       async def hold_removal():
+E                           entered.set()
+E                           await release.wait()
+E                           await original_remove()
+E
+E                       if refresh == "success":
+E                           original_sync = workbench._sync_permissions_mode
+E
+E                           async def hold_sync(*args, **kwargs):
+E                               entered.set()
+E                               await release.wait()
+E                               await original_sync(*args, **kwargs)
+E
+E                           monkeypatch.setattr(workbench, "_sync_permissions_mode", hold_sync)
+E                       else:
+E                           monkeypatch.setattr(container, "remove_children", hold_removal)
+E                       original_set = service.set_tool_state
+E
+E                       def fail(*args, **kwargs):
+E                           raise RuntimeError("synthetic permission write failure")
+E
+E                       pending = None
+E                       if refresh == "retry":
+E                           monkeypatch.setattr(service, "set_tool_state", fail)
+E                           app.query_one(SELECTORS["reallow"], Button).press()
+E                       elif refresh == "success":
+E                           app.query_one(SELECTORS["remove"], Button).press()
+E                       else:
+E                           pending = asyncio.create_task(
+E                               inspector.refresh_permission_session_approvals(
+E                                   [], profile_context=workbench._tool_policy_profile_context
+E                               )
+E                           )
+E                       try:
+E                           await asyncio.wait_for(entered.wait(), 3)
+E                           if refresh == "success":
+E                               before = service.permission_store.load()
+E                           tool.input_schema["description"] = (
+E                               "Unseen definition after the write failed"
+E                           )
+E                       finally:
+E                           release.set()
+E                       if pending is not None:
+E                           await pending
+E                       await pilot.pause()
+E                       monkeypatch.setattr(service, "set_tool_state", original_set)
+E                       app.query_one(SELECTORS["reallow"], Button).press()
+E                       await pilot.pause()
+E           >           assert service.permission_store.load() == before
+E           E           AssertionError: assert {'kill_switch...5:30.945686Z'} == {'kill_switch...5:30.605300Z'}
+E           E
+E           E             Omitting 2 identical items, use -vv to show
+E           E             Differing items:
+E           E             {'updated_at': '2026-09-19T16:05:30.945686Z'} != {'updated_at': '2026-09-19T16:05:30.605300Z'}
+E           E             {'profiles': {'default': {'global_default': 'ask', 'servers': {'local:docs': {'tools': {'search': {...}}}}}}} != {'profiles': {'default': {'global_default': 'ask', 'servers': {'local:docs': {'tools': {'search': {...}}}}}}}
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_permission_action_ownership.py:335: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-19 09:05:29.041 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E           2026-09-19 09:05:29.080 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-19 09:05:29.088 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E           2026-09-19 09:05:29.089 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E           2026-09-19 09:05:29.207 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E           2026-09-19 09:05:29.461 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-19 09:05:29.990 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1618 - MCP execution log access failed: 'PermissionsHubService' object has no attribute 'execution_log'
+E           - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-28/test_cached_permission_refresh0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           1.75s call     Tests/UI/test_mcp_permission_action_ownership.py::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_permission_action_ownership.py::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]
+E           1 failed in 2.97s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-19 09:05:28.103 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-19 09:05:28.143 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-19 09:05:28.154 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-19 09:05:28.155 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+------- generated xml file: /private/tmp/tldw-32866-red-005/results.xml --------
+============================= slowest 25 durations =============================
+3.76s call     Tests/UI/test_mcp_permission_action_ownership.py::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_permission_action_ownership.py::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[success]
+1 failed, 26 deselected in 4.61s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8ee56353-fe5e-4c62-815a-b7e16f9fdf61/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8ee56353-fe5e-4c62-815a-b7e16f9fdf61/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8ee56353-fe5e-4c62-815a-b7e16f9fdf61
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8ee56353-fe5e-4c62-815a-b7e16f9fdf61'
+  warnings.warn(

@@ -1,0 +1,32 @@
+{
+  "reviewed_head": "8b29ab5b295ebb434e635a0a95919f5a10fe1398",
+  "owner_visual_approval": "User approved and requested continuation after current-dev gallery review.",
+  "findings": [
+    {
+      "thread": "PRRT_kwDOOcyyl86kCq5J",
+      "issue": "Audit rendering lacks parameter docs",
+      "resolution": "Added Args for entry and profile_context."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kCq5L",
+      "issue": "Button events lack handler docs",
+      "resolution": "Added dispatch summary and event Args."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kCq5O",
+      "issue": "Test import splits local group",
+      "resolution": "Third-party Textual imports precede contiguous Tests/tldw_chatbook project imports."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kCq5S",
+      "issue": "Opening tool falsely reports unavailable during catalog publication",
+      "resolution": "Use existing publication lock through Tools row selection and rendering; new-identity publication regression reproduced before and passes after."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kCq5V",
+      "issue": "Opening permissions falsely reports unavailable during catalog publication",
+      "resolution": "Use existing publication lock through Permissions row selection and rendering; new-identity publication regression reproduced before and passes after."
+    }
+  ],
+  "scope": "Row availability is serialized here. Re-resolving same-ID definitions remains saved PR2726."
+}

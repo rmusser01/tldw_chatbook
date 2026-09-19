@@ -775,11 +775,27 @@ class ConsoleSettingsResult:
 
 @dataclass(frozen=True, slots=True)
 class ConsoleModelDiscoveryIdentity:
-    """One model-list request bound to the exact mutable modal draft."""
+    """One model-list request bound to the exact mutable modal draft.
+
+    Args:
+        provider_key: Config-level provider the request resolves through;
+            registry-entry drafts borrow their entry's family execution key.
+        connection_identity: Canonical ``(provider_key, url)`` endpoint pair
+            the request probes; excluded from the repr.
+        draft_generation: Model-discovery generation captured when the
+            request began. Any later draft transition advances it, fencing
+            the result as stale.
+        entry_id: Registry entry the draft addresses (TASK-32566). Entry
+            drafts carry the dashed ``custom-ep:<slug>`` id so switching
+            entries (or editing one's URL) invalidates results even when
+            two drafts share a family execution key; provider-level drafts
+            leave it None.
+    """
 
     provider_key: str
     connection_identity: tuple[str, str] = field(repr=False)
     draft_generation: int
+    entry_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1311,12 +1327,19 @@ class ConsoleSettingsModal(
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         # Entry-creation follow-up probe (provider, base_url, probe key),
         # consumed by the provider switch that lands after EndpointCreated.
-        self._pending_entry_discovery: tuple[str, str, str] | None = None
+        self._pending_entry_discovery: tuple[str, str] | None = None
         streaming_field = self._draft_field("streaming")
         self._model_discovery_generation = 0
         self._current_model_discovery_identity: (
             ConsoleModelDiscoveryIdentity | None
         ) = None
+        # True while discovery owns the controls-vs-draft model gap (a probe
+        # is in flight or a listing published without a user model edit
+        # since), so the readiness debounce must not "repair" it (qodo
+        # PR-2736 finding 4: identity equality alone cannot distinguish the
+        # listing's mechanical auto-selection from a genuine user edit,
+        # because user edits re-bind the identity to keep the listing).
+        self._discovery_owns_model_gap = False
         self._current_discovered_model_ids: tuple[str, ...] = ()
         self._unverified_model_decision: ConsoleUnverifiedModelDecision | None = None
         self._base_provenance_options: dict[
@@ -4673,47 +4696,54 @@ class ConsoleSettingsModal(
         provider_id = event.provider_id
         entry = entry_for(self._app_config, provider_id)
         if entry is not None:
-            # Probe with the entry's family execution key: the raw
-            # custom-ep id does not normalize to a URL-based provider key.
-            self._pending_entry_discovery = (
-                provider_id,
-                entry.base_url,
-                family_execution_key(entry.family),
-            )
+            self._pending_entry_discovery = (provider_id, entry.base_url)
         provider_select = self.query_one("#console-settings-provider", Select)
         # The creation modal mirrored the persisted entry into the shared
         # app_config mapping, so the rebuilt options include the new id.
-        # The rebuild itself is mechanical: suppress its selection-reset
-        # Changed(NULL) (CE-001) so the blank value never enters the switch
-        # path -- only the explicit assignment below fires Select.Changed,
-        # which runs the same switch path a manual selection uses and
-        # consumes the pending entry discovery above.
+        # Refresh BOTH adapters before the selection lands: the visible
+        # picker snapshots its options at compose time, so without the
+        # refresh the new entry id is unknown to it and the switch renders
+        # a blank field with no entry row in the dropdown (CE-006). The
+        # rebuilds themselves are mechanical: suppress the Select's
+        # selection-reset Changed(NULL) (CE-001) so the blank value never
+        # enters the switch path -- only the explicit assignment below
+        # fires Select.Changed, which runs the same switch path a manual
+        # selection uses and consumes the pending entry discovery above.
+        try:
+            self.query_one(
+                "#console-settings-provider-picker", ConsoleProviderPicker
+            ).set_options(self._provider_picker_options())
+        except (NoMatches, QueryError):
+            pass
         with provider_select.prevent(Select.Changed):
             provider_select.set_options(self._provider_select_options())
         provider_select.value = provider_id
 
-    def _probe_entry_models(
-        self, provider: str, base_url: str, provider_key: str
-    ) -> None:
+    def _probe_entry_models(self, provider: str, base_url: str) -> None:
         """Probe a just-created entry's models list (evidence identity path).
+
+        Runs only after the switch onto the entry has landed, so the
+        identity helpers resolve the entry draft itself. The raw entry id
+        (``custom-ep:<slug>``) cannot form a connection identity -- the
+        endpoint contract keys on URL-based provider keys -- so the entry
+        resolves through its family execution key and its own URL
+        (CE-001: raising here crashed the post-Create switch; TASK-32566:
+        the settled evidence is entry-scoped instead of discarded).
 
         Args:
             provider: Entry provider id the results apply to.
             base_url: Entry endpoint to probe.
-            provider_key: Family execution key for the endpoint contract.
-                Discovery retains the entry id as its owner while resolving
-                the models URL through this family (CE-001).
         """
         normalized_probe_url = normalize_probe_base_url(base_url)
         if normalized_probe_url is None or not validate_url(normalized_probe_url):
             self._set_model_discover_status(MODEL_DISCOVER_INVALID_URL_COPY)
             return
-        if (
-            provider != self._active_provider
-            or provider_key != self._discovery_provider_key(provider)
-        ):
+        if provider != self._active_provider:
             return
         self._cancel_connection_probe(mark_generation_stale=False)
+        # Same two-identity pattern as the manual Discover press: the
+        # evidence store settles a ProviderDraftIdentity, while the worker
+        # matches its result against the entry-scoped discovery identity.
         discovery_identity = self._begin_model_discovery_identity(provider, base_url)
         identity = self._current_connection_probe_identity()
         if identity is None:
@@ -5196,10 +5226,21 @@ class ConsoleSettingsModal(
                     "#console-settings-model-custom", Button
                 ).label = "Model list"
             else:
-                self._sync_model_controls(
-                    state.settings.provider,
-                    state.settings.model,
-                )
+                # Mechanical projection: suppress the model Select's
+                # transient set_options/value Changed echoes (the same trio
+                # ``_apply_model_discovery_result`` prevents). Queued echoes
+                # dispatch late -- after a follow-up entry probe auto-selects
+                # the sole listed model -- and would revert the picker to the
+                # pre-listing model (TASK-32566).
+                with self.prevent(
+                    Select.Changed,
+                    Input.Changed,
+                    ModelSearchPicker.ModelValueChanged,
+                ):
+                    self._sync_model_controls(
+                        state.settings.provider,
+                        state.settings.model,
+                    )
             self._sync_base_url_control(
                 state.settings.provider,
                 state.settings.base_url,
@@ -5259,20 +5300,6 @@ class ConsoleSettingsModal(
 
     def _clear_rebase_event_guard(self) -> None:
         self._rebase_event_guard = False
-        self.call_after_refresh(self._probe_pending_entry_models)
-
-    def _probe_pending_entry_models(self) -> None:
-        """Start creation's probe after the provider's controls have settled."""
-        pending = self._pending_entry_discovery
-        if (
-            pending is None
-            or pending[0] != self._active_provider
-            or self._updating_controls
-            or self._rebase_event_guard
-        ):
-            return
-        self._pending_entry_discovery = None
-        self._probe_entry_models(*pending)
 
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
@@ -5343,7 +5370,30 @@ class ConsoleSettingsModal(
         ):
             return
         if self._draft_rebaser is not None:
-            self._rebase_to(provider, None)
+            if self._rebase_to(provider, None):
+                self._defer_pending_entry_discovery(provider)
+            else:
+                # The switch never landed: a probe now could never pass the
+                # draft fencing, so drop the follow-up instead of firing a
+                # doomed request. Restore both adapters to the still-active
+                # provider (the same suppression the sentinel flow uses) so
+                # the failed selection does not render as the session
+                # provider; the refreshed option set stays, keeping the
+                # created entry selectable for a manual retry (qodo PR-2736
+                # finding 5).
+                self._pending_entry_discovery = None
+                provider_adapter = self.query_one(
+                    "#console-settings-provider", Select
+                )
+                with provider_adapter.prevent(Select.Changed):
+                    provider_adapter.value = self._active_provider or Select.NULL
+                try:
+                    self.query_one(
+                        "#console-settings-provider-picker", ConsoleProviderPicker
+                    ).set_provider(self._active_provider)
+                except (NoMatches, QueryError):
+                    pass
+                self._sync_endpoint_new_button(self._active_provider)
             return
         self._cancel_connection_probe()
         self._invalidate_model_discovery_for_provider(self._active_provider)
@@ -5356,6 +5406,7 @@ class ConsoleSettingsModal(
         self._sync_base_url_control(provider, base_url)
         self._advance_model_discovery_generation()
         self._sync_model_discover_controls(provider)
+        self._defer_pending_entry_discovery(provider)
         self._sync_provider_choice_placeholders()
         self._sync_generation_control_support()
         self._sync_generation_test_controls()
@@ -5363,7 +5414,33 @@ class ConsoleSettingsModal(
         self._sync_visual_representation_availability()
         self._sync_default_readiness()
 
-        self.call_after_refresh(self._probe_pending_entry_models)
+    def _defer_pending_entry_discovery(self, provider: str) -> None:
+        """Schedule the follow-up probe past the switch's control echoes.
+
+        Projecting the switched-to draft rebuilds the model Select's
+        options, which queues a transient blank ``Select.Changed`` that the
+        model-change handler treats as a draft edit -- a probe started
+        inside the switch would be cancelled by its own echo. Deferring one
+        refresh lets those echoes drain first; the probe then captures its
+        nonce against the settled draft.
+        """
+        self.call_after_refresh(self._run_pending_entry_discovery, provider)
+
+    def _run_pending_entry_discovery(self, provider: str) -> None:
+        """Fire endpoint creation's follow-up probe once the switch landed.
+
+        The probe resolves its identities from the mounted draft, so it must
+        run only after ``_active_provider`` addresses the new entry (the
+        rebase or the raw draft swap above). A pending record for a
+        different provider stays armed for its own switch.
+        """
+        pending = self._pending_entry_discovery
+        if pending is None or pending[0] != provider:
+            return
+        if self._active_provider != provider:
+            return
+        self._pending_entry_discovery = None
+        self._probe_entry_models(provider, pending[1])
 
     @on(Select.Changed, "#console-settings-model-select")
     def _model_select_changed(self, event: Select.Changed) -> None:
@@ -5438,6 +5515,16 @@ class ConsoleSettingsModal(
         if (
             self._draft_rebaser is not None
             and not self._updating_controls
+            # Discovery owns the controls/draft model gap only while a probe
+            # is in flight or a published listing has seen no user model
+            # edit since: that gap is the listing's own mechanical
+            # sole-model auto-selection (already fenced by its generation),
+            # and rebasing here would re-project the draft and wipe the
+            # listing status for nothing. Genuine user model edits clear
+            # the flag, so they keep rebasing even though they re-bind the
+            # discovery identity to preserve the listing (qodo PR-2736
+            # finding 4).
+            and not self._discovery_owns_model_gap
             and (self._active_provider, model)
             != (self._draft.settings.provider, self._draft.settings.model)
         ):
@@ -5601,6 +5688,31 @@ class ConsoleSettingsModal(
         self._sync_model_provenance_copy()
         self._sync_readiness_display()
 
+    def _entry_discovery_target(self, provider: object) -> tuple[str, str, str] | None:
+        """Return the entry-scoped discovery coordinates for registry entries.
+
+        TASK-32566: a registry id cannot form a connection identity (the
+        endpoint contract keys on URL-based provider keys), so entry drafts
+        resolve through their family execution key and their own persisted
+        URL. The dashed entry id travels with the fencing identity so a
+        different entry (or a changed entry URL) is a different draft.
+
+        Args:
+            provider: Candidate provider id (any shape, may be None).
+
+        Returns:
+            ``(entry_id, family_execution_key, entry_base_url)``, or None
+            when ``provider`` is not a resolvable registry entry.
+        """
+        provider_text = provider if isinstance(provider, str) else None
+        entry_id = canonical_custom_endpoint_id(provider_text)
+        if entry_id is None:
+            return None
+        entry = self._custom_endpoint_entry_for(provider_text)
+        if entry is None:
+            return None
+        return entry_id, family_execution_key(entry.family), entry.base_url
+
     def _discovery_owner_key(self, provider: str) -> str:
         """Retain a named entry's exact id independently of its wire family."""
         entry = self._custom_endpoint_entry_for(provider)
@@ -5753,6 +5865,23 @@ class ConsoleSettingsModal(
         self,
     ) -> ConsoleModelDiscoveryIdentity | None:
         """Return the canonical identity of the current mounted draft."""
+        entry = self._entry_discovery_target(self._active_provider)
+        if entry is not None:
+            # TASK-32566: entry drafts carry a real identity -- family
+            # execution key + the entry's persisted URL -- so discovery
+            # evidence settles and surfaces instead of being fenced away.
+            entry_id, provider_key, base_url = entry
+            connection_identity = canonical_connection_identity(
+                provider_key, base_url
+            )
+            if connection_identity is None:
+                return None
+            return ConsoleModelDiscoveryIdentity(
+                provider_key=provider_key,
+                connection_identity=connection_identity,
+                draft_generation=self._model_discovery_generation,
+                entry_id=entry_id,
+            )
         provider_key = self._discovery_owner_key(self._active_provider)
         connection_identity = self._discovery_connection_identity(
             self._active_provider,
@@ -5771,16 +5900,30 @@ class ConsoleSettingsModal(
         provider: str,
         base_url: str,
     ) -> ConsoleModelDiscoveryIdentity:
-        """Advance and capture one exact request nonce for a validated endpoint."""
-        provider_key = self._discovery_owner_key(provider)
-        connection_identity = self._discovery_connection_identity(provider, base_url)
+        """Advance and capture one exact request nonce for a validated endpoint.
+
+        Registry-entry providers resolve through their family execution key
+        and probe the entry's own persisted URL (the passed ``base_url`` for
+        entry drafts); the dashed entry id scopes the returned identity.
+        """
+        entry = self._entry_discovery_target(provider)
+        if entry is not None:
+            entry_id, provider_key, base_url = entry
+        else:
+            entry_id = None
+            provider_key = self._discovery_owner_key(provider)
+        connection_identity = canonical_connection_identity(provider_key, base_url)
         if connection_identity is None:
             raise ValueError("model discovery requires a valid endpoint")
         self._advance_model_discovery_generation(clear_status=False, force=True)
+        # A probe is in flight: until it settles, any controls/draft model
+        # gap predates the request and must not be "repaired" mid-probe.
+        self._discovery_owns_model_gap = True
         return ConsoleModelDiscoveryIdentity(
             provider_key=provider_key,
             connection_identity=connection_identity,
             draft_generation=self._model_discovery_generation,
+            entry_id=entry_id,
         )
 
     def _advance_model_discovery_generation(
@@ -5804,6 +5947,9 @@ class ConsoleSettingsModal(
         self._model_discovery_generation += 1
         self._unverified_model_decision = None
         self._current_model_discovery_identity = None
+        # Invalidation drops discovery's claim on the model gap: whatever
+        # transitioned the draft (a user edit, a switch) now owns it.
+        self._discovery_owns_model_gap = False
         self._current_discovered_model_ids = ()
         self._invalidate_model_discovery_for_provider(self._active_provider)
         if clear_status:
@@ -6456,12 +6602,17 @@ class ConsoleSettingsModal(
             ModelSearchPicker.ModelValueChanged,
         ):
             self._sync_model_controls(provider, selected_model)
-        if selected_model is not None and selected_model != previous_model:
-            # ``_sync_model_controls`` schedules the picker refresh. Commit an
-            # automatic selection synchronously so generation fencing observes
-            # the actual post-listing model in this same turn.
-            picker.set_model_value(selected_model)
-            self._set_provider_model_draft(provider, selected_model)
+            if selected_model is not None and selected_model != previous_model:
+                # ``_sync_model_controls`` schedules the picker refresh. Commit
+                # an automatic selection synchronously so generation fencing
+                # observes the actual post-listing model in this same turn.
+                # The commit stays inside the prevent: an auto-selection is a
+                # mechanical transition, and its picker echo would re-enter as
+                # a user model change -- the model-only rebase it triggers
+                # wipes this listing's just-published status (and re-projects
+                # the draft) for nothing.
+                picker.set_model_value(selected_model)
+                self._set_provider_model_draft(provider, selected_model)
         current_model = self._current_model_value()
         if fenced and current_model != previous_model:
             self._advance_model_discovery_generation(clear_status=False)
@@ -6487,6 +6638,11 @@ class ConsoleSettingsModal(
                 identity = rebound
             self._current_model_discovery_identity = identity
             self._current_discovered_model_ids = model_ids
+            # The published listing (including its mechanical sole-model
+            # auto-selection) owns any controls/draft model gap until the
+            # user edits the model; the readiness debounce must not rebase
+            # over it (qodo PR-2736 finding 4).
+            self._discovery_owns_model_gap = True
             self._promote_current_discovery_options()
         self._sync_readiness_display()
         self._sync_generation_control_support()
@@ -7088,7 +7244,13 @@ class ConsoleSettingsModal(
         base_url_input = self.query_one("#console-settings-base-url", Input)
         uses_base_url = self._provider_uses_base_url(provider)
         entry = self._custom_endpoint_entry_for(provider)
-        base_url_input.value = base_url or ""
+        # Mechanical projection, not a user edit: the written URL is the
+        # provider/entry's own value. Suppress the Input.Changed echo so the
+        # change handler does not cancel a just-started entry probe (the
+        # echo dispatches after the switch, mid-probe) or clear its status;
+        # the switch/apply paths already invalidate what they must.
+        with base_url_input.prevent(Input.Changed):
+            base_url_input.value = base_url or ""
         base_url_input.disabled = not uses_base_url or entry is not None
         base_url_input.display = uses_base_url
         try:

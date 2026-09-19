@@ -15974,3 +15974,14 @@ queues and retain native inputs; bypassing the production post_message boundary
 would bypass the fix and test a different path. The same task's native compact
 run found a focused recovery button below a padded callout; full-app compositor
 paint assertions caught what focus identity alone missed.
+
+## Keep review fingerprints stable across cached UI refreshes (TASK-32866)
+
+The MCP Re-allow ownership review first blocked schema drift between rendering
+and clicking, but internal review found that failure retry, session-list refresh
+and successful Remove completion recomputed the hash from a mutable cached tool.
+Holding the refresh await, changing the schema and clicking the rebuilt control
+reproduced an unintended Allow write in all three paths. The fix retains the
+original fingerprint until a fresh selection and checks completion ownership
+under the inspector lock. A direct stale-click test alone did not establish this
+contract: cached refresh and retry need the same drift test.

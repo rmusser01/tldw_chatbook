@@ -1,0 +1,35 @@
+....................................                                     [100%]
+------ generated xml file: /private/tmp/tldw-32866-green-002/results.xml -------
+============================= slowest 25 durations =============================
+3.23s call     Tests/UI/test_mcp_permission_action_ownership.py::test_permission_completion_preserves_a_newer_selection[tool-remove]
+3.02s call     Tests/UI/test_mcp_permission_action_ownership.py::test_permission_completion_preserves_a_newer_selection[clear-reallow]
+2.92s call     Tests/UI/test_mcp_permission_action_ownership.py::test_failed_permission_action_is_retryable[reallow]
+2.90s call     Tests/UI/test_mcp_permission_action_ownership.py::test_failed_permission_action_is_retryable[remove]
+2.79s call     Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[description]
+2.78s call     Tests/UI/test_mcp_permission_action_ownership.py::test_permission_completion_preserves_a_newer_selection[tool-reallow]
+2.74s call     Tests/UI/test_mcp_permission_action_ownership.py::test_permission_completion_preserves_a_newer_selection[roundtrip-reallow]
+2.74s call     Tests/UI/test_mcp_permission_action_ownership.py::test_permission_completion_preserves_a_newer_selection[roundtrip-remove]
+2.70s call     Tests/UI/test_mcp_permission_action_ownership.py::test_permission_completion_preserves_a_newer_selection[clear-remove]
+2.64s call     Tests/UI/test_mcp_permission_action_ownership.py::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[retry]
+2.62s call     Tests/UI/test_mcp_permission_action_ownership.py::test_reallow_refuses_a_definition_changed_since_rendering[schema]
+2.62s call     Tests/UI/test_mcp_permission_action_ownership.py::test_cached_permission_refresh_does_not_reapprove_an_unseen_definition[session]
+2.58s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_failed_revoke_can_be_retried_without_reselecting_the_tool
+2.55s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_older_revoke_refresh_preserves_a_newer_profiles_listing
+1.96s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[profile]
+1.81s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[replace]
+1.78s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_revoke_is_consumed_once_and_fresh_controls_target_their_own_grant
+1.76s call     Tests/UI/test_mcp_permission_action_ownership.py::test_obsolete_permission_controls_cannot_target_a_replacement[same-reallow]
+1.73s call     Tests/UI/test_mcp_permission_action_ownership.py::test_live_permission_controls_are_consumed_once_with_the_displayed_target[remove]
+1.72s call     Tests/UI/test_mcp_permission_action_ownership.py::test_obsolete_permission_controls_cannot_target_a_replacement[reorder-remove]
+1.72s call     Tests/UI/test_mcp_permission_action_ownership.py::test_obsolete_permission_controls_cannot_target_a_replacement[tool-remove]
+1.71s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[roundtrip]
+1.71s call     Tests/UI/test_mcp_permission_action_ownership.py::test_live_permission_controls_are_consumed_once_with_the_displayed_target[reallow]
+1.70s call     Tests/UI/test_mcp_session_revoke_ownership.py::test_queued_revoke_cannot_target_a_replacement_view[clear]
+1.70s call     Tests/UI/test_mcp_permission_action_ownership.py::test_obsolete_permission_controls_cannot_target_a_replacement[roundtrip-remove]
+36 passed in 78.02s (0:01:18)
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d8eb858d-c3c0-44cc-a83b-bb9b90cc0d0c/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d8eb858d-c3c0-44cc-a83b-bb9b90cc0d0c/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d8eb858d-c3c0-44cc-a83b-bb9b90cc0d0c
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d8eb858d-c3c0-44cc-a83b-bb9b90cc0d0c'
+  warnings.warn(

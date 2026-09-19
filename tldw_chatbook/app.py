@@ -98,7 +98,7 @@ from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
-from textual.events import AppFocus
+from textual.events import AppFocus, Resize
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
@@ -190,6 +190,7 @@ from tldw_chatbook.Constants import (
     WATCHLISTS_NAV_CONTEXT_RUN_ID,
     WATCHLISTS_NAV_CONTEXT_SECTION,
     WATCHLISTS_SECTION_RUNS,
+    WIDE_VIEWPORT_COLUMNS,
     get_tab_display_label,
 )
 from tldw_chatbook.css import build_css, widget_css
@@ -7576,11 +7577,52 @@ class _DeferredCollectionsCaptureScope:
         delattr(self._resolve(), name)
 
 
+class WideViewportTierMixin:
+    """App-wide responsive wide tier: one class toggle for every modal.
+
+    The Conversation settings modal (PR #2670) and the Alt+M model popover
+    (PR #2672) each shipped a private viewport-width tier with its own
+    Python toggle. The repo-wide rollout replaces per-modal toggles with
+    this single one: at >= 150 terminal columns the App gains the
+    ``-wide-viewport`` CSS class, re-synced on every resize. Every widget
+    is a descendant of the App, so one ``App.-wide-viewport #<modal-id>``
+    selector per modal (see ``components/_agentic_terminal.tcss``) reaches
+    every modal regardless of where its base geometry lives -- shared
+    sheets or in-file ``DEFAULT_CSS`` -- because app CSS outranks widget
+    ``DEFAULT_CSS`` and the descendant selector outspecifies each base
+    rule. The tier keys off the app viewport, never a modal's own width:
+    sizing a container from the container would oscillate.
+
+    The threshold matches the two shipped per-surface tiers so all three
+    mechanisms coexist; the shipped toggles stay (their geometry contracts
+    pin them), and the shared tier reproduces their values.
+    """
+
+    #: Single source of truth: ``tldw_chatbook.Constants.WIDE_VIEWPORT_COLUMNS``
+    #: (the class attribute keeps the threshold reachable from the mixin and
+    #: re-binds the shared constant so tests and app cannot drift).
+    WIDE_VIEWPORT_COLUMNS = WIDE_VIEWPORT_COLUMNS
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-sync the wide tier as the terminal resizes.
+
+        Args:
+            event: Terminal resize event; ``event.size.width`` supplies the
+                new viewport width compared against ``WIDE_VIEWPORT_COLUMNS``
+                to add or remove the ``-wide-viewport`` class on the App.
+        """
+        self.set_class(
+            event.size.width >= self.WIDE_VIEWPORT_COLUMNS,
+            "-wide-viewport",
+        )
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
     # crash on a mid-recompose widget (task-14903) -- see the mixin's module
     # docstring for the signature it (and ONLY it) drops.
+    WideViewportTierMixin,
     TextSelectionCrashGuard,
     LibraryIngestQueueMixin,
     App[None],
@@ -14259,6 +14301,40 @@ class TldwCli(
                 f"{screen_name!r}."
             )
 
+    def _resync_navigation_bar_active(self, screen: Any) -> None:
+        """Re-sync the visible screen's nav bar to its own route (CE-007).
+
+        A navigation click optimistically highlights the clicked destination
+        on the OUTGOING screen's own bar. Reusable routes survive navigation
+        as suspended instances, so a warm return reinstated that screen with
+        its bar still claiming the destination the user clicked away to; the
+        bar's already-active guard then swallowed every later press of that
+        destination (UAT re-run 2026-09-13, TASK-32534: nav-settings presses
+        logged with zero "Navigation requested" lines, while palette routes
+        kept working because they post ``NavigateToScreen`` directly).
+        Re-syncing the visible bar to its own route after every completed
+        navigation restores both the highlight and retry-ability; the
+        navigation-failure path already does the same for the unchanged
+        screen via ``_notify_navigation_failure`` -> ``restore_active``.
+        """
+        route = getattr(screen, "nav_bar_active", None)
+        if route is None:
+            route = getattr(screen, "screen_name", None)
+        if not isinstance(route, str):
+            return
+        # Navigation targets may be duck-typed (test fakes without the
+        # Textual widget API), so probe the seam instead of assuming it.
+        query_one = getattr(screen, "query_one", None)
+        if not callable(query_one):
+            return
+        try:
+            bar = query_one(MainNavigationBar)
+        except (NoMatches, QueryError):
+            return
+        restore_active = getattr(bar, "restore_active", None)
+        if callable(restore_active):
+            restore_active(route)
+
     async def _complete_screen_navigation(
         self,
         *,
@@ -14540,6 +14616,11 @@ class TldwCli(
                     # screen's -focus class (the next toggle would do the wrong
                     # visible action).
                     self._clear_focus_if_leaving_console(screen_name)
+                    # TASK-32534 (CE-007): the now-visible screen may be a
+                    # reused instance whose nav bar still carries the
+                    # optimistic highlight set by the departure click.
+                    self._resync_navigation_bar_active(new_screen)
+
                     # ADR-171: only successful top-level navigation is a departure;
                     # modal suspension and automatic startup never set this token.
                     if outgoing_key == TAB_CHAT and current_tab_value != TAB_CHAT:

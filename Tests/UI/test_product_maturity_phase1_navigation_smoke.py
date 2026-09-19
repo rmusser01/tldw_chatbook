@@ -228,3 +228,155 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
                     and app.screen.__class__.__name__ == "SettingsScreen"
                 ),
             )
+
+
+@pytest.mark.asyncio
+async def test_ce007_reused_console_nav_bar_resyncs_active_after_warm_return(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """CE-007 (TASK-32534): warm returns must re-sync the reused screen's nav bar.
+
+    A navigation click optimistically highlights the clicked destination on
+    the OUTGOING screen's own bar. Reusable routes survive navigation as
+    suspended instances, so returning to the Console reinstated its bar
+    still claiming the destination the user clicked away to -- and the
+    bar's already-active guard then swallowed every later press of that
+    destination (UAT re-run 2026-09-13: four nav-settings presses, zero
+    "Navigation requested" lines, while palette routes still worked because
+    they post NavigateToScreen directly). After a completed navigation the
+    visible screen's nav bar must reflect its own route.
+    """
+    app = _build_clean_navigation_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 50)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                ),
+            )
+
+            await pilot.click("#nav-console")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
+            )
+            console = app.screen
+            console_settings_tab = console.query_one("#nav-settings", Button)
+            assert "is-active" not in console_settings_tab.classes
+
+            # Navigate away via the Console's own bar (the optimistic set).
+            await pilot.click("#nav-settings")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
+            )
+
+            # Warm return: the reused Console's bar must no longer claim the
+            # destination the departure click highlighted (pre-fix: it did,
+            # and the already-active guard ate every later nav-settings press).
+            await pilot.click("#nav-console")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
+            )
+            assert app.screen is console
+            assert "is-active" not in console_settings_tab.classes
+
+            # The exact CE-007 symptom: nav-settings must still navigate.
+            await pilot.click("#nav-settings")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
+            )
+
+
+class _RecordingNavBar:
+    """Duck-typed nav bar seam: records restore_active dispatches."""
+
+    def __init__(self) -> None:
+        self.restored: list[str] = []
+
+    def restore_active(self, route: str) -> None:
+        self.restored.append(route)
+
+
+class _ResyncScreen:
+    """Duck-typed screen for the resync seam (no Textual app required)."""
+
+    def __init__(
+        self,
+        *,
+        nav_bar_active: object = None,
+        screen_name: object = None,
+        bar: object | None = None,
+        query_error: Exception | None = None,
+    ) -> None:
+        self.nav_bar_active = nav_bar_active
+        self.screen_name = screen_name
+        self._bar = bar
+        self._query_error = query_error
+
+    def query_one(self, selector: object) -> object:
+        if self._query_error is not None:
+            raise self._query_error
+        if selector is MainNavigationBar:
+            return self._bar
+        raise AssertionError(f"unexpected query_one selector: {selector!r}")
+
+
+def _resync(screen: _ResyncScreen) -> None:
+    """Invoke the CE-007 seam directly (it only touches the screen seam)."""
+    from tldw_chatbook.app import TldwCli
+
+    TldwCli._resync_navigation_bar_active(None, screen)
+
+
+def test_resync_navigation_bar_dispatches_nav_bar_active_route() -> None:
+    """CE-007 (qodo PR-2736 finding 2): the bar's own route wins when present."""
+    bar = _RecordingNavBar()
+    _resync(
+        _ResyncScreen(nav_bar_active="chat", screen_name="fallback", bar=bar)
+    )
+    assert bar.restored == ["chat"]
+
+
+def test_resync_navigation_bar_falls_back_to_screen_name() -> None:
+    """CE-007: screens without nav_bar_active resync via screen_name."""
+    bar = _RecordingNavBar()
+    _resync(_ResyncScreen(nav_bar_active=None, screen_name="settings", bar=bar))
+    assert bar.restored == ["settings"]
+
+
+def test_resync_navigation_bar_ignores_non_string_routes() -> None:
+    """CE-007: a missing/typed-wrong route is a no-op, never a crash."""
+    bar = _RecordingNavBar()
+    _resync(_ResyncScreen(nav_bar_active=None, screen_name=None, bar=bar))
+    _resync(_ResyncScreen(nav_bar_active=123, screen_name=456, bar=bar))
+    assert bar.restored == []
+
+
+def test_resync_navigation_bar_tolerates_missing_bar_and_seam() -> None:
+    """CE-007: screens without a mounted bar (or a bar without the seam)
+    must not raise -- resync is best-effort after every navigation."""
+    from textual.css.query import NoMatches
+
+    _resync(_ResyncScreen(nav_bar_active="chat", query_error=NoMatches()))
+    _resync(_ResyncScreen(nav_bar_active="chat", bar=object()))

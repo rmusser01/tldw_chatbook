@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││                               │
+│ Source                       ││  Tool                                     State     ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││    watchlists_set_briefing_schedule       Ask       ││  Why · Off — enable it to     │
+│ ▊  Local                ▼  ▎ ││    watchlists_update_collection_sources   Ask       ││  let MCP clients use          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││    web_crawl                              Ask       ││  chatbook's tools.            │
+│                              ││    web_fetch                              Ask       ││  Add server                   │
+│ Servers                      ││    web_search                             Ask       ││  search — review-docs         │
+│  ◌ stale · ◦ off · ⌂         ││  Server default — Virtual CLI             Ask       ││                               │
+│  built-in                    ││  (read-only)                                        ││  Permission: Off              │
+│    All servers               ││    cat                                    Ask     ▁ ││                               │
+│  ◦ ⌂ tldw_chatbook (bu…      ││    find                                   Ask       ││  ▸ Tool override: Off •       │
+│                              ││    git_blame                              Ask       ││                               │
+│  ◌ review-docs            1  ││    git_branches                           Ask       ││  Server default: —            │
+│                              ││    git_diff                               Ask       ││                               │
+│                              ││    git_log                                Ask       ││  Global default: Ask          │
+│                              ││    git_status                             Ask   ▇▇  ││                               │
+│                              ││    grep                                   Ask       ││    Advanced…                  │
+│                              ││    ls                                     Ask       ││                               │
+│                              ││    stat                                   Ask       ││                               │
+│                              ││  Server default — review-docs             Ask       ││                               │
+│                              ││    search                                 Off •     ││                               │
+│                              ││                                         ▌           ││                               │
+│                              ││ tldw_chatbook: 0 allow · 30 ask · 0 off — global    ││                               │
+│                              ││ default: ask                                        ││                               │
+│                              ││ • override · ⚠ definition changed · ⚑ high-risk     ││                               │
+│                              ││ floor · ≡ exact-input allows · (session) approved   ││                               │
+│                              ││ until Chatbook exits · Space cycles Inherit → Ask   ││                               │
+│                              ││ → Allow → Off                                       ││                               │
+│                              ││ 9 tool gate(s) are off. Configure the workspace,    ││                               │
+│                              ││ web, and Watchlists master switch in Tools mode;    ││                               │
+│                              ││ other registration gates are under MCP ▸ Servers ▸▅ ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | space cycle permission | F1 · F6 · Ctrl+P · Ctrl+Q

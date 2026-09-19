@@ -1,0 +1,22 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": [
+    "1409-1411",
+    "1414-1416",
+    "2536-2539",
+    "2543-2544",
+    "2590-2594",
+    "3707-3711",
+    "3844-3844",
+    "3846-3862"
+  ],
+  "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": [
+    "4866-4888",
+    "4991-5014"
+  ],
+  "Tests/UI/test_mcp_inspector.py": [
+    "12-12",
+    "14-14",
+    "41-42",
+    "4981-4984"
+  ]
+}

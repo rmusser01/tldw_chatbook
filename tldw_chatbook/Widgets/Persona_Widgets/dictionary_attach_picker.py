@@ -45,7 +45,7 @@ class DictionaryAttachPicker(ModalScreen[str | None]):
         self._filter_debounce_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(classes="dictionary-attach-body"):
             yield Label("Attach to conversation", markup=False)
             yield Input(placeholder="Search conversations…", id="dict-attach-search")
             yield ListView(id="dict-attach-list")

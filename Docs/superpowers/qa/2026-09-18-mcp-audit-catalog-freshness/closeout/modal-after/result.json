@@ -1,0 +1,203 @@
+{
+  "pid": 16835,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "modal": "extraction",
+      "body_region": [
+        12,
+        4,
+        96,
+        32
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "modal": "dictionary",
+      "body_region": [
+        24,
+        4,
+        72,
+        32
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "modal": "conversation",
+      "body_region": [
+        24,
+        4,
+        72,
+        32
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "modal": "extraction",
+      "body_region": [
+        13,
+        5,
+        144,
+        38
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "modal": "dictionary",
+      "body_region": [
+        25,
+        5,
+        120,
+        38
+      ]
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "modal": "conversation",
+      "body_region": [
+        25,
+        5,
+        120,
+        38
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "modal": "extraction",
+      "body_region": [
+        12,
+        4,
+        96,
+        32
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "modal": "dictionary",
+      "body_region": [
+        24,
+        4,
+        72,
+        32
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "modal": "conversation",
+      "body_region": [
+        24,
+        4,
+        72,
+        32
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "modal": "extraction",
+      "body_region": [
+        13,
+        5,
+        144,
+        38
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "modal": "dictionary",
+      "body_region": [
+        25,
+        5,
+        120,
+        38
+      ]
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "modal": "conversation",
+      "body_region": [
+        25,
+        5,
+        120,
+        38
+      ]
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_audit_mode.py": "6d0e78e415b3c660ac67693fc95d9b8063166fd39673d9f75f65ac9dfd2478d9",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "36e4a17b1a418e6a24c446d08b8a46400afe4321a50ed65ab171ad4a8d67ba3b",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c5b7e6787c489adde244144f5c8c924998208a3b0db4bc3e1c94c4e722fac4c1",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "002de3ec6e152ad4ee52d55479a5103cd7e6c440e269545f0d42592246d26baa",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "2d5387eb572fbb82d53de4e3766ce72ac80378677a5aeda36df9a52902fc2322",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "0685e3fc5f5f28c51e99d82b184fd4434446da7e086278d74b5cfb1f3a51cbbe",
+    "tldw_chatbook/MCP/execution_log.py": "2103254e8a62bf671ed236ff36feff9363a443d42cea3b58b2dba9ded6105891",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/Widgets/file_extraction_dialog.py": "dedb1803bfe58abaab50cdf200b129a4826c1e7219a699186cab50b8c339abe2",
+    "tldw_chatbook/Widgets/Persona_Widgets/dictionary_attach_picker.py": "4360b70ae95e35e0a33279bce81e93db008b237a60cf43cd13049c435085cf53",
+    "tldw_chatbook/Widgets/Persona_Widgets/conversation_attach_picker.py": "2e32872581bccc52a8ad47c5120573a7b0598f5219ca230c6940b723e10f2f20"
+  },
+  "journey_sha256": "6a04497402649260392c633b0fbb59368c821a9d6fb65dc4a82f90d78c5113a6",
+  "runner_sha256": "ccb14ac2b81bdb075d347b037dfea12cae69b12afb41bc08449837f49d69828d",
+  "fixture_scope": "Three real modals opened directly with synthetic in-memory contents. Cancel only; no file saves, attachments, tool execution or external servers.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "cancel",
+  "permission_profiles_unchanged": true,
+  "record_count": 0,
+  "network_attempts": [],
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

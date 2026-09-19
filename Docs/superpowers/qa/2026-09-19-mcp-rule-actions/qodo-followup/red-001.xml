@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="0" tests="7" time="0.953" timestamp="2026-09-19T09:30:47.576046-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-rule-actions]" time="0.621"><failure message="AssertionError: Traceback (most recent call last):&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 309, in &lt;module&gt;&#10;    main()&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 16, in main&#10;    root = Path(sys.argv[1]).resolve()&#10;                ~~~~~~~~^^^&#10;IndexError: list index out of range">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us0')
+arguments = []
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py')
+
+    @pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments, runner):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+&gt;       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 309, in &lt;module&gt;
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 16, in main
+E           root = Path(sys.argv[1]).resolve()
+E                       ~~~~~~~~^^^
+E       IndexError: list index out of range
+
+Tests/Utils/test_mcp_native_qa_args.py:47: AssertionError</failure></testcase><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-rule-actions]" time="0.036"><failure message="AssertionError: Traceback (most recent call last):&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 309, in &lt;module&gt;&#10;    main()&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 17, in main&#10;    tmux_socket, session = sys.argv[2:4]&#10;    ^^^^^^^^^^^^^^^^^^^^&#10;ValueError: not enough values to unpack (expected 2, got 0)">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us1')
+arguments = ['/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us1/profile']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py')
+
+    @pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments, runner):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+&gt;       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 309, in &lt;module&gt;
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 17, in main
+E           tmux_socket, session = sys.argv[2:4]
+E           ^^^^^^^^^^^^^^^^^^^^
+E       ValueError: not enough values to unpack (expected 2, got 0)
+
+Tests/Utils/test_mcp_native_qa_args.py:47: AssertionError</failure></testcase><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-rule-actions]" time="0.040"><failure message="AssertionError: Traceback (most recent call last):&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 309, in &lt;module&gt;&#10;    main()&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 20, in main&#10;    runpy.run_path(str(here.parent / &quot;2026-09-16-ingest-lifecycle/native_check.py&quot;))[&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py&quot;, line 27, in validate_profile&#10;    database = config[&quot;database&quot;]&#10;               ~~~~~~^^^^^^^^^^^^&#10;KeyError: 'database'">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us2')
+arguments = ['/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us2/profile', 'socket', 'session', 'extra']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py')
+
+    @pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments, runner):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+&gt;       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 309, in &lt;module&gt;
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 20, in main
+E           runpy.run_path(str(here.parent / "2026-09-16-ingest-lifecycle/native_check.py"))[
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E           database = config["database"]
+E                      ~~~~~~^^^^^^^^^^^^
+E       KeyError: 'database'
+
+Tests/Utils/test_mcp_native_qa_args.py:47: AssertionError</failure></testcase><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-rule-actions]" time="0.038"><failure message="AssertionError: Traceback (most recent call last):&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 309, in &lt;module&gt;&#10;    main()&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 20, in main&#10;    runpy.run_path(str(here.parent / &quot;2026-09-16-ingest-lifecycle/native_check.py&quot;))[&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py&quot;, line 27, in validate_profile&#10;    database = config[&quot;database&quot;]&#10;               ~~~~~~^^^^^^^^^^^^&#10;KeyError: 'database'">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us3')
+arguments = ['/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us3/profile', '../socket', 'session']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py')
+
+    @pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments, runner):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+&gt;       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 309, in &lt;module&gt;
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 20, in main
+E           runpy.run_path(str(here.parent / "2026-09-16-ingest-lifecycle/native_check.py"))[
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E           database = config["database"]
+E                      ~~~~~~^^^^^^^^^^^^
+E       KeyError: 'database'
+
+Tests/Utils/test_mcp_native_qa_args.py:47: AssertionError</failure></testcase><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-rule-actions]" time="0.038"><failure message="AssertionError: Traceback (most recent call last):&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 309, in &lt;module&gt;&#10;    main()&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 20, in main&#10;    runpy.run_path(str(here.parent / &quot;2026-09-16-ingest-lifecycle/native_check.py&quot;))[&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py&quot;, line 27, in validate_profile&#10;    database = config[&quot;database&quot;]&#10;               ~~~~~~^^^^^^^^^^^^&#10;KeyError: 'database'">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us4')
+arguments = ['/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us4/profile', 'socket', 'session:window']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py')
+
+    @pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments, runner):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+&gt;       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 309, in &lt;module&gt;
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 20, in main
+E           runpy.run_path(str(here.parent / "2026-09-16-ingest-lifecycle/native_check.py"))[
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E           database = config["database"]
+E                      ~~~~~~^^^^^^^^^^^^
+E       KeyError: 'database'
+
+Tests/Utils/test_mcp_native_qa_args.py:47: AssertionError</failure></testcase><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-rule-actions]" time="0.038"><failure message="AssertionError: Traceback (most recent call last):&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 309, in &lt;module&gt;&#10;    main()&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 20, in main&#10;    runpy.run_path(str(here.parent / &quot;2026-09-16-ingest-lifecycle/native_check.py&quot;))[&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py&quot;, line 27, in validate_profile&#10;    database = config[&quot;database&quot;]&#10;               ~~~~~~^^^^^^^^^^^^&#10;KeyError: 'database'">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us5')
+arguments = ['/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us5/profile', 'socket', 'space name']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py')
+
+    @pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments, runner):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+&gt;       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 309, in &lt;module&gt;
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 20, in main
+E           runpy.run_path(str(here.parent / "2026-09-16-ingest-lifecycle/native_check.py"))[
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E           database = config["database"]
+E                      ~~~~~~^^^^^^^^^^^^
+E       KeyError: 'database'
+
+Tests/Utils/test_mcp_native_qa_args.py:47: AssertionError</failure></testcase><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-rule-actions]" time="0.040"><failure message="AssertionError: Traceback (most recent call last):&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 309, in &lt;module&gt;&#10;    main()&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py&quot;, line 20, in main&#10;    runpy.run_path(str(here.parent / &quot;2026-09-16-ingest-lifecycle/native_check.py&quot;))[&#10;  File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py&quot;, line 27, in validate_profile&#10;    database = config[&quot;database&quot;]&#10;               ~~~~~~^^^^^^^^^^^^&#10;KeyError: 'database'">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us6')
+arguments = ['/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-56/test_invalid_cli_exits_with_us6/profile', 'socket', 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx']
+runner = PosixPath('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py')
+
+    @pytest.mark.parametrize("runner", RUNNERS, ids=["revoke", "rule-actions"])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            [],
+            ["ROOT"],
+            ["ROOT", "socket", "session", "extra"],
+            ["ROOT", "../socket", "session"],
+            ["ROOT", "socket", "session:window"],
+            ["ROOT", "socket", "space name"],
+            ["ROOT", "socket", "x" * 65],
+        ],
+    )
+    def test_invalid_cli_exits_with_usage_without_touching_profile(tmp_path, arguments, runner):
+        root = tmp_path / "profile"
+        root.mkdir()
+        sentinel = root / "config.toml"
+        sentinel.write_text("# Must not be read or changed for invalid arguments\n")
+        arguments = [str(root) if value == "ROOT" else value for value in arguments]
+        env = dict(os.environ, HOME=str(root), USERPROFILE=str(root))
+        result = subprocess.run(
+            [sys.executable, str(runner), *arguments],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+&gt;       assert result.returncode == 2, result.stderr
+               ^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Traceback (most recent call last):
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 309, in &lt;module&gt;
+E           main()
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-mcp-rule-actions/native_check.py", line 20, in main
+E           runpy.run_path(str(here.parent / "2026-09-16-ingest-lifecycle/native_check.py"))[
+E         File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py", line 27, in validate_profile
+E           database = config["database"]
+E                      ~~~~~~^^^^^^^^^^^^
+E       KeyError: 'database'
+
+Tests/Utils/test_mcp_native_qa_args.py:47: AssertionError</failure></testcase></testsuite></testsuites>

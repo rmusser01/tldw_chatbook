@@ -1,0 +1,37 @@
+........................................................................ [ 48%]
+........................................................................ [ 97%]
+...                                                                      [100%]
+---- generated xml file: /private/tmp/tldw-32837-qodo-final-001/results.xml ----
+============================= slowest 25 durations =============================
+20.58s call     Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+17.68s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+8.55s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-tools]
+8.55s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-light-permissions]
+8.23s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-permissions]
+7.78s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_drill_reveals_target_hidden_by_destination_filter[textual-dark-tools]
+4.39s call     Tests/UI/test_component_pattern_governance.py::test_deprecated_names_ratchet_down
+3.45s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[tools]
+3.42s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_waits_for_new_tool_rows_during_catalog_publication[permissions]
+3.26s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+3.20s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[tool]
+3.16s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[permission]
+3.08s call     Tests/UI/test_mcp_audit_navigation.py::test_current_audit_navigation_is_repeatable[mcp-audit-open-tool-AuditOpenToolRequested]
+3.06s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]
+3.05s call     Tests/UI/test_mcp_audit_navigation.py::test_current_audit_navigation_is_repeatable[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.92s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-open-tool-AuditOpenToolRequested]
+2.92s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_is_invalid_before_pruning_yields[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.92s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.85s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.84s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]
+2.80s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]
+2.79s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.76s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_ignores_an_unavailable_owning_view[hidden-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.76s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_is_invalid_before_pruning_yields[mcp-audit-open-tool-AuditOpenToolRequested]
+2.71s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]
+147 passed in 276.39s (0:04:36)
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-c8237cca-e789-4976-8c78-027affebc366/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-c8237cca-e789-4976-8c78-027affebc366/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-c8237cca-e789-4976-8c78-027affebc366
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-c8237cca-e789-4976-8c78-027affebc366'
+  warnings.warn(

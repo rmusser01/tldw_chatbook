@@ -1,0 +1,1191 @@
+FFFF..FFFF                                                               [100%]
+=================================== FAILURES ===================================
+_ test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested] _
+
+self = <Coroutine test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-too...pen-tool', 'event_type': <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditOpenToolRequested'>, ...}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_retired_audit_press_canno0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested] _
+E
+E           request = <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1160347d0>
+E           button_id = 'mcp-audit-open-tool'
+E           event_type = <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditOpenToolRequested'>
+E           replacement = 'other'
+E
+E               @pytest.mark.parametrize("button_id,event_type", ACTIONS)
+E               @pytest.mark.parametrize("replacement", ["other", "same", "clear"])
+E               @private_profile_test
+E               async def test_retired_audit_press_cannot_target_replacement(
+E                   request, monkeypatch, button_id, event_type, replacement
+E               ):
+E                   app = InspectorApp()
+E                   old_context = PermissionProfileContext("old", 1, "a" * 64, 1)
+E                   new_context = PermissionProfileContext("new", 2, "b" * 64, 2)
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await inspector.show_audit_entry(_audit_record(), profile_context=old_context)
+E                       await pilot.pause()
+E                       old_button = inspector.query_one("#" + button_id, Button)
+E                       held = []
+E                       original = Button.post_message
+E
+E                       def hold(self, message):
+E                           if self is old_button and isinstance(message, Button.Pressed):
+E                               held.append(message)
+E                               return True
+E                           return original(self, message)
+E
+E                       monkeypatch.setattr(Button, "post_message", hold)
+E                       old_button.press()
+E                       assert len(held) == 1
+E                       target = "fetch" if replacement == "other" else "search"
+E                       await inspector.show_audit_entry(
+E                           None if replacement == "clear" else _audit_record(tool_name=target),
+E                           profile_context=new_context,
+E                       )
+E                       inspector.on_button_pressed(held[0])
+E                       await pilot.pause()
+E           >           assert not [event for event in app.events if isinstance(event, event_type)]
+E           E           assert not [AuditOpenToolRequested()]
+E
+E           Tests/UI/test_mcp_audit_navigation.py:67: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:25:49.740 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:25:49.746 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:25:49.747 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:25:49.748 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]
+E           1 failed in 2.01s
+
+Tests/private_profile.py:84: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-09-18 22:25:47.890 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+2026-09-18 22:25:47.897 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-18 22:25:47.898 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-09-18 22:25:47.898 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+_ test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested] _
+
+self = <Coroutine test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-p...', 'event_type': <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditAdjustPermissionRequested'>, ...}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_retired_audit_press_canno1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested] _
+E
+E           request = <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11177cb30>
+E           button_id = 'mcp-audit-adjust-permission'
+E           event_type = <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditAdjustPermissionRequested'>
+E           replacement = 'other'
+E
+E               @pytest.mark.parametrize("button_id,event_type", ACTIONS)
+E               @pytest.mark.parametrize("replacement", ["other", "same", "clear"])
+E               @private_profile_test
+E               async def test_retired_audit_press_cannot_target_replacement(
+E                   request, monkeypatch, button_id, event_type, replacement
+E               ):
+E                   app = InspectorApp()
+E                   old_context = PermissionProfileContext("old", 1, "a" * 64, 1)
+E                   new_context = PermissionProfileContext("new", 2, "b" * 64, 2)
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await inspector.show_audit_entry(_audit_record(), profile_context=old_context)
+E                       await pilot.pause()
+E                       old_button = inspector.query_one("#" + button_id, Button)
+E                       held = []
+E                       original = Button.post_message
+E
+E                       def hold(self, message):
+E                           if self is old_button and isinstance(message, Button.Pressed):
+E                               held.append(message)
+E                               return True
+E                           return original(self, message)
+E
+E                       monkeypatch.setattr(Button, "post_message", hold)
+E                       old_button.press()
+E                       assert len(held) == 1
+E                       target = "fetch" if replacement == "other" else "search"
+E                       await inspector.show_audit_entry(
+E                           None if replacement == "clear" else _audit_record(tool_name=target),
+E                           profile_context=new_context,
+E                       )
+E                       inspector.on_button_pressed(held[0])
+E                       await pilot.pause()
+E           >           assert not [event for event in app.events if isinstance(event, event_type)]
+E           E           assert not [AuditAdjustPermissionRequested()]
+E
+E           Tests/UI/test_mcp_audit_navigation.py:67: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:25:52.573 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:25:52.579 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:25:52.579 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:25:52.580 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+E           1 failed in 2.01s
+
+Tests/private_profile.py:84: Failed
+_ test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested] _
+
+self = <Coroutine test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool...pen-tool', 'event_type': <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditOpenToolRequested'>, ...}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_retired_audit_press_canno2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested] _
+E
+E           request = <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11354c830>
+E           button_id = 'mcp-audit-open-tool'
+E           event_type = <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditOpenToolRequested'>
+E           replacement = 'same'
+E
+E               @pytest.mark.parametrize("button_id,event_type", ACTIONS)
+E               @pytest.mark.parametrize("replacement", ["other", "same", "clear"])
+E               @private_profile_test
+E               async def test_retired_audit_press_cannot_target_replacement(
+E                   request, monkeypatch, button_id, event_type, replacement
+E               ):
+E                   app = InspectorApp()
+E                   old_context = PermissionProfileContext("old", 1, "a" * 64, 1)
+E                   new_context = PermissionProfileContext("new", 2, "b" * 64, 2)
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await inspector.show_audit_entry(_audit_record(), profile_context=old_context)
+E                       await pilot.pause()
+E                       old_button = inspector.query_one("#" + button_id, Button)
+E                       held = []
+E                       original = Button.post_message
+E
+E                       def hold(self, message):
+E                           if self is old_button and isinstance(message, Button.Pressed):
+E                               held.append(message)
+E                               return True
+E                           return original(self, message)
+E
+E                       monkeypatch.setattr(Button, "post_message", hold)
+E                       old_button.press()
+E                       assert len(held) == 1
+E                       target = "fetch" if replacement == "other" else "search"
+E                       await inspector.show_audit_entry(
+E                           None if replacement == "clear" else _audit_record(tool_name=target),
+E                           profile_context=new_context,
+E                       )
+E                       inspector.on_button_pressed(held[0])
+E                       await pilot.pause()
+E           >           assert not [event for event in app.events if isinstance(event, event_type)]
+E           E           assert not [AuditOpenToolRequested()]
+E
+E           Tests/UI/test_mcp_audit_navigation.py:67: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:25:55.338 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:25:55.344 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:25:55.345 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:25:55.345 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]
+E           1 failed in 2.01s
+
+Tests/private_profile.py:84: Failed
+_ test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested] _
+
+self = <Coroutine test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-pe...', 'event_type': <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditAdjustPermissionRequested'>, ...}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_retired_audit_press_canno3/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested] _
+E
+E           request = <FixtureRequest for <Coroutine test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x113e08050>
+E           button_id = 'mcp-audit-adjust-permission'
+E           event_type = <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditAdjustPermissionRequested'>
+E           replacement = 'same'
+E
+E               @pytest.mark.parametrize("button_id,event_type", ACTIONS)
+E               @pytest.mark.parametrize("replacement", ["other", "same", "clear"])
+E               @private_profile_test
+E               async def test_retired_audit_press_cannot_target_replacement(
+E                   request, monkeypatch, button_id, event_type, replacement
+E               ):
+E                   app = InspectorApp()
+E                   old_context = PermissionProfileContext("old", 1, "a" * 64, 1)
+E                   new_context = PermissionProfileContext("new", 2, "b" * 64, 2)
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await inspector.show_audit_entry(_audit_record(), profile_context=old_context)
+E                       await pilot.pause()
+E                       old_button = inspector.query_one("#" + button_id, Button)
+E                       held = []
+E                       original = Button.post_message
+E
+E                       def hold(self, message):
+E                           if self is old_button and isinstance(message, Button.Pressed):
+E                               held.append(message)
+E                               return True
+E                           return original(self, message)
+E
+E                       monkeypatch.setattr(Button, "post_message", hold)
+E                       old_button.press()
+E                       assert len(held) == 1
+E                       target = "fetch" if replacement == "other" else "search"
+E                       await inspector.show_audit_entry(
+E                           None if replacement == "clear" else _audit_record(tool_name=target),
+E                           profile_context=new_context,
+E                       )
+E                       inspector.on_button_pressed(held[0])
+E                       await pilot.pause()
+E           >           assert not [event for event in app.events if isinstance(event, event_type)]
+E           E           assert not [AuditAdjustPermissionRequested()]
+E
+E           Tests/UI/test_mcp_audit_navigation.py:67: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:25:58.237 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:25:58.245 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:25:58.245 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:25:58.246 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+E           1 failed in 2.16s
+
+Tests/private_profile.py:84: Failed
+_ test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested] _
+
+self = <Coroutine test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-t...dit-open-tool', 'event_type': <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditOpenToolRequested'>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_audit_action_uses_rendere0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested] _
+E
+E           request = <FixtureRequest for <Coroutine test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]>>
+E           button_id = 'mcp-audit-open-tool'
+E           event_type = <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditOpenToolRequested'>
+E
+E               @pytest.mark.parametrize("button_id,event_type", ACTIONS)
+E               @private_profile_test
+E               async def test_audit_action_uses_rendered_identity_not_mutated_entry(
+E                   request, button_id, event_type
+E               ):
+E                   app = InspectorApp()
+E                   entry = _audit_record()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await inspector.show_audit_entry(entry)
+E                       await pilot.pause()
+E                       entry.update(server_key="local:other", tool_name="replacement")
+E                       assert "search" in str(
+E                           inspector.query_one("#mcp-inspector-audit-name", Static).renderable
+E                       )
+E                       inspector.query_one("#" + button_id, Button).press()
+E                       await pilot.pause()
+E                       events = [event for event in app.events if isinstance(event, event_type)]
+E                       assert len(events) == 1
+E           >           assert (events[0].server_key, events[0].tool_name) == ("local:docs", "search")
+E           E           AssertionError: assert ('local:other', 'replacement') == ('local:docs', 'search')
+E           E
+E           E             At index 0 diff: 'local:other' != 'local:docs'
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_audit_navigation.py:101: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:26:06.703 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:26:06.709 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:26:06.711 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:26:06.712 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]
+E           1 failed in 1.95s
+
+Tests/private_profile.py:84: Failed
+_ test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested] _
+
+self = <Coroutine test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust...ssion', 'event_type': <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditAdjustPermissionRequested'>}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_audit_action_uses_rendere1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested] _
+E
+E           request = <FixtureRequest for <Coroutine test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]>>
+E           button_id = 'mcp-audit-adjust-permission'
+E           event_type = <class 'tldw_chatbook.UI.MCP_Modules.mcp_inspector.MCPInspector.AuditAdjustPermissionRequested'>
+E
+E               @pytest.mark.parametrize("button_id,event_type", ACTIONS)
+E               @private_profile_test
+E               async def test_audit_action_uses_rendered_identity_not_mutated_entry(
+E                   request, button_id, event_type
+E               ):
+E                   app = InspectorApp()
+E                   entry = _audit_record()
+E                   async with app.run_test(size=(100, 60)) as pilot:
+E                       inspector = app.query_one(MCPInspector)
+E                       await inspector.show_audit_entry(entry)
+E                       await pilot.pause()
+E                       entry.update(server_key="local:other", tool_name="replacement")
+E                       assert "search" in str(
+E                           inspector.query_one("#mcp-inspector-audit-name", Static).renderable
+E                       )
+E                       inspector.query_one("#" + button_id, Button).press()
+E                       await pilot.pause()
+E                       events = [event for event in app.events if isinstance(event, event_type)]
+E                       assert len(events) == 1
+E           >           assert (events[0].server_key, events[0].tool_name) == ("local:docs", "search")
+E           E           AssertionError: assert ('local:other', 'replacement') == ('local:docs', 'search')
+E           E
+E           E             At index 0 diff: 'local:other' != 'local:docs'
+E           E             Use -v to get more diff
+E
+E           Tests/UI/test_mcp_audit_navigation.py:101: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:26:09.498 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:26:09.504 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:26:09.504 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:26:09.505 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+E           1 failed in 2.00s
+
+Tests/private_profile.py:84: Failed
+___ test_audit_navigation_handles_destination_row_removed_during_clear[tool] ___
+
+self = <Coroutine test_audit_navigation_handles_destination_row_removed_during_clear[tool]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_audit_navigation_handles_destination_row_removed_during_clear[tool]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10c42afc0>, 'destination': 'tool'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_audit_navigation_handles_0/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           ___ test_audit_navigation_handles_destination_row_removed_during_clear[tool] ___
+E
+E           request = <FixtureRequest for <Coroutine test_audit_navigation_handles_destination_row_removed_during_clear[tool]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x116004590>
+E           destination = 'tool'
+E
+E               @pytest.mark.parametrize("destination", ["tool", "permission"])
+E               @private_profile_test
+E               async def test_audit_navigation_handles_destination_row_removed_during_clear(
+E                   request, monkeypatch, destination
+E               ):
+E                   app = ToolTestApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       inspector = app.query_one(MCPInspector)
+E                       tool = workbench._last_hub_tools[0]
+E                       context = workbench._tool_policy_profile_context
+E                       assert context is not None
+E                       notices = _capture_notifications(app)
+E                       original = inspector.show_audit_entry
+E
+E                       async def clear_and_remove(entry):
+E                           await original(entry)
+E                           if destination == "tool":
+E                               await workbench.query_one(MCPToolsMode).update_tools([])
+E                           else:
+E                               await workbench.query_one(MCPPermissionsMode).update_matrix(
+E                                   [], kill_switch=False, preview="", profile_context=context
+E                               )
+E
+E                       monkeypatch.setattr(inspector, "show_audit_entry", clear_and_remove)
+E                       if destination == "tool":
+E                           await workbench._open_audit_tool(tool, context)
+E                       else:
+E                           await workbench._open_audit_permission(tool, context)
+E                       await pilot.pause()
+E           >           assert inspector.current_tool is None
+E           E           AssertionError: assert HubTool(server_key='local:docs', server_label='docs', source='local', name='fetch', description='Fetch a doc.', input_schema=None, tags=(), stale=False, executable=True) is None
+E           E            +  where HubTool(server_key='local:docs', server_label='docs', source='local', name='fetch', description='Fetch a doc.', input_schema=None, tags=(), stale=False, executable=True) = MCPInspector(id='mcp-hub-inspector', classes='destination-workbench-pane ds-inspector').current_tool
+E
+E           Tests/UI/test_mcp_audit_navigation.py:135: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:26:12.306 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:26:12.312 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:26:12.312 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:26:12.312 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 22:26:12.751 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[tool]
+E           1 failed in 2.49s
+
+Tests/private_profile.py:84: Failed
+_ test_audit_navigation_handles_destination_row_removed_during_clear[permission] _
+
+self = <Coroutine test_audit_navigation_handles_destination_row_removed_during_clear[permission]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_audit_navigation_handles_destination_row_removed_during_clear[permission]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x10c428800>, 'destination': 'permission'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-3035/test_audit_navigation_handles_1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_audit_navigation_handles_destination_row_removed_during_clear[permission] _
+E
+E           request = <FixtureRequest for <Coroutine test_audit_navigation_handles_destination_row_removed_during_clear[permission]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x115d2a540>
+E           destination = 'permission'
+E
+E               @pytest.mark.parametrize("destination", ["tool", "permission"])
+E               @private_profile_test
+E               async def test_audit_navigation_handles_destination_row_removed_during_clear(
+E                   request, monkeypatch, destination
+E               ):
+E                   app = ToolTestApp()
+E                   async with app.run_test(size=(120, 40)) as pilot:
+E                       await pilot.pause()
+E                       workbench = app.query_one(MCPWorkbench)
+E                       inspector = app.query_one(MCPInspector)
+E                       tool = workbench._last_hub_tools[0]
+E                       context = workbench._tool_policy_profile_context
+E                       assert context is not None
+E                       notices = _capture_notifications(app)
+E                       original = inspector.show_audit_entry
+E
+E                       async def clear_and_remove(entry):
+E                           await original(entry)
+E                           if destination == "tool":
+E                               await workbench.query_one(MCPToolsMode).update_tools([])
+E                           else:
+E                               await workbench.query_one(MCPPermissionsMode).update_matrix(
+E                                   [], kill_switch=False, preview="", profile_context=context
+E                               )
+E
+E                       monkeypatch.setattr(inspector, "show_audit_entry", clear_and_remove)
+E                       if destination == "tool":
+E                           await workbench._open_audit_tool(tool, context)
+E                       else:
+E                           await workbench._open_audit_permission(tool, context)
+E                       await pilot.pause()
+E                       assert inspector.current_tool is None
+E           >           assert inspector.current_permission_tool is None
+E           E           AssertionError: assert HubTool(server_key='local:docs', server_label='docs', source='local', name='fetch', description='Fetch a doc.', input_schema=None, tags=(), stale=False, executable=True) is None
+E           E            +  where HubTool(server_key='local:docs', server_label='docs', source='local', name='fetch', description='Fetch a doc.', input_schema=None, tags=(), stale=False, executable=True) = MCPInspector(id='mcp-hub-inspector', classes='destination-workbench-pane ds-inspector').current_permission_tool
+E
+E           Tests/UI/test_mcp_audit_navigation.py:136: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 22:26:15.543 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 22:26:15.550 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 22:26:15.553 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 22:26:15.556 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 22:26:16.003 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1617 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E
+E           (3 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[permission]
+E           1 failed in 2.49s
+
+Tests/private_profile.py:84: Failed
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1bb62187-519d-403d-9bf0-918216a76d4d/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1bb62187-519d-403d-9bf0-918216a76d4d/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1bb62187-519d-403d-9bf0-918216a76d4d
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1bb62187-519d-403d-9bf0-918216a76d4d'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+3.23s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[tool]
+3.21s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[permission]
+2.89s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.79s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-open-tool-AuditOpenToolRequested]
+2.70s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]
+2.70s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[clear-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.69s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.69s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]
+2.69s call     Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+2.67s call     Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]
+
+(15 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-open-tool-AuditOpenToolRequested]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[other-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-open-tool-AuditOpenToolRequested]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_retired_audit_press_cannot_target_replacement[same-mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-open-tool-AuditOpenToolRequested]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_action_uses_rendered_identity_not_mutated_entry[mcp-audit-adjust-permission-AuditAdjustPermissionRequested]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[tool]
+FAILED Tests/UI/test_mcp_audit_navigation.py::test_audit_navigation_handles_destination_row_removed_during_clear[permission]
+8 failed, 2 passed, 4 deselected, 2 warnings in 31.46s
