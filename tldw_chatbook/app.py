@@ -98,7 +98,7 @@ from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
-from textual.events import AppFocus
+from textual.events import AppFocus, Resize
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
@@ -7576,11 +7576,43 @@ class _DeferredCollectionsCaptureScope:
         delattr(self._resolve(), name)
 
 
+class WideViewportTierMixin:
+    """App-wide responsive wide tier: one class toggle for every modal.
+
+    The Conversation settings modal (PR #2670) and the Alt+M model popover
+    (PR #2672) each shipped a private viewport-width tier with its own
+    Python toggle. The repo-wide rollout replaces per-modal toggles with
+    this single one: at >= 150 terminal columns the App gains the
+    ``-wide-viewport`` CSS class, re-synced on every resize. Every widget
+    is a descendant of the App, so one ``App.-wide-viewport #<modal-id>``
+    selector per modal (see ``components/_agentic_terminal.tcss``) reaches
+    every modal regardless of where its base geometry lives -- shared
+    sheets or in-file ``DEFAULT_CSS`` -- because app CSS outranks widget
+    ``DEFAULT_CSS`` and the descendant selector outspecifies each base
+    rule. The tier keys off the app viewport, never a modal's own width:
+    sizing a container from the container would oscillate.
+
+    The threshold matches the two shipped per-surface tiers so all three
+    mechanisms coexist; the shipped toggles stay (their geometry contracts
+    pin them), and the shared tier reproduces their values.
+    """
+
+    WIDE_VIEWPORT_COLUMNS = 150
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-sync the wide tier as the terminal resizes."""
+        self.set_class(
+            event.size.width >= self.WIDE_VIEWPORT_COLUMNS,
+            "-wide-viewport",
+        )
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
     # crash on a mid-recompose widget (task-14903) -- see the mixin's module
     # docstring for the signature it (and ONLY it) drops.
+    WideViewportTierMixin,
     TextSelectionCrashGuard,
     LibraryIngestQueueMixin,
     App[None],
