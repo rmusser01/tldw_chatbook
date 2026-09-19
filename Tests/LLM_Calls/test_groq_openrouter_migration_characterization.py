@@ -24,6 +24,7 @@ import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import chat_with_mistral
 
 
 _MESSAGES = [{"role": "user", "content": "hi"}]
@@ -300,3 +301,218 @@ def test_openrouter_streaming_stop_and_usage_are_clean():
     response.close.assert_called_once_with()
     payload = mock_post.call_args.kwargs["json"]
     assert payload["stream_options"] == {"include_usage": True}
+
+
+# ---------------------------------------------------------------------------
+# TASK-32852: deepseek + mistral, the same migration onto the same engine.
+# Same shape as the groq/openrouter pins above: preserved contracts stay,
+# defect pins flip (clean Stop, requested/forwarded usage, one [DONE],
+# provider-correct metric labels -- deepseek's non-streaming path logged
+# mistral_api_* and mistral's streaming path logged openrouter_api_*).
+# ---------------------------------------------------------------------------
+
+
+def test_deepseek_nonstreaming_returns_legacy_dict_and_payload():
+    body = {
+        "id": "x",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "deepseek-chat",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = _nonstreaming_ok_response(body)
+        result = chat_api_call(
+            "deepseek",
+            messages_payload=_MESSAGES,
+            api_key="sk-ds",
+            model="deepseek-chat",
+            streaming=False,
+            temp=0.3,
+            topp=0.9,
+        )
+
+    assert result["choices"][0]["message"]["content"] == "hi"
+    assert result["usage"]["total_tokens"] == 2
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["model"] == "deepseek-chat"
+    assert payload["stream"] is False
+    assert payload["temperature"] == 0.3
+    assert payload["top_p"] == 0.9
+    assert "stream_options" not in payload
+
+
+def test_deepseek_requires_an_api_key():
+    with pytest.raises(ChatConfigurationError, match="DeepSeek API Key required"):
+        chat_api_call(
+            "deepseek", messages_payload=_MESSAGES, api_key="", streaming=False
+        )
+
+
+def test_deepseek_streaming_stop_usage_and_sentinel_are_clean():
+    response = _sse_stream_response(_groq_stream_body())
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = response
+        generator = chat_api_call(
+            "deepseek",
+            messages_payload=_MESSAGES,
+            api_key="sk-ds",
+            streaming=True,
+        )
+        assert "hi" in next(generator)
+        generator.close()
+
+    response.close.assert_called_once_with()
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["stream_options"] == {"include_usage": True}
+
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = _sse_stream_response(_groq_stream_body())
+        yielded = list(
+            chat_api_call(
+                "deepseek",
+                messages_payload=_MESSAGES,
+                api_key="sk-ds",
+                streaming=True,
+            )
+        )
+    events = _data_lines(yielded)
+    assert events.count("[DONE]") == 1
+    parsed = [json.loads(item) for item in events[:-1]]
+    assert [e for e in parsed if e.get("usage")]
+
+
+def test_deepseek_metric_labels_name_deepseek():
+    with (
+        patch("requests.Session.post") as mock_post,
+        patch(
+            "tldw_chatbook.LLM_Calls.deepseek.log_histogram"
+        ) as mock_histogram,
+        patch("tldw_chatbook.LLM_Calls.deepseek.log_counter"),
+    ):
+        mock_post.return_value = _nonstreaming_ok_response(
+            {
+                "id": "x",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "deepseek-chat",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "hi"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            }
+        )
+        chat_api_call(
+            "deepseek",
+            messages_payload=_MESSAGES,
+            api_key="sk-ds",
+            streaming=False,
+        )
+        names = [c.args[0] for c in mock_histogram.call_args_list]
+        assert "deepseek_api_response_time" in names
+        assert "mistral_api_response_time" not in names
+
+
+def test_mistral_nonstreaming_payload_and_headers():
+    body = {
+        "id": "x",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "mistral-large-latest",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = _nonstreaming_ok_response(body)
+        # mistral-only kwargs (random_seed/safe_prompt) are not part of the
+        # generic dispatcher surface; call the stable handler entry point.
+        result = chat_with_mistral(
+            _MESSAGES,
+            api_key="sk-mistral",
+            model="mistral-large-latest",
+            streaming=False,
+            temp=0.2,
+            random_seed=7,
+            safe_prompt=True,
+            system_message="be brief",
+        )
+
+    assert result["choices"][0]["message"]["content"] == "hi"
+    headers = mock_post.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer sk-mistral"
+    assert headers["Accept"] == "application/json"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["random_seed"] == 7
+    assert payload["safe_prompt"] is True
+    # has_system_in_input dedup: exactly one system message, prepended
+    roles = [m["role"] for m in payload["messages"]]
+    assert roles.count("system") == 1
+    assert roles[0] == "system"
+
+
+def test_mistral_requires_an_api_key():
+    with pytest.raises(ChatConfigurationError, match="Mistral API Key required"):
+        chat_api_call(
+            "mistral", messages_payload=_MESSAGES, api_key="", streaming=False
+        )
+
+
+def test_mistral_streaming_stop_usage_and_sentinel_are_clean():
+    response = _sse_stream_response(_groq_stream_body())
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = response
+        generator = chat_api_call(
+            "mistral",
+            messages_payload=_MESSAGES,
+            api_key="sk-mistral",
+            streaming=True,
+        )
+        assert "hi" in next(generator)
+        generator.close()
+
+    response.close.assert_called_once_with()
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["stream_options"] == {"include_usage": True}
+
+
+def test_mistral_metric_labels_name_mistral():
+    with (
+        patch("requests.Session.post") as mock_post,
+        patch(
+            "tldw_chatbook.LLM_Calls.mistral.log_histogram"
+        ) as mock_histogram,
+        patch("tldw_chatbook.LLM_Calls.mistral.log_counter"),
+    ):
+        mock_post.return_value = _sse_stream_response(_groq_stream_body())
+        list(
+            chat_api_call(
+                "mistral",
+                messages_payload=_MESSAGES,
+                api_key="sk-mistral",
+                streaming=True,
+            )
+        )
+        names = [c.args[0] for c in mock_histogram.call_args_list]
+        assert "mistral_api_response_time" in names
+        assert "openrouter_api_response_time" not in names
