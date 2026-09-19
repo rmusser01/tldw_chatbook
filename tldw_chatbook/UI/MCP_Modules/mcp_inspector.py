@@ -1369,10 +1369,12 @@ class MCPInspector(Vertical):
         # button's press handler (below) to resolve the pressed row's
         # `rule_id` for `RemoveArgRuleRequested` without re-fetching.
         self._current_permission_arg_rules: list[Mapping[str, Any]] = []
-        # task-32291: index-aligned with the session-approval rows this
-        # block last rendered, so a Revoke press resolves its own entry
-        # without re-fetching.
+        # Retain the listing for refresh; action ownership uses the actual
+        # mounted control, never a row index that a refresh may reuse.
         self._current_permission_session_approvals: list[tuple[str, str]] = []
+        self._session_approval_actions: dict[
+            Button, tuple[str, str, PermissionProfileContext | None]
+        ] = {}
         # task-32291: the rest of the block's own inputs, cached so
         # `refresh_permission_session_approvals()` can re-render EXACTLY
         # what is on screen with a fresh listing -- the caller would
@@ -2124,6 +2126,7 @@ class MCPInspector(Vertical):
         block is a place to find and drop them.
         """
         container = self.query_one("#mcp-inspector-permission", Vertical)
+        self._session_approval_actions.clear()
         await container.remove_children()
         if tool is None or effective is None:
             container.display = False
@@ -2303,15 +2306,17 @@ class MCPInspector(Vertical):
                     markup=False,
                 )
             )
-            widgets.append(
-                Button(
-                    "Revoke",
-                    id=f"mcp-inspector-session-approval-revoke-{index}",
-                    classes="console-action-secondary",
-                    compact=True,
-                    tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
-                )
+            button = Button(
+                "Revoke",
+                id=f"mcp-inspector-session-approval-revoke-{index}",
+                classes="console-action-secondary",
+                compact=True,
+                tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
             )
+            self._session_approval_actions[button] = (
+                server_key, tool_name, self._current_permission_profile_context
+            )
+            widgets.append(button)
         if show_goto_button:
             widgets.append(
                 Button(
@@ -2364,7 +2369,10 @@ class MCPInspector(Vertical):
             )
 
     async def refresh_permission_session_approvals(
-        self, session_approvals: Sequence[tuple[str, str]]
+        self,
+        session_approvals: Sequence[tuple[str, str]],
+        *,
+        profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Re-render the OPEN permission block with a fresh session-approval
         listing (task-32291) -- `MCPWorkbench`'s revoke handler.
@@ -2389,8 +2397,12 @@ class MCPInspector(Vertical):
                 own identities, not this block's tool: the listing spans
                 the whole profile, and the order is what the mounted Revoke
                 buttons are index-aligned with. Empty clears the group.
+            profile_context: The profile whose grants were fetched. An older
+                completion must not replace another profile's displayed list.
         """
         async with self._refresh_lock:
+            if profile_context != self._current_permission_profile_context:
+                return
             await self._render_permission_container(
                 self._current_permission_tool,
                 self._current_permission_effective,
@@ -3695,23 +3707,17 @@ class MCPInspector(Vertical):
             )
             return
         if button_id.startswith("mcp-inspector-session-approval-revoke-"):
-            # task-32291: one Revoke per live session grant, index-aligned
-            # with `_current_permission_session_approvals`. The entry's own
-            # (server_key, tool_name) travels -- NOT the block's tool, which
-            # is usually a different one.
             event.stop()
-            try:
-                index = int(button_id.rsplit("-", 1)[-1])
-                server_key, tool_name = self._current_permission_session_approvals[
-                    index
-                ]
-            except (ValueError, IndexError):
+            action = self._session_approval_actions.pop(event.button, None)
+            if action is None or not event.button.is_attached:
                 return
+            server_key, tool_name, profile_context = action
+            event.button.disabled = True
             self.post_message(
                 self.RevokeSessionApprovalRequested(
                     server_key,
                     tool_name,
-                    self._current_permission_profile_context,
+                    profile_context,
                 )
             )
             return

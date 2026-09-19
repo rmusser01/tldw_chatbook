@@ -1,0 +1,68 @@
+{
+  "cases": [
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_session_approvals_are_isolated_by_exact_profile_id",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_session_approvals_can_be_listed",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_revoking_a_session_approval_makes_the_next_call_ask_again",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_revoking_an_unheld_session_approval_reports_false",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_permissions::test_session_approval_revalidates_profile_digest_under_fence",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_bridge::test_session_approval_set_check_clear",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_control_plane_bridge::test_session_approvals_are_per_instance_not_persisted",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_unified_control_plane_service::test_session_approval_listing_survives_concurrent_grants_and_revokes",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.MCP.test_unified_control_plane_service::test_clearing_one_profiles_session_approvals_keeps_the_same_set_object",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_session_approval_permits_without_a_stamp",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_approve_session_records_a_session_approval",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_named_profile_is_used_for_resolution_and_session_approval",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_effective_deny_wins_over_live_session_approval",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_gate_lists_and_revokes_its_own_session_approval",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_gate_lists_only_builtin_approvals_from_its_own_profile",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Agents.test_builtin_tool_gate::test_service_less_gate_has_nothing_to_list_or_revoke",
+      "status": "passed"
+    }
+  ]
+}

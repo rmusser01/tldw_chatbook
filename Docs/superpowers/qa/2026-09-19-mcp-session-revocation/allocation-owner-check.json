@@ -1,0 +1,11 @@
+{
+  "worktrees": 34,
+  "owners": [
+    {
+      "worktree": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review",
+      "path": "backlog/tasks/task-32865 - Keep-session-grant-revocation-tied-to-the-displayed-grant.md"
+    }
+  ],
+  "history": [],
+  "unique": true
+}
