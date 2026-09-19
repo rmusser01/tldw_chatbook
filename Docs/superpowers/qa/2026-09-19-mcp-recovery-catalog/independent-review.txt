@@ -1,0 +1,5 @@
+Independent reviewer: /root/mcp_server_action_review
+Base: d6c0312bedff15d8c2e8e9589a70c5be7c60379b (PR2727)
+Read-only review of TASK32840 source and tests; no tests/apps run by reviewer.
+No concrete blockers found. local_external_catalog uses the existing passive store/session-state reader; the result is staged locally and gated by the recovery token before publication. Catalog failure preserves approved ownership, renders the built-in state, and uses the existing r reload binding for retry. Cancellation still propagates through the outer finally. Helper copy accurately keeps historical grants inactive. The adjusted old assertion continues checking historical discovery/tools are absent.
+Post-review changes: an explanatory BLE001 suppression on the intentionally broad post-approval UI error boundary; diagnostic inventory reviewed and updated; native harness handles an absent disconnected client. No functional production changes.
