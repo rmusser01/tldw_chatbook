@@ -1,0 +1,32 @@
+........................................................................ [ 22%]
+........................................................................ [ 45%]
+........................................................................ [ 67%]
+........................................................................ [ 90%]
+................................                                         [100%]
+============================= slowest 25 durations =============================
+5.31s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]
+5.24s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]
+5.18s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]
+5.15s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]
+4.70s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_unchanged_raw_form_preserves_editor_draft_focus_and_preview
+4.50s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_tool_inspector_reveals_focused_actions_and_arguments[size0]
+4.42s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_tool_inspector_reveals_focused_actions_and_arguments[size1]
+4.36s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_does_not_take_newer_focus_during_removal
+4.11s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refused_reopen_cannot_accept_previous_forms_pending_preview
+4.00s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_delayed_preview_is_revoked_before_retiring_panel_disappears[refresh]
+3.97s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_queued_preview_request_for_retired_form_does_not_mint
+3.94s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_delayed_preview_is_revoked_before_retiring_panel_disappears[close]
+3.79s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_waiting_catalog_refresh_cannot_replace_newer_tool_selection
+2.96s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+1.97s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+1.91s call     Tests/UI/test_mcp_inspector.py::test_advanced_toggle_hides_and_reshows_round_trip
+1.75s call     Tests/UI/test_mcp_inspector.py::test_advanced_hide_then_reveal_disarms_a_pending_confirm
+1.63s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+1.62s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1.60s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.59s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+1.59s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+1.58s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.58s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+1.58s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+320 passed in 192.32s (0:03:12)

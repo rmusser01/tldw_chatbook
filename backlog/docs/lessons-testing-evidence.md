@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## A retiring form can still look current while removal is awaited
+
+**TASK-32823, 2026-09-18.** Holding MCP preview minting until a selected-tool
+refresh entered child removal reproduced a nonce published into a retiring form;
+Close had the same gap. A missing old nonce meant no queued revocation could
+invalidate the worker. Clear the form's opaque identity synchronously before
+teardown and reject publication against that identity as well as the worker
+generation. Advance generation before refusal paths: a held mint across a
+refused reopen otherwise adopted the new form's shared identity. Separate
+regressions hold both mint/removal and mint/refused-reopen, without tool execution.
+Textual pruning also moves focus automatically; clearing only the retiring focus
+before removal permits restoration while preserving an explicit newer focus.
+
 ## Large SVG failure diagnostics can hide a quick assertion result
 
 **TASK-32821, 2026-09-18.** Both gallery snapshots passed at the baseline.

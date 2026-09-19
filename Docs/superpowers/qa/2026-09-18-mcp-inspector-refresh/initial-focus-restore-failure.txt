@@ -1,0 +1,392 @@
+.FF....                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_catalog_refresh_reconciles_selected_tool_without_reselecting[description] _
+
+self = <Coroutine test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x1160311c0>, 'change': 'description'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2830/test_catalog_refresh_reconcile1/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           _ test_catalog_refresh_reconciles_selected_tool_without_reselecting[description] _
+E
+E           request = <FixtureRequest for <Coroutine test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1116a4e30>
+E           change = 'description'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("change", ["unchanged", "description", "schema", "removed"])
+E               @private_profile_test
+E               async def test_catalog_refresh_reconciles_selected_tool_without_reselecting(
+E                   request, monkeypatch, change
+E               ):
+E                   app = WorkbenchAppWithBundledCSS()
+E                   app.unified_mcp_service = ToolTestHubService()
+E                   async with app.run_test(size=(170, 48)) as pilot:
+E                       workbench, canvas = await _open(pilot)
+E                       original = next(t for t in workbench._last_hub_tools if t.name == "search")
+E                       await canvas.select_tool_row(original.tool_id)
+E                       canvas.query_one(DataTable).focus()
+E                       await pilot.press("enter")
+E                       await _settle(pilot)
+E                       inspector = app.query_one(MCPInspector)
+E                       assert inspector.current_tool == original
+E                       inspector.query_one("#mcp-inspector-test-tool", Button).focus()
+E                       await pilot.press("enter")
+E                       await app.workers.wait_for_complete()
+E                       await _settle(pilot)
+E                       field = inspector.query_one("#mcp-schema-field-0", Input)
+E                       field.focus()
+E                       await pilot.press(*"keep me")
+E                       await _settle(pilot)
+E                       assert field.value == "keep me"
+E                       nonce = inspector._test_preview.nonce
+E
+E                       fresh = replace(original)
+E                       if change == "description":
+E                           fresh = replace(original, description="Search the current catalog.")
+E                       elif change == "schema":
+E                           fresh = replace(original, input_schema={"oneOf": [{"type": "object"}]})
+E                       tools = [
+E                           fresh if tool.tool_id == original.tool_id else tool
+E                           for tool in workbench._last_hub_tools
+E                           if change != "removed" or tool.tool_id != original.tool_id
+E                       ]
+E                       monkeypatch.setattr(workbench, "_collect_hub_tools", lambda: tools)
+E                       await workbench._sync_children()
+E                       await app.workers.wait_for_complete()
+E                       await _settle(pilot)
+E
+E                       if change == "unchanged":
+E                           assert inspector.query_one("#mcp-schema-field-0", Input) is field
+E                           assert field.value == "keep me" and field.has_focus
+E                           assert inspector._test_preview.nonce == nonce
+E                       else:
+E                           assert not inspector.query("#mcp-inspector-test-panel")
+E                           assert inspector._test_preview is None
+E                           assert nonce in app.unified_mcp_service.revoked_nonces
+E                           if change == "removed":
+E                               assert inspector.current_tool is None
+E                               assert not inspector.query_one("#mcp-inspector-tool").display
+E                           else:
+E                               assert inspector.current_tool == fresh
+E                               assert (
+E                                   str(
+E                                       inspector.query_one(
+E                                           "#mcp-inspector-tool-description", Static
+E                                       ).renderable
+E                                   )
+E                                   == fresh.description
+E                               )
+E                               schema = inspector.query_one("#mcp-inspector-tool-schema", Static)
+E                               assert str(schema.renderable) == (
+E                                   "Parameters: raw JSON" if change == "schema" else "Parameters: form"
+E                               )
+E           >                   assert inspector.query_one("#mcp-inspector-test-tool", Button).has_focus
+E           E                   AssertionError: assert False
+E           E                    +  where False = Button(id='mcp-inspector-test-tool', classes='console-action-primary -style-default -textual-compact').has_focus
+E           E                    +    where Button(id='mcp-inspector-test-tool', classes='console-action-primary -style-default -textual-compact') = query_one('#mcp-inspector-test-tool', Button)
+E           E                    +      where query_one = MCPInspector(id='mcp-hub-inspector', classes='destination-workbench-pane ds-inspector').query_one
+E
+E           Tests/UI/test_mcp_inspector_catalog_refresh.py:88: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 16:58:59.310 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 16:58:59.317 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 16:58:59.317 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 16:58:59.317 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 16:58:59.945 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1619 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           2026-09-18 16:59:00.183 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1619 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           2026-09-18 16:59:01.723 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1619 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           2.58s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]
+E           1 failed in 4.50s
+
+Tests/private_profile.py:84: Failed
+__ test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema] ___
+
+self = <Coroutine test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]>>, 'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x116031b80>, 'change': 'schema'}
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pytest", request.node.nodeid,
+                "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+                f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if process.returncode:
+>           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E           Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-2830/test_catalog_refresh_reconcile2/private-profile-process/pytest.log
+E           F                                                                        [100%]
+E           =================================== FAILURES ===================================
+E           __ test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema] ___
+E
+E           request = <FixtureRequest for <Coroutine test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x115730c50>
+E           change = 'schema'
+E
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("change", ["unchanged", "description", "schema", "removed"])
+E               @private_profile_test
+E               async def test_catalog_refresh_reconciles_selected_tool_without_reselecting(
+E                   request, monkeypatch, change
+E               ):
+E                   app = WorkbenchAppWithBundledCSS()
+E                   app.unified_mcp_service = ToolTestHubService()
+E                   async with app.run_test(size=(170, 48)) as pilot:
+E                       workbench, canvas = await _open(pilot)
+E                       original = next(t for t in workbench._last_hub_tools if t.name == "search")
+E                       await canvas.select_tool_row(original.tool_id)
+E                       canvas.query_one(DataTable).focus()
+E                       await pilot.press("enter")
+E                       await _settle(pilot)
+E                       inspector = app.query_one(MCPInspector)
+E                       assert inspector.current_tool == original
+E                       inspector.query_one("#mcp-inspector-test-tool", Button).focus()
+E                       await pilot.press("enter")
+E                       await app.workers.wait_for_complete()
+E                       await _settle(pilot)
+E                       field = inspector.query_one("#mcp-schema-field-0", Input)
+E                       field.focus()
+E                       await pilot.press(*"keep me")
+E                       await _settle(pilot)
+E                       assert field.value == "keep me"
+E                       nonce = inspector._test_preview.nonce
+E
+E                       fresh = replace(original)
+E                       if change == "description":
+E                           fresh = replace(original, description="Search the current catalog.")
+E                       elif change == "schema":
+E                           fresh = replace(original, input_schema={"oneOf": [{"type": "object"}]})
+E                       tools = [
+E                           fresh if tool.tool_id == original.tool_id else tool
+E                           for tool in workbench._last_hub_tools
+E                           if change != "removed" or tool.tool_id != original.tool_id
+E                       ]
+E                       monkeypatch.setattr(workbench, "_collect_hub_tools", lambda: tools)
+E                       await workbench._sync_children()
+E                       await app.workers.wait_for_complete()
+E                       await _settle(pilot)
+E
+E                       if change == "unchanged":
+E                           assert inspector.query_one("#mcp-schema-field-0", Input) is field
+E                           assert field.value == "keep me" and field.has_focus
+E                           assert inspector._test_preview.nonce == nonce
+E                       else:
+E                           assert not inspector.query("#mcp-inspector-test-panel")
+E                           assert inspector._test_preview is None
+E                           assert nonce in app.unified_mcp_service.revoked_nonces
+E                           if change == "removed":
+E                               assert inspector.current_tool is None
+E                               assert not inspector.query_one("#mcp-inspector-tool").display
+E                           else:
+E                               assert inspector.current_tool == fresh
+E                               assert (
+E                                   str(
+E                                       inspector.query_one(
+E                                           "#mcp-inspector-tool-description", Static
+E                                       ).renderable
+E                                   )
+E                                   == fresh.description
+E                               )
+E                               schema = inspector.query_one("#mcp-inspector-tool-schema", Static)
+E                               assert str(schema.renderable) == (
+E                                   "Parameters: raw JSON" if change == "schema" else "Parameters: form"
+E                               )
+E           >                   assert inspector.query_one("#mcp-inspector-test-tool", Button).has_focus
+E           E                   AssertionError: assert False
+E           E                    +  where False = Button(id='mcp-inspector-test-tool', classes='-textual-compact -style-default console-action-primary').has_focus
+E           E                    +    where Button(id='mcp-inspector-test-tool', classes='-textual-compact -style-default console-action-primary') = query_one('#mcp-inspector-test-tool', Button)
+E           E                    +      where query_one = MCPInspector(id='mcp-hub-inspector', classes='destination-workbench-pane ds-inspector').query_one
+E
+E           Tests/UI/test_mcp_inspector_catalog_refresh.py:88: AssertionError
+E           ---------------------------- Captured stderr setup -----------------------------
+E           2026-09-18 16:59:04.996 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:638 - ⚠️ huggingface_hub dependency not found. Feature 'huggingface_hub' will be disabled. Reason: No module named 'huggingface_hub'
+E           2026-09-18 16:59:05.002 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E           2026-09-18 16:59:05.002 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E           2026-09-18 16:59:05.002 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ----------------------------- Captured stderr call -----------------------------
+E           2026-09-18 16:59:05.641 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1619 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           2026-09-18 16:59:05.889 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1619 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           2026-09-18 16:59:07.359 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1619 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E           ============================= slowest 25 durations =============================
+E           2.48s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]
+E
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]
+E           1 failed in 4.45s
+
+Tests/private_profile.py:84: Failed
+============================= slowest 25 durations =============================
+7.68s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]
+6.28s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_delayed_preview_is_revoked_before_retiring_panel_disappears[refresh]
+5.50s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]
+5.50s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]
+5.30s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]
+4.70s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_delayed_preview_is_revoked_before_retiring_panel_disappears[close]
+4.37s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_does_not_take_newer_focus_during_removal
+
+(14 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]
+2 failed, 5 passed in 41.75s

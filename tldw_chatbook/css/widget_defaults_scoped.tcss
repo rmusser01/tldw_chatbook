@@ -342,6 +342,11 @@
         min-height: 0;
         display: none;
     }
+    MCPInspector #mcp-inspector-tool .console-action-primary,
+    MCPInspector #mcp-inspector-tool .console-action-secondary {
+        min-width: 0;
+        max-width: 100%;
+    }
 
     MCPInspector #mcp-inspector-permission {
         height: auto;

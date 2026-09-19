@@ -1,0 +1,23 @@
+..........................................                               [100%]
+============================= slowest 25 durations =============================
+5.49s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[schema]
+5.46s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[removed]
+5.14s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[unchanged]
+5.11s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_reconciles_selected_tool_without_reselecting[description]
+4.66s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_unchanged_raw_form_preserves_editor_draft_focus_and_preview
+4.38s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_queued_preview_request_for_retired_form_does_not_mint
+4.27s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_catalog_refresh_does_not_take_newer_focus_during_removal
+4.15s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refused_reopen_cannot_accept_previous_forms_pending_preview
+3.91s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_delayed_preview_is_revoked_before_retiring_panel_disappears[close]
+3.81s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_delayed_preview_is_revoked_before_retiring_panel_disappears[refresh]
+3.75s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_waiting_catalog_refresh_cannot_replace_newer_tool_selection
+1.90s call     Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount
+1.61s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_unmount_and_remount_revokes_old_nonce
+1.40s call     Tests/UI/test_mcp_workbench.py::test_test_tool_repeated_cancellation_reclaims_abandoned_mint_and_tasks
+1.25s call     Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update
+1.11s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_success_calls_service_and_renders_ok
+1.09s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_switch_revokes_old_nonce
+1.00s call     Tests/UI/test_mcp_workbench.py::test_test_tool_one_click_ask_dispatches_approve_once_from_first_activation
+
+(7 durations < 1s hidden.)
+42 passed, 319 deselected in 85.79s (0:01:25)

@@ -1,0 +1,380 @@
+UI latency guardrails	Run boot budget ratchets	﻿2026-09-19T00:33:26.7337294Z ##[group]Run pytest Tests/Performance/test_app_import_weight.py \
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7338075Z [36;1mpytest Tests/Performance/test_app_import_weight.py \[0m
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7338694Z [36;1m  Tests/Performance/test_ui_ready_module_census.py \[0m
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7339134Z [36;1m  Tests/Performance/test_boot_worker_census.py \[0m
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7339592Z [36;1m  Tests/Performance/test_textual_css_fastpath.py \[0m
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7340010Z [36;1m  Tests/Performance/test_boot_css_byte_budget.py \[0m
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7340398Z [36;1m  -v --timeout=300[0m
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7364898Z shell: /usr/bin/bash -e {0}
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7365343Z env:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7365738Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7366266Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7366757Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7367219Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7367807Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7368750Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:26.7369335Z ##[endgroup]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1410412Z ============================= test session starts ==============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1411513Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0 -- /opt/hostedtoolcache/Python/3.12.14/x64/bin/python
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1412273Z cachedir: .pytest_cache
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1413011Z hypothesis profile 'tldw' -> database=None, deadline=None, max_examples=25, print_blob=True, derandomize=True, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1413778Z rootdir: /home/runner/work/tldw_chatbook/tldw_chatbook
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1414213Z configfile: pyproject.toml
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1414756Z plugins: anyio-4.15.1, hypothesis-6.168.0, cov-7.1.0, mock-3.15.1, asyncio-1.4.0, timeout-2.4.0, xdist-3.8.0
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1415648Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1416349Z timeout: 300.0s
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1416675Z timeout method: signal
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.1417094Z timeout func_only: False
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.4165708Z collecting ... collected 20 items
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:27.4166180Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:30.8325957Z Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers PASSED [  5%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:33.0512138Z Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline PASSED [ 10%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:35.2956868Z Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size PASSED [ 15%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:37.5101988Z Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set PASSED [ 20%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:37.5127045Z Tests/Performance/test_app_import_weight.py::test_ensure_torch_resolves_real_torch_when_installed SKIPPED [ 25%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:37.5151729Z Tests/Performance/test_app_import_weight.py::test_ensure_transformers_resolves_real_transformers_when_installed SKIPPED [ 30%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:33:37.5350168Z Tests/Performance/test_app_import_weight.py::test_ensure_numpy_resolves_real_numpy_when_installed PASSED [ 35%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:07.3888419Z Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size PASSED [ 40%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:07.3911300Z Tests/Performance/test_ui_ready_module_census.py::test_flag_time_snapshot_copies_modules_inside_the_assignment_and_only_once PASSED [ 45%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:07.3931950Z Tests/Performance/test_ui_ready_module_census.py::test_flag_time_snapshot_is_per_instance_state_on_the_class PASSED [ 50%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:07.3957985Z Tests/Performance/test_ui_ready_module_census.py::test_census_script_embeds_the_unit_tested_helper PASSED [ 55%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:07.4002030Z Tests/Performance/test_boot_worker_census.py::test_census_waits_for_the_serially_delayed_required_worker[True] PASSED [ 60%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:07.4040955Z Tests/Performance/test_boot_worker_census.py::test_census_waits_for_the_serially_delayed_required_worker[False] PASSED [ 65%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:26.2326382Z Tests/Performance/test_boot_worker_census.py::test_boot_worker_and_thread_starts_stay_within_the_allowlist PASSED [ 70%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:26.2359911Z Tests/Performance/test_textual_css_fastpath.py::test_upstream_apply_still_has_the_shape_the_fastpath_assumes PASSED [ 75%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:56.4047495Z Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node PASSED [ 80%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:34:56.4077014Z Tests/Performance/test_textual_css_fastpath.py::test_ancestor_requirements_only_claims_what_it_can_prove PASSED [ 85%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:13.5570550Z Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime PASSED [ 90%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:20.3347390Z Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet FAILED [ 95%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6691178Z Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget PASSED [100%]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6692270Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6692887Z =================================== FAILURES ===================================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6693699Z ____________ test_ancestor_scoped_bare_type_rule_count_is_a_ratchet ____________
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6694177Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6694581Z self = <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6695038Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6695897Z     def runtest(self) -> None:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6696700Z         runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6697543Z         runner = self._request.getfixturevalue(runner_fixture_id)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6698554Z         context = contextvars.copy_context()
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6699255Z         synchronized_obj = _synchronize_coroutine(
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6699978Z             getattr(*self._synchronization_target_attr), runner, context
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6700706Z         )
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6701156Z         with MonkeyPatch.context() as c:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6701833Z             c.setattr(*self._synchronization_target_attr, synchronized_obj)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6702513Z >           super().runtest()
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6702828Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6703357Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6704498Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6705836Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6707116Z     runner.run(coro, context=context)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6708176Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/runners.py:118: in run
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6708962Z     return self._loop.run_until_complete(task)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6709839Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6711010Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6712291Z     return future.result()
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6712882Z            ^^^^^^^^^^^^^^^
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6713609Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6714271Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6714482Z args = ()
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6715567Z kwargs = {'request': <FixtureRequest for <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>>}
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6716560Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6716809Z     @wraps(function)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6717420Z     async def wrapped(*args, **kwargs):
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6718371Z         request = kwargs["request"]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6719130Z         if is_private_profile_child(request):
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6720246Z             result = function(*args, **kwargs)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6721171Z             return await result if inspect.isawaitable(result) else result
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6722132Z         if _CHILD_NODE in os.environ:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6722961Z             pytest.fail("private profile child node changed")
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6724610Z         work = request.getfixturevalue("tmp_path") / "private-profile-process"
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6725588Z         work.mkdir(mode=0o700)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6726305Z         profile = work / "profile"
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6727012Z         profile.mkdir(mode=0o700)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6727662Z         environment = dict(os.environ)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6728552Z         environment.update(
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6729294Z             TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6730176Z             TLDW_TEST_CONFIG_ROOT=str(profile),
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6730920Z             HOME=str(profile / "home"),
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6731679Z             USERPROFILE=str(profile / "home"),
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6732505Z             XDG_CONFIG_HOME=str(profile / "config"),
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6733283Z             XDG_DATA_HOME=str(profile / "data"),
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6734405Z             TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6735365Z             PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6736143Z         )
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6736676Z         for name in (
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6737367Z             "TLDW_TEST_CONFIG_ROOT_OWNER", "PYTEST_XDIST_WORKER",
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6738366Z             "PYTEST_XDIST_WORKER_COUNT", "PYTEST_ADDOPTS",
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6739198Z         ):
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6739785Z             environment.pop(name, None)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6740772Z         marker = request.node.get_closest_marker("timeout")
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6741726Z         timeout = marker.args[0] if marker and marker.args else None
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6742591Z         if timeout is None and marker:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6743419Z             timeout = marker.kwargs.get("timeout")
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6744142Z         if timeout is None:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6744880Z             timeout = get_env_settings(request.config).timeout
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6745712Z         timeout = float(timeout or 0)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6746421Z         report = work / "pytest.xml"
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6747176Z         log = work / "pytest.log"
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6747993Z         with log.open("w") as output:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6748714Z             process = await asyncio.create_subprocess_exec(
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6749797Z                 sys.executable, "-m", "pytest", request.node.nodeid,
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6750802Z                 "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout", "-q",
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6751920Z                 f"--timeout={timeout}", f"--basetemp={work / 'pytest'}",
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6752776Z                 f"--junitxml={report}",
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6753523Z                 cwd=Path(__file__).resolve().parents[1],
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6754302Z                 env=environment,
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6754947Z                 stdout=output,
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6755698Z                 stderr=asyncio.subprocess.STDOUT,
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6756410Z             )
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6756896Z             try:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6757758Z                 await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6758883Z             finally:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6759556Z                 if process.returncode is None:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6760293Z                     process.kill()
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6761110Z                     await process.wait()
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6761881Z         if process.returncode:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6762634Z >           pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6764050Z E           Failed: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/pytest.log
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6767246Z E           :806 - LibraryCollectionsDB initialized with path: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6771617Z E           2026-09-19 00:35:16.701 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6774743Z E           2026-09-19 00:35:16.918 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6777624Z E           2026-09-19 00:35:16.933 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6780727Z E           2026-09-19 00:35:16.933 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6784227Z E           2026-09-19 00:35:16.933 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6787073Z E           2026-09-19 00:35:17.143 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6789667Z E           2026-09-19 00:35:17.212 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6792224Z E           2026-09-19 00:35:17.284 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6794764Z E           2026-09-19 00:35:17.358 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6797618Z E           2026-09-19 00:35:17.428 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6800388Z E           2026-09-19 00:35:17.500 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6803427Z E           2026-09-19 00:35:17.500 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/scheduled_tasks.sqlite [Client: default]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6805584Z E           2026-09-19 00:35:17.565 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6806746Z E           2026-09-19 00:35:17.566 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6808430Z E           2026-09-19 00:35:17.580 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6809754Z E           2026-09-19 00:35:17.691 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6811354Z E           2026-09-19 00:35:17.691 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6812961Z E           2026-09-19 00:35:17.691 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6814280Z E           2026-09-19 00:35:17.793 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6815486Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6816479Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6817420Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 1.430 seconds
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6818485Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.116s (8.1%)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6819374Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6820243Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.001s (0.1%)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6821165Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.3% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6822582Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.3% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6823963Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.2% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6825024Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.1% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6825960Z E           2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6826904Z E           2026-09-19 00:35:18.565 | INFO     | tldw_chatbook.Widgets.splash_screen:_select_card:245 - Randomly selected splash card: blueprint
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6828307Z E           2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:310 - Splash screen mounted - duration: 7.0s, card: blueprint
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6829527Z E           2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:330 - Starting splash screen - type: static, card: blueprint
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6830872Z E           2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:338 - Setting static content: 1824 chars with style: bold cyan on rgb(0,0,30)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6832105Z E           2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:324 - Splash screen auto-close timer set for 7.0s
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6833187Z E           2026-09-19 00:35:18.765 | DEBUG    | tldw_chatbook.app:on_mount:15711 - Deferring logging setup until after splash screen closes
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6834235Z E           2026-09-19 00:35:18.773 | DEBUG    | tldw_chatbook.app:on_mount:15865 - Applied default theme: textual-dark
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6835127Z E           2026-09-19 00:35:18.774 | INFO     | tldw_chatbook.app:on_mount:15885 - on_mount completed in 0.020 seconds
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6837063Z E           2026-09-19 00:35:19.086 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryIngestJobsDB initialized with path: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_ingest_jobs.db [Client: default]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6839315Z E           2026-09-19 00:35:19.095 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6841718Z E           2026-09-19 00:35:19.095 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.PENDING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'})>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6844407Z E           2026-09-19 00:35:19.095 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6846789Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.RUNNING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'})>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6850016Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6852034Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.PENDING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x7fad8dc632a0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6853785Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6855494Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x7fad8dc632a0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6857215Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6859124Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.PENDING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x7fad8ef2ee30>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6860802Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6862535Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x7fad8ef2ee30>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6864373Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6866296Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.PENDING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x7fad8dc659c0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6868452Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6870401Z E           2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.RUNNING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x7fad8dc659c0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6872290Z E           2026-09-19 00:35:19.110 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.SUCCESS)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6873971Z E           2026-09-19 00:35:19.110 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.SUCCESS | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x7fad8ef2ee30>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6875630Z E           2026-09-19 00:35:19.113 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.SUCCESS)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6877383Z E           2026-09-19 00:35:19.113 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.SUCCESS | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'})>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6879227Z E           2026-09-19 00:35:19.180 | INFO     | tldw_chatbook.Chat.console_runtime:dispose:4758 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6880362Z E           2026-09-19 00:35:19.190 | INFO     | tldw_chatbook.app:on_unmount:19485 - Local MCP client sessions disconnected
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6881104Z E           2026-09-19 00:35:19.190 | INFO     | tldw_chatbook.app:on_unmount:19495 - Artifact share stopped (if running)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6881815Z E           2026-09-19 00:35:19.190 | INFO     | tldw_chatbook.app:on_unmount:19509 - Server context provider cached client closed
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6882509Z E           2026-09-19 00:35:19.191 | INFO     | tldw_chatbook.app:on_unmount:19524 - TTS resources cleaned up properly
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6883200Z E           2026-09-19 00:35:19.191 | INFO     | tldw_chatbook.app:on_unmount:19555 - DB size update timer stopped during unmount.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6883903Z E           2026-09-19 00:35:19.192 | INFO     | tldw_chatbook.app:on_unmount:19707 - --- App Unmounted (Loguru) ---
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6884513Z E           ------------------------------ Captured log call -------------------------------
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6885086Z E           INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6885677Z E           WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6886341Z E           ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6886920Z E           INFO     root:app.py:12312 Splash screen enabled: True
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6887433Z E           INFO     root:app.py:12325 Creating splash screen - duration: 7.0, card: random
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6888043Z E           INFO     root:app.py:12340 Splash screen yielded, returning early from compose
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6888961Z E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6889955Z E           INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6890761Z E           INFO     root:app.py:19334 --- App Unmounting ---
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6891348Z E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_stopping component=app
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6891910Z E           ============================= slowest 25 durations =============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6892604Z E           3.97s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6893377Z E           1.24s setup    Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6893999Z E
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6894299Z E           (1 durations < 1s hidden.)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6894770Z E           =========================== short test summary info ============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6895919Z E           FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet - AssertionError: 275 ancestor-scoped bare-type-subject rules (ratchet limit 274; Button=175, Input=29, Static=19, Select=17, Vertical=14, Checkbox=13, Horizontal=4, VerticalScroll=4).
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6898083Z E             Each of these is a style-apply candidate for EVERY widget of its type in the app, because Textual indexes rules by their rightmost selector only. Do not raise the constant (see the constant's comment and ADR-097's ratchet discipline): re-key the new rule instead -- give its subject a class carried only by the intended widgets, e.g. `#panel Button` -> `Button.panel-action` plus that class in compose().
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6900094Z E             Newest offenders are easiest to find with: git diff on tldw_chatbook/css/ for selectors ending in a bare Button/Static/Input... type.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6900795Z E             Sample of current offenders:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6901250Z E               [Button] TraceFiltersDialog #trace-filter-dialog-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6901889Z E               [Button] ConsoleCapturePolicyDialog #capture-policy-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6902491Z E               [Button] ConsoleExchangeExportDialog #exchange-export-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6903107Z E               [Button] TraceExportDialog #trace-export-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6903623Z E               [Button] NoteSelectionDialog .button-row Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6904070Z E               [Button] ConversationSelectionDialog .button-row Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6904570Z E               [Button] FileExtractionDialog .dialog-buttons Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6905013Z E               [Button] VoiceBlendDialog .button-row Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6905422Z E               [Button] #tabs Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6905782Z E               [Button] #tabs Button:hover
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6906131Z E               [Button] #tabs Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6906514Z E               [Button] #tabs Button:last-of-type
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6906916Z E               [Button] #tabs Button:hover
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6907424Z E               [Button] Button:disabled, Button.-style-default:disabled, Button.-style-flat:disabled
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6908003Z E               [Button] .form-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6908370Z E           assert 275 <= 274
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6908707Z E           1 failed in 5.45s
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6908907Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6909044Z Tests/private_profile.py:84: Failed
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6909433Z =============================== warnings summary ===============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6910109Z Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6911013Z   /home/runner/work/tldw_chatbook/tldw_chatbook/Tests/Performance/test_app_import_weight.py:317: UserWarning: boot-import-weight: 669/686 modules (headroom 17)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6911746Z     ratchet.emit_headroom(
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6911955Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6912302Z Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6913122Z   /home/runner/work/tldw_chatbook/tldw_chatbook/Tests/Performance/test_ui_ready_module_census.py:428: UserWarning: ui-ready-census: 1022/1022 modules (headroom 0)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6913794Z     ratchet.emit_headroom(
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6913996Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6914237Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6914747Z ============================= slowest 25 durations =============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6915415Z 30.17s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6916267Z 29.85s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6917013Z 18.83s call     Tests/Performance/test_boot_worker_census.py::test_boot_worker_and_thread_starts_stay_within_the_allowlist
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6917766Z 17.15s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6918605Z 6.68s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6919336Z 3.33s call     Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6920011Z 2.26s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6920788Z 2.24s call     Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6921512Z 2.22s call     Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6922227Z 2.21s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6922950Z 1.15s setup    Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6923420Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6923559Z (14 durations < 1s hidden.)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6924013Z =========================== short test summary info ============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6924561Z SKIPPED [1] Tests/Performance/test_app_import_weight.py:352: torch not installed in this environment
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6925319Z SKIPPED [1] Tests/Performance/test_app_import_weight.py:370: torch/transformers not installed in this environment
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6926373Z FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet - Failed: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/pytest.log
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6927949Z :806 - LibraryCollectionsDB initialized with path: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6929542Z 2026-09-19 00:35:16.701 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - WorkspaceDB initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6930782Z 2026-09-19 00:35:16.918 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6932019Z 2026-09-19 00:35:16.933 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6933168Z 2026-09-19 00:35:16.933 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - EventStateRepository initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6934408Z 2026-09-19 00:35:16.933 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SyncStateRepository initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6935599Z 2026-09-19 00:35:17.143 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6936574Z 2026-09-19 00:35:17.212 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6937568Z 2026-09-19 00:35:17.284 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6938802Z 2026-09-19 00:35:17.358 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:61 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6939747Z 2026-09-19 00:35:17.428 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:66 - Scheduling schema migrated to version 6 (task_incidents)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6940808Z 2026-09-19 00:35:17.500 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6941958Z 2026-09-19 00:35:17.500 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - ScheduledTasksDB initialized with path: /tmp/tldw-chatbook-test-m_s05jkc/scheduled_tasks.sqlite [Client: default]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6942962Z 2026-09-19 00:35:17.565 | DEBUG    | tldw_chatbook.app:__init__:8241 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6943770Z 2026-09-19 00:35:17.566 | DEBUG    | tldw_chatbook.app:__init__:8244 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6944756Z 2026-09-19 00:35:17.580 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6945773Z 2026-09-19 00:35:17.691 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6946901Z 2026-09-19 00:35:17.691 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6948078Z 2026-09-19 00:35:17.691 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6948893Z 2026-09-19 00:35:17.793 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6949765Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:_init_worker_handlers:12134 - Worker handler registry initialized with all handlers
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6950559Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8424 - === STARTUP TIMING SUMMARY ===
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6951215Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8425 - Total initialization time: 1.430 seconds
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6951850Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8431 -   basic_init: 0.116s (8.1%)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6952458Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8431 -   attribute_init: 0.000s (0.0%)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6953124Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8431 -   parallel_init: 0.001s (0.1%)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6953813Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - notes_service: 0.000s (0.3% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6954567Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - media_db: 0.000s (0.3% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6955280Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - providers_models: 0.000s (0.2% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6955993Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8444 -     - prompts_service: 0.000s (0.1% of parallel_init)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6956632Z 2026-09-19 00:35:17.793 | INFO     | tldw_chatbook.app:__init__:8448 - ==============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6957364Z 2026-09-19 00:35:18.565 | INFO     | tldw_chatbook.Widgets.splash_screen:_select_card:245 - Randomly selected splash card: blueprint
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6958297Z 2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:310 - Splash screen mounted - duration: 7.0s, card: blueprint
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6959302Z 2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:330 - Starting splash screen - type: static, card: blueprint
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6960242Z 2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:_start_splash:338 - Setting static content: 1824 chars with style: bold cyan on rgb(0,0,30)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6961138Z 2026-09-19 00:35:18.597 | INFO     | tldw_chatbook.Widgets.splash_screen:on_mount:324 - Splash screen auto-close timer set for 7.0s
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6961992Z 2026-09-19 00:35:18.765 | DEBUG    | tldw_chatbook.app:on_mount:15711 - Deferring logging setup until after splash screen closes
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6962704Z 2026-09-19 00:35:18.773 | DEBUG    | tldw_chatbook.app:on_mount:15865 - Applied default theme: textual-dark
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6963394Z 2026-09-19 00:35:18.774 | INFO     | tldw_chatbook.app:on_mount:15885 - on_mount completed in 0.020 seconds
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6964625Z 2026-09-19 00:35:19.086 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - LibraryIngestJobsDB initialized with path: /tmp/pytest-of-runner/pytest-1/test_ancestor_scoped_bare_type0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_ingest_jobs.db [Client: default]
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6966084Z 2026-09-19 00:35:19.095 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6967795Z 2026-09-19 00:35:19.095 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.PENDING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'})>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6970324Z 2026-09-19 00:35:19.095 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6973051Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.RUNNING | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'})>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6975790Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6978181Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.PENDING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x7fad8dc632a0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6980203Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'resume_startup' (Group: research_source_association_startup, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6981822Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_source_association_startup: Worker 'resume_startup' (Group: research_source_association_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object ResearchSourceAssociationScheduler.resume_startup at 0x7fad8dc632a0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6983460Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6985117Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.PENDING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x7fad8ef2ee30>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6986863Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6988549Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.RUNNING | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x7fad8ef2ee30>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6990290Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.PENDING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6992140Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.PENDING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x7fad8dc659c0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6994010Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation, State: WorkerState.RUNNING)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6995873Z 2026-09-19 00:35:19.096 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research-quick-notes-startup-reconciliation: Worker '_reconcile_research_quick_notes_startup' (Group: research-quick-notes-startup-reconciliation) -> State: WorkerState.RUNNING | Desc: <coroutine object TldwCli._reconcile_research_quick_notes_startup at 0x7fad8dc659c0>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6997750Z 2026-09-19 00:35:19.110 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup, State: WorkerState.SUCCESS)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.6999520Z 2026-09-19 00:35:19.110 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - research_paste_staging_startup: Worker '_sweep_research_paste_staging' (Group: research_paste_staging_startup) -> State: WorkerState.SUCCESS | Desc: <coroutine object LibraryIngestQueueMixin._sweep_research_paste_staging at 0x7fad8ef2ee30>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7001241Z 2026-09-19 00:35:19.113 | DEBUG    | tldw_chatbook.app:on_worker_state_changed:19773 - on_worker_state_changed: Worker 'restore_ingest_jobs' (Group: ingest_restore, State: WorkerState.SUCCESS)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7002964Z 2026-09-19 00:35:19.113 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:log_state_change:85 - ingest_restore: Worker 'restore_ingest_jobs' (Group: ingest_restore) -> State: WorkerState.SUCCESS | Desc: <bound method LibraryIngestQueueMixin._restore_ingest_jobs_off_thread of TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'})>
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7004712Z 2026-09-19 00:35:19.180 | INFO     | tldw_chatbook.Chat.console_runtime:dispose:4758 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7005662Z 2026-09-19 00:35:19.190 | INFO     | tldw_chatbook.app:on_unmount:19485 - Local MCP client sessions disconnected
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7006329Z 2026-09-19 00:35:19.190 | INFO     | tldw_chatbook.app:on_unmount:19495 - Artifact share stopped (if running)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7007169Z 2026-09-19 00:35:19.190 | INFO     | tldw_chatbook.app:on_unmount:19509 - Server context provider cached client closed
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7007928Z 2026-09-19 00:35:19.191 | INFO     | tldw_chatbook.app:on_unmount:19524 - TTS resources cleaned up properly
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7008641Z 2026-09-19 00:35:19.191 | INFO     | tldw_chatbook.app:on_unmount:19555 - DB size update timer stopped during unmount.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7009323Z 2026-09-19 00:35:19.192 | INFO     | tldw_chatbook.app:on_unmount:19707 - --- App Unmounted (Loguru) ---
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7009895Z ------------------------------ Captured log call -------------------------------
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7010484Z INFO     root:app.py:8195 App __init__: Determined initial tab value: chat
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7011054Z WARNING  root:app.py:8301 Prompts service not initialized, self.prompts_db set to None.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7011773Z ERROR    root:app.py:8322 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7012338Z INFO     root:app.py:12312 Splash screen enabled: True
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7012809Z INFO     root:app.py:12325 Creating splash screen - duration: 7.0, card: random
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7013406Z INFO     root:app.py:12340 Splash screen yielded, returning early from compose
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7014028Z INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_started component=app
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7014992Z INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:247 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7015837Z INFO     root:app.py:19334 --- App Unmounting ---
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7016382Z INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:247 event=app_stopping component=app
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7017023Z ============================= slowest 25 durations =============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7017676Z 3.97s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7018788Z 1.24s setup    Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7019245Z
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7019381Z (1 durations < 1s hidden.)
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7019764Z =========================== short test summary info ============================
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7020976Z FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet - AssertionError: 275 ancestor-scoped bare-type-subject rules (ratchet limit 274; Button=175, Input=29, Static=19, Select=17, Vertical=14, Checkbox=13, Horizontal=4, VerticalScroll=4).
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7023052Z   Each of these is a style-apply candidate for EVERY widget of its type in the app, because Textual indexes rules by their rightmost selector only. Do not raise the constant (see the constant's comment and ADR-097's ratchet discipline): re-key the new rule instead -- give its subject a class carried only by the intended widgets, e.g. `#panel Button` -> `Button.panel-action` plus that class in compose().
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7024718Z   Newest offenders are easiest to find with: git diff on tldw_chatbook/css/ for selectors ending in a bare Button/Static/Input... type.
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7025382Z   Sample of current offenders:
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7025830Z     [Button] TraceFiltersDialog #trace-filter-dialog-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7026448Z     [Button] ConsoleCapturePolicyDialog #capture-policy-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7026982Z     [Button] ConsoleExchangeExportDialog #exchange-export-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7027605Z     [Button] TraceExportDialog #trace-export-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7028189Z     [Button] NoteSelectionDialog .button-row Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7028669Z     [Button] ConversationSelectionDialog .button-row Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7029214Z     [Button] FileExtractionDialog .dialog-buttons Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7029673Z     [Button] VoiceBlendDialog .button-row Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7030043Z     [Button] #tabs Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7030382Z     [Button] #tabs Button:hover
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7030747Z     [Button] #tabs Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7031223Z     [Button] #tabs Button:last-of-type
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7031574Z     [Button] #tabs Button:hover
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7032034Z     [Button] Button:disabled, Button.-style-default:disabled, Button.-style-flat:disabled
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7032565Z     [Button] .form-actions Button
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7032919Z assert 275 <= 274
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7674632Z 1 failed in 5.45s
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.7675300Z ======= 1 failed, 17 passed, 2 skipped, 2 warnings in 116.53s (0:01:56) ========
+UI latency guardrails	Run boot budget ratchets	2026-09-19T00:35:23.9719309Z ##[error]Process completed with exit code 1.
