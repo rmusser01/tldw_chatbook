@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from tldw_chatbook.Utils.timestamps import (
+    is_canonical_utc,
     parse_utc,
     to_utc_iso,
     utc_now,
@@ -72,3 +73,31 @@ def test_canonical_string_round_trips():
 def test_parse_utc_rejects_garbage(bad):
     with pytest.raises(ValueError):
         parse_utc(bad)
+
+
+def test_is_canonical_utc_accepts_only_the_canonical_shape():
+    assert is_canonical_utc(utc_now_iso())
+    assert is_canonical_utc("2026-09-20T12:34:56.789Z")
+    # everything the writer must NOT emit
+    for bad in [
+        "2026-09-20T12:34:56.789012Z",   # microseconds
+        "2026-09-20T12:34:56.789+00:00",  # offset, not Z
+        "2026-09-20T12:34:56Z",           # no fraction
+        "2026-09-20 12:34:56.789Z",       # space separator
+        "2026-09-20T12:34:56.789z",       # lowercase z
+        "",
+        None,
+        12345,
+    ]:
+        assert not is_canonical_utc(bad), bad
+
+
+def test_everything_to_utc_iso_emits_is_canonical():
+    from datetime import datetime, timezone, timedelta
+    for dt in [
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 9, 20, 12, 34, 56, 789012, tzinfo=timezone.utc),
+        datetime(2026, 9, 20, 7, 0, 0, tzinfo=timezone(timedelta(hours=-5))),
+        datetime(2026, 9, 20, 12, 0, 0),  # naive -> UTC
+    ]:
+        assert is_canonical_utc(to_utc_iso(dt))

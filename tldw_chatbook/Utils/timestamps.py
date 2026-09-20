@@ -22,6 +22,7 @@ time via ``datetime.now()`` are latent bugs the format guard (AC#2) flags.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 #: The canonical stored UTC shape, e.g. ``2026-09-20T12:34:56.789Z``.
@@ -88,3 +89,23 @@ def parse_utc(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+#: Matches exactly the canonical shape YYYY-MM-DDTHH:MM:SS.mmmZ (years
+#: 1000-9999). Used by :func:`is_canonical_utc`; the format guard (ADR-173
+#: AC#2) asserts timestamp-bearing writes produce this.
+_CANONICAL_UTC_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
+)
+
+
+def is_canonical_utc(value: str) -> bool:
+    """Return True iff `value` is exactly the canonical stored shape.
+
+    A shape check only (fixed-width millisecond ISO-8601 with a ``Z`` suffix);
+    it does not validate that the field values form a real calendar date. Reads
+    still go through :func:`parse_utc`, which is tolerant; this is for the write
+    side -- the format guard uses it to reject a divergent shape before it is
+    stored.
+    """
+    return isinstance(value, str) and _CANONICAL_UTC_RE.match(value) is not None
