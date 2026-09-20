@@ -2357,6 +2357,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
@@ -2608,11 +2609,14 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 >>>>>>> b6266880b5 (fix: restore the privacy suite from the pre-rebase tip (rebase auto-resolution markers))
 =======
 >>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+=======
+>>>>>>> 8f4a994dae (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
         # logs verbatim (bound to the typed error) per the freeze.
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -2726,7 +2730,12 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 >>>>>>> 7e7c2781d2 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+<<<<<<< HEAD
 >>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+=======
+=======
+>>>>>>> 8f4a994dae (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
+>>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (

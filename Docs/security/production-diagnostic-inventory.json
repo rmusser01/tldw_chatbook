@@ -1244,6 +1244,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
       "call_count": 269,
       "diagnostic_digest": "e8225e3610bdbf11071a",
 <<<<<<< HEAD
@@ -1772,7 +1773,14 @@
       "diagnostic_digest": "e8225e3610bdbf11071a",
 >>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 >>>>>>> 7e7c2781d2 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+<<<<<<< HEAD
 >>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+=======
+=======
+      "call_count": 269,
+      "diagnostic_digest": "e8225e3610bdbf11071a",
+>>>>>>> 8f4a994dae (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
+>>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -12132,6 +12140,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -12163,6 +12172,8 @@
 >>>>>>> 84f48be389 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 =======
 >>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+=======
+>>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
     "task_492_calls": 1355,
 =======
     "task_492_calls": 1356,
@@ -12326,6 +12337,7 @@
     "task_492_calls": 1409,
 >>>>>>> b463addfd6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 6d3ca1e585 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 28168b60ad (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_494_calls": 7770
 =======
@@ -12575,5 +12587,11 @@
     "task_494_calls": 7770
 >>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 >>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+=======
+=======
+    "task_492_calls": 1355,
+>>>>>>> 8f4a994dae (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
+    "task_494_calls": 7770
+>>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
   }
 }

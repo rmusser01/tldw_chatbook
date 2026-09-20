@@ -48,37 +48,6 @@ from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
->>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
-=======
->>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
->>>>>>> 3a97760163 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
-=======
->>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
-=======
->>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
->>>>>>> 939d3fcb59 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-<<<<<<< HEAD
->>>>>>> f0bfd62695 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
-=======
-=======
->>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
->>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
-=======
->>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -89,10 +58,13 @@ from tldw_chatbook.Chat.Chat_Deps import (
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 =======
 >>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+=======
+>>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -282,7 +254,12 @@ from tldw_chatbook.Chat.Chat_Deps import (
 =======
 >>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 >>>>>>> 7e7c2781d2 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+<<<<<<< HEAD
 >>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+=======
+=======
+>>>>>>> 8f4a994dae (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
+>>>>>>> 2bcecd7bb6 (chore(diagnostic): re-pin inventory + manifest boundary for the post-chat-tail dev base)
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,
