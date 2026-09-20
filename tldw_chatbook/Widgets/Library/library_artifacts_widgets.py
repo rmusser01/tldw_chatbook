@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual import on
@@ -11,6 +12,11 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Key
 from textual.widgets import Button, Input, Markdown, OptionList, Static
 from textual.widgets.option_list import Option
+
+if TYPE_CHECKING:
+    from ...UI.Library_Modules.library_artifacts_controller import (
+        LibraryArtifactsController,
+    )
 
 
 class ArtifactSearch(Input):
@@ -26,7 +32,7 @@ class ArtifactSearch(Input):
 class ArtifactItems(Vertical):
     """Search, retention filter, bounded results and paging controls."""
 
-    def __init__(self, controller, **kwargs):
+    def __init__(self, controller: LibraryArtifactsController, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.controller = controller
         self._page = None
@@ -170,7 +176,7 @@ class ArtifactItems(Vertical):
 class ArtifactWork(Vertical):
     """Read-only report body, provenance and capability-specific actions."""
 
-    def __init__(self, controller, **kwargs):
+    def __init__(self, controller: LibraryArtifactsController, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.controller = controller
         self._markdown_body = None

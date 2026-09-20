@@ -19,6 +19,12 @@ from ...Utils.adaptive_reader_state import (
 )
 
 if TYPE_CHECKING:
+    from ...Library.library_rail_state import LibraryRailPreferences
+    from ...Library.library_shell_state import LibraryShellState
+    from ...Utils.adaptive_reader_state import AdaptiveReaderLayoutPreferences
+    from ...Widgets.Library.library_artifacts_reader_shell import (
+        LibraryArtifactsReaderShell,
+    )
     from ..Screens.library_screen import LibraryScreen
 
 ARTIFACT_READER_PROFILE = AdaptiveReaderLayoutProfile(list_first_when_empty=True)
@@ -88,7 +94,7 @@ class LibraryArtifactsController:
             and self.screen.app.screen is self.screen
         )
 
-    def preferences(self):
+    def preferences(self) -> AdaptiveReaderLayoutPreferences:
         library = self.app_instance.app_config.get("library", {})
         shared = library.get("reader", {})
         destination = library.get("artifacts_reader", {})
@@ -131,7 +137,9 @@ class LibraryArtifactsController:
             self.reader_open,
         )
 
-    def build_shell(self, state, preferences):
+    def build_shell(
+        self, state: LibraryShellState, preferences: LibraryRailPreferences
+    ) -> LibraryArtifactsReaderShell:
         from ...Widgets.Library.library_artifacts_reader_shell import (
             LibraryArtifactsReaderShell,
         )
@@ -151,7 +159,7 @@ class LibraryArtifactsController:
         )
         return LibraryArtifactsReaderShell(rail, self)
 
-    def attach(self, shell) -> None:
+    def attach(self, shell: LibraryArtifactsReaderShell) -> None:
         self.shell = shell
         self.resize()
         self.sync()
@@ -738,6 +746,13 @@ class LibraryArtifactsController:
             or key != self.selected
         ):
             return
+        if key.source == "kept_report":
+            report = {
+                **report,
+                "status": "complete",
+                "created_at": report.get("original_created_at")
+                or report.get("kept_at"),
+            }
         # The accepted picker result owns its captured copy across parent suspension.
         await self.screen.app.push_screen(
             FileSave(
@@ -771,9 +786,9 @@ class LibraryArtifactsController:
             )
 
     async def _play(self, key, profile, presentation) -> None:
-        from ...Subscriptions.briefing_audio import audio_file_path_is_safe
+        from ...Subscriptions.briefing_audio import briefing_audio_dir
         from ...TTS.audio_player import play_audio_file
-        from ...Utils.path_validation import validate_path_simple
+        from ...Utils.path_validation import validate_path
 
         db = getattr(self.app_instance, "subscriptions_db", None)
         raw = await self.screen._run_library_service_call(
@@ -781,8 +796,11 @@ class LibraryArtifactsController:
         )
         if not self.presentable(presentation, profile) or key != self.selected:
             return
-        if not raw or not audio_file_path_is_safe(raw):
+        if not raw:
             self.notify("This report's audio is no longer available.", "warning")
             return
-        path = validate_path_simple(Path(raw), require_exists=True)
+        path = validate_path(raw, briefing_audio_dir(), redact_paths=True)
+        if not path.is_file():
+            self.notify("This report's audio is no longer available.", "warning")
+            return
         play_audio_file(path)

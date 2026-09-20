@@ -126,8 +126,11 @@ async def test_reader_layout_uses_visible_panes_and_returns_to_items(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("original_created_at", ["2026-02-03 04:05:06", None])
 @private_profile_test
-async def test_keep_delete_watchlist_read_and_export_durable_copy(tmp_path, request):
+async def test_keep_delete_watchlist_read_and_export_durable_copy(
+    tmp_path, request, original_created_at
+):
     from tldw_chatbook.Third_Party.textual_fspicker import FileSave
 
     async with artifact_library(tmp_path) as (screen, pilot):
@@ -143,6 +146,12 @@ async def test_keep_delete_watchlist_read_and_export_durable_copy(tmp_path, requ
             if c.detail and c.selected.source == "kept_report" and not c.busy:
                 break
         assert c.selected.source == "kept_report"
+        kept_at = "2026-03-04 05:06:07"
+        with screen.app_instance.chachanotes_db.transaction() as conn:
+            conn.execute(
+                "UPDATE kept_briefings SET original_created_at=?, kept_at=? WHERE id=?",
+                (original_created_at, kept_at, c.selected.native_id),
+            )
         WatchlistBundleService(screen.app_instance.subscriptions_db).delete(watch)
         c.action("kept")
         for _ in range(100):
@@ -158,13 +167,21 @@ async def test_keep_delete_watchlist_read_and_export_durable_copy(tmp_path, requ
                 break
         assert isinstance(screen.app.screen, FileSave)
         await pilot.pause(0.15)
+        from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import InputBar
+
+        created = original_created_at or kept_at
+        filename = screen.app.screen.query_one(InputBar).query_one(Input).value
+        assert created.split(" ")[0] in filename
         destination = tmp_path / "kept.md"
         screen.app.screen.dismiss(destination)
         for _ in range(100):
             await pilot.pause(0.03)
             if destination.exists():
                 break
-        assert body in destination.read_text()
+        exported = destination.read_text()
+        assert body in exported
+        assert "status: complete\n" in exported
+        assert f"created: {created}\n" in exported
 
 
 @pytest.mark.asyncio
@@ -359,3 +376,43 @@ async def test_returning_to_reports_preserves_details_mode(tmp_path, request):
         assert not screen.query_one("#library-artifacts-markdown", Markdown).display
         content = screen.query_one("#library-artifacts-content", Static)
         assert content.display and "Created:" in str(content.renderable)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_report_playback_uses_the_validated_audio_path(
+    tmp_path, request, monkeypatch
+):
+    from tldw_chatbook.Subscriptions import briefing_audio
+    from tldw_chatbook.TTS import audio_player
+
+    async with artifact_library(tmp_path) as (screen, pilot):
+        controller = screen._artifacts_controller
+        audio_root = tmp_path / "audio"
+        audio_root.mkdir()
+        audio_file = audio_root / "episode.wav"
+        audio_file.write_bytes(b"audio fixture")
+        monkeypatch.setattr(briefing_audio, "briefing_audio_dir", lambda: audio_root)
+        played = []
+        monkeypatch.setattr(audio_player, "play_audio_file", played.append)
+        with screen.app_instance.subscriptions_db.transaction() as conn:
+            script = conn.execute(
+                "INSERT INTO briefing_scripts(briefing_id, preset_name, status, roster_snapshot_json) VALUES (?, 'Cast', 'complete', '[]')",
+                (controller.selected.native_id,),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO briefing_audio(script_id, voice_snapshot_json, status, file_path) VALUES (?, '[]', 'complete', ?)",
+                (script, audio_file.name),
+            )
+        controller.select(controller.selected, refresh=True)
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if controller.detail and controller.detail.can_play:
+                break
+        assert controller.detail.can_play
+        controller.action("play")
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if played:
+                break
+        assert played == [audio_file.resolve()]

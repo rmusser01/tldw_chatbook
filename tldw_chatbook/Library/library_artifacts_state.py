@@ -18,6 +18,13 @@ MISSING_TIMESTAMP_ORDER = 9223372036854775807
 
 @dataclass(frozen=True)
 class ArtifactKey:
+    """Identify one artifact without conflating live and kept copies.
+
+    Attributes:
+        source: Storage owner namespace.
+        native_id: Positive integer ID within that owner.
+    """
+
     source: ArtifactSource
     native_id: int
 
@@ -30,6 +37,15 @@ class ArtifactKey:
 
 @dataclass(frozen=True)
 class ArtifactScope:
+    """Describe the validated query applied to an artifact inventory.
+
+    Attributes:
+        view: Artifact types admitted to the inventory.
+        query: Trimmed metadata search text local to this view.
+        sort: Stable ordering shared by all participating owners.
+        kept_only: Restrict results to independent kept report copies.
+    """
+
     view: ArtifactView = "reports"
     query: str = ""
     sort: ArtifactSort = "newest"
@@ -47,6 +63,20 @@ class ArtifactScope:
 
 @dataclass(frozen=True)
 class ArtifactSummary:
+    """Project metadata without loading an artifact's saved body.
+
+    Attributes:
+        key: Namespaced identity for selection and owner lookup.
+        order_key: Stable cross-owner key used for paging and exact location.
+        title: Display title.
+        source_label: Human-readable origin.
+        copy_label: Live or independently kept copy label.
+        status: Source lifecycle status.
+        type_label: Human-readable artifact type.
+        revision: Metadata fingerprint that fences stale detail results.
+        created_at: Display timestamp when available.
+    """
+
     key: ArtifactKey
     order_key: ArtifactOrderKey
     title: str
@@ -60,6 +90,15 @@ class ArtifactSummary:
 
 @dataclass(frozen=True)
 class ArtifactSourceWindow:
+    """Bounded owner rows and counts from the same source snapshot.
+
+    Attributes:
+        items: Ordered metadata rows within the requested window.
+        total: Count of all matching owner rows, including those outside the window.
+        before_boundary: Matching rows strictly before the requested boundary.
+        equal_boundary: Matching rows at the boundary, for inclusive page alignment.
+    """
+
     items: tuple[ArtifactSummary, ...]
     total: int
     before_boundary: int
@@ -68,6 +107,15 @@ class ArtifactSourceWindow:
 
 @dataclass(frozen=True)
 class ArtifactPage:
+    """Present a bounded page merged across the scope's storage owners.
+
+    Attributes:
+        scope: Query and filters that produced this page.
+        items: Ordered metadata rows on this page.
+        total: Full matching inventory count, independent of the page size.
+        start: Zero-based offset in the merged inventory.
+    """
+
     scope: ArtifactScope
     items: tuple[ArtifactSummary, ...]
     total: int
@@ -76,6 +124,23 @@ class ArtifactPage:
 
 @dataclass(frozen=True)
 class ArtifactDetail:
+    """Selected content, provenance and currently available user actions.
+
+    Attributes:
+        key: Exact identity of the loaded content.
+        revision: Fingerprint that must match the selected summary.
+        body: Stored Markdown or report content.
+        truncated: Whether the stored body is an explicitly shortened copy.
+        can_keep: Whether a complete live report can be copied independently.
+        can_export: Whether saved report content supports Markdown export.
+        can_play: Whether validated audio is currently available.
+        can_share: Whether the registered bundle is currently usable for sharing.
+        source_available: Whether navigation to the original source is available.
+        details: Display label/value pairs for the provenance panel.
+        source_conversation_id: Optional originating conversation identity.
+        source_message_id: Optional originating message identity.
+    """
+
     key: ArtifactKey
     revision: str
     body: str
@@ -101,7 +166,9 @@ def validate_artifact_window(
     if not isinstance(scope, ArtifactScope):
         raise TypeError("Expected ArtifactScope")
     if type(limit) is not int or not 1 <= limit <= ARTIFACT_PAGE_SIZE:
-        raise ValueError("Artifact limit must be an integer in 1..20")
+        raise ValueError(
+            f"Artifact limit must be an integer in 1..{ARTIFACT_PAGE_SIZE}"
+        )
     if direction not in ("after", "before") or type(inclusive) is not bool:
         raise ValueError("Invalid artifact window direction or inclusion")
     if boundary is not None:

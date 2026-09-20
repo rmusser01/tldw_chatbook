@@ -1,7 +1,7 @@
 # Library artifacts — implementation evidence
 
-Implemented on `codex/library-artifacts-design`, based on the fetched dev commit
-`ebee42fab8`. ADR-172 governs the completed browse/navigation boundary. The
+Implemented on `codex/library-artifacts-design`, originally based on dev commit
+`ebee42fab8` and rebased onto latest dev `de10a62e67124a2b21b78edf1a4887cea03ff139`. ADR-172 governs the completed browse/navigation boundary. The
 existing schema, registry inventory, report generators, ZIP manager, and
 application-owned share service remain the owners of their data and actions.
 
@@ -131,6 +131,55 @@ re-indented exception call. No new sink or path-privacy candidate was introduced
 `Docs/security/production-diagnostic-inventory.json` was regenerated after that
 review; it adds the two owners and updates the existing share-owner digest.
 The same CI checker with `--diff` passes: no drift, 610 owners and 14 sink files.
+
+## Qodo review and dev rebase
+
+All seven Qodo findings were addressed before merge:
+
+1. Ctrl+6 has a dedicated compatibility action, outside the permanent shell
+   shortcut map. Navigation labels, binding counts and the actual CSS destination
+   tour agree on fourteen permanent destinations; Ctrl+6 still opens All artifacts.
+2. Registered bundle paths pass central validation before symlink/file/ZIP probes.
+   Lexical home expansion preserves existing `~/pack.zip` registrations. Sharing
+   still performs its own staging/authority checks after explicit review.
+3. Detail capability checks and playback use the normalized path returned by the
+   existing audio-directory validator; malformed/outside paths are unavailable.
+4. All six public artifact state dataclasses document their attributes and
+   identity, paging, revision and capability contracts.
+5. Reader builders and constructors expose concrete parameter/return types, with
+   cross-module imports guarded by `TYPE_CHECKING`.
+6. Exact-location predecessor windows derive from `ARTIFACT_PAGE_SIZE - 1`.
+7. Kept exports normalize complete status and original creation time (falling
+   back to kept time) for both the filename and Markdown document.
+
+Eight behavior regressions passed after reproducing the failures. Independent
+review caught a lost home-relative bundle path during validation; its positive
+regression was observed failing before the compatibility fix and passing after.
+Final focused evidence (overlapping runs, not a full suite):
+
+- 83 registry, catalog/state, share-owner and Chatbooks integration cases passed.
+- 49 permanent-navigation and mounted Ctrl+6 cases passed. Two existing config-
+  loading tests now use the repository's private-profile process harness, and
+  the Ctrl+6 fixture disables its own startup splash through the real config.
+- The broader UI run passed all 38 artifact navigation/canvas cases, including
+  normalized playback and kept export date/status with and without original time.
+  Its four navigation/fixture failures were fixed and covered by the final 49.
+- The actual permanent-destination CSS tour and five controller governance
+  checks passed (6 total). Existing unrelated ceilings were not changed.
+- Focused files pass Ruff and formatting; all sixteen changed Python files have
+  zero Ruff diagnostics on added lines. `git diff --check` passes.
+- Native `TldwCli` in `/private/tmp/artifact-review-native/run6/` receives Ctrl+6's
+  extended terminal sequence and reaches Library / All artifacts. Actual
+  F6/Shift+F6, Escape and Enter pass at 160, 64 and 50 columns. The process used
+  a fresh private profile, `LinuxDriver`, `isatty=True`, and exited 0. An earlier
+  tmux legacy-key attempt produced Control-circumflex rather than Ctrl+6 and is
+  not counted as passing evidence.
+- Rebase preserved upstream MCP changes. Its only conflict was the generated
+  diagnostic count; the combined inventory rebuild matches exactly: 610 owners,
+  7,765 TASK-494 calls and 14 sink files.
+
+ADR-172 remains the governing decision; no new storage, publication, or runtime
+boundary was introduced by these corrections.
 
 ## Known verification limits
 

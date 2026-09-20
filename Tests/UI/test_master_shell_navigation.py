@@ -8,6 +8,7 @@ import pytest
 from textual import events
 from textual.app import App
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Horizontal
 from textual.widgets import Button
@@ -114,7 +115,6 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-library", "\u23033 Library"),
         ("nav-personas", "\u23034 Roleplay"),
         ("nav-watchlists_collections", "\u23035 Watchlists"),
-        ("nav-artifacts", "\u23036 Artifacts"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
         ("nav-mcp", "\u23039 MCP"),
@@ -432,7 +432,8 @@ async def test_media_folded_route_returns_to_library_primary_route():
 
 
 @pytest.mark.asyncio
-async def test_every_visible_master_shell_nav_destination_resolves():
+@private_profile_test
+async def test_every_visible_master_shell_nav_destination_resolves(request):
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
@@ -527,7 +528,6 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "library": "ctrl+3",
         "personas": "ctrl+4",
         "watchlists_collections": "ctrl+5",
-        "artifacts": "ctrl+6",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
         "mcp": "ctrl+9",
@@ -539,6 +539,9 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "meetings": "f7",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
+    from Tests.UI.css_destination_tour import DESTINATION_BODIES
+
+    assert set(DESTINATION_BODIES) == set(SHELL_DESTINATION_SHORTCUTS)
     for binding in hotkey_bindings:
         _namespace, _action, (destination_id,) = parse(binding.action)
         destination = next(
@@ -551,7 +554,9 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         assert destination.accessible_label in binding.description
 
 
-def test_no_screen_shadows_shell_destination_hotkeys():
+@pytest.mark.asyncio
+@private_profile_test
+async def test_no_screen_shadows_shell_destination_hotkeys(request):
     """ADR-152: no BaseAppScreen subclass may bind a shell destination hotkey.
 
     Screen-level bindings shadow app-level bindings, so a screen that binds a
@@ -568,6 +573,7 @@ def test_no_screen_shadows_shell_destination_hotkeys():
     import tldw_chatbook.UI.Screens as screens_pkg
     from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
     from tldw_chatbook.UI.Navigation.shell_destinations import (
+        ARTIFACTS_COMPATIBILITY_SHORTCUT,
         SHELL_DESTINATION_SHORTCUTS,
     )
 
@@ -577,6 +583,7 @@ def test_no_screen_shadows_shell_destination_hotkeys():
         importlib.import_module(module_info.name)
 
     nav_keys = {key.lower() for key in SHELL_DESTINATION_SHORTCUTS.values()}
+    nav_keys.add(ARTIFACTS_COMPATIBILITY_SHORTCUT)
     offenders: list[tuple[str, str]] = []
     for screen_cls in BaseAppScreen.__subclasses__():
         for binding in getattr(screen_cls, "BINDINGS", ()):

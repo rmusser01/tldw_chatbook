@@ -583,6 +583,7 @@ from .UI.Navigation.screen_registry import (
     screen_load_error,
 )
 from .UI.Navigation.shell_destinations import (
+    ARTIFACTS_COMPATIBILITY_SHORTCUT,
     SHELL_DESTINATION_ORDER,
     SHELL_DESTINATION_SHORTCUTS,
     get_shell_destination,
@@ -1344,7 +1345,6 @@ class TabNavigationProvider(Provider):
     NAVIGATION_TABS = tuple(
         destination.primary_route
         for destination in SHELL_DESTINATION_ORDER
-        if destination.destination_id != "artifacts"
     )
 
     POPULAR_TABS = (
@@ -7783,7 +7783,10 @@ class TldwCli(
         Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
         # ADR-172: preserve muscle memory after Artifacts folds into Library.
         Binding(
-            "ctrl+6", "shell_destination('artifacts')", "Library Artifacts", show=False
+            ARTIFACTS_COMPATIBILITY_SHORTCUT,
+            "library_artifacts",
+            "Library Artifacts",
+            show=False,
         ),
         Binding(
             "ctrl+shift+f",
@@ -20170,6 +20173,10 @@ class TldwCli(
             shortcuts=shortcuts,
         )
         self.push_screen(WorkbenchHelpPanel(state))
+
+    def action_library_artifacts(self) -> None:
+        """Preserve Ctrl+6 as a Library route outside permanent shell destinations."""
+        self.post_message(NavigateToScreen(TAB_ARTIFACTS))
 
     def action_shell_destination(self, destination_id: str) -> None:
         """Navigate to the shell destination identified by a stable ID.

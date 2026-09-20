@@ -9,7 +9,6 @@ DESTINATION_BODIES = {
     "library": "#library-landing-canvas",
     "personas": "#personas-detail-stack",
     "watchlists_collections": "#wl-workbench-body",
-    "artifacts": "#artifacts-detail-pane",
     "schedules": "#scheduling-task-table",
     "workflows": "#workflows-editor",
     "mcp": "#mcp-mode-canvas-servers",

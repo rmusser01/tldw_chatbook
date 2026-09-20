@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 22:05'
-updated_date: '2026-09-20 07:18'
+updated_date: '2026-09-20 08:18'
 labels:
   - library
   - artifacts
@@ -32,10 +32,14 @@ Combine registered Chatbooks and all report copies into Library All artifacts, t
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/172-library-artifacts-browse-and-navigation.md. Reason: Completes accepted Library navigation structure without changing artifact ownership. 1. Expose composite All artifacts using the bounded catalog. 2. Preserve exact target claims, explicit mode precedence and Ctrl+6 while resolving legacy Artifacts entry to Library and retaining the actual Chatbook manager route. 3. Remove the top-level Artifacts destination after parity verification. 4. Verify targeted routing/handoff, mixed catalog, production CSS and native behavior; update the user guide. Prepare cutover while stage2 finishes, apply after parity is checked.
+
+Qodo review: separate the retired Artifacts hotkey from permanent shell destinations, retain real Ctrl+6 navigation, and derive exact-location predecessor bounds from the shared page-size constant. Rebase on latest dev and verify navigation contracts, derived artifacts and PR checks before merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented mixed All artifacts and completed the parity-gated navigation cutover. Exact targets locate beyond page one; failures retry without consuming claims, missing targets clear stale detail, and explicit Library routes retain precedence. Ctrl+6, palette, legacy aliases and configured defaults reach Library without renumbering other shortcuts; Chatbooks remains the actual manager. 21 navigation and 9 cutover checks pass. Final native verification covers four geometries, artifact-only onboarding, sharing across Notes, manager entry and keyboard routes. ADR: backlog/decisions/172-library-artifacts-browse-and-navigation.md. Evidence and explicit baseline limits: Docs/superpowers/plans/2026-09-19-library-artifacts-verification.md. User guide updated. No full suite requested; changed/new focused tests pass, added-line Ruff diagnostics are zero, generated CSS checks pass, and native private-profile TldwCli was verified. Existing recovery-initialization and repository-wide screen-size/workflows-style failures remain documented; their limits were not raised.
+
+Qodo review: Ctrl6 now uses a dedicated compatibility action outside permanent shell destinations; corrected the navigation contract and CSS tour, retained key-shadow protection, and derived exact-location bounds from ARTIFACT_PAGE_SIZE. Final navigation/Ctrl6 run: 49 passed; full destination tour and new controller checks: 6 passed. Fresh native extended Ctrl6 reaches Library All artifacts; F6/ShiftF6/Escape/Enter pass at 160/64/50 columns. Rebased onto latest dev de10a62e67124a2b21b78edf1a4887cea03ff139 with diagnostic rebuild verified. ADR-172 remains governing; targeted verification and lint pass, no full suite.
 <!-- SECTION:NOTES:END -->

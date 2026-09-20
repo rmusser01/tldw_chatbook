@@ -201,7 +201,6 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "library": "ctrl+3",
         "personas": "ctrl+4",
         "watchlists_collections": "ctrl+5",
-        "artifacts": "ctrl+6",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
         "mcp": "ctrl+9",
@@ -213,6 +212,9 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "meetings": "f7",
     }
 )
+
+# ADR-172: a retained hotkey for the retired route, outside permanent navigation.
+ARTIFACTS_COMPATIBILITY_SHORTCUT = "ctrl+6"
 
 _ROUTABLE_LEGACY_ROUTES = {
     "chunking_lab",

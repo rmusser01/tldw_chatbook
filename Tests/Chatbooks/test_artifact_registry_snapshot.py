@@ -193,3 +193,51 @@ async def test_snapshot_rejects_duplicate_or_inconsistent_identity(service):
     service._save_registry(registry)
     with pytest.raises(ValueError):
         service.artifact_read_snapshot()
+
+
+@pytest.mark.parametrize(
+    "invalid", ["bad\x00.zip", "../../escape.zip", "pack;command.zip"]
+)
+def test_invalid_bundle_path_is_refused_before_filesystem_probes(
+    tmp_path, monkeypatch, invalid
+):
+    import zipfile
+    from pathlib import Path
+
+    from tldw_chatbook.Chatbooks.artifact_registry_snapshot import (
+        usable_chatbook_bundle,
+    )
+
+    raw = str(tmp_path / invalid)
+    probes = []
+    for name in ("is_symlink", "is_file"):
+        original = getattr(Path, name)
+
+        def probe(path, _name=name, _original=original):
+            if str(path) == raw:
+                probes.append(_name)
+                return _name == "is_file"
+            return _original(path)
+
+        monkeypatch.setattr(Path, name, probe)
+
+    def probe_zip(path):
+        probes.append("zip")
+        return False
+
+    monkeypatch.setattr(zipfile, "is_zipfile", probe_zip)
+    assert not usable_chatbook_bundle(raw)[0]
+    assert probes == []
+
+
+def test_home_relative_bundle_remains_shareable(tmp_path, monkeypatch):
+    import zipfile
+
+    from tldw_chatbook.Chatbooks.artifact_registry_snapshot import (
+        usable_chatbook_bundle,
+    )
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with zipfile.ZipFile(tmp_path / "registered-pack.zip", "w") as bundle:
+        bundle.writestr("manifest.json", "{}")
+    assert usable_chatbook_bundle("~/registered-pack.zip")[0]

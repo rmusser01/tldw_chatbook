@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 from typing import Any
 
 from .library_artifacts_state import (
@@ -243,7 +242,11 @@ class LibraryArtifactsCatalog:
             if not isinstance(target, ArtifactSummary) or target.key != key:
                 raise ArtifactReadError(source, "Invalid target identity")
             windows = self._windows(
-                owners, scope, boundary=target.order_key, direction="before", limit=19
+                owners,
+                scope,
+                boundary=target.order_key,
+                direction="before",
+                limit=ARTIFACT_PAGE_SIZE - 1,
             )
             rank = sum(window.before_boundary for window in windows)
             offset = rank % ARTIFACT_PAGE_SIZE
@@ -285,15 +288,19 @@ class LibraryArtifactsCatalog:
                 can_play = False
                 if live:
                     from tldw_chatbook.Subscriptions.briefing_audio import (
-                        audio_file_path_is_safe,
+                        briefing_audio_dir,
                     )
+                    from tldw_chatbook.Utils.path_validation import validate_path
 
                     audio_path = owner.get_artifact_audio_path(key)
-                    can_play = (
-                        bool(audio_path)
-                        and audio_file_path_is_safe(audio_path)
-                        and Path(audio_path).is_file()
-                    )
+                    if audio_path:
+                        try:
+                            validated_audio = validate_path(
+                                audio_path, briefing_audio_dir(), redact_paths=True
+                            )
+                            can_play = validated_audio.is_file()
+                        except (OSError, ValueError, RuntimeError):
+                            can_play = False
                 details = tuple(
                     (label, str(row[field]))
                     for label, field in (

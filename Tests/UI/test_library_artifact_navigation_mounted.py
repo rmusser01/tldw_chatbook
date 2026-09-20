@@ -196,3 +196,24 @@ async def test_scripts_delete_refreshes_retained_kept_selection(tmp_path, reques
         )
         assert controller.selected != target
         assert controller.detail is None or controller.detail.key != target
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_ctrl6_compatibility_key_enters_library_artifacts(tmp_path, request):
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    save_setting_to_cli_config("splash_screen", "enabled", False)
+    app = _build_test_app(configured_default="home")
+    async with app.run_test(size=(160, 50)) as pilot:
+        await settled(pilot, lambda: getattr(app.screen, "screen_name", None) == "home")
+        await pilot.press("ctrl+6")
+        await settled(
+            pilot,
+            lambda: (
+                getattr(app.screen, "screen_name", None) == "library"
+                and app.screen._library_selected_row_id == "artifacts-all"
+            ),
+        )
+        assert app.screen.query_one("#library-artifacts-reader-shell").is_mounted

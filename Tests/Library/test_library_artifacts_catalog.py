@@ -421,8 +421,9 @@ def test_duplicate_owner_identities_are_rejected(owners, monkeypatch):
         catalog_for(owners).read_page(ArtifactScope())
 
 
+@pytest.mark.parametrize("stored_form", ["absolute", "relative"])
 def test_selected_live_audio_uses_exact_owner_metadata_and_safe_existing_path(
-    owners, tmp_path, monkeypatch
+    owners, tmp_path, monkeypatch, stored_form
 ):
     from tldw_chatbook.Subscriptions import briefing_audio
 
@@ -432,6 +433,7 @@ def test_selected_live_audio_uses_exact_owner_metadata_and_safe_existing_path(
     audio_root.mkdir()
     audio_file = audio_root / "episode.wav"
     audio_file.write_bytes(b"audio")
+    stored = str(audio_file) if stored_form == "absolute" else audio_file.name
     monkeypatch.setattr(briefing_audio, "briefing_audio_dir", lambda: audio_root)
     with subs.transaction() as conn:
         script = conn.execute(
@@ -439,13 +441,11 @@ def test_selected_live_audio_uses_exact_owner_metadata_and_safe_existing_path(
         ).lastrowid
         conn.execute(
             "INSERT INTO briefing_audio(script_id, voice_snapshot_json, status, file_path) VALUES (?, '[]', 'complete', ?)",
-            (script, str(audio_file)),
+            (script, stored),
         )
     catalog = catalog_for(owners)
     assert catalog.read_detail(ArtifactKey("live_report", 1)).can_play
-    assert subs.get_artifact_audio_path(ArtifactKey("live_report", 1)) == str(
-        audio_file
-    )
+    assert subs.get_artifact_audio_path(ArtifactKey("live_report", 1)) == stored
     audio_file.unlink()
     assert not catalog.read_detail(ArtifactKey("live_report", 1)).can_play
     with subs.transaction() as conn:

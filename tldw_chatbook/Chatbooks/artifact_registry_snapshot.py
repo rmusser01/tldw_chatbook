@@ -23,6 +23,7 @@ from tldw_chatbook.Library.library_artifacts_state import (
     ReadDirection,
     validate_artifact_window,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 _ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
@@ -203,7 +204,7 @@ def usable_chatbook_bundle(raw_path: Any) -> tuple[bool, str]:
     if not raw_path:
         return False, "No exported bundle; manage Chatbook packs to create an export."
     try:
-        path = Path(str(raw_path)).expanduser()
+        path = validate_path_simple(Path(raw_path).expanduser(), probe_existing=False)
         if path.is_symlink():
             return False, "Export is a symlink; sharing is unavailable."
         if not path.is_file():

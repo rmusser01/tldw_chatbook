@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from textual import on
 from textual.events import DescendantFocus, Key
 from textual.widgets import Input, Select
@@ -15,9 +17,17 @@ from .library_adaptive_reader_shell import (
 )
 from .library_artifacts_widgets import ArtifactItems, ArtifactWork
 
+if TYPE_CHECKING:
+    from ...UI.Library_Modules.library_artifacts_controller import (
+        LibraryArtifactsController,
+    )
+    from .library_rail import LibraryRail
+
 
 class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
-    def __init__(self, library, controller):
+    def __init__(
+        self, library: LibraryRail, controller: LibraryArtifactsController
+    ) -> None:
         self.controller = controller
         super().__init__(
             library,

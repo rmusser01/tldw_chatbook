@@ -249,7 +249,10 @@ async def test_artifacts_default_and_shortcut_use_same_library_context(
     )
     assert posted[0].screen_name == "artifacts"
     bindings = {binding.key: binding.action for binding in TldwCli.BINDINGS}
-    assert bindings["ctrl+6"] == "shell_destination('artifacts')"
+    assert bindings["ctrl+6"] == "library_artifacts"
+    posted.clear()
+    TldwCli.action_library_artifacts(SimpleNamespace(post_message=posted.append))
+    assert posted[0].screen_name == "artifacts"
     expected = {
         "ctrl+7": "schedules",
         "ctrl+8": "workflows",
