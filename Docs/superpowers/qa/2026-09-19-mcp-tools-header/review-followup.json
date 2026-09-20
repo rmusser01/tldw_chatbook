@@ -1,0 +1,18 @@
+{
+  "reviewed_commit": "b369f7dd2e837154c7768852dc1a06d29d1744a3",
+  "file": "Docs/superpowers/qa/2026-09-19-mcp-tools-header/native_journey.py",
+  "original_sha256": "03d15eb144a16d3c059b69db68f7f09773594f28f7db0ede962e314ccf312c63",
+  "updated_sha256": "bbb19ecba6d5c6a3b37483bb9b22a2b078ac48cfd66a53873e92cab0f8aecbd9",
+  "snapshot_limit": 200,
+  "constant_uses": 2,
+  "ast_identical_after_inlining_constant": true,
+  "compiles": true,
+  "review": "Qodo review of b369f7dd2e837154c7768852dc1a06d29d1744a3 reported zero bugs and one repeated-constant finding; both execution-log reads now share the same named limit.",
+  "checks": {
+    "targeted_native_cli_cases": 7,
+    "failures": 0,
+    "ruff_check": "pass",
+    "ruff_format": "pass"
+  },
+  "evidence_scope": "Original native captures, lifecycle receipts and 152-test run were produced before this QA-only refactor and are retained without modification. Production and automated regression sources are unchanged. Native journeys were not rerun for the named-constant extraction; the normalized AST comparison qualifies its equivalence."
+}

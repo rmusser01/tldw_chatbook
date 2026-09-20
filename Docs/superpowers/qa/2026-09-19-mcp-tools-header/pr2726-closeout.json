@@ -1,0 +1,157 @@
+{
+  "pr": "https://github.com/rmusser01/tldw_chatbook/pull/2726",
+  "state": "MERGED",
+  "merged_at": "2026-09-19T21:24:36Z",
+  "verified_at": "2026-09-19T21:25:19.961386+00:00",
+  "approved_head": "a4158a6a9a103ac27b0a0a825b60951c24c21f03",
+  "owner_visual_approval": true,
+  "tested_head": "f42bba8e58347e801b99c2a3f1b88b5ca7fb7840",
+  "live_premerge_dev": "cccf0acdad8e939a55cb003588ff1406cef5d1f4",
+  "merge_commit": "ad0f76e23b8737904f24eb34760bbee9ac01a04c",
+  "merge_parents": [
+    "cccf0acdad8e939a55cb003588ff1406cef5d1f4",
+    "f42bba8e58347e801b99c2a3f1b88b5ca7fb7840"
+  ],
+  "tested_tree": "846ce6522dc419b28f2b237f683e3c35a1f8fafd",
+  "merged_tree": "846ce6522dc419b28f2b237f683e3c35a1f8fafd",
+  "actual_merged_tree_matches_tested_head": true,
+  "targeted_tests_passed": 203,
+  "preflight_guards_passed": 7,
+  "pixel_identical_modal_pairs": 12,
+  "pixel_identical_approved_audit_pairs": 8,
+  "qodo_review": {
+    "head": "a4158a6a9a103ac27b0a0a825b60951c24c21f03",
+    "bugs": 0,
+    "rule_violations": 0,
+    "requirement_gaps": 0,
+    "updated_at": "2026-09-19T20:54:29Z"
+  },
+  "independent_final_head_review": {
+    "head": "f42bba8e58347e801b99c2a3f1b88b5ca7fb7840",
+    "agent": "/root/mcp_server_action_review",
+    "blockers": 0
+  },
+  "unresolved_review_threads": 0,
+  "final_head_checks": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:05:07Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336682/job/105967345964",
+      "name": "platform-evidence",
+      "startedAt": "2026-09-19T21:05:17Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-19637 pinned workspace platform evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:05:07Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336680/job/105967321359",
+      "name": "Linux storage - Python ${{ matrix.python }}",
+      "startedAt": "2026-09-19T21:05:08Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-32011 one-off Linux storage evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:05:30Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336702/job/105967320516",
+      "name": "No duplicate backlog task IDs",
+      "startedAt": "2026-09-19T21:05:10Z",
+      "status": "COMPLETED",
+      "workflowName": "Backlog Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:05:34Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336692/job/105967320734",
+      "name": "CSS bundle reproduces from its sources",
+      "startedAt": "2026-09-19T21:05:10Z",
+      "status": "COMPLETED",
+      "workflowName": "CSS Bundle Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:20:10Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336685/job/105967779576",
+      "name": "PR Fast Lane",
+      "startedAt": "2026-09-19T21:08:31Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:10:36Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336760/job/105967320723",
+      "name": "UI latency guardrails",
+      "startedAt": "2026-09-19T21:05:10Z",
+      "status": "COMPLETED",
+      "workflowName": "Perf Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:06:13Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336690/job/105967320594",
+      "name": "GGUF import evidence - ubuntu-latest",
+      "startedAt": "2026-09-19T21:05:10Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:06:02Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336690/job/105967320617",
+      "name": "GGUF import evidence - macos-latest",
+      "startedAt": "2026-09-19T21:05:14Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:07:00Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336690/job/105967320470",
+      "name": "GGUF import evidence - windows-latest",
+      "startedAt": "2026-09-19T21:05:12Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-2062.1 GGUF import evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:23:26Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35469336685/job/105969362149",
+      "name": "Derived artifacts reproduce from their sources",
+      "startedAt": "2026-09-19T21:20:13Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-19T21:05:21Z",
+      "conclusion": "NEUTRAL",
+      "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/2726",
+      "name": "cubic \u00b7 AI code reviewer",
+      "startedAt": "2026-09-19T21:05:19Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-09-19T21:05:07Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ],
+  "remaining_scope": "Separate intermittent Tools header reproduction and repair; then Permissions restored roots and remaining MCP reviews.",
+  "evidence": "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/CLOSEOUT.md",
+  "worktree_clean": true
+}

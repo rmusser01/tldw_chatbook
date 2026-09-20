@@ -1,5 +1,32 @@
 # MCP component review
 
+## Current checkpoint — PR2749 approved closeout
+
+The owner approved the Tools header gallery. The final dev rebase onto
+`b91340a5db` preserves both sides of a documentation-only conflict; Tools sources
+are unchanged. [Fresh 152-case validation, seven guards, native lifecycle and
+four pixel-identical approved views](../qa/2026-09-19-mcp-tools-header/CLOSEOUT.md)
+qualify the integration. Current-head CI/review and live-dev inspection remain
+before the authorized merge. Existing PR2727 is next; PR2707's heartbeat stays
+paused. Earlier pending-approval checkpoints below are historical.
+
+## Current checkpoint — PR2726 merged; Tools header follow-up
+
+[PR2726](https://github.com/rmusser01/tldw_chatbook/pull/2726) merged at
+`ad0f76e23b8737904f24eb34760bbee9ac01a04c`. Its final-head CI passed, accumulated
+Qodo review was clean, independent review covered the final selector repair, and
+the actual merged tree equals the tested tree. [Merge receipt](../qa/2026-09-19-mcp-tools-header/pr2726-closeout.json).
+
+TASK-32868 reproduces the retained Tools header race on that merged baseline.
+Local cache invalidation at measurement restores the composed header without
+changing layout or selection. [152 targeted passes, seven guards, independent
+review and native before/after evidence](../qa/2026-09-19-mcp-tools-header/README.md)
+qualify the bounded fix; [visual approval](../qa/2026-09-19-mcp-tools-header/GALLERY.md)
+and this PR's own current-head CI/review remain before merge. Next is existing
+PR2727's Permissions restored-root review, then remaining MCP component work.
+PR2707's heartbeat remains paused. Earlier pending/next statements below are
+historical checkpoints.
+
 ## PR2726 approved closeout — selector-budget repair
 
 The owner approved PR2726's integrated conflict choices and gallery. Qodo found

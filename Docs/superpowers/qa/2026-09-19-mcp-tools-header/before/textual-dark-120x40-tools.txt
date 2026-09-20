@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ MCP
+ MCP (Model Context Protocol) lets chatbook use external tools — most people never need to change anything here.
+   Servers    Tools     Permissions    Audit
+╭──────────────────────────────╮╭─────────────────────────────────────────────────────╮╭───────────────────────────────╮
+│                              ││   Local workspace, web, and Watchlists tools: on    ││                               │
+│ Source                       ││                          ▸                          ││ Inspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  Applies immediately - no Save needed.              ││  ◦ Off (opt-in)               │
+│ ▊  Local                ▼  ▎ ││  Available by default. Calls still follow Ask,      ││  tldw_chatbook (built-in)     │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Allow, or Off permissions.                         ││  Why · Off — enable it to     │
+│                              ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   Save root      ││  let MCP clients use          │
+│ Servers                      ││  ▊  Local MCP / Hub test root    ▎                  ││  chatbook's tools.            │
+│  ◦ off · ⌂ built-in          ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                  ││  Add server                   │
+│    All servers               ││                                                     ││    Advanced…                  │
+│  ◦ ⌂ tldw_chatbook (bu…      ││  Root: local MCP serving and Hub tests. Blank uses  ││                               │
+│                              ││  the serving process's current folder. Console      ││                               │
+│                              ││  uses Chat scratch and admitted Workspace folders.  ││                               │
+│                              ││                                                     ││                               │
+│                              ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││                               │
+│                              ││  ▊  Filter tools…    ▎▊  All servers          ▼  ▎  ││                               │
+│                              ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ││                               │
+│                              ││                                                     ││                               │
+│                              ││  Tool  State  Server  Tags  Schema                  ││                               │
+│                              ││  chat_with_character  Ask    Docs 文档  read-only   ││                               │
+│                              ││  chat_with_llm        Ask    Docs 文档  read-only   ││                               │
+│                              ││  search_rag           Ask    Docs 文档  read-only   ││                               │
+│                              ││                                             ▉       ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+│                              ││                                                     ││                               │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  1-4 mode | a add server | r refresh | t test tool | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
