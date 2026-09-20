@@ -1483,7 +1483,7 @@ class MCPWorkbench(Container):
         snapshot = self._snapshot_for(server_key)
         return None if snapshot is None else self._display_snapshot(snapshot)
 
-    async def _sync_children(self) -> None:
+    async def _sync_children(self, *, recovery_token=None) -> None:
         """Push current state into the rail/canvas/inspector children.
 
         Awaited end to end -- `MCPInspector.update_readiness()` must fully
@@ -1516,7 +1516,13 @@ class MCPWorkbench(Container):
         method's docstring for why that's correct there: each of those
         handlers just mutated the store itself).
         """
+        # A recovery receipt owns only its original view; ordinary sync callers
+        # retain their existing behavior. Recheck after each rendering suspension.
         async with self._sync_children_lock:
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
             # Lifecycle and restore workers may request a sync during the same
             # Textual-floor pre-mount window as the initial load. Establish the
             # deferred-canvas invariant at this shared boundary, under the lock
@@ -1524,6 +1530,10 @@ class MCPWorkbench(Container):
             # switcher is not queryable yet, the initial-load retry will paint
             # the current state on the next message-pump turn.
             await self._mount_deferred_canvases()
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
             if not self.query(MCPToolsMode):
                 return
             display_snapshots = [
@@ -1546,18 +1556,38 @@ class MCPWorkbench(Container):
                 mutations_available=self._server_mutations_available,
                 mutation_target_label=self._active_target_label(),
             )
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
             selected = self._snapshot_for_display(self._selected_server_key)
             await self._show_selected_detail(canvas, selected)
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
             await self.query_one(MCPInspector).update_readiness(selected)
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
             tools = self._collect_hub_tools()
             self._last_hub_tools = tools
             effective, policy_inventory = self._capture_permission_render_state(tools)
             await self._sync_tools_mode(tools, effective)
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
             await self._sync_permissions_mode(
                 effective,
                 policy_inventory=policy_inventory,
                 refresh_governance=True,
             )
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
             await self._sync_audit_mode()
 
     async def _sync_audit_mode(self) -> None:
@@ -2241,6 +2271,7 @@ class MCPWorkbench(Container):
             return False
         if profile_id == self._tool_policy_profile_id:
             return True
+        self._mcp_recovery_token = None
         self._tool_policy_profile_id = profile_id
         self._tool_policy_selector_generation += 1
         self._tool_policy_profile_context = None
@@ -3183,26 +3214,38 @@ class MCPWorkbench(Container):
         service = self._service()
         context = getattr(service, "context", None)
         return (
-            effective_config_path(),
-            self._active_mode,
-            self._source,
-            self._selected_server_key,
-            self._scope,
-            self._scope_ref,
-            getattr(context, "selected_source", None),
-            getattr(context, "selected_active_server_id", None),
-            getattr(context, "selected_scope", None),
-            getattr(context, "selected_scope_ref", None),
+            (
+                effective_config_path(),
+                self._active_mode,
+                self._source,
+                self._selected_server_key,
+                self._scope,
+                self._scope_ref,
+            ),
+            (
+                getattr(context, "selected_source", None),
+                getattr(context, "selected_active_server_id", None),
+                getattr(context, "selected_scope", None),
+                getattr(context, "selected_scope_ref", None),
+            ),
         )
 
-    def _mcp_recovery_current(self, token) -> bool:
-        return (
+    def _mcp_recovery_current(self, token, *, context_reset: bool = False) -> bool:
+        if not (
             self.is_mounted
             and token is self._mcp_recovery_token
             and token[1] is self._service()
             and token[2] is self.screen
+            and token[2] is self.app.screen
             and self._active_mode == "permissions"
-            and token[3] == self._mcp_recovery_view()
+        ):
+            return False
+        ui_view, service_context = self._mcp_recovery_view()
+        original_view, original_context = token[3]
+        # Approval deliberately replaces the owner's context with local defaults.
+        # The originating UI view must still match before publishing that reset.
+        return original_view == ui_view and (
+            context_reset or original_context == service_context
         )
 
     def on_mcp_permissions_mode_recovery_review_requested(
@@ -3297,64 +3340,72 @@ class MCPWorkbench(Container):
         content.styles.overflow_y = "auto"
 
     def _confirm_mcp_recovery_review(self, token, review, accepted: bool) -> None:
-        current = self._mcp_recovery_current(token) and self.app.screen is token[2]
-        if token is self._mcp_recovery_token:
-            self._mcp_recovery_token = None
-        if not accepted or not current or self._mcp_recovery_busy:
+        if (
+            not accepted
+            or not self._mcp_recovery_current(token)
+            or self._mcp_recovery_busy
+        ):
+            if token is self._mcp_recovery_token:
+                self._mcp_recovery_token = None
             return
         self._mcp_recovery_busy = True
         self.app.run_worker(
-            self._record_mcp_recovery_review(token[1], review),
+            self._record_mcp_recovery_review(token, review),
             group="mcp-recovery-confirm",
             exit_on_error=False,
         )
 
-    async def _record_mcp_recovery_review(self, service, review) -> None:
+    async def _record_mcp_recovery_review(self, token, review) -> None:
         from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 
+        service = token[1]
         try:
-            task = asyncio.create_task(
-                asyncio.to_thread(service.approve_recovery_review, review)
-            )
-            await join_retained_task(task)
-        except (OSError, ValueError, TypeError, RuntimeError):
-            if self.is_mounted:
-                self.app.notify(
-                    "MCP roots changed or are unavailable. Request a fresh review.",
-                    severity="warning",
+            try:
+                task = asyncio.create_task(
+                    asyncio.to_thread(service.approve_recovery_review, review)
                 )
-            return
+                await join_retained_task(task)
+            except (OSError, ValueError, TypeError, RuntimeError):
+                if self._mcp_recovery_current(token):
+                    self.app.notify(
+                        "MCP roots changed or are unavailable. Request a fresh review.",
+                        severity="warning",
+                    )
+                return
+            if not self._mcp_recovery_current(token, context_reset=True):
+                return
+            # The owner reset local context. Refresh only passive local display.
+            self._source = "local"
+            self._selected_server_key = None
+            self._scope = service.context.selected_scope or "personal"
+            self._scope_ref = service.context.selected_scope_ref
+            self._server_mutations_available = False
+            self._last_hub_tools = []
+            self._snapshots = []
+            self._catalog_records = {}
+            self._governance_profiles_cache = None
+            self._findings_cache = None
+            # Track the reset view while its children finish rendering. A later
+            # navigation still invalidates this token and suppresses the receipt.
+            token = (token[0], service, token[2], self._mcp_recovery_view())
+            self._mcp_recovery_token = token
+            self._rebind_inspector_advanced_context(service)
+            inspector = self.query_one(MCPInspector)
+            await inspector.show_tool(None)
+            if not self._mcp_recovery_current(token):
+                return
+            await inspector.show_finding(None)
+            if not self._mcp_recovery_current(token):
+                return
+            await self._sync_children(recovery_token=token)
+            if self._mcp_recovery_current(token):
+                self.app.notify(
+                    "Fresh MCP roots reviewed. Connect and tool grants remain separate actions."
+                )
         finally:
             self._mcp_recovery_busy = False
-        if not self.is_mounted or service is not self._service():
-            return
-        # The owner reset local context. Refresh only passive local display.
-        self._source = "local"
-        self._selected_server_key = None
-        self._scope = service.context.selected_scope or "personal"
-        self._scope_ref = service.context.selected_scope_ref
-        self._server_mutations_available = False
-        self.query_one(MCPRail).sync_state(
-            source="local",
-            snapshots=[],
-            selected_server_key=None,
-            scope_options=[("Personal", "personal")],
-            scope_value=self._scope,
-            scope_ref_options=[],
-            scope_ref_value=self._scope_ref,
-        )
-        inspector = self.query_one(MCPInspector)
-        await inspector.show_tool(None)
-        await inspector.show_finding(None)
-        self._last_hub_tools = []
-        self._snapshots = []
-        self._catalog_records = {}
-        self._governance_profiles_cache = None
-        self._findings_cache = None
-        await self._sync_permissions_mode(effective={})
-        self.app.notify(
-            "Fresh MCP roots reviewed. Connect and tool grants remain separate actions."
-        )
+            if token is self._mcp_recovery_token:
+                self._mcp_recovery_token = None
 
     async def on_mcp_permissions_mode_state_cycle_requested(
         self, event: MCPPermissionsMode.StateCycleRequested
@@ -4652,6 +4703,8 @@ class MCPWorkbench(Container):
         context = self._validate_profile_context(event.profile_context)
         if context is None:
             return
+        # The accepted native review may finish, but this selection owns the UI.
+        self._mcp_recovery_token = None
         inspector = self.query_one(MCPInspector)
         if event.row_kind == "tool" and event.server_key == BUILTIN_TOOL_SERVER_KEY:
             effective = self._last_builtin_effective.get(

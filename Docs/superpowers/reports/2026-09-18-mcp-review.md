@@ -1,5 +1,23 @@
 # MCP component review
 
+## Current checkpoint — PR2749 merged; PR2727 integrated
+
+[PR2749](https://github.com/rmusser01/tldw_chatbook/pull/2749) merged at
+`65d79cc2b7bd8b7b1d86ee87cc31f1823475ab3a` after owner approval, current-head
+CI and accumulated review. The actual merge tree equals the verified head.
+[Merge receipt](../qa/2026-09-18-mcp-restored-roots/integration/pr2749-closeout.json).
+
+Existing PR2727 / TASK-32839 is rebased onto that merged state. Both report
+histories are retained; no product conflict occurred. Four new real-owner
+keyboard regressions reproduce and fix late completion overwriting a newer
+Permissions row/profile selection, including round trips, while the native
+write still completes. [85 targeted passes, seven guards, conflict choices and
+16 fresh native captures](../qa/2026-09-18-mcp-restored-roots/CURRENT-DEV-REVIEW.md)
+qualify the integrated repair. Current-head CI/review and this PR's own final
+visual approval remain before merge. Catalog repopulation/status guidance,
+long-path presentation, inspector refresh and connected-runtime journeys remain
+follow-ups. PR2707's heartbeat stays paused. Earlier checkpoints are historical.
+
 ## Current checkpoint — PR2749 approved closeout
 
 The owner approved the Tools header gallery. The final dev rebase onto
@@ -155,6 +173,25 @@ This fresh-dev branch does not include that or the inspector refresh/layout/
 guidance follow-ups. Refresh of an already-open inspector, 80×24 reachability
 and connected-runtime qualification remain separate. Current-head CI and final
 visual approval still gate merging. Next: Permissions restored-roots review.
+
+## Post-merge restored MCP review completion — TASK-32839
+
+PR #2707 merged into dev at `149acda36be8939fe8cd5e589bf77d13462257e7`.
+Its unmerged closeout checkpoint below is historical; component review resumed
+on bounded follow-up branches and the resume heartbeat remains paused.
+
+[45 targeted cases, seven preflight guards and 16 inspected native captures](../qa/2026-09-18-mcp-restored-roots/README.md)
+qualify accepted-review receipt ownership through native completion/rendering,
+mode and screen round trips, service replacement, fresh Ask/local defaults and
+clearing old passive catalog displays. Real owner approval, cancellation and
+changed-root rejection remain intact. The private app exited cleanly with user
+defaults unchanged. One unrelated restored Evals enrollment diagnostic is recorded.
+
+This fresh-dev branch is independent of Audit PRs #2724/#2726 and earlier
+inspector/lifecycle follow-ups. It does not reload discovery or qualify connected
+runtime use. Next review: post-review catalog repopulation/status guidance,
+then bulk permission actions and approval workflows. Current-head CI and final
+visual approval still gate merging this draft.
 
 ## Qualified
 
