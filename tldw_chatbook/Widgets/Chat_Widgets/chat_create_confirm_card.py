@@ -127,7 +127,17 @@ class ChatCreateConfirmCard(Container):
                 )
         run_id = self._payload.get("run_id")
         if run_id:
-            lines.append(f"Requested by agent run {run_id}.")
+            who = "agent run"
+            if str(self._payload.get("agent_kind") or "") == "subagent":
+                who = "SUB-AGENT run"
+            lines.append(f"Requested by {who} {run_id}.")
+            bits = []
+            if self._payload.get("parent_run_id"):
+                bits.append(f"parent run {self._payload['parent_run_id']}")
+            if self._payload.get("agent_task"):
+                bits.append(f"task: {self._payload['agent_task']}")
+            if bits:
+                lines.append("(" + "; ".join(bits) + ")")
         target_bits = []
         if self._payload.get("preset"):
             target_bits.append(f"preset '{self._payload['preset']}'")

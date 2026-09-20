@@ -672,3 +672,31 @@ def test_execute_routing_rejects_non_string_inputs(real_db_controller):
         {"tool": "new_chat", "session_id": session.id, "title": "N",
          "opening_prompt": "", "instructions": "", "provider": ["x"]})
     assert not outcome["ok"] and outcome["kind"] == "invalid_args"
+
+
+def test_fork_from_child_run_context_copies_parent_conversation(real_db_controller):
+    """TASK-32531 end to end: a sub-agent's fork_chat call (child run
+    context) forks the PARENT conversation's active path with lineage."""
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="P")
+    conv = controller.store.persistence.create_conversation(conversation_title="P")
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "root"})
+    completed = []
+    controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
+
+    # The executor keys off the SESSION (shared by parent and child runs),
+    # so a child-run context lands on the same conversation.
+    with use_run_id("child-run-1"):
+        outcome = controller.execute_agent_chat_create(
+            {"tool": "fork_chat", "session_id": session.id, "title": "C",
+             "opening_prompt": "go", "instructions": "", "run_id": "child-run-1"})
+    assert outcome["ok"], outcome
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    assert row["parent_conversation_id"] == conv
+    copied = db.get_messages_for_conversation(outcome["conversation_id"])
+    assert [m["content"] for m in copied] == ["root"]
+    handoff = completed[0]
+    assert handoff["conversation_id"] == outcome["conversation_id"]

@@ -17099,9 +17099,38 @@ class ConsoleChatController:
         true_run_id = current_run_id()
         if true_run_id:
             payload = {**payload, "run_id": str(true_run_id)}
+        # TASK-32531: stamp the REQUESTING run's identity (kind + parent)
+        # from the agent_runs row -- the card must name WHO is asking, and
+        # a sub-agent requester never rides a session grant (below).
+        requesting_kind = "primary"
+        requesting_parent: str | None = None
+        requesting_task = ""
+        agent_db = getattr(self._agent_bridge, "agent_runs_db", None)
+        get_run = getattr(agent_db, "get_run", None)
+        if true_run_id and callable(get_run):
+            try:
+                row = get_run(str(true_run_id))
+            except Exception:  # noqa: BLE001 -- identity is best-effort
+                row = None
+            if isinstance(row, dict):
+                requesting_kind = str(row.get("agent_kind") or "primary")
+                parent = row.get("parent_run_id")
+                requesting_parent = str(parent) if parent else None
+                requesting_task = str(row.get("task") or "")[:120]
+        payload = {
+            **payload,
+            "agent_kind": requesting_kind,
+            "parent_run_id": requesting_parent,
+            "agent_task": requesting_task,
+        }
         # Session-scoped remember: a standing grant for this (session, tool)
-        # pair short-circuits -- no card is armed at all.
-        if tool in self._chat_create_session_grants.get(owning_session_id, set()):
+        # pair short-circuits -- no card is armed at all. TASK-32531: a
+        # SUB-AGENT requester never rides one -- children share the session
+        # with the primary, so the user's session grant must not silently
+        # auto-allow child-run chat creation; every child call confirms.
+        if requesting_kind == "primary" and tool in self._chat_create_session_grants.get(
+            owning_session_id, set()
+        ):
             return {"allow": True, "remember": True}
 
         # Final-review fix wave (Finding 1): enrich the payload BEFORE the

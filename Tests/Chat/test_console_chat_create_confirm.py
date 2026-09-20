@@ -310,3 +310,64 @@ def test_confirm_payload_run_id_is_the_true_run(make_controller):
     t2.join(timeout=5)
     payload = controller.pending_chat_create_payloads[0]
     assert payload["run_id"] == "run-TRUE-1"
+
+
+# ---------------------------------------------------------------------------
+# TASK-32531: sub-agent requesters stamp identity and never ride grants.
+# ---------------------------------------------------------------------------
+
+
+class _FakeAgentDB:
+    def __init__(self, row):
+        self._row = row
+
+    def get_run(self, run_id):
+        return {"agent_kind": self._row, "parent_run_id": "parent-1",
+                "task": "do the thing"} if run_id == "run-9" else None
+
+
+def test_subagent_requester_stamps_identity_and_skips_session_grant(make_controller):
+    controller = make_controller()
+    real = controller.store.create_session(title="S")
+    sid = real.id  # active session: the round MOUNTS (no park)
+    controller._chat_create_session_grants[sid] = {"fork_chat"}
+    controller._agent_bridge = type("B", (), {"agent_runs_db": _FakeAgentDB("subagent")})
+
+    decisions = []
+
+    import threading
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    def worker():
+        with use_run_id("run-9"):
+            decisions.append(
+                controller.request_chat_create_confirm(_payload(), session_id=sid)
+            )
+
+    t = threading.Thread(target=worker)
+    t.start()
+    _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+    payload_seen = dict(controller.pending_chat_create_payloads[-1])
+    controller.resolve_pending_chat_create(
+        True, False, request_id=controller.pending_chat_create_ids()[0]
+    )
+    t.join(timeout=5)
+    # No silent grant ride: a card was armed (round existed) and decided.
+    assert decisions == [{"allow": True, "remember": False}]
+    assert payload_seen["agent_kind"] == "subagent"
+    assert payload_seen["parent_run_id"] == "parent-1"
+    assert payload_seen["agent_task"].startswith("do the thing")
+
+
+def test_primary_requester_still_rides_session_grant(make_controller):
+    controller = make_controller()
+    real = controller.store.create_session(title="S")
+    sid = real.id
+    controller._chat_create_session_grants[sid] = {"fork_chat"}
+    controller._agent_bridge = type("B", (), {"agent_runs_db": _FakeAgentDB("primary")})
+
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    with use_run_id("run-9"):
+        decision = controller.request_chat_create_confirm(_payload(), session_id=sid)
+    assert decision == {"allow": True, "remember": True}
