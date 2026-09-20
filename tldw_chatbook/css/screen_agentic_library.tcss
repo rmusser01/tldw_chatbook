@@ -1,10 +1,10 @@
 /* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
- * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss
+ * library-owned rules split out of features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss
  * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
  * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit features/_library.tcss + features/_library_panels.tcss and re-run build_css.py.
+ * first paint. Edit features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -4295,4 +4295,70 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 
 .library-notes-sync-attention-actions > Button {
     width: $ds-width-full;
+}
+/* Artifacts compose the shared reader and standard interactive control states. */
+#library-artifacts-reader-shell {
+    height: $ds-height-fill;
+    width: $ds-width-full;
+}
+#library-artifacts-reader-shell #library-canvas,
+#library-artifacts-work {
+    padding: $ds-space-0 $ds-space-inset;
+}
+#library-artifacts-heading,
+#library-artifacts-title {
+    height: $ds-height-auto;
+    text-style: $ds-text-strong;
+}
+#library-artifacts-retention,
+#library-artifacts-count {
+    height: $ds-height-auto;
+    color: $ds-text-muted;
+}
+.library-artifacts-toolbar {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+}
+.library-artifacts-toolbar Button {
+    width: $ds-width-auto;
+    min-width: $ds-space-0;
+    margin-right: $ds-space-inline;
+}
+#library-artifacts-list,
+#library-artifacts-body {
+    height: $ds-height-fill;
+}
+#library-artifacts-content {
+    height: $ds-height-auto;
+}
+#library-artifacts-body:focus {
+    border: tall $ds-focus-accent;
+}
+#library-artifacts-markdown {
+    height: $ds-height-auto;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+}
+.library-artifacts-share-strip {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    padding: $ds-space-0 $ds-space-inset;
+}
+#library-artifacts-share-status {
+    width: $ds-width-fill;
+    height: $ds-height-auto;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+.library-artifacts-share-strip Button {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    width: $ds-width-auto;
+    min-width: $ds-space-0;
+    margin-left: $ds-space-inline;
+}
+#library-artifacts-markdown MarkdownHeader {
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
+    content-align: left middle;
 }

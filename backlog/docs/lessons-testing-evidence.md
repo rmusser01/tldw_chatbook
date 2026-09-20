@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## A completed catalog read can still block backup maintenance
+
+**PR #2754 / TASK-32870, 2026-09-20.** Artifact snapshot and mounted-reader tests
+passed, but independent review found a completed Kept browse left one native
+ChaChaNotes connection in the live pool thread; participant drain returned false.
+Closing the read transaction was insufficient. Routing the controller through
+Library’s existing finite worker boundary retired its newly owned file-backed
+cache while preserving borrowed and UI-thread handles. Controller-driven tests
+check actual native closure on the owning pool thread and maintenance drain for
+success, failure and cancellation. Join the cancelled worker before checking:
+cancelling its UI waiter does not stop the underlying SQLite work.
+
+
 ## Large SVG failure diagnostics can hide a quick assertion result
 
 **TASK-32821, 2026-09-18.** Both gallery snapshots passed at the baseline.
