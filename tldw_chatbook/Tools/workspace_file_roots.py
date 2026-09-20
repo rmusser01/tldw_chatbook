@@ -558,6 +558,77 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
     return tuple(roots)
 
 
+def current_folder_binding_exclusions() -> tuple[Path, ...]:
+    """Absolute user-exclusion paths for the current run's folder bindings.
+
+    Family-2 injection point (spec 2026-09-20): the builtin file tools fold
+    these into their per-call sensitive context, mirroring what
+    ``WorkspaceToolExecutor._call_context`` and the local provider's preflight
+    already do for the other file-tool families. Enumerates exactly the
+    bindings ``allowed_file_roots`` would admit for the current run workspace
+    on the READ side (the superset: a read-admitted binding's exclusions apply
+    to its writes too), so a binding dropped for path drift, narrowed run
+    scopes, or a frozen-authority mismatch also drops its exclusions here.
+
+    Returns:
+        Resolved exclusion paths from the admitted bindings; ``()`` outside a
+        run workspace, for the default workspace, when no admitted binding
+        carries exclusions, or when the registry is unavailable (consistent
+        with ``allowed_file_roots`` degrading to sandbox-only there, which
+        already makes every bound path unreachable).
+    """
+    paths: list[Path] = []
+    try:
+        workspace_id = current_run_workspace_id()
+        from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+        if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
+            return ()
+        registry = _registry_factory()
+        maximum_binding_ids = _RUN_WORKSPACE_READ_BINDING_IDS.get()
+        frozen_authority = _RUN_WORKSPACE_BINDING_AUTHORITY.get()
+        authority_by_id = (
+            {
+                str(getattr(item, "binding_id", "")): item
+                for item in frozen_authority
+            }
+            if frozen_authority is not None
+            else None
+        )
+        from tldw_chatbook.Workspaces.registry_service import (
+            binding_exclusion_entries,
+        )
+
+        for binding, folder in _iter_valid_folder_bindings(
+            registry.list_folder_bindings(workspace_id)
+        ):
+            binding_id = str(getattr(binding, "binding_id", ""))
+            if (
+                maximum_binding_ids is not None
+                and binding_id not in maximum_binding_ids
+            ):
+                continue
+            frozen = (
+                authority_by_id.get(binding_id)
+                if authority_by_id is not None
+                else None
+            )
+            if authority_by_id is not None and frozen is None:
+                continue
+            if frozen is not None and not _binding_matches_frozen_authority(
+                folder, frozen
+            ):
+                continue
+            for entry in binding_exclusion_entries(binding):
+                paths.append((folder / entry.path).resolve(strict=False))
+    except Exception:
+        logger.opt(exception=True).debug(
+            "Workspace binding exclusions unavailable; treating as none"
+        )
+        return ()
+    return tuple(paths)
+
+
 def _binding_matches_frozen_authority(folder: Path, frozen: Any) -> bool:
     """Return whether one live binding is still the exact admitted root."""
     try:
