@@ -3265,8 +3265,11 @@ class ConsoleTranscript(VerticalScroll):
         self._row_widgets.clear()
         self._row_signatures.clear()
         self._row_build_counts.clear()
+        turn_file_cards = self._turn_file_cards_enabled()
         for row in self._transcript_rows():
-            widget = self._build_row_widget(row, track=True)
+            widget = self._build_row_widget(
+                row, track=True, turn_file_cards=turn_file_cards
+            )
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
@@ -4870,6 +4873,18 @@ class ConsoleTranscript(VerticalScroll):
         except NoActiveAppError:
             app_config = None
         return get_console_prune_watermarks(app_config)
+
+    def _turn_file_cards_enabled(self) -> bool:
+        """Read the turn-file-card presentation switch once per render pass.
+
+        task-32804.6 ([W-console-2]): this was `get_cli_setting(...)` per row
+        (~5 ms each; a 20-card pass went 1.2 ms -> ~102 ms). Row-building
+        passes read it once here and thread the bool through
+        `_build_row_widget` / `_update_row_widget`; direct callers fall back to
+        this. Kept on the module-level `get_cli_setting` so the existing
+        patch-point pinning test stays valid.
+        """
+        return bool(get_cli_setting("console", "turn_file_cards", True))
 
     def _assistant_markdown_enabled(self) -> bool:
         """Return the ``[chat_defaults] assistant_markdown`` toggle (TASK-1990)."""
@@ -7045,8 +7060,10 @@ class ConsoleTranscript(VerticalScroll):
         return rows
 
     def _message_widgets(self) -> list[Widget]:
+        turn_file_cards = self._turn_file_cards_enabled()
         return [
-            self._build_row_widget(row, track=False) for row in self._transcript_rows()
+            self._build_row_widget(row, track=False, turn_file_cards=turn_file_cards)
+            for row in self._transcript_rows()
         ]
 
     def _canvas_card_session_id(self) -> str | None:
@@ -7090,6 +7107,7 @@ class ConsoleTranscript(VerticalScroll):
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
+        turn_file_cards = self._turn_file_cards_enabled()
 
         removals: list[Widget] = []
         for stale_key in [
@@ -7110,7 +7128,7 @@ class ConsoleTranscript(VerticalScroll):
                 await self._sync_assistant_turn_widget(widget, row)
                 self._row_signatures[row.key] = row.signature
                 continue
-            updated_widget = self._update_row_widget(widget, row)
+            updated_widget = self._update_row_widget(widget, row, turn_file_cards=turn_file_cards)
             if updated_widget is widget:
                 self._row_signatures[row.key] = row.signature
                 continue
@@ -7162,7 +7180,9 @@ class ConsoleTranscript(VerticalScroll):
                 continue
             widget = replacements.pop(row.key, None)
             if widget is None:
-                widget = self._build_row_widget(row, track=True)
+                widget = self._build_row_widget(
+                    row, track=True, turn_file_cards=turn_file_cards
+                )
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             pending_widgets.append(widget)
@@ -7236,8 +7256,11 @@ class ConsoleTranscript(VerticalScroll):
             await self._sync_activity_widgets(widget, row)
             widget._console_activity_signature = row.activity_signature
         if getattr(widget, "_console_adjunct_signature", None) != row.adjunct_signature:
+            turn_file_cards = self._turn_file_cards_enabled()
             adjuncts = tuple(
-                self._build_row_widget(nested_row, track=False)
+                self._build_row_widget(
+                    nested_row, track=False, turn_file_cards=turn_file_cards
+                )
                 for nested_row in row.nested_rows[1:]
             )
             if widget.adjunct_stack.children:
@@ -7247,7 +7270,13 @@ class ConsoleTranscript(VerticalScroll):
                 await widget.adjunct_stack.mount(*adjuncts)
             widget._console_adjunct_signature = row.adjunct_signature
 
-    def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:
+    def _build_row_widget(
+        self,
+        row: _TranscriptRow,
+        *,
+        track: bool,
+        turn_file_cards: bool | None = None,
+    ) -> Widget:
         if track:
             self._row_build_counts[row.key] = self._row_build_counts.get(row.key, 0) + 1
         if row.kind == "rule":
@@ -7286,7 +7315,9 @@ class ConsoleTranscript(VerticalScroll):
         if row.kind == "assistant-turn":
             return self._build_assistant_turn_widget(row)
         if row.kind == "message" and row.message is not None:
-            return self._build_message_widget(row.message, selected=row.selected)
+            return self._build_message_widget(
+                row.message, selected=row.selected, turn_file_cards=turn_file_cards
+            )
         if (
             row.kind == "canvas-card"
             and row.message is not None
@@ -7352,13 +7383,18 @@ class ConsoleTranscript(VerticalScroll):
         *,
         selected: bool,
         show_header: bool = True,
+        turn_file_cards: bool | None = None,
     ) -> Widget:
         """Build one message body through the shared standalone/nested seam."""
         review_run_id = getattr(message, "change_review_run_id", None)
         if (
             review_run_id
             and self._change_review_provider_factory is not None
-            and bool(get_cli_setting("console", "turn_file_cards", True))
+            and (
+                turn_file_cards
+                if turn_file_cards is not None
+                else self._turn_file_cards_enabled()
+            )
         ):
             return ConsoleTurnFileCard(
                 str(message.content),
@@ -7697,7 +7733,13 @@ class ConsoleTranscript(VerticalScroll):
         widget.add_class("console-transcript-image")
         return widget
 
-    def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
+    def _update_row_widget(
+        self,
+        widget: Widget,
+        row: _TranscriptRow,
+        *,
+        turn_file_cards: bool | None = None,
+    ) -> Widget:
         if (
             row.kind == "message"
             and row.message is not None
@@ -7717,7 +7759,11 @@ class ConsoleTranscript(VerticalScroll):
             still_a_card = (
                 review_run_id is not None
                 and self._change_review_provider_factory is not None
-                and bool(get_cli_setting("console", "turn_file_cards", True))
+                and (
+                    turn_file_cards
+                    if turn_file_cards is not None
+                    else self._turn_file_cards_enabled()
+                )
             )
             if (
                 still_a_card
@@ -7726,7 +7772,7 @@ class ConsoleTranscript(VerticalScroll):
             ):
                 widget.update_selected(row.selected)
                 return widget
-            return self._build_row_widget(row, track=True)
+            return self._build_row_widget(row, track=True, turn_file_cards=turn_file_cards)
         if (
             row.kind == "message"
             and row.message is not None
