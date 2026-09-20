@@ -1,7 +1,7 @@
 ---
 id: TASK-32853
 title: Collapse the nine hosted summarize_with handlers onto shared transport
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-19 08:24'
 labels:
@@ -36,3 +36,9 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-17`-adjacent ev
 - [ ] #5 The diagnostic ledger is re-keyed coherently and its tests updated to the new call sites
 - [ ] #6 Caller-visible error-string returns are unchanged; ingest analysis paths still work
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Phase A (safety-net restoration) landed 2026-09-19 via PR #2746 (commits on `fix/cascade-wave1`): the two summarization suites joined `keep_bootstrap_profile`, restoring 106 admission-red tests (the TASK-19642.10 signature -- every `summarize_with_*` reads provider settings through `get_cli_setting` and the broad excepts turn the admission failure into an error STRING); the ten stream-laziness tests unmasked by that fix now accept `recovery_review._OpenAIStream` (TASK-32628's retention wrapper); and the manifest boundary is re-pinned. Both suites are green for the first time since 2026-09-16 -- the collapse work can proceed against a live safety net. Phase B (the six OpenAI-compatible handlers onto `owned_json_post`) and Phase C (anthropic/google/cohere behind one `_post_with_retry`) are not started.
+<!-- SECTION:NOTES:END -->
