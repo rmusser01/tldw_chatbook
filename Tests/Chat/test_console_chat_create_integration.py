@@ -80,13 +80,20 @@ def test_denial_guard_terminals_after_two():
     assert len(confirm.payloads) == 2  # no third card
 
 
-def test_remember_skips_confirm_for_that_tool_only():
-    confirm, executor = _FakeConfirm([{"allow": True, "remember": True}]), _FakeExecutor()
-    fork_tool, new_tool = build_chat_create_tool_closures(confirm=confirm, execute=executor,
-                                                          session_id="s1", run_id="r1")
-    assert fork_tool({}).ok                      # card shown, remembered
-    assert fork_tool({}).ok                      # no card (per-run memo)
-    assert not new_tool({}).ok                   # confirm has no decisions left -> deny fail-closed
+def test_remember_decision_is_not_cached_in_the_closure():
+    """Qodo 2761 finding 1: there is deliberately NO run-local remember
+    memo -- every call goes through the confirm callback, whose
+    session-grant short-circuit is the single remember authority (and
+    refuses to ride for sub-agent requesters)."""
+    confirm, executor = _FakeConfirm([
+        {"allow": True, "remember": True},
+        {"allow": True, "remember": False},
+    ]), _FakeExecutor()
+    fork_tool, _ = build_chat_create_tool_closures(confirm=confirm, execute=executor,
+                                                   session_id="s1", run_id="r1")
+    assert fork_tool({}).ok                      # card 1: allow + remember
+    assert fork_tool({}).ok                      # card 2 STILL armed (no memo)
+    assert len(confirm.payloads) == 2
 
 
 def test_raising_executor_maps_to_execution_failed():

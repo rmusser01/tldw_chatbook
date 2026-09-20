@@ -59,10 +59,20 @@ def test_deny_round_trip(make_controller):
 
 def test_remember_grants_session_scope(make_controller):
     controller = make_controller()
+    # TASK-32531: grants ride only for VERIFIED primary requesters.
+    class _PDB:
+        @staticmethod
+        def get_run(run_id):
+            return {"agent_kind": "primary", "parent_run_id": None, "task": ""}
+
+    controller._agent_bridge = type("B", (), {"agent_runs_db": _PDB()})
     results = []
 
+    from tldw_chatbook.Agents.run_context import use_run_id
+
     def first():
-        results.append(controller.request_chat_create_confirm(_payload(), session_id="s1"))
+        with use_run_id("run-x"):
+            results.append(controller.request_chat_create_confirm(_payload(), session_id="s1"))
     t = threading.Thread(target=first)
     t.start()
     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
@@ -76,13 +86,18 @@ def test_remember_grants_session_scope(make_controller):
     # same intent -- the granted call marshals NO new payload -- without
     # assuming round 1 ever mounted.)
     payloads_before_second = list(controller.pending_chat_create_payloads)
-    decision = controller.request_chat_create_confirm(_payload(), session_id="s1")
+    with use_run_id("run-x"):
+        decision = controller.request_chat_create_confirm(_payload(), session_id="s1")
     assert decision == {"allow": True, "remember": True}
     assert controller.pending_chat_create_payloads == payloads_before_second
 
     # Different tool in the same session still confirms.
-    t2 = threading.Thread(target=lambda: results.append(
-        controller.request_chat_create_confirm(_payload(tool="new_chat"), session_id="s1")))
+    def second_tool():
+        with use_run_id("run-x"):
+            results.append(controller.request_chat_create_confirm(
+                _payload(tool="new_chat"), session_id="s1"))
+
+    t2 = threading.Thread(target=second_tool)
     t2.start()
     _wait_until(lambda: len(controller.pending_chat_create_ids()) > 0)
     controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[-1])

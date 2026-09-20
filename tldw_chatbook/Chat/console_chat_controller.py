@@ -17085,6 +17085,7 @@ class ConsoleChatController:
             ``allow=False``.
         """
         from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+        from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
         if self.app is None or self.set_pending_chat_create is None:
             return {"allow": False, "remember": False}
 
@@ -17102,7 +17103,11 @@ class ConsoleChatController:
         # TASK-32531: stamp the REQUESTING run's identity (kind + parent)
         # from the agent_runs row -- the card must name WHO is asking, and
         # a sub-agent requester never rides a session grant (below).
-        requesting_kind = "primary"
+        # Qodo 2761 finding 2: UNKNOWN is fail-safe -- when the run row
+        # cannot be read (no bridge db, raise, missing row) the requester
+        # is treated as NOT primary, so a session grant can never ride on
+        # an unverified identity.
+        requesting_kind = "unknown"
         requesting_parent: str | None = None
         requesting_task = ""
         agent_db = getattr(self._agent_bridge, "agent_runs_db", None)
@@ -17112,8 +17117,8 @@ class ConsoleChatController:
                 row = get_run(str(true_run_id))
             except Exception:  # noqa: BLE001 -- identity is best-effort
                 row = None
-            if isinstance(row, dict):
-                requesting_kind = str(row.get("agent_kind") or "primary")
+            if isinstance(row, dict) and row.get("agent_kind"):
+                requesting_kind = str(row["agent_kind"])
                 parent = row.get("parent_run_id")
                 requesting_parent = str(parent) if parent else None
                 requesting_task = str(row.get("task") or "")[:120]
@@ -17128,8 +17133,11 @@ class ConsoleChatController:
         # SUB-AGENT requester never rides one -- children share the session
         # with the primary, so the user's session grant must not silently
         # auto-allow child-run chat creation; every child call confirms.
-        if requesting_kind == "primary" and tool in self._chat_create_session_grants.get(
-            owning_session_id, set()
+        if (
+            requesting_kind == AGENT_KIND_PRIMARY
+            and tool in self._chat_create_session_grants.get(
+                owning_session_id, set()
+            )
         ):
             return {"allow": True, "remember": True}
 
@@ -17539,10 +17547,15 @@ class ConsoleChatController:
                         merged.update(parsed)
                 except ValueError:
                     logger.debug("chat_create: source metadata unparseable; replaced")
+            # Qodo 2761 finding 5: stamp the TRUE owning run id (the
+            # executor runs inside the run context; the closure's payload
+            # carries the originating assistant-message id placeholder).
+            from tldw_chatbook.Agents.run_context import current_run_id as _cur_run
+
             merged["console_agent_handoff"] = {
                 "draft": opening_prompt,
                 "created_via": tool,
-                "source_run_id": str(payload.get("run_id") or ""),
+                "source_run_id": str(_cur_run() or payload.get("run_id") or ""),
             }
             if settings_snapshot is not None:
                 # Qodo round finding 3: the routed generation snapshot is

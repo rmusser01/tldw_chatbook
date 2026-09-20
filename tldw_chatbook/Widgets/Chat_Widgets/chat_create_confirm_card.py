@@ -127,8 +127,10 @@ class ChatCreateConfirmCard(Container):
                 )
         run_id = self._payload.get("run_id")
         if run_id:
+            from tldw_chatbook.Agents.agent_models import AGENT_KIND_SUBAGENT
+
             who = "agent run"
-            if str(self._payload.get("agent_kind") or "") == "subagent":
+            if str(self._payload.get("agent_kind") or "") == AGENT_KIND_SUBAGENT:
                 who = "SUB-AGENT run"
             lines.append(f"Requested by {who} {run_id}.")
             bits = []
