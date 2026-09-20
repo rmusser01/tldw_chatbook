@@ -114,6 +114,23 @@ class EvalsViewModel:
 
         return [task for task in self._all_tasks() if is_character_bench(task)]
 
+    def skill_eval_benches(self) -> list[dict[str, Any]]:
+        """Skill-eval benches: eval_tasks rows tagged bench_type == "skill_eval"."""
+        from ...Evals.skill_eval.storage import is_skill_eval_bench
+        return [task for task in self._all_tasks() if is_skill_eval_bench(task)]
+
+    def skill_eval_bench_by_id(self, bench_id: str) -> Optional[dict[str, Any]]:
+        if not bench_id or self._db is None:
+            return None
+        row = self._db.get_task(bench_id)
+        from ...Evals.skill_eval.storage import is_skill_eval_bench
+        return row if is_skill_eval_bench(row) else None
+
+    def skill_eval_targets(self) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        return list(self._db.list_models(limit=200))
+
     def datasets(self) -> list[dict[str, Any]]:
         if self._db is None:
             return []
