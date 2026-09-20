@@ -6566,3 +6566,66 @@ def test_render_section_payload_renders_error_payloads_as_one_line_status():
         "overview", {"source": "local", "error": ""}
     )
     assert "{" in blank_error
+
+
+class _BlockingAdvService(FakeAdvService):
+    """`load_section` parks until released, so the hide can race the load."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def load_section(self, section=None):
+        self.entered.set()
+        await self.release.wait()
+        return {"source": "local", "section": section or "overview"}
+
+
+class _BlockingInspectorApp(ConsolidatedCSSApp):
+    def __init__(self) -> None:
+        super().__init__()
+        self.service = _BlockingAdvService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-inspector")
+
+    def on_mount(self) -> None:
+        inspector = self.query_one(MCPInspector)
+        inspector.set_service_context(
+            self.service, [("Overview", "overview"), ("Inventory", "inventory")]
+        )
+
+
+@pytest.mark.asyncio
+async def test_hiding_advanced_during_a_section_load_does_not_kill_the_app():
+    """TASK-32800.1: the awaited load must not resume into a removed subtree.
+
+    `_load_advanced_section` dereferenced `#mcp-adv-content` after awaiting
+    `load_section()`, and `_hide_advanced()` removes the collapsing container
+    that holds it. `exclusive=True` does not help -- it only cancels another
+    worker in the *same group*, not this one -- so the await resumed into a
+    removed subtree, raised `NoMatches`, and `exit_on_error` (default True)
+    took the whole app down.
+    """
+    app = _BlockingInspectorApp()
+
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+
+        await inspector._reveal_advanced()
+        await pilot.pause()
+        await asyncio.wait_for(app.service.entered.wait(), timeout=5)
+        assert app.query("#mcp-adv-content"), "advanced section should be mounted"
+
+        await inspector._hide_advanced()
+        await pilot.pause()
+        assert not app.query("#mcp-adv-content"), "hide should remove the section"
+
+        # Let the parked load resume into the subtree that no longer exists.
+        app.service.release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.is_running, "hiding Advanced mid-load killed the app"

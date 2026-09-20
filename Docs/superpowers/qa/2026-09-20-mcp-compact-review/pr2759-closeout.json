@@ -1,0 +1,223 @@
+{
+  "verified_at": "2026-09-20T19:16:04.544990+00:00",
+  "verified_head": "8c034f7de757d0e8ffcb6fe8b04f23764b7dadd2",
+  "premerge": {
+    "baseRefName": "dev",
+    "baseRefOid": "62d43190ce3ca21bda0f0ff03e5148971eedc7ca",
+    "headRefOid": "8c034f7de757d0e8ffcb6fe8b04f23764b7dadd2",
+    "isDraft": false,
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "reviews": [
+      {
+        "id": "PRR_kwDOOcyyl88AAAABOZqZ2w",
+        "author": {
+          "login": "qodo-code-review"
+        },
+        "authorAssociation": "NONE",
+        "body": "",
+        "submittedAt": "2026-09-20T18:47:31Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "COMMENTED",
+        "commit": {
+          "oid": "518143252eb43934f56c527f178d28cae2cda797"
+        }
+      },
+      {
+        "id": "PRR_kwDOOcyyl88AAAABOZrV-A",
+        "author": {
+          "login": "rmusser01"
+        },
+        "authorAssociation": "OWNER",
+        "body": "",
+        "submittedAt": "2026-09-20T18:55:04Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "COMMENTED",
+        "commit": {
+          "oid": "8c034f7de757d0e8ffcb6fe8b04f23764b7dadd2"
+        }
+      },
+      {
+        "id": "PRR_kwDOOcyyl88AAAABOZrWNQ",
+        "author": {
+          "login": "rmusser01"
+        },
+        "authorAssociation": "OWNER",
+        "body": "",
+        "submittedAt": "2026-09-20T18:55:05Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "COMMENTED",
+        "commit": {
+          "oid": "8c034f7de757d0e8ffcb6fe8b04f23764b7dadd2"
+        }
+      }
+    ],
+    "state": "OPEN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:54:31Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560145/job/106130285009",
+        "name": "platform-evidence",
+        "startedAt": "2026-09-20T18:54:31Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-19637 pinned workspace platform evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:54:31Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560129/job/106130284768",
+        "name": "Linux storage - Python ${{ matrix.python }}",
+        "startedAt": "2026-09-20T18:54:31Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-32011 one-off Linux storage evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:54:54Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560151/job/106130284328",
+        "name": "No duplicate backlog task IDs",
+        "startedAt": "2026-09-20T18:54:34Z",
+        "status": "COMPLETED",
+        "workflowName": "Backlog Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:54:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560140/job/106130284196",
+        "name": "CSS bundle reproduces from its sources",
+        "startedAt": "2026-09-20T18:54:34Z",
+        "status": "COMPLETED",
+        "workflowName": "CSS Bundle Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T19:11:41Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560116/job/106130727395",
+        "name": "PR Fast Lane",
+        "startedAt": "2026-09-20T18:57:49Z",
+        "status": "COMPLETED",
+        "workflowName": "Derived Artifacts"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:59:37Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560213/job/106130284790",
+        "name": "UI latency guardrails",
+        "startedAt": "2026-09-20T18:54:34Z",
+        "status": "COMPLETED",
+        "workflowName": "Perf Guard"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:55:32Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560258/job/106130284633",
+        "name": "GGUF import evidence - ubuntu-latest",
+        "startedAt": "2026-09-20T18:54:34Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-2062.1 GGUF import evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:55:29Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560258/job/106130284837",
+        "name": "GGUF import evidence - macos-latest",
+        "startedAt": "2026-09-20T18:54:39Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-2062.1 GGUF import evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:56:16Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560258/job/106130284731",
+        "name": "GGUF import evidence - windows-latest",
+        "startedAt": "2026-09-20T18:54:34Z",
+        "status": "COMPLETED",
+        "workflowName": "TASK-2062.1 GGUF import evidence"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T19:13:49Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/35530560116/job/106132785051",
+        "name": "Derived artifacts reproduce from their sources",
+        "startedAt": "2026-09-20T19:11:43Z",
+        "status": "COMPLETED",
+        "workflowName": "Derived Artifacts"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-20T18:54:47Z",
+        "conclusion": "NEUTRAL",
+        "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/2759",
+        "name": "cubic \u00b7 AI code reviewer",
+        "startedAt": "2026-09-20T18:54:45Z",
+        "status": "COMPLETED",
+        "workflowName": ""
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "CodeRabbit",
+        "startedAt": "2026-09-20T18:54:33Z",
+        "state": "SUCCESS",
+        "targetUrl": ""
+      }
+    ]
+  },
+  "merge": {
+    "baseRefName": "dev",
+    "headRefOid": "8c034f7de757d0e8ffcb6fe8b04f23764b7dadd2",
+    "mergeCommit": {
+      "oid": "8d110a06e384add07a72e4d96f7e1e0aa4b7a144"
+    },
+    "mergedAt": "2026-09-20T19:14:43Z",
+    "state": "MERGED",
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2759"
+  },
+  "actual_merge_tree_equals_verified_head": true,
+  "actual_merge_parents": [
+    "62d43190ce3ca21bda0f0ff03e5148971eedc7ca",
+    "8c034f7de757d0e8ffcb6fe8b04f23764b7dadd2"
+  ],
+  "dev_at_closeout": "8d110a06e384add07a72e4d96f7e1e0aa4b7a144",
+  "owner_visual_approval": "approval.json; preserved through docstring-only product follow-up per qodo-followup.json",
+  "qodo": {
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2759#issuecomment-5751861462",
+    "head": "8c034f7de757d0e8ffcb6fe8b04f23764b7dadd2",
+    "body_sha256": "0452609762e97678fee12e531de1f7e76383b5c9e40502effb1eda1b8781c710",
+    "reported_bugs": 0,
+    "rule_violations": 0,
+    "all_threads_resolved": true,
+    "threads": [
+      "PRRT_kwDOOcyyl86kLL_j",
+      "PRRT_kwDOOcyyl86kLL_m"
+    ]
+  },
+  "ci": {
+    "run": 35530560116,
+    "fast_lane_passed": 1152,
+    "fast_lane_seconds": 739.65,
+    "required_guards": "all passed on verified head"
+  },
+  "local_verification": {
+    "distinct_targeted_passes": 116,
+    "reproduced_baseline_failures": 2,
+    "fresh_approved_regressions": 10,
+    "qodo_followup_regressions": 4,
+    "full_suite_run": false
+  },
+  "next_branch": "codex/mcp-connected-runtime-review-20260920",
+  "remaining_scope": "Connected-runtime journeys and other unqualified MCP controls remain separate. No remaining screen is declared qualified."
+}

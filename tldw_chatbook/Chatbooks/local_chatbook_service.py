@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
-
 import json
 import re
 import threading
+from collections.abc import Callable
 from contextlib import AbstractContextManager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call
 from tldw_chatbook.Chat.citation_artifact_ownership import (
     ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES,
     ArtifactBackendMode,
@@ -28,6 +28,9 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
 from .chatbook_models import ContentType
+
+if TYPE_CHECKING:
+    from .artifact_registry_snapshot import ChatbookArtifactSnapshot
 
 _REGISTRY_LOCKS_GUARD = threading.Lock()
 _REGISTRY_LOCKS: dict[Path, threading.RLock] = {}
@@ -116,6 +119,7 @@ class LocalChatbookService:
         def guarded():
             with operation((self.registry_path,)), self._registry_lock:
                 yield
+
         return guarded()
 
     @property
@@ -137,7 +141,7 @@ class LocalChatbookService:
 
     @staticmethod
     def _utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
     def _coerce_string_list(values: Any) -> list[str]:
@@ -166,10 +170,10 @@ class LocalChatbookService:
         with self.registry_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
         if not isinstance(payload, dict):
-            raise ValueError(f"Invalid local chatbook registry: {self.registry_path}")
+            raise ValueError(f"Invalid local chatbook registry: {self.registry_path}")  # noqa: TRY004 - preserve owner validation contract
         records = payload.get("records")
         if not isinstance(records, list):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004 - preserve owner validation contract
                 f"Invalid local chatbook registry records: {self.registry_path}"
             )
         raw_outbox = payload.get("provenance_outbox", [])
@@ -353,7 +357,7 @@ class LocalChatbookService:
             )
             parsed = datetime.fromisoformat(normalized)
             if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
+                parsed = parsed.replace(tzinfo=UTC)
             timestamp_value = parsed.timestamp()
         except (TypeError, ValueError):
             timestamp_value = 0.0
@@ -374,6 +378,21 @@ class LocalChatbookService:
         ]
         records.sort(key=self._home_artifact_sort_key, reverse=True)
         return records[: int(limit)]
+
+    @content_call(_content_sources)
+    def artifact_read_snapshot(self) -> ChatbookArtifactSnapshot:
+        """Read the registry once for a synchronous Library worker request.
+
+        The detached snapshot never writes or reopens the registry. Window,
+        rank, and selected-record reads share its request-owned content.
+        """
+        from .artifact_registry_snapshot import ChatbookArtifactSnapshot
+
+        with self._registry_lock:
+            registry = self._load_registry()
+        return ChatbookArtifactSnapshot(
+            [self._record_copy(record) for record in registry["records"]]
+        )
 
     @content_call(_content_sources)
     async def get_chatbook(self, chatbook_id: int | str) -> dict[str, Any]:
@@ -614,7 +633,7 @@ class LocalChatbookService:
         tombstone = DeferredArtifactOwnerUnlink(
             tombstone_id=binding.binding_id,
             binding=binding,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         outbox = registry["provenance_outbox"]
         for existing in outbox:
@@ -864,7 +883,7 @@ class LocalChatbookService:
                 registry["provenance_outbox"][index] = operation.model_copy(
                     update={
                         "state": ArtifactOwnerOutboxState.ACKNOWLEDGED,
-                        "acknowledged_at": datetime.now(timezone.utc),
+                        "acknowledged_at": datetime.now(UTC),
                         "error_code": None,
                     }
                 ).model_dump(mode="json")
@@ -932,8 +951,8 @@ class LocalChatbookService:
         self,
         request_data: Any,
         *,
-        progress_callback: Optional[Callable[[Any], None]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None,
+        progress_callback: Callable[[Any], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         payload = self._as_dict(request_data)
         output_path = payload.pop("output_path", None)

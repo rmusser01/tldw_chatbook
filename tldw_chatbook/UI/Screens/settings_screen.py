@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from rich.cells import cell_len
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
@@ -5036,7 +5036,7 @@ class SettingsScreen(BaseAppScreen):
             ConfirmationDialog(
                 title="Remove Tool Profile?",
                 message=(
-                    f"Remove {escape_markup(display_profile_id)}? Its id remains "
+                    f"Remove {display_profile_id}? Its id remains "
                     "reserved by a permanent Deny tombstone."
                 ),
                 confirm_label="Remove profile",
@@ -27355,7 +27355,7 @@ class SettingsScreen(BaseAppScreen):
         self.app.push_screen(
             ConfirmationDialog(
                 title="Review restored local embedding model",
-                message=escape_markup(message), confirm_label="Approve local model",
+                message=message, confirm_label="Approve local model",
             ),
             lambda accepted: self._confirm_local_model_review(token, review, accepted),
         )
@@ -27443,7 +27443,7 @@ class SettingsScreen(BaseAppScreen):
         self.app.push_screen(
             ConfirmationDialog(
                 title="Review restored OpenAI connection",
-                message=escape_markup(message), confirm_label="Allow OpenAI requests",
+                message=message, confirm_label="Allow OpenAI requests",
             ),
             lambda accepted: self._confirm_openai_reconnect_review(token, review, accepted),
         )

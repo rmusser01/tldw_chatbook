@@ -16,6 +16,7 @@ import pytest
 import requests
 
 import tldw_chatbook.LLM_Calls.hosted_chat as hosted_chat
+import tldw_chatbook.LLM_Calls.recovery_review as recovery_review
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -1136,6 +1137,35 @@ def test_owned_json_post_honors_http_date_and_malformed_retry_after(
 
 
 @pytest.mark.allow_network
+def test_owned_json_post_caps_provider_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A provider's Retry-After is honoured only up to a bounded cap.
+
+    api_base_url is user-configurable for every hosted provider, so a
+    misbehaving or hostile endpoint can name any delay; the engine's worker
+    must never sleep it in full (Stop cancels the task but cannot interrupt
+    the thread). TASK-32853 pins the cap the 2026-09-17 review asked for.
+    """
+    sleeps: list[float] = []
+    monkeypatch.setattr(hosted_chat.time, "sleep", sleeps.append)
+    with _scripted_hosted_server(
+        [
+            {"status": 503, "headers": {"Retry-After": "99999999"}},
+            {"body": b'{"ok":true}'},
+        ]
+    ) as (_server, base_url):
+        result = owned_json_post(
+            config=_transport_config(base_url, retries=1, retry_delay=0.25),
+            route="chat/completions",
+            payload={},
+            streaming=False,
+        )
+
+    assert result == {"ok": True}
+    assert len(sleeps) == 1
+    assert sleeps[0] == pytest.approx(60.0)
+
+
+@pytest.mark.allow_network
 def test_sensitive_request_forces_transport_retries_to_zero() -> None:
     with _scripted_hosted_server([{"status": 503}, {"body": b'{"ok":true}'}]) as (
         server,
@@ -1213,6 +1243,43 @@ def test_nonstreaming_2xx_malformed_body_is_not_retried(
 
 
 @pytest.mark.allow_network
+def test_owned_json_post_forwards_extra_headers_without_core_overrides():
+    """TASK-32851: providers like OpenRouter send attribution headers, so the
+    engine forwards extra headers as a neutral capability -- and refuses to
+    let them override the Authorization/Content-Type pair it owns."""
+    with _scripted_hosted_server([{"body": b'{"ok":true}'}]) as (server, base_url):
+        result = owned_json_post(
+            config=_transport_config(
+                base_url,
+                extra_headers={
+                    "HTTP-Referer": "http://localhost",
+                    "X-Title": "TLDW-API",
+                },
+            ),
+            route="chat/completions",
+            payload={},
+            streaming=False,
+        )
+
+    assert result == {"ok": True}
+    sent = server.requests[0]["headers"]
+    assert sent["HTTP-Referer"] == "http://localhost"
+    assert sent["X-Title"] == "TLDW-API"
+    assert sent["Authorization"] == "Bearer SECRET-TRANSPORT-CANARY"
+
+    with _scripted_hosted_server([{"body": b'{"ok":true}'}]) as (_server, base_url):
+        with pytest.raises(ChatProviderError, match="transport configuration"):
+            owned_json_post(
+                config=_transport_config(
+                    base_url, extra_headers={"Authorization": "Bearer evil"}
+                ),
+                route="chat/completions",
+                payload={},
+                streaming=False,
+            )
+
+
+@pytest.mark.allow_network
 def test_owned_sse_stream_transfers_ownership_and_closes_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1227,7 +1294,13 @@ def test_owned_sse_stream_transfers_ownership_and_closes_exactly_once(
             payload={"stream": True},
             streaming=True,
         )
-        assert isinstance(stream, OwnedSSEStream)
+        # TASK-32628's recovery admission retains every stream a provider
+        # call returns behind recovery_review._OpenAIStream; the transport
+        # guarantee this test pins is that the retained stream is an owned
+        # SSE stream, and the ownership/close assertions below run through
+        # the wrapper because that is what every consumer receives.
+        assert isinstance(stream, recovery_review._OpenAIStream)
+        assert isinstance(stream.iterator, OwnedSSEStream)
         assert sessions[0].close_calls == 0
         assert list(stream) == [
             SSERecord(event=None, data='{"ok":true}'),
@@ -1259,7 +1332,10 @@ def test_owned_sse_stream_does_not_retry_after_any_body_byte(
             payload={"stream": True},
             streaming=True,
         )
-        assert isinstance(stream, OwnedSSEStream)
+        # Same wrapper contract as the ownership test above: the read
+        # failure must surface through the retained owned stream.
+        assert isinstance(stream, recovery_review._OpenAIStream)
+        assert isinstance(stream.iterator, OwnedSSEStream)
         with pytest.raises(HostedSSEReadError):
             list(stream)
 

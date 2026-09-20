@@ -1,0 +1,89 @@
+{
+  "pid": 72782,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "draft_preserved": true,
+      "cursor_and_focus_preserved": true,
+      "preview_preserved_on_unchanged_refresh": true,
+      "changed_definition_retires_preview": true,
+      "guidance_visible": true,
+      "removed_tool_clears_detail": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "draft_preserved": true,
+      "cursor_and_focus_preserved": true,
+      "preview_preserved_on_unchanged_refresh": true,
+      "changed_definition_retires_preview": true,
+      "guidance_visible": true,
+      "removed_tool_clears_detail": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "draft_preserved": true,
+      "cursor_and_focus_preserved": true,
+      "preview_preserved_on_unchanged_refresh": true,
+      "changed_definition_retires_preview": true,
+      "guidance_visible": true,
+      "removed_tool_clears_detail": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "draft_preserved": true,
+      "cursor_and_focus_preserved": true,
+      "preview_preserved_on_unchanged_refresh": true,
+      "changed_definition_retires_preview": true,
+      "guidance_visible": true,
+      "removed_tool_clears_detail": true
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/__init__.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/input_validation.py",
+    "tldw_chatbook.Utils.path_validation": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Utils/path_validation.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "68b7fcffc3f88a854d701caee3d7955d486282656fdd08e3d2c071dd23915f92",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "e31fad676f32389fd66cfcfacb6305d809c7e63aaa42694eae10269c3ec71dee",
+    "tldw_chatbook/UI/Screens/mcp_screen.py": "c3db4e0c4817ee1002f3d6556e0f24f4ea1e4f6451527c4f3765a9bae9a75bb0",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3ce0e4f05ba7997a9e0bbf9d7ef5993fbbe5ef263c30c5f6a878c088a113ad13",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a"
+  },
+  "runner_sha256": "f425422c9ed565c2288bc679d22d0fc548423d9c5b7ba6a31783e4341795566c",
+  "fixture_scope": "Controlled collector changes replace one real built-in tool definition in the UI. The real service prepares/revokes permission previews; no tool runs. This does not qualify external MCP discovery or connected runtime behavior.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "permission_profiles_unchanged": true,
+  "execution_log_unchanged": true,
+  "tool_dispatches": 0,
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

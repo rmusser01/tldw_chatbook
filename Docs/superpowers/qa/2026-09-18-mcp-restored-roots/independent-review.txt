@@ -1,0 +1,7 @@
+Independent internal review: /root/mcp_server_action_review
+Initial findings (P2):
+1. Recovery could continue clearing findings and synchronizing children after navigation during a rendering await.
+2. Leaving the MCP screen and returning before completion could resurrect the same-view receipt.
+Resolution: checks after inspector waits, the shared synchronization lock and each child-render step; accepted/busy screen suspension invalidates the UI token while retaining native work. Six gated rendering regressions and identical-view screen round trips added.
+Re-review: No remaining concrete blockers in updated production/test diff. Review was read-only; reviewer ran no tests/apps.
+Final test-only review: the two existing footer cases correctly retain all assertions and opt into the existing private_profile_test wrapper with request and correct decorator order. No blocker.

@@ -1,0 +1,554 @@
+BASELINE_CWD: /private/tmp/tldw-2730-current-dev-baseline
+FFFFFFFFFFFFFFFFFFF                                                      [100%]
+=================================== FAILURES ===================================
+_________ test_raw_shell_command_view_has_bounded_scrollable_geometry __________
+Tests/UI/test_console_mcp_approval.py:373: in test_raw_shell_command_view_has_bounded_scrollable_geometry
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+Tests/UI/test_console_mcp_approval.py:87: in _assert_rule_pinned_in_bundle_source_and_bundle
+    assert declaration in block, (
+E   AssertionError: _agentic_terminal.tcss's '.approval-row-full-command' block is missing 'width: 1fr'
+E   assert 'width: 1fr' in '.approval-row-full-command {\n    width: $ds-width-fill;\n    height: $ds-size-6;\n    min-height: $ds-size-3;\n'
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 00:35:22.555 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 00:35:22.643 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 00:35:22.650 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 00:35:22.653 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+______ test_descriptor_effects_reach_the_mounted_production_approval_card ______
+Tests/UI/test_console_mcp_approval.py:1414: in test_descriptor_effects_reach_the_mounted_production_approval_card
+    gate = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+___ test_approved_definitive_tool_stays_mounted_until_real_terminal[success] ___
+Tests/UI/test_console_mcp_approval.py:1519: in test_approved_definitive_tool_stays_mounted_until_real_terminal
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+----------------------------- Captured stderr call -----------------------------
+2026-09-20 00:35:23.333 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-603/test_approved_definitive_tool_0/subscriptions.db [Client: test]
+____ test_approved_definitive_tool_stays_mounted_until_real_terminal[crash] ____
+Tests/UI/test_console_mcp_approval.py:1519: in test_approved_definitive_tool_stays_mounted_until_real_terminal
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+----------------------------- Captured stderr call -----------------------------
+2026-09-20 00:35:23.603 | INFO     | tldw_chatbook.DB.base_db:__init__:806 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-603/test_approved_definitive_tool_1/subscriptions.db [Client: test]
+_____ test_local_same_name_finishing_rows_complete_by_call_id_out_of_order _____
+Tests/UI/test_console_mcp_approval.py:1738: in test_local_same_name_finishing_rows_complete_by_call_id_out_of_order
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_______ test_finishing_card_is_not_counted_and_keyboard_focuses_the_card _______
+Tests/UI/test_console_mcp_approval.py:1840: in test_finishing_card_is_not_counted_and_keyboard_focuses_the_card
+    app = _build_ready_production_console_app()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+___________ test_alt_a_focuses_the_pending_approval_decision_select ____________
+Tests/UI/test_console_mcp_approval.py:1896: in test_alt_a_focuses_the_pending_approval_decision_select
+    app = _build_ready_production_console_app()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_________________ test_alt_a_notifies_when_nothing_is_pending __________________
+Tests/UI/test_console_mcp_approval.py:1923: in test_alt_a_notifies_when_nothing_is_pending
+    app = _build_ready_production_console_app()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_______ test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed ________
+Tests/UI/test_console_mcp_approval.py:1941: in test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed
+    app = _build_ready_production_console_app()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_ test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css _
+Tests/UI/test_console_mcp_approval.py:1987: in test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+    app = _build_ready_production_console_app()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_ test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css _
+Tests/UI/test_console_mcp_approval.py:2111: in test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+    app = _build_ready_production_console_app()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_ test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle _
+Tests/UI/test_console_mcp_approval.py:2160: in test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+Tests/UI/test_console_mcp_approval.py:87: in _assert_rule_pinned_in_bundle_source_and_bundle
+    assert declaration in block, (
+E   AssertionError: _agentic_terminal.tcss's '.approval-row-decision {' block is missing 'width: 27;'
+E   assert 'width: 27;' in '.approval-row-decision {\n    width: $ds-agentic-prompt-vars-pane;\n'
+_______ test_approval_row_height_rule_pinned_in_bundle_source_and_bundle _______
+Tests/UI/test_console_mcp_approval.py:2172: in test_approval_row_height_rule_pinned_in_bundle_source_and_bundle
+    _assert_rule_pinned_in_bundle_source_and_bundle(
+Tests/UI/test_console_mcp_approval.py:87: in _assert_rule_pinned_in_bundle_source_and_bundle
+    assert declaration in block, (
+E   AssertionError: _agentic_terminal.tcss's '.approval-row {' block is missing 'width: 1fr;'
+E   assert 'width: 1fr;' in '.approval-row {\n    height: auto;\n    min-height: $ds-size-1;\n    width: $ds-width-fill;\n'
+_____ test_refusing_one_call_does_not_get_overwritten_by_approving_another _____
+Tests/UI/test_console_mcp_approval.py:3873: in test_refusing_one_call_does_not_get_overwritten_by_approving_another
+    assert verdicts.get("call-2", "proceed") == "proceed", (
+E   AssertionError: approving spec.md must still let it run: {'read_file': 'proceed', 'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved')}
+E   assert ToolReviewDecision(verdict='proceed', approval_decision='approved') == 'proceed'
+E    +  where ToolReviewDecision(verdict='proceed', approval_decision='approved') = <built-in method get of dict object at 0x11dbba640>('call-2', 'proceed')
+E    +    where <built-in method get of dict object at 0x11dbba640> = {'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephras...ision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved'), 'read_file': 'proceed'}.get
+_____ test_request_mcp_approvals_marks_human_input_wait_while_round_armed ______
+Tests/UI/test_console_mcp_approval.py:4652: in test_request_mcp_approvals_marks_human_input_wait_while_round_armed
+    assert result["marked_while_armed"] is True
+E   assert False is True
+----------------------------- Captured stderr call -----------------------------
+2026-09-20 00:35:24.892 | DEBUG    | tldw_chatbook.Chat.console_interrupt_rounds:_note_pending:495 - Pending-round attention hook failed for approval
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/private/tmp/tldw-2730-current-dev-baseline/Tests/UI/test_console_mcp_approval.py", line 4629, in _run_round
+    result["decisions"] = controller.request_mcp_approvals([_pending()])
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Chat/console_chat_controller.py", line 14047, in request_mcp_approvals
+    self._interrupt_host.run_round(
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Chat/console_interrupt_rounds.py", line 785, in run_round
+    self._note_pending(kind, raised=True)
+> File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Chat/console_interrupt_rounds.py", line 493, in _note_pending
+    hook(self.pending_total(), kind, raised)
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Chat/console_chat_controller.py", line 14925, in on_pending_rounds_changed
+    and self._interrupt_bell_enabled()
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Chat/console_chat_controller.py", line 14961, in _interrupt_bell_enabled
+    config_value = _bool_or_none(get_cli_setting("console", "interrupt_bell", None))
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/config.py", line 8478, in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/config.py", line 6257, in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Backup_Recovery/config_participants.py", line 419, in wrapped
+    with operation(source, target=target):
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Backup_Recovery/config_participants.py", line 352, in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Backup_Recovery/raw_participants.py", line 611, in _scope
+    participant = _raw_participant(source)
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Backup_Recovery/raw_participants.py", line 269, in _raw_participant
+    state = _participant_state(participant)
+  File "/private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Backup_Recovery/raw_participants.py", line 127, in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+______ test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook _______
+Tests/UI/test_console_mcp_approval.py:4770: in test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+E   AssertionError: assert ToolReviewDecision(verdict='tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision=None) == 'tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.'
+E    +  where 'tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.' = <built-in method format of str object at 0x10bf89f10>(name='mcp__srv__tool')
+E    +    where <built-in method format of str object at 0x10bf89f10> = 'tool call denied by the user: {name}. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.'.format
+_________ test_the_approval_route_reaches_a_pending_skill_install_card _________
+Tests/UI/test_console_mcp_approval.py:4788: in test_the_approval_route_reaches_a_pending_skill_install_card
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+____________ test_a_route_with_nothing_pending_can_decline_to_warn _____________
+Tests/UI/test_console_mcp_approval.py:4834: in test_a_route_with_nothing_pending_can_decline_to_warn
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+___________ test_local_provider_refuses_write_after_revoke_then_arm ____________
+Tests/UI/test_console_mcp_approval.py:5040: in test_local_provider_refuses_write_after_revoke_then_arm
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8478: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6257: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+=============================== warnings summary ===============================
+tldw_chatbook/Tools/patch_tool_impls.py:32
+  /private/tmp/tldw-2730-current-dev-baseline/tldw_chatbook/Tools/patch_tool_impls.py:32: SyntaxWarning: invalid escape sequence '\ '
+    satisfied (accepting only the ``\ No newline at end of file`` marker
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+------------ generated xml file: /private/tmp/2730-baseline-001.xml ------------
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_mcp_approval.py::test_raw_shell_command_view_has_bounded_scrollable_geometry
+FAILED Tests/UI/test_console_mcp_approval.py::test_descriptor_effects_reach_the_mounted_production_approval_card
+FAILED Tests/UI/test_console_mcp_approval.py::test_approved_definitive_tool_stays_mounted_until_real_terminal[success]
+FAILED Tests/UI/test_console_mcp_approval.py::test_approved_definitive_tool_stays_mounted_until_real_terminal[crash]
+FAILED Tests/UI/test_console_mcp_approval.py::test_local_same_name_finishing_rows_complete_by_call_id_out_of_order
+FAILED Tests/UI/test_console_mcp_approval.py::test_finishing_card_is_not_counted_and_keyboard_focuses_the_card
+FAILED Tests/UI/test_console_mcp_approval.py::test_alt_a_focuses_the_pending_approval_decision_select
+FAILED Tests/UI/test_console_mcp_approval.py::test_alt_a_notifies_when_nothing_is_pending
+FAILED Tests/UI/test_console_mcp_approval.py::test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed
+FAILED Tests/UI/test_console_mcp_approval.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+FAILED Tests/UI/test_console_mcp_approval.py::test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+FAILED Tests/UI/test_console_mcp_approval.py::test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_console_mcp_approval.py::test_approval_row_height_rule_pinned_in_bundle_source_and_bundle
+FAILED Tests/UI/test_console_mcp_approval.py::test_refusing_one_call_does_not_get_overwritten_by_approving_another
+FAILED Tests/UI/test_console_mcp_approval.py::test_request_mcp_approvals_marks_human_input_wait_while_round_armed
+FAILED Tests/UI/test_console_mcp_approval.py::test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook
+FAILED Tests/UI/test_console_mcp_approval.py::test_the_approval_route_reaches_a_pending_skill_install_card
+FAILED Tests/UI/test_console_mcp_approval.py::test_a_route_with_nothing_pending_can_decline_to_warn
+FAILED Tests/UI/test_console_mcp_approval.py::test_local_provider_refuses_write_after_revoke_then_arm
+19 failed, 1 warning in 6.12s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-189c103c-5563-4807-a090-b2698664ce9e/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-189c103c-5563-4807-a090-b2698664ce9e/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-189c103c-5563-4807-a090-b2698664ce9e
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-189c103c-5563-4807-a090-b2698664ce9e'
+  warnings.warn(

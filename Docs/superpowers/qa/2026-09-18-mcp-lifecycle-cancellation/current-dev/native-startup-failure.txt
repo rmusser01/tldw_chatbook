@@ -1,0 +1,50 @@
+bash /private/tmp/tldw-32829-current-native-001/run.sh
+➜  approval-batch-action-review bash /private/tmp/tldw-32829-current-native-001/run.sh
+INFO:root:Initializing Database object for path: /private/tmp/tldw-32829-current-native-001/data/db/media.db [Client ID: tldw_cli_local_instance_v1]
+INFO:root:Checking DB schema. Current version: 0. Code supports: 9
+INFO:root:Applying migration: Initial schema creation (v0 → v1)
+INFO:root:Applying initial schema (Version 1) to DB: /private/tmp/tldw-32829-current-native-001/data/db/media.db...
+INFO:root:[Schema V1] Core Schema V1 (incl. version update) applied and committed successfully for DB: /private/tmp/tldw-32829-current-native-001/data/db/media.db.
+INFO:root:[Schema V1] FTS Tables created successfully.
+INFO:root:Successfully migrated to version 1
+INFO:root:Applying migration: Add chunking configuration support (v1 → v2)
+INFO:root:Applying migration from version 1 to 2 (chunking support) to DB: /private/tmp/tldw-32829-current-native-001/data/db/media.db...
+INFO:root:[Migration v1->v2] Chunking configuration migration applied successfully.
+INFO:root:Successfully migrated to version 2
+INFO:root:Applying migration: Add local reading progress store (v2 → v3)
+INFO:root:Applying migration from version 2 to 3 (reading progress store) to DB: /private/tmp/tldw-32829-current-native-001/data/db/media.db...
+INFO:root:[Migration v2->v3] ReadingProgress migration applied successfully.
+INFO:root:Successfully migrated to version 3
+INFO:root:Applying migration: Add local read-it-later store (v3 → v4)
+INFO:root:Applying migration from version 3 to 4 (read-it-later store) to DB: /private/tmp/tldw-32829-current-native-001/data/db/media.db...
+INFO:root:[Migration v3->v4] MediaReadItLaterState migration applied successfully.
+INFO:root:Successfully migrated to version 4
+INFO:root:Applying migration: Add persisted STT provenance (v4 → v5)
+INFO:root:Successfully migrated to version 5
+INFO:root:Applying migration: Add chunk engine version stamp to UnvectorizedMediaChunks (v5 → v6)
+INFO:root:Successfully migrated to version 6
+INFO:root:Applying migration: Rebuild ChunkingTemplates with uuid/tags/is_builtin/version/deleted, convert rows, seed six server built-ins (v6 → v7)
+INFO:root:[Migration v6->v7] Dropping old seed 'academic_paper'; the six built-ins re-seed it
+INFO:root:[Migration v6->v7] Dropping old seed 'code_documentation'; the six built-ins re-seed it
+INFO:root:[Migration v6->v7] ChunkingTemplates rebuild applied successfully.
+INFO:root:Successfully migrated to version 7
+INFO:root:Applying migration: Add the engine-version census covering index to UnvectorizedMediaChunks (v7 → v8)
+INFO:root:Successfully migrated to version 8
+INFO:root:Applying migration: Add four active-media partial indexes so the stats-free planner stops sorting the whole library per list render (v8 → v9)
+INFO:root:Successfully migrated to version 9
+INFO:root:Database schema fully migrated to version 9
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService: Verified base directory: /private/tmp/tldw-32829-current-native-001/data/db
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService initialized with unified DB template: /private/tmp/tldw-32829-current-native-001/data/db/chachanotes.db
+INFO:root:App __init__: Determined initial tab value: chat
+INFO:root:Assigned prompts_interop.get_db_instance() to self.prompts_db
+INFO:root:Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback.
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/na
+tive_check.py", line 353, in <module>
+    main()
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/na
+tive_check.py", line 92, in main
+    name: sys.modules[name].__file__
+          ~~~~~~~~~~~^^^^^^
+KeyError: 'tldw_chatbook.UI.MCP_Modules.mcp_workbench'
+➜  approval-batch-action-review git:(codex/mcp-connected-runtime-review-20260920) ✗

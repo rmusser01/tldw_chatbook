@@ -1,0 +1,3 @@
+No new Ruff diagnostics; 6 existing production diagnostics retained.
+New test/runner files and every changed production range pass Ruff formatting.
+Changed production ranges: 578-595, 687-687, 765-765, 770-770, 776-776, 847-849, 909-911, 1076-1076, 1082-1082, 1089-1089, 1091-1091, 1273-1273, 1275-1275, 1282-1282, 1284-1284, 1359-1368, 1510-1512, 1515-1523, 1526-1531, 1572-1576

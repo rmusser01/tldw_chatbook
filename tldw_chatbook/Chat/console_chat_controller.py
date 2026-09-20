@@ -38,7 +38,7 @@ from uuid import uuid4
 import weakref
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 from tldw_chatbook.Agents.approval_provenance import (
     approval_key_unanswered,
@@ -5030,9 +5030,17 @@ class ConsoleChatController:
                     loop = asyncio.get_running_loop()
 
                     def run_repository_call() -> None:
+                        # TASK-32801.4: this body runs on a bare thread, so the
+                        # thread-local handle ``replace`` opens stays in the
+                        # quiescence registry for the life of the process --
+                        # one leaked fd and WAL reader per conversation-level
+                        # Capture change. The helper retires only a handle this
+                        # call opened; on the inline branch below it borrows the
+                        # loop thread's existing handle and leaves it alone.
                         try:
                             repository_result.append(
-                                repository.replace(
+                                self._run_owned_chat_db_operation(
+                                    repository.replace,
                                     before.conversation_id,
                                     detail,
                                 )
@@ -14180,10 +14188,26 @@ class ConsoleChatController:
             state["summary_fired"] = True
             if not needs:
                 return
+        # TASK-32801.4: the tail is read from the store, and the store is
+        # owned by this thread (``store mutation always runs on the thread
+        # that owns the store``). Reading it here rather than in the worker
+        # keeps ``messages_for_session`` -- which folds buffered chunks and
+        # can persist a pending row -- off the raw thread entirely. The
+        # worker is left with the network call alone.
+        try:
+            from tldw_chatbook.Chat.permission_summary_service import (
+                build_messages_tail,
+            )
+
+            tail = build_messages_tail(
+                self._summary_tail_messages(payload), resolution.tail_max_chars
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            tail = []
         try:
             threading.Thread(
                 target=self._permission_summary_worker,
-                args=(round_id, payload, resolution),
+                args=(round_id, payload, resolution, tail),
                 daemon=True,
                 name=f"permission-summary-{round_id}",
             ).start()
@@ -14193,24 +14217,28 @@ class ConsoleChatController:
             logger.debug("permission summary thread spawn failed")
 
     def _permission_summary_worker(
-        self, round_id: str, payload: dict[str, Any], resolution: object
+        self,
+        round_id: str,
+        payload: dict[str, Any],
+        resolution: object,
+        tail: list,
     ) -> None:
         """Worker THREAD: run the advisory call, deliver on the UI thread.
 
         The approval wait loop is never blocked and the round's deadline is
         unaffected; a slow call that outlives the round is dropped on
         delivery. Content-free failures only (ADR-090).
+
+        ``tail`` arrives already built: it is store-derived, and the store
+        belongs to the thread that spawned this one (TASK-32801.4). Nothing
+        here may touch ``self.store``.
         """
         from tldw_chatbook.Chat.permission_summary_service import (
-            build_messages_tail,
             pending_calls_info_from_payload,
             summarize_pending_round,
         )
 
         try:
-            tail = build_messages_tail(
-                self._summary_tail_messages(payload), resolution.tail_max_chars
-            )
             info = pending_calls_info_from_payload(payload.get("calls") or [])
             text = summarize_pending_round(resolution, tail, info)
         except Exception:  # noqa: BLE001 -- advisory only
@@ -17085,6 +17113,7 @@ class ConsoleChatController:
             ``allow=False``.
         """
         from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+        from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
         if self.app is None or self.set_pending_chat_create is None:
             return {"allow": False, "remember": False}
 
@@ -17099,9 +17128,45 @@ class ConsoleChatController:
         true_run_id = current_run_id()
         if true_run_id:
             payload = {**payload, "run_id": str(true_run_id)}
+        # TASK-32531: stamp the REQUESTING run's identity (kind + parent)
+        # from the agent_runs row -- the card must name WHO is asking, and
+        # a sub-agent requester never rides a session grant (below).
+        # Qodo 2761 finding 2: UNKNOWN is fail-safe -- when the run row
+        # cannot be read (no bridge db, raise, missing row) the requester
+        # is treated as NOT primary, so a session grant can never ride on
+        # an unverified identity.
+        requesting_kind = "unknown"
+        requesting_parent: str | None = None
+        requesting_task = ""
+        agent_db = getattr(self._agent_bridge, "agent_runs_db", None)
+        get_run = getattr(agent_db, "get_run", None)
+        if true_run_id and callable(get_run):
+            try:
+                row = get_run(str(true_run_id))
+            except Exception:  # noqa: BLE001 -- identity is best-effort
+                row = None
+            if isinstance(row, dict) and row.get("agent_kind"):
+                requesting_kind = str(row["agent_kind"])
+                parent = row.get("parent_run_id")
+                requesting_parent = str(parent) if parent else None
+                requesting_task = str(row.get("task") or "")[:120]
+        payload = {
+            **payload,
+            "agent_kind": requesting_kind,
+            "parent_run_id": requesting_parent,
+            "agent_task": requesting_task,
+        }
         # Session-scoped remember: a standing grant for this (session, tool)
-        # pair short-circuits -- no card is armed at all.
-        if tool in self._chat_create_session_grants.get(owning_session_id, set()):
+        # pair short-circuits -- no card is armed at all. TASK-32531: a
+        # SUB-AGENT requester never rides one -- children share the session
+        # with the primary, so the user's session grant must not silently
+        # auto-allow child-run chat creation; every child call confirms.
+        if (
+            requesting_kind == AGENT_KIND_PRIMARY
+            and tool in self._chat_create_session_grants.get(
+                owning_session_id, set()
+            )
+        ):
             return {"allow": True, "remember": True}
 
         # Final-review fix wave (Finding 1): enrich the payload BEFORE the
@@ -17372,6 +17437,21 @@ class ConsoleChatController:
         title = str(payload.get("title") or "").strip()
         opening_prompt = str(payload.get("opening_prompt") or "")
         instructions = str(payload.get("instructions") or "")
+        # Qodo round finding 4: same strict-type contract as the bridge
+        # closures -- the executor is reachable from callers other than the
+        # closures, so a non-string routing input is a clear refusal here
+        # too, never a str() coercion.
+        for _name in ("provider", "model", "preset"):
+            _value = payload.get(_name, "")
+            if not isinstance(_value, str):
+                return {
+                    "ok": False,
+                    "kind": "invalid_args",
+                    "error": f"{_name} must be a string, got {type(_value).__name__}",
+                }
+        req_provider = str(payload.get("provider") or "").strip()
+        req_model = str(payload.get("model") or "").strip()
+        req_preset = str(payload.get("preset") or "").strip()
         # Mirrors the bridge closures' cap (CHAT_CREATE_PAYLOAD_MAX in
         # agent_models -- the single shared constant, PR review #5);
         # duplicated here so the executor stays safe even if wired to a
@@ -17390,6 +17470,85 @@ class ConsoleChatController:
             return {"ok": False, "kind": "execution_failed",
                     "error": "persistence unavailable"}
 
+        # TASK-32874: optional routing for the CREATED chat. Resolved
+        # BEFORE anything is created; every RoutingError surfaces as the
+        # outcome's kind with nothing created (ADR-147 vocabulary).
+        routed_settings: Any = None
+        if req_provider or req_model or req_preset:
+            from dataclasses import replace as _dc_replace
+
+            from tldw_chatbook.Agents.agent_models import definition_from_row
+            from tldw_chatbook.Agents.agent_routing import (
+                RoutingError as _RoutingError,
+                load_agents_routing_config as _load_routing,
+                resolve_spawn_target as _resolve_target,
+            )
+            from tldw_chatbook.Chat.console_session_settings import (
+                build_default_console_session_settings as _build_settings,
+            )
+            from tldw_chatbook.config import load_settings as _load_app_config
+
+            app_config = _load_app_config()
+            routing_cfg = _load_routing()
+            preset_def = None
+            if req_preset:
+                agent_db = getattr(self._agent_bridge, "agent_runs_db", None)
+                rows = (
+                    agent_db.list_agent_definitions(enabled_only=True)
+                    if agent_db is not None
+                    else []
+                )
+                match = next(
+                    (r for r in rows if str(r.get("name") or "") == req_preset), None
+                )
+                if match is None:
+                    return {"ok": False, "kind": "unknown_preset",
+                            "error": f"no enabled agent preset named '{req_preset}'"}
+                preset_def = definition_from_row(match)
+                if not (preset_def.provider or preset_def.model):
+                    return {"ok": False, "kind": "preset_unrouted",
+                            "error": f"preset '{req_preset}' sets no provider/model"}
+            try:
+                # The [agents] SUB-AGENT default level does not apply to
+                # chat creation (this is not a spawn): clear it so the
+                # levels are exactly ad-hoc -> preset -> parent-fill.
+                target = _resolve_target(
+                    app_config,
+                    parent_provider=(
+                        session.settings.provider if session.settings else ""
+                    ),
+                    parent_model=(
+                        session.settings.model if session.settings else ""
+                    ),
+                    preset=preset_def,
+                    override_provider=req_provider,
+                    override_model=req_model,
+                    # The [agents] sub-agent default level never applies
+                    # here (uniformly cleared for every chat-create
+                    # request): levels are ad-hoc -> preset -> parent-fill.
+                    routing=_dc_replace(
+                        routing_cfg,
+                        subagent_default_provider="",
+                        subagent_default_model="",
+                    ),
+                )
+            except _RoutingError as exc:
+                return {"ok": False, "kind": str(exc.code), "error": str(exc)}
+            # Qodo round finding 2: the resolver's merged params (preset
+            # params above registry-entry params above defaults) ride the
+            # ADR-147 extra_sources seam so a routed chat keeps the
+            # preset/endpoint tuning, not just provider/model.
+            routed_settings = _build_settings(
+                app_config,
+                provider=target.provider,
+                model=target.model or None,
+                extra_sources=(
+                    (dict(getattr(target, "params", None) or ()),)
+                    if getattr(target, "params", None)
+                    else ()
+                ),
+            )
+
         source_conv: str | None = None
         source_row: dict[str, Any] | None = None
         new_conv: str | None = None
@@ -17402,7 +17561,9 @@ class ConsoleChatController:
         elif not title:
             title = "New Chat"
 
-        def _handoff_metadata(source_metadata: str | None) -> dict[str, Any]:
+        def _handoff_metadata(
+            source_metadata: str | None, settings_snapshot: Any = None
+        ) -> dict[str, Any]:
             """PR review #9: MERGE the handoff key into the source's own
             metadata (speech/roleplay/canvas prefs ride along) instead of
             replacing it with a handoff-only mapping."""
@@ -17414,11 +17575,28 @@ class ConsoleChatController:
                         merged.update(parsed)
                 except ValueError:
                     logger.debug("chat_create: source metadata unparseable; replaced")
+            # Qodo 2761 finding 5: stamp the TRUE owning run id (the
+            # executor runs inside the run context; the closure's payload
+            # carries the originating assistant-message id placeholder).
+            from tldw_chatbook.Agents.run_context import current_run_id as _cur_run
+
             merged["console_agent_handoff"] = {
                 "draft": opening_prompt,
                 "created_via": tool,
-                "source_run_id": str(payload.get("run_id") or ""),
+                "source_run_id": str(_cur_run() or payload.get("run_id") or ""),
             }
+            if settings_snapshot is not None:
+                # Qodo round finding 3: the routed generation snapshot is
+                # DURABLE -- merged under the same generation-settings
+                # metadata key every reopened conversation reads, so the
+                # routing survives a failed completion or a later reopen,
+                # not just the in-memory restore.
+                from tldw_chatbook.Chat.console_generation_settings_metadata import (
+                    merge_console_generation_settings as _merge_gen,
+                    snapshot_from_session_settings as _snap,
+                )
+
+                merged = _merge_gen(merged, _snap(settings_snapshot))
             return merged
 
         try:
@@ -17455,7 +17633,10 @@ class ConsoleChatController:
                     assistant_kind=source_row.get("assistant_kind"),
                     assistant_id=source_row.get("assistant_id"),
                     assistant_authority_id=source_row.get("assistant_authority_id"),
-                    metadata=_handoff_metadata(source_row.get("metadata")),
+                    metadata=_handoff_metadata(
+                        source_row.get("metadata"),
+                        settings_snapshot=routed_settings,
+                    ),
                     parent_conversation_id=source_conv,
                     forked_from_message_id=source_leaf,
                 )
@@ -17475,7 +17656,7 @@ class ConsoleChatController:
                     scope_type=scope,
                     workspace_id=None if scope == "global" else workspace_id,
                     system_prompt=instructions or None,
-                    metadata=_handoff_metadata(None),
+                    metadata=_handoff_metadata(None, routed_settings),
                 )
         except ValueError as exc:
             if new_conv is not None:
@@ -17554,6 +17735,7 @@ class ConsoleChatController:
                 workspace_id=completion_workspace_id,
                 nodes=nodes,
                 active_leaf_persisted_id=new_leaf,
+                settings=routed_settings,
                 **identity,
             )
         return {

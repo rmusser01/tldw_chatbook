@@ -76,7 +76,6 @@ from typing import Any
 from loguru import logger
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
-from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -276,6 +275,7 @@ class KeptBriefingsModal(ModalScreen[None]):
         *,
         subs_db: Any | None = None,
         load_character: Any = None,
+        initial_kept_id: int | None = None,
     ) -> None:
         super().__init__()
         self.chacha_db = chacha_db
@@ -283,7 +283,7 @@ class KeptBriefingsModal(ModalScreen[None]):
         self._load_character = load_character
         self._kept: list[dict[str, Any]] = []
         self._kept_overflow = False
-        self._selected_kept_id: int | None = None
+        self._selected_kept_id: int | None = initial_kept_id
         self._scripts: list[dict[str, Any]] = []
         self._scripts_overflow = False
         self._presets: list[dict[str, Any]] = []
@@ -443,6 +443,8 @@ class KeptBriefingsModal(ModalScreen[None]):
     async def on_mount(self) -> None:
         await self._load_kept()
         await self._load_presets()
+        if self._selected_kept_id is not None:
+            await self._load_scripts_and_refresh(self._selected_kept_id)
         if self.is_attached:
             self.refresh(recompose=True)
 
@@ -470,6 +472,10 @@ class KeptBriefingsModal(ModalScreen[None]):
             rows = []
         self._kept_overflow = len(rows) > _KEPT_LIST_DISPLAY_CAP
         self._kept = [dict(row) for row in rows[:_KEPT_LIST_DISPLAY_CAP]]
+        if self._selected_kept_id is not None and not any(row["id"] == self._selected_kept_id for row in self._kept):
+            selected = await asyncio.to_thread(self.chacha_db.get_kept_briefing, self._selected_kept_id)
+            if selected is not None:
+                self._kept.insert(0, dict(selected))
 
     async def _load_presets(self) -> None:
         """Re-read every stored `briefing_presets` row for the cast picker.
@@ -650,7 +656,7 @@ class KeptBriefingsModal(ModalScreen[None]):
             ConfirmationDialog(
                 title="Delete kept briefing",
                 message=(
-                    f'Delete the kept briefing from "{escape_markup(name)}"? '
+                    f'Delete the kept briefing from "{name}"? '
                     "This also deletes its kept scripts, and cannot be "
                     "undone."
                 ),

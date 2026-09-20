@@ -1,0 +1,210 @@
+tldw_chatbook/Chat/chat_persistence_service.py	557	_reconcile_completed_voice_pair :: SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_typ
+tldw_chatbook/Chat/chat_persistence_service.py	569	_reconcile_completed_voice_pair :: SELECT revision_id, source_conversation_id, source_message_id, revision_sequence, normaliz
+tldw_chatbook/Chat/chat_persistence_service.py	603	_reconcile_completed_voice_pair :: SELECT conversation_id, mark_type, CAST(created_at AS TEXT) AS created_at_text, CAST(updat
+tldw_chatbook/Chat/chat_persistence_service.py	863	commit_completed_voice_pair :: SELECT conversation_id, deleted FROM messages WHERE id = ?
+tldw_chatbook/Chat/citation_artifact_ownership.py	511	_validate_shared_database_contract :: SELECT name FROM main.sqlite_master WHERE type = 'table' AND name IN (?, ?)
+tldw_chatbook/Chat/citation_artifact_ownership.py	533	_validate_shared_database_contract (fstring) :: SELECT name FROM main.sqlite_master WHERE type = 'table' AND name IN (?, ?)
+tldw_chatbook/Chat/citation_legacy_migration.py	1394	_canonical_records :: SELECT trace.trace_id, trace.origin, trace.aggregate_json, owner.message_id, owner.body_fi
+tldw_chatbook/Chat/citation_legacy_migration.py	1526	retry_diverged :: SELECT refs.snapshot_payload_id FROM rag_trace_evidence_refs AS refs JOIN rag_citation_tra
+tldw_chatbook/Chat/citation_payload_lifecycle.py	302	_revoke_in_transaction :: SELECT payload_id, governance_scope_id, authority_id, confidentiality_policy_id, revocatio
+tldw_chatbook/Chat/citation_payload_lifecycle.py	338	_revoke_in_transaction :: SELECT DISTINCT reference.trace_id FROM rag_trace_evidence_refs AS reference JOIN rag_evid
+tldw_chatbook/Chat/citation_payload_lifecycle.py	674	_collect_under_artifact_guard :: SELECT DISTINCT snapshot.payload_id, snapshot.origin_namespace, snapshot.origin_payload_id
+tldw_chatbook/Chat/citation_payload_lifecycle.py	878	_trace_has_barrier :: SELECT owner.state, owner.updated_at AS owner_updated_at, message.deleted AS message_delet
+tldw_chatbook/Chat/citation_payload_lifecycle.py	938	_trace_has_barrier :: SELECT retain_until FROM rag_evidence_snapshots WHERE profile_id = ? AND payload_id IN ( S
+tldw_chatbook/Chat/citation_payload_lifecycle.py	958	_trace_has_barrier :: SELECT DISTINCT snapshot.origin_namespace, snapshot.origin_payload_id FROM rag_trace_evide
+tldw_chatbook/Chat/citation_trace_repository.py	1362	write_prepared :: SELECT message_revision, state, body_fingerprint, idempotency_key FROM rag_message_trace_o
+tldw_chatbook/Chat/citation_trace_repository.py	1621	link_fork_message_owner :: SELECT profile_id, trace_id, state, body_fingerprint FROM rag_message_trace_owners WHERE m
+tldw_chatbook/Chat/citation_trace_repository.py	1702	classify_fork_message_owner :: SELECT profile_id, trace_id, state, body_fingerprint FROM rag_message_trace_owners WHERE m
+tldw_chatbook/Chat/citation_trace_repository.py	3721	_trace_row_identities_match :: SELECT run_id, run_ordinal, stage FROM rag_evidence_runs WHERE profile_id = ? AND trace_id
+tldw_chatbook/Chat/citation_trace_repository.py	3735	_trace_row_identities_match :: SELECT payload_id, attempt_id FROM rag_answer_attempt_payloads WHERE profile_id = ? AND tr
+tldw_chatbook/Chat/citation_trace_repository.py	3750	_trace_row_identities_match :: SELECT prompt_set_id, evidence_ordinal, run_id, snapshot_payload_id, marker_ordinal, stora
+tldw_chatbook/Chat/citation_trace_repository.py	4099	hydrate_trace :: SELECT DISTINCT s.payload_id, s.governance_scope_id, s.authority_id, s.origin_namespace, s
+tldw_chatbook/Chat/citation_trace_repository.py	4159	hydrate_trace :: SELECT 1 FROM rag_payload_tombstones WHERE profile_id = ? AND origin_namespace = ? AND ori
+tldw_chatbook/Chat/citation_trace_repository.py	4191	hydrate_trace :: SELECT 1 FROM rag_payload_tombstones WHERE profile_id = ? AND origin_namespace = ? AND ori
+tldw_chatbook/Chat/citation_trace_repository.py	4287	hydrate_trace :: SELECT 1 FROM rag_payload_tombstones WHERE profile_id = ? AND origin_namespace = ? AND ori
+tldw_chatbook/Chat/console_context_repository.py	1411	_persisted_lineage_state :: SELECT id, role, sender, content, image_data, image_mime_type, variant_number, is_selected
+tldw_chatbook/Chat/console_context_repository.py	1482	_persisted_attachment_digests :: SELECT position, data, mime_type, display_name FROM message_attachments WHERE message_id =
+tldw_chatbook/Chat/console_context_repository.py	1526	_load_applicable_branch_head :: SELECT sequence, selection_id, conversation_id, activation_message_id, selected_memory_id,
+tldw_chatbook/Chat/console_launch_wake.py	89	pending_conversations_at_launch (fstring) :: SELECT DISTINCT child.conversation_id FROM agent_runs AS child JOIN agent_runs AS parent O
+tldw_chatbook/Chat/console_semantic_revision.py	221	project_semantic_revision_provider_messages (fstring) :: SELECT revision_id, source_conversation_id, source_message_id, revision_sequence, normaliz
+tldw_chatbook/Chat/console_semantic_revision.py	242	project_semantic_revision_provider_messages (fstring) :: SELECT id, conversation_id, parent_message_id, sender, role, content, image_data, image_mi
+tldw_chatbook/Chat/console_semantic_revision.py	424	project_semantic_revision_provider_continuations (fstring) :: SELECT r.revision_id, r.source_conversation_id, r.source_message_id, r.live_message_id, m.
+tldw_chatbook/Chat/console_semantic_revision.py	828	_reachable_policy_ids :: WITH RECURSIVE revision_descendants(node_id) AS ( SELECT node_id FROM console_trace_surfac
+tldw_chatbook/Chat/console_trace_legacy.py	457	read_calls :: SELECT call.call_id FROM console_trace_calls AS call JOIN console_trace_request_headers AS
+tldw_chatbook/Chat/console_trace_legacy.py	535	_read_call :: WITH RECURSIVE legacy_chain( node_id, predecessor_node_id, component_kind, reference_kind,
+tldw_chatbook/Chat/console_trace_maintenance.py	1778	_remaining_owner_conversations :: WITH RECURSIVE owner_lineage( conversation_id, segment_id, depth ) AS ( SELECT conversatio
+tldw_chatbook/Chat/console_trace_repository.py	665	_validate_post_dispatch_message_lineage :: SELECT id, conversation_id, parent_message_id, sender, role, deleted, assistant_generation
+tldw_chatbook/Chat/console_trace_repository.py	2375	ensure_redaction_spans (fstring) :: SELECT span_id, policy_id, source_kind, semantic_revision_id, artifact_id, field_path, sta
+tldw_chatbook/Chat/console_trace_repository.py	2437	ensure_redaction_spans (fstring) :: SELECT span_id, policy_id, source_kind, semantic_revision_id, artifact_id, field_path, sta
+tldw_chatbook/Chat/console_trace_repository.py	2465	read_redaction_spans (fstring) :: SELECT span_id, policy_id, source_kind, semantic_revision_id, artifact_id, field_path, sta
+tldw_chatbook/Chat/console_trace_repository.py	2642	find_sanitized_artifact :: SELECT artifact_id, identity_digest, media_type, normalization_version, sanitized_bytes FR
+tldw_chatbook/Chat/console_trace_repository.py	2828	read_lineage_surface_nodes :: SELECT node_id, segment_id, sequence, predecessor_node_id, component_kind, reference_kind,
+tldw_chatbook/Chat/console_trace_repository.py	3010	read_surface_replacements :: SELECT r.replacement_id, r.segment_id, r.predecessor_head_id, r.start_node_id, r.start_seq
+tldw_chatbook/Chat/console_trace_repository.py	3107	create_or_reuse_request_header :: SELECT header_id FROM console_trace_request_headers WHERE provider_name = ? AND model_name
+tldw_chatbook/Chat/console_trace_repository.py	3759	_header_components :: SELECT component_kind, ordinal, artifact_id FROM console_trace_header_components WHERE hea
+tldw_chatbook/Chat/console_trace_runtime.py	540	__call__ (fstring) :: SELECT semantic_revision_id FROM console_trace_events WHERE call_id = ? AND event_type = '
+tldw_chatbook/Chat/console_trace_service.py	3279	_validate_completed_tool_turn :: SELECT 1 FROM messages WHERE id = ? AND assistant_generation_state = 'discarded'
+tldw_chatbook/Chat/console_trace_service.py	3441	_validate_completed_tool_turn :: SELECT 1 FROM messages WHERE id = ? AND assistant_generation_state = 'discarded'
+tldw_chatbook/Chat/console_trace_service.py	3504	_validate_completed_tool_turn :: SELECT 1 FROM messages WHERE id = ? AND assistant_generation_state = 'discarded'
+tldw_chatbook/Chat/console_trace_service.py	3643	_validate_completed_tool_turn :: SELECT 1 FROM messages WHERE id = ? AND assistant_generation_state = 'discarded'
+tldw_chatbook/Chat/console_trace_service.py	5170	_resolve_reference_values (fstring) :: SELECT artifact_id, sanitized_bytes FROM console_trace_artifacts WHERE artifact_id IN ()
+tldw_chatbook/Chat/console_trace_settlement.py	363	recover_open_calls :: SELECT call_id FROM console_trace_calls WHERE state IN ('reserved', 'dispatch_started', 'r
+tldw_chatbook/Chat/conversation_local_marks_service.py	450	list_console_unseen_marks :: SELECT conversation_id, mark_type FROM conversation_local_marks WHERE mark_type LIKE ? ORD
+tldw_chatbook/Chat/conversation_local_marks_service.py	472	has_console_unseen_marks :: SELECT mark_type FROM conversation_local_marks WHERE mark_type LIKE ?
+tldw_chatbook/Chat/conversation_local_marks_service.py	519	console_terminal_outcome :: SELECT mark_type FROM conversation_local_marks WHERE conversation_id = ? AND (mark_type = 
+tldw_chatbook/DB/AgentRuns_DB.py	674	_initialize_schema :: PRAGMA table_info(agent_runs)
+tldw_chatbook/DB/AgentRuns_DB.py	729	_initialize_schema :: PRAGMA table_info(agent_definitions)
+tldw_chatbook/DB/AgentRuns_DB.py	741	_initialize_schema :: PRAGMA table_info(change_snapshots)
+tldw_chatbook/DB/AgentRuns_DB.py	772	_initialize_schema :: PRAGMA table_info(change_notes)
+tldw_chatbook/DB/AgentRuns_DB.py	817	_initialize_schema :: PRAGMA table_info(agent_definitions)
+tldw_chatbook/DB/AgentRuns_DB.py	1268	roots_with_change_snapshots :: SELECT DISTINCT root FROM change_snapshots
+tldw_chatbook/DB/AgentRuns_DB.py	1308	change_snapshots_for_run :: SELECT * FROM change_snapshots WHERE run_id = ? ORDER BY id
+tldw_chatbook/DB/AgentRuns_DB.py	1332	change_snapshots_for_run_review :: SELECT cs.*, ar.created_at AS run_created_at, ar.status AS run_status FROM change_snapshot
+tldw_chatbook/DB/AgentRuns_DB.py	1355	change_snapshots_for_conversation :: SELECT cs.*, ar.created_at AS run_created_at, ar.status AS run_status FROM change_snapshot
+tldw_chatbook/DB/AgentRuns_DB.py	1501	notes_for_run :: SELECT * FROM change_notes WHERE run_id = ? ORDER BY id
+tldw_chatbook/DB/AgentRuns_DB.py	1523	pending_notes_for_conversation :: SELECT cn.* FROM change_notes cn JOIN agent_runs ar ON ar.id = cn.run_id WHERE ar.conversa
+tldw_chatbook/DB/AgentRuns_DB.py	1557	change_note_counts_for_conversation :: SELECT cn.root, cn.path, COUNT(*) AS note_count FROM change_notes cn JOIN agent_runs ar ON
+tldw_chatbook/DB/AgentRuns_DB.py	1591	delivered_notes_for_conversation :: SELECT cn.* FROM change_notes cn JOIN agent_runs ar ON ar.id = cn.run_id WHERE ar.conversa
+tldw_chatbook/DB/AgentRuns_DB.py	1663	mark_notes_delivered (fstring) :: SELECT id FROM change_notes WHERE id IN () AND delivered_at = ? AND delivered_by_run_id IS
+tldw_chatbook/DB/AgentRuns_DB.py	1717	_batch_hydrate_steps (fstring) :: SELECT run_id, payload FROM agent_run_steps WHERE run_id IN () ORDER BY run_id, seq
+tldw_chatbook/DB/AgentRuns_DB.py	2310	continuation_budget :: WITH RECURSIVE chain AS ( SELECT id, resumed_from_run_id, budget_tokens, status FROM agent
+tldw_chatbook/DB/AgentRuns_DB.py	2396	run_observations :: SELECT payload FROM agent_run_steps WHERE run_id = ?
+tldw_chatbook/DB/AgentRuns_DB.py	2452	reconcile_orphaned_runs :: SELECT payload FROM agent_run_steps WHERE run_id = ?
+tldw_chatbook/DB/AgentRuns_DB.py	2460	reconcile_orphaned_runs :: SELECT id FROM agent_runs WHERE status = 'running' AND agent_kind = 'local_command'
+tldw_chatbook/DB/AgentRuns_DB.py	2505	reconcile_orphaned_runs :: SELECT id FROM agent_runs WHERE status = 'running' AND agent_kind = 'local_command'
+tldw_chatbook/DB/AgentRuns_DB.py	2926	local_command_resume_records :: WITH eligible_local_commands AS MATERIALIZED ( SELECT ar.rowid AS run_rowid, ar.id, ar.sta
+tldw_chatbook/DB/AgentRuns_DB.py	3155	undelivered_wake_runs (fstring) :: SELECT child.* FROM agent_runs AS child JOIN agent_runs AS parent ON parent.id = child.par
+tldw_chatbook/DB/AgentRuns_DB.py	3177	pending_wake_conversation_ids (fstring) :: SELECT DISTINCT child.conversation_id FROM agent_runs AS child JOIN agent_runs AS parent O
+tldw_chatbook/DB/AgentRuns_DB.py	3191	pending_wake_results (fstring) :: SELECT child.id, child.status, child.work_chain_id FROM agent_runs AS child JOIN agent_run
+tldw_chatbook/DB/AgentRuns_DB.py	3280	count_subagents_by_conversation (fstring) :: SELECT conversation_id, COUNT(*) AS n FROM agent_runs WHERE agent_kind = 'subagent' AND co
+tldw_chatbook/DB/ChaChaNotes_DB.py	4292	_skip_already_applied_add_column :: SELECT name FROM pragma_table_info(?)
+tldw_chatbook/DB/ChaChaNotes_DB.py	5240	_migrate_from_v15_to_v16 :: SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table') AND name IN ('flas
+tldw_chatbook/DB/ChaChaNotes_DB.py	5408	_migrate_from_v19_to_v20 :: PRAGMA table_info(conversations)
+tldw_chatbook/DB/ChaChaNotes_DB.py	5463	_migrate_from_v20_to_v21 :: PRAGMA table_info(world_book_entries)
+tldw_chatbook/DB/ChaChaNotes_DB.py	5511	_migrate_from_v21_to_v22 :: PRAGMA table_info(world_book_entries)
+tldw_chatbook/DB/ChaChaNotes_DB.py	5594	_migrate_from_v23_to_v24 :: PRAGMA table_info(conversations)
+tldw_chatbook/DB/ChaChaNotes_DB.py	5679	_migrate_from_v25_to_v26 :: PRAGMA table_info(conversations)
+tldw_chatbook/DB/ChaChaNotes_DB.py	5945	_migrate_from_v29_to_v30 :: PRAGMA table_info(messages)
+tldw_chatbook/DB/ChaChaNotes_DB.py	6022	_migrate_from_v30_to_v31 :: PRAGMA table_info(messages)
+tldw_chatbook/DB/ChaChaNotes_DB.py	6442	_migrate_from_v41_to_v42 :: PRAGMA table_info(conversations)
+tldw_chatbook/DB/ChaChaNotes_DB.py	6461	_migrate_from_v41_to_v42 (fstring) :: PRAGMA table_info(conversations)
+tldw_chatbook/DB/ChaChaNotes_DB.py	6581	_migrate_from_v42_to_v43 (fstring) :: PRAGMA table_info(research_quick_note_owner_proofs)
+tldw_chatbook/DB/ChaChaNotes_DB.py	6599	_migrate_from_v42_to_v43 (fstring) :: PRAGMA foreign_key_list(research_quick_note_owner_proofs)
+tldw_chatbook/DB/ChaChaNotes_DB.py	7514	_migrate_from_v53_to_v54 :: PRAGMA table_info(conversations)
+tldw_chatbook/DB/ChaChaNotes_DB.py	7552	_migrate_from_v54_to_v55 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	7661	_migrate_from_v57_to_v58 (fstring) :: SELECT id FROM WHERE sync_id IS NULL ORDER BY id
+tldw_chatbook/DB/ChaChaNotes_DB.py	7679	_migrate_from_v57_to_v58 (fstring) :: SELECT id FROM WHERE sync_id IS NULL ORDER BY id
+tldw_chatbook/DB/ChaChaNotes_DB.py	7717	_migrate_from_v58_to_v59 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	7754	_migrate_from_v59_to_v60 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	7791	_migrate_from_v60_to_v61 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	7864	_migrate_from_v62_to_v63 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	7974	_migrate_from_v65_to_v66 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	8041	_require_canvas_migration_predecessor_schema (fstring) :: SELECT name FROM sqlite_master WHERE name IN ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	8066	_migrate_from_v66_to_v67 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	8106	_migrate_from_v67_to_v68 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	8141	_migrate_from_v69_to_v70 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	8182	_migrate_from_v68_to_v69 :: PRAGMA foreign_key_check
+tldw_chatbook/DB/ChaChaNotes_DB.py	8640	_repair_missing_notes_organization_sync_ids (fstring) :: SELECT id FROM WHERE sync_id IS NULL ORDER BY id
+tldw_chatbook/DB/ChaChaNotes_DB.py	9325	list_character_expression_states :: SELECT state_id FROM character_expression_images WHERE character_id = ? AND deleted = 0 OR
+tldw_chatbook/DB/ChaChaNotes_DB.py	11058	get_conversation_archive_states (fstring) :: SELECT id, archived FROM conversations WHERE deleted = 0 AND id IN ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	12252	get_message_images_by_ids (fstring) :: SELECT id, image_data, image_mime_type FROM messages WHERE id IN () AND image_data IS NOT 
+tldw_chatbook/DB/ChaChaNotes_DB.py	14328	get_attachments_for_messages (fstring) :: SELECT message_id, position, data, mime_type, display_name FROM message_attachments WHERE 
+tldw_chatbook/DB/ChaChaNotes_DB.py	14416	get_generation_metadata_for_messages (fstring) :: SELECT message_id, position, prompt, negative_prompt, backend, model, seed, style, params_
+tldw_chatbook/DB/ChaChaNotes_DB.py	15153	_update_message_uncoordinated (fstring) :: WITH RECURSIVE descendants(id) AS ( SELECT id FROM messages WHERE parent_message_id = ? AN
+tldw_chatbook/DB/ChaChaNotes_DB.py	15467	get_message_exchanges :: SELECT run_tag, seq, status, abandoned, capture_detail, capture_blob, created_at FROM mess
+tldw_chatbook/DB/ChaChaNotes_DB.py	15495	list_full_exchange_keys_for_conversation :: SELECT exchange.message_id, exchange.run_tag, exchange.seq FROM message_exchanges AS excha
+tldw_chatbook/DB/ChaChaNotes_DB.py	15778	get_trajectory_rows :: SELECT message_id, conversation_id, turn_id, seq, event_kind, step_started_at, first_token
+tldw_chatbook/DB/ChaChaNotes_DB.py	15924	soft_delete_message_subtree :: WITH RECURSIVE subtree(id) AS ( SELECT id FROM messages WHERE id = ? AND conversation_id =
+tldw_chatbook/DB/ChaChaNotes_DB.py	16049	_capture_chat_delete_base_hashes (fstring) :: SELECT id, role, content, provider_continuation_json, thinking_blocks_json, assistant_gene
+tldw_chatbook/DB/ChaChaNotes_DB.py	16104	get_message_tombstones (fstring) :: SELECT id, conversation_id, version FROM messages WHERE deleted = 1 AND id IN ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	17647	get_note_version_states (fstring) :: SELECT id, version, deleted FROM notes WHERE id IN ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	17734	list_deleted_notes :: SELECT COUNT(*) AS cnt FROM notes WHERE deleted = 1
+tldw_chatbook/DB/ChaChaNotes_DB.py	17905	_library_organization_for_notes (fstring) :: SELECT nk.note_id, k.sync_id, k.keyword FROM note_keywords AS nk JOIN keywords AS k ON k.i
+tldw_chatbook/DB/ChaChaNotes_DB.py	17916	_library_organization_for_notes (fstring) :: WITH effective AS ( SELECT DISTINCT m.note_id, f.id, f.sync_id, f.name, f.path FROM note_f
+tldw_chatbook/DB/ChaChaNotes_DB.py	17977	_library_organization_for_notes (fstring) :: SELECT note_id, state FROM note_organization_receipts WHERE note_id IN ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	18000	_library_organization_for_notes (fstring) :: SELECT note_id, state FROM note_organization_receipts WHERE note_id IN ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	18039	_library_organization_for_notes (fstring) :: SELECT note_id, state FROM note_organization_receipts WHERE note_id IN ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	18162	list_library_notes_page :: SELECT COUNT(*) AS count FROM notes WHERE deleted = 0
+tldw_chatbook/DB/ChaChaNotes_DB.py	18332	search_library_notes_page (fstring) :: SELECT COUNT(*) AS count FROM notes WHERE deleted = 0 AND ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	18567	list_library_conversations_page (fstring) :: SELECT COUNT(*) AS count FROM conversations WHERE deleted = 0 AND
+tldw_chatbook/DB/ChaChaNotes_DB.py	18673	search_library_conversations_page (fstring) :: SELECT COUNT(*) AS count FROM conversations WHERE deleted = 0 AND AND ()
+tldw_chatbook/DB/ChaChaNotes_DB.py	18841	get_library_conversation_messages :: SELECT COUNT(*) AS count FROM messages WHERE conversation_id = ? AND deleted = 0
+tldw_chatbook/DB/ChaChaNotes_DB.py	18938	list_latest_dispatchable_note_sync_entries (fstring) :: SELECT intent_id, note_id AS entity_id, operation, entity_version AS version, payload_json
+tldw_chatbook/DB/ChaChaNotes_DB.py	19230	soft_delete_note (fstring) :: SELECT * FROM note_organization_receipts WHERE note_id = ?
+tldw_chatbook/DB/ChaChaNotes_DB.py	19597	replace_keywords_for_conversation :: SELECT keyword_id FROM conversation_keywords WHERE conversation_id = ?
+tldw_chatbook/DB/ChaChaNotes_DB.py	20102	_previous_committed_chat_payload_hash :: SELECT operation, payload FROM sync_log WHERE entity = 'messages' AND entity_id = ? AND ve
+tldw_chatbook/DB/ChaChaNotes_DB.py	21998	list_flashcard_templates :: SELECT COUNT(*) AS total FROM flashcard_templates WHERE deleted = 0
+tldw_chatbook/DB/ChaChaNotes_DB.py	23924	kept_script_counts (fstring) :: SELECT kept_briefing_id, COUNT(*) AS cnt FROM kept_scripts WHERE kept_briefing_id IN () GR
+tldw_chatbook/DB/ChaChaNotes_DB.py	23948	kept_script_source_ids :: SELECT source_script_id FROM kept_scripts WHERE kept_briefing_id = ? AND source_script_id 
+tldw_chatbook/DB/Chunking_Lab_DB.py	608	_collect :: SELECT document FROM lab_checkpoints WHERE id=?
+tldw_chatbook/DB/Chunking_Lab_DB.py	615	_collect :: SELECT document FROM lab_checkpoints WHERE id=?
+tldw_chatbook/DB/Client_Media_DB_v2.py	1463	_apply_schema_v1 :: PRAGMA table_info(Media)
+tldw_chatbook/DB/Client_Media_DB_v2.py	1929	_apply_migration_v6_to_v7 :: SELECT name, description, template_json, is_system, created_at, updated_at FROM ChunkingTe
+tldw_chatbook/DB/Client_Media_DB_v2.py	2064	_assert_no_foreign_keys_reference :: SELECT name FROM sqlite_master WHERE type = 'table'
+tldw_chatbook/DB/Client_Media_DB_v2.py	4007	soft_delete_media :: SELECT mk.id, k.uuid AS keyword_uuid FROM MediaKeywords mk JOIN Keywords k ON mk.keyword_i
+tldw_chatbook/DB/Client_Media_DB_v2.py	4051	soft_delete_media (fstring) :: SELECT id, AS uuid, version FROM WHERE = ? AND deleted = 0
+tldw_chatbook/DB/Client_Media_DB_v2.py	4286	undelete_media (fstring) :: SELECT id, AS uuid, version FROM WHERE = ? AND deleted = 1
+tldw_chatbook/DB/Client_Media_DB_v2.py	4373	hard_delete_old_media :: SELECT id, uuid, title, type FROM Media WHERE deleted = 1 AND last_modified < ? ORDER BY l
+tldw_chatbook/DB/Client_Media_DB_v2.py	4468	get_deletion_candidates :: SELECT id, uuid, title, type, last_modified FROM Media WHERE deleted = 1 AND last_modified
+tldw_chatbook/DB/Client_Media_DB_v2.py	5549	update_keywords_for_media :: SELECT mk.keyword_id, k.uuid AS keyword_uuid FROM MediaKeywords mk JOIN Keywords k ON k.id
+tldw_chatbook/DB/Client_Media_DB_v2.py	5953	soft_delete_keyword :: SELECT mk.media_id, m.uuid AS media_uuid FROM MediaKeywords mk JOIN Media m ON mk.media_id
+tldw_chatbook/DB/Client_Media_DB_v2.py	6175	merge_keywords (fstring) :: SELECT DISTINCT mk.media_id FROM MediaKeywords mk JOIN Keywords k ON mk.keyword_id = k.id 
+tldw_chatbook/DB/Client_Media_DB_v2.py	7045	fetch_all_keywords :: SELECT keyword FROM Keywords WHERE deleted = 0 ORDER BY keyword COLLATE NOCASE
+tldw_chatbook/DB/Client_Media_DB_v2.py	8704	list_library_media_page :: SELECT COUNT(*) AS count FROM Media WHERE deleted = 0 AND is_trash = 0
+tldw_chatbook/DB/Client_Media_DB_v2.py	8774	list_library_media_trash_page (fstring) :: SELECT COUNT(*) AS count FROM Media WHERE
+tldw_chatbook/DB/Client_Media_DB_v2.py	8788	list_library_media_trash_page (fstring) :: SELECT COUNT(*) AS count FROM Media WHERE
+tldw_chatbook/DB/Client_Media_DB_v2.py	8903	search_library_media_page (fstring) :: SELECT COUNT(*) AS count FROM Media WHERE deleted = 0 AND is_trash = 0 AND ()
+tldw_chatbook/DB/Client_Media_DB_v2.py	9267	empty_trash :: SELECT id, title FROM Media WHERE is_trash = 1 AND deleted = 0 AND trash_date <= ?
+tldw_chatbook/DB/Client_Media_DB_v2.py	10093	get_all_content_from_database :: SELECT id, uuid, content, title, author, type, url, ingestion_date, last_modified FROM Med
+tldw_chatbook/DB/Evals_DB.py	973	delete_task :: SELECT DISTINCT run_group_id FROM eval_runs WHERE task_id = ? AND run_group_id IS NOT NULL
+tldw_chatbook/DB/Evals_DB.py	1979	run_group_cell_failure_counts :: SELECT r.run_group_id AS group_id, COUNT(*) AS total_cells, SUM( CASE WHEN json_extract(re
+tldw_chatbook/DB/Evals_DB.py	2055	get_run_metrics :: SELECT metric_name, metric_value, metric_type FROM eval_run_metrics WHERE run_id = ?
+tldw_chatbook/DB/Evals_DB.py	2139	list_probe_turn_annotations :: SELECT * FROM eval_probe_turn_annotations WHERE run_group_id = ?
+tldw_chatbook/DB/Evals_DB.py	2200	list_probe_review_state :: SELECT * FROM eval_probe_review_state WHERE run_group_id = ?
+tldw_chatbook/DB/Evals_DB.py	2224	compare_runs (fstring) :: SELECT r.id, r.name, m.metric_name, m.metric_value, m.metric_type FROM eval_runs r JOIN ev
+tldw_chatbook/DB/Library_Ingest_Jobs_DB.py	477	all_jobs :: SELECT * FROM ingest_jobs ORDER BY seq ASC
+tldw_chatbook/DB/Prompts_DB.py	755	_apply_schema_v1 :: PRAGMA table_info(Prompts)
+tldw_chatbook/DB/Prompts_DB.py	816	_apply_migration_v1_to_v2 :: PRAGMA table_info(Prompts)
+tldw_chatbook/DB/Prompts_DB.py	1177	_finalize_prompt_sync_snapshot :: SELECT k.keyword FROM PromptKeywordsTable AS k JOIN PromptKeywordLinks AS link ON link.key
+tldw_chatbook/DB/Prompts_DB.py	1792	update_keywords_for_prompt :: SELECT pkl.keyword_id, pkw.keyword, pkw.uuid as keyword_uuid FROM PromptKeywordLinks pkl J
+tldw_chatbook/DB/Prompts_DB.py	2182	_active_prompt_keyword_rows :: SELECT pkw.id, pkw.keyword, pkw.uuid AS keyword_uuid FROM PromptKeywordLinks AS pkl JOIN P
+tldw_chatbook/DB/Prompts_DB.py	2830	soft_delete_keyword :: SELECT p.uuid AS prompt_uuid FROM PromptKeywordLinks pkl JOIN Prompts p ON pkl.prompt_id =
+tldw_chatbook/DB/Prompts_DB.py	2884	get_all_active_prompt_ids :: SELECT id FROM Prompts WHERE deleted = 0 ORDER BY id
+tldw_chatbook/DB/Prompts_DB.py	2924	fetch_prompt_chatbook_snapshot :: SELECT keyword_table.keyword FROM PromptKeywordsTable AS keyword_table JOIN PromptKeywordL
+tldw_chatbook/DB/Prompts_DB.py	3300	browse_prompts (fstring) :: SELECT COUNT(*) FROM Prompts AS p WHERE
+tldw_chatbook/DB/Prompts_DB.py	3453	list_library_prompts_page (fstring) :: SELECT COUNT(*) AS count FROM Prompts WHERE deleted = 0
+tldw_chatbook/DB/Prompts_DB.py	3546	search_library_prompts_page (fstring) :: SELECT COUNT(*) AS count FROM Prompts WHERE deleted = 0 AND ()
+tldw_chatbook/DB/Prompts_DB.py	3884	search_prompts :: SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?
+tldw_chatbook/DB/Prompts_DB.py	3901	search_prompts :: SELECT rowid FROM prompt_keywords_fts WHERE prompt_keywords_fts MATCH ?
+tldw_chatbook/DB/Prompts_DB.py	3912	search_prompts (fstring) :: SELECT DISTINCT prompt_id FROM PromptKeywordLinks WHERE keyword_id IN ()
+tldw_chatbook/DB/Prompts_DB.py	4227	restore_prompt_history_entry :: SELECT keyword FROM PromptKeywordsTable AS keyword_table JOIN PromptKeywordLinks AS link O
+tldw_chatbook/DB/Prompts_DB.py	4523	search_prompts_by_text :: SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?
+tldw_chatbook/DB/Subscriptions_DB.py	1046	_migrate_from_v1_to_v2 (fstring) :: SELECT bi.briefing_id, bi.item_id, bi.featured, i.id AS live_item_id, i.title AS item_titl
+tldw_chatbook/DB/Subscriptions_DB.py	1801	get_watchlist_item_counts :: SELECT w.id AS bucket, SUM(CASE WHEN si.id IS NOT NULL THEN 1 ELSE 0 END) AS total, SUM(CA
+tldw_chatbook/DB/Subscriptions_DB.py	1846	get_source_item_counts :: SELECT subscription_id, COUNT(id) AS total, SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END
+tldw_chatbook/DB/Subscriptions_DB.py	3417	get_reader_items_page (fstring) :: SELECT COUNT(*) FROM subscription_items i JOIN subscriptions s ON i.subscription_id = s.id
+tldw_chatbook/DB/Subscriptions_DB.py	3706	resolve_source_candidates (fstring) :: SELECT FROM subscriptions WHERE id = ?
+tldw_chatbook/DB/Subscriptions_DB.py	3762	resolve_collection_candidates :: SELECT id, name FROM watchlists WHERE id = ?
+tldw_chatbook/DB/Subscriptions_DB.py	3818	get_source_collection_memberships (fstring) :: WITH ranked_memberships AS ( SELECT ws.subscription_id, w.id, w.name, ROW_NUMBER() OVER ( 
+tldw_chatbook/DB/Subscriptions_DB.py	4692	mark_all_read (fstring) :: UPDATE subscription_items SET status = 'reviewed' WHERE RETURNING id
+tldw_chatbook/DB/Subscriptions_DB.py	5230	list_briefings :: SELECT * FROM briefings WHERE watchlist_id = ? ORDER BY created_at DESC, id DESC
+tldw_chatbook/DB/Subscriptions_DB.py	5308	list_briefing_schedules :: SELECT w.id AS watchlist_id, w.name AS name, w.briefing_cadence_seconds AS briefing_cadenc
+tldw_chatbook/DB/Subscriptions_DB.py	6077	get_subscription_items_by_ids (fstring) :: SELECT * FROM subscription_items WHERE id IN ()
+tldw_chatbook/DB/Subscriptions_DB.py	6102	find_duplicate_items :: SELECT * FROM subscription_items WHERE (canonical_url = ? OR content_hash = ?) AND status 
+tldw_chatbook/DB/Subscriptions_DB.py	6243	get_failing_subscriptions :: SELECT * FROM subscriptions WHERE consecutive_failures >= ? OR (error_count > 0 AND last_s
+tldw_chatbook/DB/Subscriptions_DB.py	6566	get_subscription_count (fstring) :: SELECT type, COUNT(*) as count FROM subscriptions GROUP BY type
+tldw_chatbook/DB/VisualIdentity_DB.py	47	find_pack_by_source_id :: SELECT * FROM visual_identity_packs WHERE owner_user_id = ? AND source_kind = ? AND (? = 1
+tldw_chatbook/DB/VisualIdentity_DB.py	165	list_version_assets :: SELECT * FROM visual_identity_assets WHERE pack_version_id = ? AND owner_user_id = ? AND d
+tldw_chatbook/DB/Workspace_DB.py	608	_initialize_schema :: PRAGMA table_info(research_quick_note_receipts)
+tldw_chatbook/DB/Workspace_DB.py	616	_initialize_schema :: PRAGMA table_info(research_quick_note_receipts)
+tldw_chatbook/DB/Workspace_DB.py	643	_initialize_schema :: PRAGMA table_info(research_quick_note_receipts)
+tldw_chatbook/DB/automatic_work.py	468	admit_call :: SELECT * FROM automatic_work_reservations WHERE id IN (?, ?)
+tldw_chatbook/DB/character_conversation_search.py	102	_project :: SELECT id, parent_message_id, role, content, deleted, variant_of, is_selected_variant, tim
+tldw_chatbook/DB/character_conversation_search.py	409	page_for_character (fstring) :: SELECT COUNT(*) FROM conversations AS c JOIN character_cards AS card ON card.id = c.charac
+tldw_chatbook/DB/character_conversation_search.py	702	repair_candidates :: SELECT COUNT(*) FROM character_cards WHERE deleted = 0
+tldw_chatbook/DB/character_conversation_search.py	1479	_resolved_group (fstring) :: SELECT COUNT(*) FROM conversations AS c WHERE c.deleted = 0 AND c.runtime_backend = 'local
+tldw_chatbook/DB/private_sqlite.py	3694	_connection_main_database :: PRAGMA database_list
+tldw_chatbook/DB/recovery_core.py	270	validate (fstring) :: PRAGMA quick_check
+tldw_chatbook/DB/recovery_sqlite.py	54	_validate_sqlite (fstring) :: PRAGMA quick_check
+tldw_chatbook/UI/Screens/library_screen.py	30945	_review_set_live_ids (fstring) :: SELECT id FROM Media WHERE id IN () AND deleted = 0 AND is_trash = 0
+tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py	517	list_pets :: SELECT pet_id FROM tamagotchis ORDER BY updated_at DESC

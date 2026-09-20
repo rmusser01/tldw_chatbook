@@ -1,0 +1,82 @@
+{
+  "pid": 60872,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "cancel_visible": true,
+      "cleanup_retained_admission": true,
+      "repeat_cancel_did_not_interrupt": true,
+      "cancellation_persisted_after_settlement": true,
+      "retry_admitted_after_settlement": true,
+      "retry_error_persisted": "Fixture connection failed; retry is available."
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "3b78c8c96e2a1b30bb599a7928cf21eef53a452cb305ddb08f003ac2e4079da7",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "a6a695e13d1ada9ac000ee99075099c837eae7c0400f68ec469143020a574d96",
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "2418773e8a5c0baccc86514b90beb76db569ec23a1748f0ba2e2413a119bb107",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "671f887d71a3f96ecacfd2df5e1b6b62ca5b584dd49b3683f720f67d939dd0df",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917"
+  },
+  "runner_sha256": "6b0794e22cf3506277f4b130df72287102311333aa04e2310d06555559b1ea8f",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "network_attempts": [],
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

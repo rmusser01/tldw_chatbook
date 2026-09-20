@@ -9,7 +9,7 @@ from functools import partial
 from typing import Literal
 
 from rich.cells import cell_len, split_graphemes
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.await_complete import AwaitComplete
@@ -2870,10 +2870,15 @@ class LibraryFileNotesGitPanel(Vertical):
         generation: int,
         notes: tuple[CommitReviewNoteProjection, ...],
     ) -> None:
-        list_view = self.query_one(
-            "#file-notes-git-commit-included-notes",
-            ListView,
-        )
+        # TASK-32800.5: this is a worker body, so the panel may already be
+        # detached by the time it runs; `exit_on_error` defaults to True, so an
+        # unguarded lookup here exits the whole app rather than abandoning a
+        # stale render. The generation checks below already treat "too late" as
+        # a no-op -- a missing subtree is the same situation.
+        found = self.query("#file-notes-git-commit-included-notes")
+        if not found:
+            return
+        list_view = found.first(ListView)
         await list_view.clear()
         if generation != self._commit_note_render_generation:
             return
@@ -3250,7 +3255,14 @@ class LibraryFileNotesGitPanel(Vertical):
         group_id: int | None,
         rows: tuple[SessionGitRow, ...],
     ) -> None:
-        list_view = self.query_one("#file-notes-git-rows", ListView)
+        # TASK-32800.5: the lookup sat OUTSIDE the try below, so the one
+        # statement that can raise when the panel is detached was the one
+        # statement not covered. Worker body + exit_on_error=True means that is
+        # an app exit, not a dropped render.
+        found = self.query("#file-notes-git-rows")
+        if not found:
+            return
+        list_view = found.first(ListView)
         try:
             await list_view.clear()
             if generation != self._row_render_generation:

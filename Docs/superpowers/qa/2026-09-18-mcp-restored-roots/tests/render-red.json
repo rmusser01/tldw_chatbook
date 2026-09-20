@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[tool]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[finding]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[sync_lock]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[overview]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[detail]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[readiness]",
+      "status": "failure"
+    }
+  ]
+}

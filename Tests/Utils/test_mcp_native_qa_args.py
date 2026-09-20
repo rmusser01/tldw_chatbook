@@ -11,6 +11,12 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 RUNNERS = [
+    REPO / "Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/native_check.py",
+    REPO / "Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/native_check.py",
+    REPO / "Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py",
+    REPO / "Docs/superpowers/qa/2026-09-19-mcp-recovery-catalog/native_check.py",
+    REPO / "Docs/superpowers/qa/2026-09-18-mcp-restored-roots/native_check.py",
+    REPO / "Docs/superpowers/qa/2026-09-19-mcp-tools-header/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/modal_check.py",
     REPO / "Docs/superpowers/qa/2026-09-18-mcp-audit-catalog-freshness/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-18-mcp-audit-navigation/native_check.py",
@@ -24,6 +30,12 @@ RUNNERS = [
     "runner",
     RUNNERS,
     ids=[
+        "lifecycle-cancellation",
+        "inspector-refresh",
+        "approval-actions",
+        "recovery-catalog",
+        "restored-roots",
+        "tools-header",
         "modal-selector",
         "catalog-freshness",
         "audit-navigation",
