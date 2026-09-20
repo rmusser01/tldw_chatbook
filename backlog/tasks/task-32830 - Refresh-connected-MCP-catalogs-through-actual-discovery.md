@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 02:02'
-updated_date: '2026-09-20 22:10'
+updated_date: '2026-09-20 22:19'
 labels:
   - mcp
   - ui
@@ -35,6 +35,8 @@ Refresh tools must discover the current server catalog instead of reporting succ
 ADR required: no. ADR path: N/A; existing ADR-111 and ADR-161 apply. Reason: restore existing catalog-refresh semantics within current service, transport and permission boundaries. Resume existing PR2714 from merged PR2713 dev 5e0f9f82c3. 1. Re-run saved real-stdio regressions before integrating the service patch. 2. Integrate the minimal service repair while preserving current boundaries. 3. Modernize and validate the native evidence runner; run focused neighbors and fresh four-cell native qualification. 4. Complete independent review and update the existing PR with a current visual gallery. Owner visual approval and current-head CI/review remain merge gates.
 
 Qodo follow-up: verify the reported cleanup interleaving against real client scheduling, pin any ownership issue with a focused regression, validate fixture state/trace paths beneath an explicit trusted root with malicious-path coverage, document both public methods, and add isolated service branch tests alongside existing wire tests. Re-run affected checks and native evidence for changes, preserve the approved UI, then answer all review threads and complete current-head CI/latest-dev merge gates. Existing ADR-111/161 apply; no new architecture or ADR.
+
+Qodo second pass: pin canonical profile-ID handling and failed temporary cleanup with targeted regressions, then normalize ownership keys and surface incomplete cleanup through the existing failure path. Add bounded malformed-input handling to the test fixture and document the shared policy helper. Re-run affected checks and fresh native qualification before updating the same PR. No new public API/ADR; existing connection-state and cleanup acceptance criteria apply.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

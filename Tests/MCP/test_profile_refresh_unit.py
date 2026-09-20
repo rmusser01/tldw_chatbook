@@ -1,5 +1,6 @@
 """Isolated service decisions complement the real stdio refresh journeys."""
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -104,3 +105,47 @@ async def test_refresh_unit_failure_cleans_only_the_established_session(
         assert client.sessions["profile-a"] is other
     else:
         assert "profile-a" not in client.sessions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["false", "exception", "cancelled"])
+async def test_refresh_unit_does_not_report_success_with_retained_temporary_session(
+    service_parts: tuple, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Failed temporary cleanup is visible; cancellation keeps its precedence."""
+    service, client, store, _policy = service_parts
+
+    async def fail_disconnect(profile_id: str) -> bool:
+        if failure == "exception":
+            raise OSError("process cleanup unavailable")
+        if failure == "cancelled":
+            raise asyncio.CancelledError
+        return False
+
+    monkeypatch.setattr(client, "disconnect_from_server", fail_disconnect)
+    expected = asyncio.CancelledError if failure == "cancelled" else RuntimeError
+    with pytest.raises(expected):
+        await service.refresh_external_profile("profile-a")
+    assert "profile-a" in client.sessions
+    assert store.get_discovery_snapshot("profile-a")["tools"] == [
+        {"name": "remote_tool"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_refresh_unit_cleanup_postcondition_allows_a_replacement_owner(
+    service_parts: tuple, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer owner must not be mistaken for failed temporary-session cleanup."""
+    service, client, _store, _policy = service_parts
+    replacement = object()
+
+    async def replace_during_disconnect(profile_id: str) -> bool:
+        client.sessions[profile_id] = replacement
+        return False
+
+    monkeypatch.setattr(client, "disconnect_from_server", replace_during_disconnect)
+    assert (await service.refresh_external_profile("profile-a"))["tools"] == [
+        {"name": "remote_tool"}
+    ]
+    assert client.sessions["profile-a"] is replacement

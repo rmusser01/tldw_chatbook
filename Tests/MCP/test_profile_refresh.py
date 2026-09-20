@@ -17,6 +17,9 @@ from Tests.private_profile import private_profile_test
 from tldw_chatbook.MCP.client import MCPClient
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    UnifiedMCPControlPlaneService,
+)
 
 
 class RefreshPolicy:
@@ -27,7 +30,16 @@ class RefreshPolicy:
         self.actions: list[str] = []
 
     def require_allowed(self, *, action_id: str, runtime_state_override: Any) -> None:
-        """Apply the fixture policy at the real service boundary."""
+        """Apply the fixture policy at the real service boundary.
+
+        Args:
+            action_id: Service action to record and compare with the denial.
+            runtime_state_override: Production local-source state supplied by
+                the service; this focused policy does not inspect its fields.
+
+        Raises:
+            PermissionError: The requested action matches the selected denial.
+        """
         self.actions.append(action_id)
         if action_id == self.denied:
             raise PermissionError(action_id)
@@ -170,6 +182,73 @@ async def test_disconnected_refresh_cleans_up_if_saving_catalog_fails(
         assert not client.sessions
         assert not client._pending_connections
         assert not client._connect_reservations
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("connected", [True, False])
+@private_profile_test
+async def test_padded_profile_id_restores_canonical_connection_state(
+    request: pytest.FixtureRequest, tmp_path: Path, connected: bool
+) -> None:
+    """Accepted padded IDs must use the canonical session for state restoration."""
+    async with profile(tmp_path) as (service, client, store, _policy, _state, _trace):
+        if connected:
+            await service.connect_profile("catalog")
+        assert_catalog(await service.refresh_external_profile(" catalog "), "original")
+        assert ("catalog" in client.sessions) is connected
+        assert_catalog(store.get_discovery_snapshot("catalog"), "original")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_padded_profile_id_cleans_owned_session_on_save_failure(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A save failure after canonical connection must reap the owned subprocess."""
+    async with profile(tmp_path) as (service, client, store, _policy, _state, _trace):
+        process = None
+
+        def fail_save(*args: Any) -> None:
+            nonlocal process
+            process = client.sessions["catalog"].process
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(store, "save_discovery_snapshot", fail_save)
+        with pytest.raises(OSError, match="disk unavailable"):
+            await service.connect_profile(" catalog ")
+        assert process is not None and process.returncode is not None
+        assert not client.sessions
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_real_client_cleanup_failure_is_reported_and_can_retry_disconnect(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real live process retained by failed client teardown cannot report success."""
+    async with profile(tmp_path) as (service, client, store, _policy, _state, _trace):
+        control_plane = UnifiedMCPControlPlaneService(
+            target_store=None,
+            context_store=None,
+            local_service=service,
+            server_service=None,
+        )
+
+        async def fail_close(*args: Any, **kwargs: Any) -> None:
+            raise OSError("fixture cleanup unavailable")
+
+        with monkeypatch.context() as failure:
+            failure.setattr(client, "_teardown_connection", fail_close)
+            with pytest.raises(RuntimeError, match="disconnect"):
+                await control_plane.refresh_local_profile("catalog")
+            process = client.sessions["catalog"].process
+            assert process.returncode is None
+            assert_catalog(store.get_discovery_snapshot("catalog"), "original")
+            outcome = store.get_profile_runtime_state("catalog")
+            assert outcome["ok"] is False and outcome["last_action"] == "refresh"
+        assert await service.disconnect_profile("catalog")
+        assert process.returncode is not None
+        assert not client.sessions
 
 
 @pytest.mark.asyncio

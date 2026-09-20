@@ -306,6 +306,7 @@ class LocalMCPControlService:
         profile = self.store.get_profile(profile_id)
         if profile is None:
             raise KeyError(f"Unknown profile_id: {profile_id}")
+        profile_id = profile.profile_id
 
         client = self._get_client()
         resolved_env = self._build_spawn_env(profile)
@@ -405,6 +406,8 @@ class LocalMCPControlService:
         Observe and launch denials leave the existing connection untouched.
         A failed reconnect may leave the profile disconnected; the last saved
         catalog remains available when discovery fails before saving.
+        Failed temporary cleanup reports an error with the fresh catalog already
+        saved, retaining the owned session so disconnection can be retried.
 
         Args:
             profile_id: ID of the stored local stdio profile.
@@ -415,11 +418,14 @@ class LocalMCPControlService:
         Raises:
             PermissionError: Local observe or launch permission is denied.
             KeyError: The profile is unknown.
-            RuntimeError: Spawn environment resolution, connection or usable
-                capability discovery fails.
+            RuntimeError: Spawn environment resolution, connection, usable
+                capability discovery or temporary-session cleanup fails.
             OSError: Snapshot persistence fails.
         """
         self._require_allowed("mcp.external_profiles.observe.local")
+        profile = self.store.get_profile(profile_id)
+        if profile is not None:
+            profile_id = profile.profile_id
         client = self._get_client()
         was_connected = profile_id in getattr(client, "sessions", {})
         # describe_server reads cached discovery; reconnect to refresh it.
@@ -429,7 +435,15 @@ class LocalMCPControlService:
             # not yield after session publication. Disconnect captures that
             # session's identity before its first suspension, so subsequent
             # replacement sessions are not owned by this temporary cleanup.
+            session = getattr(client, "sessions", {}).get(profile_id)
             await self._disconnect_best_effort(client, profile_id)
+            if (
+                session is not None
+                and getattr(client, "sessions", {}).get(profile_id) is session
+            ):
+                raise RuntimeError(
+                    f"Failed to disconnect temporary profile session: {profile_id}"
+                )
         return snapshot
 
     def delete_external_profile(self, profile_id: str) -> bool:

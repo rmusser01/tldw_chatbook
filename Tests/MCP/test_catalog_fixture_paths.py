@@ -80,3 +80,46 @@ def test_fixture_serves_valid_paths_beneath_owned_root(
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["result"]["tools"][0]["name"] == "inside_tool"
     assert json.loads(trace.read_text())["method"] == "tools/list"
+
+
+@pytest.mark.parametrize(
+    ("invalid", "code"),
+    [
+        ("{", -32700),
+        ("[]", -32600),
+        ('{"jsonrpc":"2.0","id":1}', -32600),
+        ('{"jsonrpc":"2.0","id":1,"method":"initialize"}', -32602),
+        (
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":7}}',
+            -32602,
+        ),
+    ],
+)
+def test_fixture_rejects_malformed_request_and_serves_next_request(
+    tmp_path: Path, invalid: str, code: int
+) -> None:
+    """Malformed wire data gets a bounded protocol error without killing the fixture."""
+    state = tmp_path / "state.json"
+    trace = tmp_path / "trace.jsonl"
+    state.write_text('{"version": "inside"}')
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(FIXTURE.resolve()),
+            str(state),
+            str(trace),
+            str(tmp_path.resolve()),
+        ],
+        input=invalid + "\n" + REQUEST,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    errors, discovery = map(json.loads, result.stdout.splitlines())
+    assert errors["error"]["code"] == code
+    assert discovery["result"]["tools"][0]["name"] == "inside_tool"
+    assert [json.loads(line)["method"] for line in trace.read_text().splitlines()] == [
+        "tools/list"
+    ]
