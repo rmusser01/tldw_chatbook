@@ -470,3 +470,64 @@ async def test_server_mode_policy_enforcement_never_typeerrors():
         "rag.admin.list.server",
         "rag.admin.configure.server",
     ]
+
+
+# -- task-32804.12: list_templates' sync SELECT runs off the loop -------------
+
+
+@pytest.mark.asyncio
+async def test_list_templates_runs_off_the_loop_when_backend_is_thread_safe():
+    """The local `SELECT * FROM ChunkingTemplates` must not run on the event
+    loop when the backend declares its media-DB reads thread-safe."""
+    import threading
+
+    main_thread = threading.current_thread().name
+
+    class ThreadSafeLocal(FakeLocalService):
+        def __init__(self):
+            super().__init__(templates=[{"name": "t", "id": 1}])
+            self.ran_on = None
+
+        def diagnostics_are_thread_safe(self):
+            return True
+
+        def list_templates(self, **kwargs):
+            self.ran_on = threading.current_thread().name
+            return list(self.templates)
+
+    local = ThreadSafeLocal()
+    scope = RAGAdminScopeService(local_service=local, server_service=None)
+
+    result = await scope.list_templates(mode="local")
+
+    assert local.ran_on is not None
+    assert local.ran_on != main_thread  # offloaded to a worker thread
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_templates_stays_on_loop_when_backend_not_thread_safe():
+    """A :memory: backend (thread-local connection would open an empty DB on a
+    worker) must keep the read on the calling thread."""
+    import threading
+
+    main_thread = threading.current_thread().name
+
+    class MemoryLocal(FakeLocalService):
+        def __init__(self):
+            super().__init__(templates=[{"name": "t", "id": 1}])
+            self.ran_on = None
+
+        def diagnostics_are_thread_safe(self):
+            return False
+
+        def list_templates(self, **kwargs):
+            self.ran_on = threading.current_thread().name
+            return list(self.templates)
+
+    local = MemoryLocal()
+    scope = RAGAdminScopeService(local_service=local, server_service=None)
+
+    await scope.list_templates(mode="local")
+
+    assert local.ran_on == main_thread  # unsafe backend -> not offloaded
