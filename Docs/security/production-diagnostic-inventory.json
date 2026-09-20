@@ -11540,7 +11540,7 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 610,
+    "owner_files": 612,
     "path_privacy_candidate_calls": 701,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
