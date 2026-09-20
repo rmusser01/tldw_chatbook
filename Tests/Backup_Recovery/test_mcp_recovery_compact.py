@@ -7,6 +7,7 @@ from Tests.Backup_Recovery.test_mcp_recovery_review import _SETUP
 
 _SCRIPT = r"""
 from textual.app import App
+from textual.containers import VerticalScroll
 from textual.widgets import Button
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -62,11 +63,14 @@ async def run():
    await pilot.press('enter')
   else:
    # Opening the review must expose a keyboard scroll target immediately.
+   body=dialog.query_one('#mcp-recovery-review-body',VerticalScroll)
+   assert body.max_scroll_y>0, 'fixture must require scrolling'
    await pilot.press('end');await settle(pilot)
    message=dialog.query_one('.dialog-message')
    assert compact('No server will connect and no tool permission will be granted.') in compact(painted(app.screen.region)), 'keyboard cannot read the end of the review'
    visible_actions()
    await pilot.press('home');await settle(pilot)
+   assert body.scroll_y==0
    assert 'Workspace:' in painted(app.screen.region)
    # Collect each visible message row while advancing with actual keys.
    rows={}
@@ -75,10 +79,11 @@ async def run():
     shown=region.intersection(clip)
     for y in range(shown.y,shown.bottom):
      rows[y-message.region.y]=app.screen._compositor.render_strips()[y].crop(shown.x,shown.right).text
-    before=message.region.y
+    before=body.scroll_y
     await pilot.press('down');await settle(pilot)
     visible_actions()
-    if message.region.y==before:break
+    if body.scroll_y==before:break
+   assert body.scroll_y==body.max_scroll_y, 'keyboard traversal did not reach the bottom'
    from rich.text import Text
    assert compact(Text.from_markup(dialog.message).plain) in compact('\n'.join(rows[i] for i in sorted(rows)))
    await pilot.press('escape')

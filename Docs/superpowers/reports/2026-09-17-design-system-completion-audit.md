@@ -10,9 +10,11 @@ left-aligned complete paths and persistent Cancel/Use fresh MCP defaults actions
 qualify this bounded slice. The catalog test now waits for actual review completion.
 Existing approval ownership and native recovery writes remain unchanged.
 The owner approved the [visual gallery](../qa/2026-09-20-mcp-compact-review/GALLERY.md).
-Current product/style hashes still match the approved native capture. Current-head
-CI, accumulated review and current dev/conflict review remain before merge. Connected-runtime journeys and other unqualified MCP
-controls remain separate; PR2707’s heartbeat stays paused.
+The Qodo follow-up adds a return docstring and clearer scroll-progress assertions;
+product behavior and styles remain identical to the approved native capture.
+All four affected tests pass again. Current-head CI, accumulated review and
+current dev/conflict review remain before merge. Connected-runtime journeys and
+other unqualified MCP controls remain separate; PR2707’s heartbeat stays paused.
 
 ## Current checkpoint — PR2757 merged; compact review next
 

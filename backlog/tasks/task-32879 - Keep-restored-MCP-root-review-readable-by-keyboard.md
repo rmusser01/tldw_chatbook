@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-20 18:22'
-updated_date: '2026-09-20 18:44'
+updated_date: '2026-09-20 18:54'
 labels: []
 dependencies: []
 ---
@@ -38,4 +38,6 @@ Implemented a recovery-specific ConfirmationDialog with a keyboard-scrollable, l
 Saved as draft PR2759 against dev: https://github.com/rmusser01/tldw_chatbook/pull/2759. No merge performed; current-head CI/review and final owner visual approval remain.
 
 Owner visual approval received for head 518143252e and the sixteen-capture gallery. Current native source/style hashes match. origin/dev is unchanged at 62d43190ce, with no rebase or conflict choices needed. Advancing PR2759 to review and current-head CI before the authorized merge.
+
+Addressed both Qodo findings: documented the ComposeResult contract and made keyboard scroll progress/overflow/bottom assertions explicit without weakening complete text checks. Four affected tests pass; Ruff check/format and independent review pass. Product AST excluding docstrings and all styles remain identical to the owner-approved gallery; see qodo-followup.json. Current-head CI/review and merge remain.
 <!-- SECTION:NOTES:END -->
