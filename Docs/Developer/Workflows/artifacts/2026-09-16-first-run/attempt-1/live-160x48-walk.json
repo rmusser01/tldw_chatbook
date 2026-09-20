@@ -1,0 +1,195 @@
+{
+  "phase": "walk",
+  "pid": 61382,
+  "size": [
+    160,
+    48
+  ],
+  "paths": {
+    "config": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/config/config.toml",
+    "get_chachanotes_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/chachanotes_db_path.db",
+    "get_evals_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/evals_db_path.db",
+    "get_library_collections_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/library_collections_db_path.db",
+    "get_library_ingest_jobs_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/library_ingest_jobs_db_path.db",
+    "get_media_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/media_db_path.db",
+    "get_notes_sync_state_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/default_user/tldw_chatbook_notes_sync_state.db",
+    "get_notifications_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/notifications_db_path.db",
+    "get_prompts_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/prompts_db_path.db",
+    "get_rag_indexing_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/rag_indexing_db_path.db",
+    "get_research_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/research_db_path.db",
+    "get_scheduled_tasks_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/scheduled_tasks_db_path.db",
+    "get_subscriptions_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/subscriptions_db_path.db",
+    "get_tts_profiles_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/tts_profiles_db_path.db",
+    "get_workflows_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/workflows_db_path.db",
+    "get_workspaces_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/workspaces_db_path.db",
+    "get_writing_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/writing_db_path.db",
+    "data": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/default_user",
+    "cache": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/cache",
+    "bootstrap_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a",
+    "per_test_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/probes/160x48-walk/test_live_full_app0/test_data",
+    "HOME": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/probes/160x48-walk/test_live_full_app0/test_data/home",
+    "TMPDIR": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/",
+    "PYTHONPATH": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev",
+    "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+    "XDG_CACHE_HOME": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/cache",
+    "HF_HOME": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/cache/huggingface",
+    "TIKTOKEN_CACHE_DIR": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/cache/tiktoken",
+    "USERPROFILE": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/home",
+    "XDG_DATA_HOME": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/probes/160x48-walk/test_live_full_app0/test_data",
+    "XDG_CONFIG_HOME": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/probes/160x48-walk/test_live_full_app0/test_data/config",
+    "permission_store": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/default_user/mcp_permissions.json"
+  },
+  "app_file": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook/app.py",
+  "provider": "llama_cpp",
+  "model": "../../../Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+  "endpoint": "http://localhost:9099",
+  "requests": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:9099/v1/chat/completions"
+    },
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:9099/v1/chat/completions"
+    },
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:9099/v1/chat/completions"
+    }
+  ],
+  "captures": [
+    {
+      "file": "live-160x48-setup-inputs.svg",
+      "sha256": "ca46e55d6f09840926c7fb5208b79333ee563c3614811008dcc5fd7a40e635ea"
+    },
+    {
+      "file": "live-160x48-setup-destinations.svg",
+      "sha256": "d96de15005866c4207e69c8941ba6fc218573818ce89112378c7d99970f675cd"
+    },
+    {
+      "file": "live-160x48-file-ask.svg",
+      "sha256": "3d047391ad7e6b75f28f3cc4e49d85324405eb1fa4beee02cdbd9ef7ce4a19c2"
+    },
+    {
+      "file": "live-160x48-model-ask.svg",
+      "sha256": "1b2cc3a22c6c280c5f9e292f77c4a989ae5204abe3a7701d7c25194045f70185"
+    },
+    {
+      "file": "live-160x48-edited-review.svg",
+      "sha256": "44f8a88672fa27617e64bc1119c0f89740199dff676f88116d9d1ce60bacf1da"
+    },
+    {
+      "file": "live-160x48-offscreen-stay.svg",
+      "sha256": "8ebe6d684a87e7edb83e0c8139acee0737a3ae2c5b6c8b7931cc2de77fe32f81"
+    },
+    {
+      "file": "live-160x48-note-ask.svg",
+      "sha256": "af8f80ad2797b25708a425c19634ca90d0e1f64112c0fa59ff37e2d0b5925285"
+    },
+    {
+      "file": "live-160x48-completed.svg",
+      "sha256": "77a663defaef2da266364c376323b033c07aabeeb22d9b9f2c224865d8894023"
+    },
+    {
+      "file": "live-160x48-open-note.svg",
+      "sha256": "f252009ff3d475d8caefa30172d0ca046b563d32f4f804b04504cc66fa323a66"
+    },
+    {
+      "file": "live-160x48-cancelled.svg",
+      "sha256": "430c1ee7dea354b50a77fc53b432d8e78202afd23d25dc2a86723b90898368cb"
+    },
+    {
+      "file": "live-160x48-rejected.svg",
+      "sha256": "888b9aa01733338b7d782529bf1a90999d9f67b0c1af60868fd7e21c3e5aeebe"
+    },
+    {
+      "file": "live-160x48-quit-loss.svg",
+      "sha256": "5828ccae924555983eb93a680e2c7e884c95ffba08dfad30979ac5e1ddd94110"
+    }
+  ],
+  "versions": {
+    "textual": "8.2.8",
+    "httpx": "0.28.1"
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "evidence_kind": "real TldwCli.run_test driver/compositor; not native PTY",
+  "notes_before": [],
+  "workflow_id": "ba9e62aa-9859-4d42-98dc-26e3b10cdba0",
+  "revision_id": "b42d45fb-dc91-4645-a6d9-a72c589282bd",
+  "approved_note_id": "fd394da4-6f79-4f99-8292-16251b1083aa",
+  "notes_after": [
+    {
+      "id": "fd394da4-6f79-4f99-8292-16251b1083aa",
+      "title": "Reviewed file summary",
+      "content": "Human-edited summary"
+    }
+  ],
+  "result": "passed",
+  "log_scan": {
+    "files": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/default_user/faulthandler.log",
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/default_user/tldw_cli_app.log"
+    ],
+    "unhandled_exception_or_app_stopping": true,
+    "payload_found": false
+  },
+  "config_evidence": {
+    "after_parsed_json_sha256": "f663d1fda5ffe2b381e889189416bd32cd30eeb19b17353fb388f3dc14e9044c",
+    "after_toml_parsed": true,
+    "raw_original_manifest": ".superpowers/sdd/2026-09-16-workflows-first-run/task-6-raw-manifests/attempt-1-live-160x48-walk.json",
+    "before_hash": "not captured in this early walkthrough; effective-path assertions ran before app construction",
+    "relevant_after": {
+      "paths": {
+        "data_dir": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data"
+      },
+      "database": {
+        "chachanotes_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/chachanotes_db_path.db",
+        "prompts_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/prompts_db_path.db",
+        "media_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/media_db_path.db",
+        "research_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/research_db_path.db",
+        "writing_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/writing_db_path.db",
+        "library_collections_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/library_collections_db_path.db",
+        "workspaces_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/workspaces_db_path.db",
+        "evals_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/evals_db_path.db",
+        "rag_indexing_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/rag_indexing_db_path.db",
+        "subscriptions_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/subscriptions_db_path.db",
+        "USER_DB_BASE_DIR": "~/.local/share/tldw_cli/",
+        "check_integrity_on_startup": false,
+        "integrity_check_timeout": 30,
+        "tts_profiles_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/tts_profiles_db_path.db",
+        "workflows_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/workflows_db_path.db",
+        "library_ingest_jobs_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/library_ingest_jobs_db_path.db",
+        "notifications_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/notifications_db_path.db",
+        "scheduled_tasks_db_path": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/data/scheduled_tasks_db_path.db"
+      },
+      "tldw_api": {
+        "base_url": "http://127.0.0.1:1",
+        "auth_token": ""
+      },
+      "model_catalog": {
+        "use_models_dev": false,
+        "auto_refresh_enabled": false,
+        "refresh_consent_recorded": false,
+        "stale_after_hours": 24,
+        "auto_refresh_disabled": [],
+        "write_to_config": []
+      }
+    },
+    "llama_cpp_after": {
+      "api_key_env_var": "LLAMA_CPP_API_KEY",
+      "api_url": "http://localhost:9099",
+      "model": "",
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "top_k": 40,
+      "min_p": 0.05,
+      "max_tokens": 4096,
+      "timeout": 120,
+      "retries": 1,
+      "retry_delay": 2,
+      "streaming": true,
+      "system_prompt": "You are a helpful AI assistant",
+      "credential_source": "none"
+    }
+  }
+}

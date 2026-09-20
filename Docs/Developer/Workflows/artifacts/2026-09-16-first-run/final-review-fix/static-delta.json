@@ -1,0 +1,38 @@
+[
+  {
+    "file": "tldw_chatbook/Notes/Notes_Library.py",
+    "lint_baseline": 115,
+    "lint_current": 115,
+    "introduced_lint": [],
+    "format_baseline": 14,
+    "format_current": 14,
+    "introduced_format": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Screens/workflows_screen.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/UI/test_workflows_run.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  },
+  {
+    "file": "Tests/Workflows/test_local_steps.py",
+    "lint_baseline": 0,
+    "lint_current": 0,
+    "introduced_lint": [],
+    "format_baseline": 0,
+    "format_current": 0,
+    "introduced_format": []
+  }
+]
