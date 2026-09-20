@@ -283,6 +283,12 @@ for destination in SHELL_DESTINATION_ORDER:
         )
 
 
+# ADR-172: preserve both public routes while Library owns browse navigation.
+# The old permanent entry is removed only after the staged parity gate.
+_ROUTE_MAP["artifacts"] = ResolvedShellRoute("library", "library", "artifacts")
+_ROUTE_MAP["chatbooks"] = ResolvedShellRoute("library", "chatbooks", "chatbooks")
+
+
 def get_shell_destination(destination_id: str) -> ShellDestination:
     return _BY_DESTINATION_ID[destination_id]
 

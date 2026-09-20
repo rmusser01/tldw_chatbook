@@ -45,6 +45,7 @@ TAB_MEETINGS = "meetings"
 
 # Library navigation-context contract keys and values.
 LIBRARY_NAV_CONTEXT_MODE = "mode"
+LIBRARY_NAV_CONTEXT_ARTIFACT_CHATBOOK_ID = "artifact_chatbook_id"
 LIBRARY_NAV_CONTEXT_CONVERSATION_ID = "conversation_id"
 LIBRARY_NAV_CONTEXT_NOTE_ID = "note_id"
 LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
