@@ -11,6 +11,8 @@ import sys
 import traceback
 from pathlib import Path
 
+WORKER_TIMEOUT_SECONDS = 8
+
 
 def main() -> None:
     """Run ROOT TMUX_SOCKET SESSION in an existing native tmux session.
@@ -244,7 +246,7 @@ def main() -> None:
                     await focus("#approval-submit")
                     await capture(stem + "-ready-to-submit")
                     await pilot.press("enter")
-                    decisions = await asyncio.wait_for(worker, 8)
+                    decisions = await asyncio.wait_for(worker, WORKER_TIMEOUT_SECONDS)
                     worker = None
                     assert decisions == {
                         "search": "approve_once",
@@ -276,7 +278,7 @@ def main() -> None:
             if worker is not None and not worker.done() and controller is not None:
                 for round_id in tuple(controller._pending_approval_rounds):
                     controller.resolve_pending_approval({}, round_id=round_id)
-                await asyncio.wait_for(worker, 8)
+                await asyncio.wait_for(worker, WORKER_TIMEOUT_SECONDS)
             await tmux("send-keys", "-t", session, "C-q")
 
     app.run(auto_pilot=journey, size=(170, 48))

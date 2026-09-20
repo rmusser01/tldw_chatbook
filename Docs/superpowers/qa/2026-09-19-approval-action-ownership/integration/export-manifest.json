@@ -112,150 +112,10 @@
     "normalization": "trailing whitespace and final newline only"
   },
   {
-    "source": "/private/tmp/2730-preflight-001.log",
-    "target": "preflight.txt",
-    "original_sha256": "fd818086c5df991c918b4bb2c8012698b22f50d92477320f79b749a7a4b76c70",
-    "export_sha256": "fd818086c5df991c918b4bb2c8012698b22f50d92477320f79b749a7a4b76c70",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
     "source": "/private/tmp/2728-closeout-receipt.json",
     "target": "pr2728-closeout.json",
     "original_sha256": "c2de26860a8b96a7d17660542452348349ddb2b31a42d408c2901357e04bcaec",
     "export_sha256": "c2de26860a8b96a7d17660542452348349ddb2b31a42d408c2901357e04bcaec",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-170x48-ready-to-submit.svg",
-    "target": "native/textual-light-170x48-ready-to-submit.svg",
-    "original_sha256": "353eaf2b49e3552921826df53135e42de50b6d2637b6275954f4746ec9211a47",
-    "export_sha256": "90de07a0aee3bfe6ee750be329c0eec99355b3e3679ea4ef7bb178dccbd20c4d",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-120x40-deny-all.txt",
-    "target": "native/textual-light-120x40-deny-all.txt",
-    "original_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
-    "export_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-170x48-ready-to-submit.txt",
-    "target": "native/textual-dark-170x48-ready-to-submit.txt",
-    "original_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
-    "export_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-120x40-deny-all.svg",
-    "target": "native/textual-light-120x40-deny-all.svg",
-    "original_sha256": "5a0f7b016e706f8016f9f1fb5ff190ba33dbcb2704e1967da0ecc97e98576953",
-    "export_sha256": "7153aed567aaa80e8b82c912b393dd8811c30118bfbadada199e7ec83a35a019",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-170x48-ready-to-submit.txt",
-    "target": "native/textual-light-170x48-ready-to-submit.txt",
-    "original_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
-    "export_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-170x48-ready-to-submit.svg",
-    "target": "native/textual-dark-170x48-ready-to-submit.svg",
-    "original_sha256": "eb544c93db254bb9ef238f504ae4845ab7a454a7aff9651f4e1841cfc128c12a",
-    "export_sha256": "d5e49fd2ad6c760b6dfbe89d51e30d2ac3c8577c3022de6268ea7290f51cab7d",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/result.json",
-    "target": "native/result.json",
-    "original_sha256": "870bc269e4d7844534745a1ef8719f6098acea9ffa8d7c1213b7f84b0ddb1eef",
-    "export_sha256": "870bc269e4d7844534745a1ef8719f6098acea9ffa8d7c1213b7f84b0ddb1eef",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-170x48-deny-all.txt",
-    "target": "native/textual-dark-170x48-deny-all.txt",
-    "original_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
-    "export_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-170x48-deny-all.svg",
-    "target": "native/textual-dark-170x48-deny-all.svg",
-    "original_sha256": "088e8a72c4d7715705a810b67c7e3f7c2f119bd43effa670f4e6dca5bc7e9569",
-    "export_sha256": "4b1166140af721374b75903f2404bc1e0af05a6588eb913518163a07d8b59cce",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-120x40-deny-all.svg",
-    "target": "native/textual-dark-120x40-deny-all.svg",
-    "original_sha256": "a2480cbf44bf635f80a30e2289b3ae1a73f191114378a50beff9a8567aaca79c",
-    "export_sha256": "65f232bcf11aafb1d82ef0604687f4613ac9055881d0e56a654017c63b76c63d",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-120x40-deny-all.txt",
-    "target": "native/textual-dark-120x40-deny-all.txt",
-    "original_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
-    "export_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-170x48-deny-all.svg",
-    "target": "native/textual-light-170x48-deny-all.svg",
-    "original_sha256": "01aba509ff4a3a7965552c7462c64b374240eda132b3084fb17dc7cdc69c3daf",
-    "export_sha256": "43d8b6fb2be439000ca07e964e60b43f0bbe1edc2c314643be624f1039b8b483",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-120x40-ready-to-submit.txt",
-    "target": "native/textual-dark-120x40-ready-to-submit.txt",
-    "original_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
-    "export_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-120x40-ready-to-submit.svg",
-    "target": "native/textual-light-120x40-ready-to-submit.svg",
-    "original_sha256": "8b07521d88a82cdd76e7c13aa5098a95436db69e99235f30b5bebb2ae8fd3ecb",
-    "export_sha256": "3c426f3dabe65983991cd25c177d7c3ccdb9d46d47b70f8c6985003cac95d08f",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-dark-120x40-ready-to-submit.svg",
-    "target": "native/textual-dark-120x40-ready-to-submit.svg",
-    "original_sha256": "16fb06462ad0e1307ea8fef442080c1540e9735b3fb3c16a1a635f6cb4f5e355",
-    "export_sha256": "15d534ed0848f022ed5c4149e25be5b1cf48a4da54ec490ecc8ec85154c5932e",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-120x40-ready-to-submit.txt",
-    "target": "native/textual-light-120x40-ready-to-submit.txt",
-    "original_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
-    "export_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/evidence/textual-light-170x48-deny-all.txt",
-    "target": "native/textual-light-170x48-deny-all.txt",
-    "original_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
-    "export_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/preparation.json",
-    "target": "preparation.json",
-    "original_sha256": "4e48d50156a7fde2bdf3acc120724a15fe40064552cb06d884301daab46733ad",
-    "export_sha256": "4e48d50156a7fde2bdf3acc120724a15fe40064552cb06d884301daab46733ad",
-    "normalization": "trailing whitespace and final newline only"
-  },
-  {
-    "source": "/private/tmp/tldw-32841-integrated-native-003/lifecycle.json",
-    "target": "lifecycle.json",
-    "original_sha256": "50abca01d2ee21d9a1b1ef1869e56438b54fe8e46e0d03ac0d3d79e20eb2cf93",
-    "export_sha256": "50abca01d2ee21d9a1b1ef1869e56438b54fe8e46e0d03ac0d3d79e20eb2cf93",
     "normalization": "trailing whitespace and final newline only"
   },
   {
@@ -284,6 +144,181 @@
     "target": "earlier-native/002-lifecycle.json",
     "original_sha256": "da8148e9140d741f2b64c5b251752545684c6b446e048d69a8673024ef3eab11",
     "export_sha256": "da8148e9140d741f2b64c5b251752545684c6b446e048d69a8673024ef3eab11",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-approval-action-ownership/integration/native/result.json",
+    "target": "earlier-native/003-result.json",
+    "original_sha256": "870bc269e4d7844534745a1ef8719f6098acea9ffa8d7c1213b7f84b0ddb1eef",
+    "export_sha256": "870bc269e4d7844534745a1ef8719f6098acea9ffa8d7c1213b7f84b0ddb1eef",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-approval-action-ownership/integration/lifecycle.json",
+    "target": "earlier-native/003-lifecycle.json",
+    "original_sha256": "50abca01d2ee21d9a1b1ef1869e56438b54fe8e46e0d03ac0d3d79e20eb2cf93",
+    "export_sha256": "50abca01d2ee21d9a1b1ef1869e56438b54fe8e46e0d03ac0d3d79e20eb2cf93",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-ready-to-submit.svg",
+    "target": "native/textual-light-170x48-ready-to-submit.svg",
+    "original_sha256": "353eaf2b49e3552921826df53135e42de50b6d2637b6275954f4746ec9211a47",
+    "export_sha256": "90de07a0aee3bfe6ee750be329c0eec99355b3e3679ea4ef7bb178dccbd20c4d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-deny-all.txt",
+    "target": "native/textual-light-120x40-deny-all.txt",
+    "original_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "export_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-ready-to-submit.txt",
+    "target": "native/textual-dark-170x48-ready-to-submit.txt",
+    "original_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "export_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-deny-all.svg",
+    "target": "native/textual-light-120x40-deny-all.svg",
+    "original_sha256": "5a0f7b016e706f8016f9f1fb5ff190ba33dbcb2704e1967da0ecc97e98576953",
+    "export_sha256": "7153aed567aaa80e8b82c912b393dd8811c30118bfbadada199e7ec83a35a019",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-ready-to-submit.txt",
+    "target": "native/textual-light-170x48-ready-to-submit.txt",
+    "original_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "export_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-ready-to-submit.svg",
+    "target": "native/textual-dark-170x48-ready-to-submit.svg",
+    "original_sha256": "eb544c93db254bb9ef238f504ae4845ab7a454a7aff9651f4e1841cfc128c12a",
+    "export_sha256": "d5e49fd2ad6c760b6dfbe89d51e30d2ac3c8577c3022de6268ea7290f51cab7d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/result.json",
+    "target": "native/result.json",
+    "original_sha256": "f75575c0a3b4bcc825ec3f4244f39f804e9760861b24f339ee1dce5b4ccede58",
+    "export_sha256": "f75575c0a3b4bcc825ec3f4244f39f804e9760861b24f339ee1dce5b4ccede58",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-deny-all.txt",
+    "target": "native/textual-dark-170x48-deny-all.txt",
+    "original_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "export_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-deny-all.svg",
+    "target": "native/textual-dark-170x48-deny-all.svg",
+    "original_sha256": "088e8a72c4d7715705a810b67c7e3f7c2f119bd43effa670f4e6dca5bc7e9569",
+    "export_sha256": "4b1166140af721374b75903f2404bc1e0af05a6588eb913518163a07d8b59cce",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-deny-all.svg",
+    "target": "native/textual-dark-120x40-deny-all.svg",
+    "original_sha256": "a2480cbf44bf635f80a30e2289b3ae1a73f191114378a50beff9a8567aaca79c",
+    "export_sha256": "65f232bcf11aafb1d82ef0604687f4613ac9055881d0e56a654017c63b76c63d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-deny-all.txt",
+    "target": "native/textual-dark-120x40-deny-all.txt",
+    "original_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "export_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-deny-all.svg",
+    "target": "native/textual-light-170x48-deny-all.svg",
+    "original_sha256": "01aba509ff4a3a7965552c7462c64b374240eda132b3084fb17dc7cdc69c3daf",
+    "export_sha256": "43d8b6fb2be439000ca07e964e60b43f0bbe1edc2c314643be624f1039b8b483",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-ready-to-submit.txt",
+    "target": "native/textual-dark-120x40-ready-to-submit.txt",
+    "original_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "export_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-ready-to-submit.svg",
+    "target": "native/textual-light-120x40-ready-to-submit.svg",
+    "original_sha256": "8b07521d88a82cdd76e7c13aa5098a95436db69e99235f30b5bebb2ae8fd3ecb",
+    "export_sha256": "3c426f3dabe65983991cd25c177d7c3ccdb9d46d47b70f8c6985003cac95d08f",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-ready-to-submit.svg",
+    "target": "native/textual-dark-120x40-ready-to-submit.svg",
+    "original_sha256": "16fb06462ad0e1307ea8fef442080c1540e9735b3fb3c16a1a635f6cb4f5e355",
+    "export_sha256": "15d534ed0848f022ed5c4149e25be5b1cf48a4da54ec490ecc8ec85154c5932e",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-ready-to-submit.txt",
+    "target": "native/textual-light-120x40-ready-to-submit.txt",
+    "original_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "export_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-deny-all.txt",
+    "target": "native/textual-light-170x48-deny-all.txt",
+    "original_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "export_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/preparation.json",
+    "target": "preparation.json",
+    "original_sha256": "a5b0781ec8ede71276529ea296370a9852c3924e607b50386d879afd5ed9aecb",
+    "export_sha256": "a5b0781ec8ede71276529ea296370a9852c3924e607b50386d879afd5ed9aecb",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/lifecycle.json",
+    "target": "lifecycle.json",
+    "original_sha256": "5be3bdc055d290065520fddf5587c1d88f5b98607fa016db6e4b16fd2a1913e0",
+    "export_sha256": "5be3bdc055d290065520fddf5587c1d88f5b98607fa016db6e4b16fd2a1913e0",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-005.log",
+    "target": "tests/qodo-005.txt",
+    "original_sha256": "1f101fd6487d4d294ee4ab6d33b5ba00351888b7899760e8d4beb8524e1315aa",
+    "export_sha256": "1f101fd6487d4d294ee4ab6d33b5ba00351888b7899760e8d4beb8524e1315aa",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-005.xml",
+    "target": "tests/qodo-005.xml",
+    "original_sha256": "06e914846ebc5a5e93b01ea4f63ed021e03d708632709ee177d73bb2231798c4",
+    "export_sha256": "4a7267e9d25b6b4e6ec5ec6399a89ae208aca6ef305ef7af1550a3bcde773191",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-preflight-005.log",
+    "target": "preflight.txt",
+    "original_sha256": "fd818086c5df991c918b4bb2c8012698b22f50d92477320f79b749a7a4b76c70",
+    "export_sha256": "fd818086c5df991c918b4bb2c8012698b22f50d92477320f79b749a7a4b76c70",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-visual-comparison.json",
+    "target": "qodo-visual-comparison.json",
+    "original_sha256": "5aa52c193b0bc35bec2578fb54cfe7f065073222f2627133522e5152e4e93b7f",
+    "export_sha256": "5aa52c193b0bc35bec2578fb54cfe7f065073222f2627133522e5152e4e93b7f",
     "normalization": "trailing whitespace and final newline only"
   }
 ]

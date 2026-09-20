@@ -7,3 +7,7 @@ all project imports. Final review found no remaining blocker in that fix or the
 loaded-module assertions (package, app, approval card, validators, controller).
 The reviewer did not run native probes or independently certify their receipts.
 The primary agent verified final integrated run 003, lifecycle and test outputs.
+Qodo follow-up: the primary agent verified that the production AST differs only
+in the requested helper name. Both timeout uses share the same value. All 109
+affected tests and seven guards pass; final native run 006 matches all eight
+inspected captures pixel-for-pixel and passes the full lifecycle verification.

@@ -9,8 +9,8 @@ from textual.widgets import Button
 
 from Tests.UI.test_console_mcp_approval import _CardHarnessApp, _sample_calls
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    ApprovalActionButton,
     ChatApprovalCard,
-    _ApprovalActionButton,
 )
 
 
@@ -21,14 +21,14 @@ def test_published_press_keeps_its_generation_after_button_changes(monkeypatch):
         "post_message",
         lambda button, message: published.append(message) or True,
     )
-    button = _ApprovalActionButton("Submit", generation=7)
+    button = ApprovalActionButton("Submit", generation=7)
 
     assert button.post_message(Button.Pressed(button))
     button.batch_generation = 8
 
     assert len(published) == 1
     event = published[0]
-    assert isinstance(event, _ApprovalActionButton.Pressed)
+    assert isinstance(event, ApprovalActionButton.Pressed)
     assert event.button is button and event.batch_generation == 7
     assert event.handler_name == "on_button_pressed"
 

@@ -1,0 +1,42 @@
+[
+  {
+    "capture": "textual-dark-120x40-deny-all.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  },
+  {
+    "capture": "textual-dark-120x40-ready-to-submit.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  },
+  {
+    "capture": "textual-dark-170x48-deny-all.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  },
+  {
+    "capture": "textual-dark-170x48-ready-to-submit.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  },
+  {
+    "capture": "textual-light-120x40-deny-all.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  },
+  {
+    "capture": "textual-light-120x40-ready-to-submit.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  },
+  {
+    "capture": "textual-light-170x48-deny-all.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  },
+  {
+    "capture": "textual-light-170x48-ready-to-submit.svg.png",
+    "pixel_identical": true,
+    "difference_bounds": null
+  }
+]

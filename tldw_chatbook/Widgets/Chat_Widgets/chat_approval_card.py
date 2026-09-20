@@ -575,11 +575,11 @@ def format_context_line(text: object, cap: int = RATIONALE_DISPLAY_CAP) -> str:
     return normalize_rationale(text, cap=cap)
 
 
-class _ApprovalActionButton(Button):
+class ApprovalActionButton(Button):
     """Capture the displayed batch when a press is published, before delivery."""
 
     class Pressed(Button.Pressed, namespace="button"):
-        def __init__(self, button: _ApprovalActionButton) -> None:
+        def __init__(self, button: ApprovalActionButton) -> None:
             self.batch_generation = button.batch_generation
             super().__init__(button)
 
@@ -762,18 +762,18 @@ class ChatApprovalCard(Container):
         with batch_body:
             yield Vertical(id="approval-batch-rows")
             with Horizontal(id="approval-batch-actions"):
-                yield _ApprovalActionButton(
+                yield ApprovalActionButton(
                     "Approve all",
                     id="approval-approve-all",
                     tooltip="Set every pending tool call's decision to Approve once.",
                 )
-                yield _ApprovalActionButton(
+                yield ApprovalActionButton(
                     "Submit",
                     id="approval-submit",
                     variant="primary",
                     tooltip="Apply each row's selected decision and resume the run.",
                 )
-                yield _ApprovalActionButton(
+                yield ApprovalActionButton(
                     "Deny all",
                     id="approval-deny-all",
                     variant="error",
@@ -906,7 +906,7 @@ class ChatApprovalCard(Container):
             "#approval-deny-all",
         ):
             try:
-                button = self.query_one(button_id, _ApprovalActionButton)
+                button = self.query_one(button_id, ApprovalActionButton)
                 button.batch_generation = generation
                 button.disabled = finishing
             except NoMatches:
@@ -1073,7 +1073,7 @@ class ChatApprovalCard(Container):
                     )
                 )
             if single_row:
-                fast_approve = _ApprovalActionButton(
+                fast_approve = ApprovalActionButton(
                     (
                         _RAW_APPROVE_ONCE_LABEL
                         if _is_raw_shell_row(entry)
@@ -1086,7 +1086,7 @@ class ChatApprovalCard(Container):
                     classes=_FAST_APPROVE_CLASS,
                     tooltip=_FAST_APPROVE_TOOLTIP,
                 )
-                fast_deny = _ApprovalActionButton(
+                fast_deny = ApprovalActionButton(
                     _DENY_LABEL,
                     generation=generation,
                     id=f"approval-fast-deny-{generation}-{index}",
@@ -1270,7 +1270,7 @@ class ChatApprovalCard(Container):
             )
         row.remove_class("needs-decision")
 
-        fast_approve = _ApprovalActionButton(
+        fast_approve = ApprovalActionButton(
             _APPROVE_ONCE_LABEL,
             generation=generation,
             id=f"approval-fast-approve-{generation}-0",
@@ -1279,7 +1279,7 @@ class ChatApprovalCard(Container):
             classes=_FAST_APPROVE_CLASS,
             tooltip=_FAST_APPROVE_TOOLTIP,
         )
-        fast_deny = _ApprovalActionButton(
+        fast_deny = ApprovalActionButton(
             _DENY_LABEL,
             generation=generation,
             id=f"approval-fast-deny-{generation}-0",
@@ -1356,7 +1356,7 @@ class ChatApprovalCard(Container):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if not isinstance(event, _ApprovalActionButton.Pressed):
+        if not isinstance(event, ApprovalActionButton.Pressed):
             return
         event.stop()
         if (

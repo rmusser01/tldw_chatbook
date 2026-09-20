@@ -1,9 +1,9 @@
 # Console approval ownership — current-dev integration
 
 PR2730 prevents queued approval actions from affecting a replacement batch and
-prevents duplicate submissions. The production fix is unchanged from saved head
-`10747313ea6ec2c8d40381518ca31708cc94fa68`; only integration tests and the native
-verification runner changed. Existing scopes, raw-shell exclusions and layout stay
+prevents duplicate submissions. The production behavior matches saved head
+`10747313ea6ec2c8d40381518ca31708cc94fa68`; Qodo requested a mechanical helper
+rename to `ApprovalActionButton` and one shared native worker timeout constant. Existing scopes, raw-shell exclusions and layout stay
 intact. ADR-032 and ADR-150 apply; no new ADR is required.
 
 ## Base and conflict choices
@@ -41,7 +41,7 @@ histories. [Conflict choices](integration/rebase-conflicts.json).
 ## Native qualification
 
 [Eight individually inspected captures](GALLERY.md) cover dark/light at 120×40 and
-170×48 in integrated native run **003**. The real app uses LinuxDriver and TTY
+170×48 in integrated native run **006**. The real app uses LinuxDriver and TTY
 streams, with a disposable profile. Keyboard Deny all and Approve all change
 choices only; Submit completes the real controller round trip for exactly the
 two synthetic pending calls. No tools are dispatched and no network attempts
@@ -57,11 +57,19 @@ or conversations, unchanged default settings, empty faulthandler and no app erro
 Earlier integration run **001 is unqualified**: its CLI parser cached the main
 checkout package before the worktree path was pinned. File hashes alone did not
 prove which code ran. [Import reproduction](integration/runner-import-provenance.json).
-Run **002 is superseded** by 003's explicit loaded-module receipts. Their result
-and lifecycle receipts are retained under `integration/earlier-native/`; neither
+Runs **002/003 are superseded** by final 006 after the Qodo cleanup; 003 first
+established explicit loaded-module receipts. Final 006 is pixel-identical to all
+eight individually inspected 003 captures. Launches 004/005 were refused before
+app construction because the prepared directories were incomplete. Their result
+and lifecycle receipts are retained under `integration/earlier-native/`; none
 is counted as final current-source qualification. Original-base evidence remains
 historical. [Export hashes](integration/export-manifest.json) record whitespace
 normalization only.
+
+Qodo reported zero bugs and two maintainability findings on `f1af5ee17c`.
+Both are addressed, with [109 affected passes](integration/tests/qodo-005.txt),
+seven fresh guards and [eight pixel-identical final captures](integration/qodo-visual-comparison.json).
+The production AST differs only in the helper name. [Follow-up receipt](integration/qodo-followup.json).
 
 Current-head CI, accumulated Qodo review and PR2730's own final visual approval
 remain merge gates. The wider work stream remains open: MCP inspector refresh,

@@ -1,6 +1,6 @@
 # Console approval actions — visual review
 
-TASK-32841; current-dev integrated native run 003 on dev `de10a62e67`. The existing layout and scopes are preserved.
+TASK-32841; current-dev integrated native run 006 on dev `de10a62e67`. The existing layout and scopes are preserved.
 Each pair shows Deny all changing both rows, then Approve all setting both to Once
 with Submit focused. Keyboard Submit subsequently resolves those exact call IDs.
 No tool/provider is dispatched. [Evidence and limits](CURRENT-DEV-REVIEW.md).
