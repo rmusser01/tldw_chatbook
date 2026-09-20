@@ -582,7 +582,13 @@ def _atomic_write_target(
     expected_sha256: str | None,
     expected_absent: bool,
 ) -> None:
-    """Write through one pinned parent descriptor and same-directory temp."""
+    """Write through one pinned parent descriptor and same-directory temp.
+
+    task-32808.5 AC#3: deliberately NOT routed through
+    ``Utils/atomic_file_ops.atomic_write_text`` -- this path needs a pinned
+    parent ``dir_fd`` (TOCTOU-safe rename), ``O_NOFOLLOW``, an sha256/absent
+    precondition and a target lock, none of which the shared helper offers.
+    """
     directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     if hasattr(os, "O_DIRECTORY"):
         directory_flags |= os.O_DIRECTORY
