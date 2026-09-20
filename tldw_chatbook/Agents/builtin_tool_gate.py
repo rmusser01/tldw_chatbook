@@ -751,6 +751,30 @@ _ASK_USER_DESCRIPTION = (
 )
 
 
+def _gate_config_snapshot() -> tuple[dict, dict]:
+    """Load the config ONCE and return its ``[tools]`` and ``[console]`` sections.
+
+    task-32804.7: `all_tool_gates()` and `_off_tool_gate_status()` each read
+    ~11 gate keys. Every `get_cli_setting` runs a full storage-admission pass
+    (~4.8 ms, 482 syscalls) even against a warm cache, so 11 keys cost ~53 ms
+    on the event loop -- re-run on every MCP-hub `_sync_children` pass and
+    every Permissions-matrix Space press. All the keys live in just two
+    sections, so one config load plus two dict reads replaces the per-key
+    admission passes. The dict lookups reproduce `get_cli_setting`'s flat
+    section read exactly (env overrides are already folded into the loaded
+    config); `coerce_bool_setting` still guards every value.
+    """
+    from ..config import load_cli_config_and_ensure_existence
+
+    config = load_cli_config_and_ensure_existence()
+    tools_cfg = config.get("tools")
+    console_cfg = config.get("console")
+    return (
+        tools_cfg if isinstance(tools_cfg, dict) else {},
+        console_cfg if isinstance(console_cfg, dict) else {},
+    )
+
+
 def all_tool_gates() -> list[ToolGate]:
     """Every ``[tools]``/``[console]`` registration gate, on or off.
 
@@ -776,7 +800,7 @@ def all_tool_gates() -> list[ToolGate]:
         Every gate in the order described above (the `_GATEABLE_BUILTINS`
         rows, then the local group's two).
     """
-    from ..config import coerce_bool_setting, get_cli_setting
+    from ..config import coerce_bool_setting
     from .local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
         ASK_USER_GATE_KEY,
@@ -784,6 +808,7 @@ def all_tool_gates() -> list[ToolGate]:
     )
     from .tool_catalog import _GATEABLE_BUILTINS
 
+    tools_cfg, console_cfg = _gate_config_snapshot()
     gates: list[ToolGate] = []
     for entry in _GATEABLE_BUILTINS:
         gates.append(
@@ -794,7 +819,7 @@ def all_tool_gates() -> list[ToolGate]:
                 title=entry.title,
                 description=entry.blurb,
                 enabled=coerce_bool_setting(
-                    get_cli_setting("tools", entry.gate_key, False), False
+                    tools_cfg.get(entry.gate_key, False), False
                 ),
                 group="builtin",
             )
@@ -808,8 +833,8 @@ def all_tool_gates() -> list[ToolGate]:
             title=LOCAL_TOOLS_MASTER_TITLE,
             description=_LOCAL_TOOLS_MASTER_DESCRIPTION,
             enabled=coerce_bool_setting(
-                get_cli_setting(
-                    "console", LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED
+                console_cfg.get(
+                    LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED
                 ),
                 LOCAL_TOOLS_DEFAULT_ENABLED,
             ),
@@ -824,7 +849,7 @@ def all_tool_gates() -> list[ToolGate]:
             title="Deep web research (web_deep_search)",
             description=_WEB_DEEP_SEARCH_DESCRIPTION,
             enabled=coerce_bool_setting(
-                get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+                tools_cfg.get(WEB_DEEP_SEARCH_GATE_KEY, False), False
             ),
             group="local",
             # The one gate here that also decides what the built-in MCP
@@ -844,7 +869,7 @@ def all_tool_gates() -> list[ToolGate]:
             title="Ask you a question (ask_user)",
             description=_ASK_USER_DESCRIPTION,
             enabled=coerce_bool_setting(
-                get_cli_setting("tools", ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED),
+                tools_cfg.get(ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED),
                 ASK_USER_DEFAULT_ENABLED,
             ),
             group="local",
@@ -879,9 +904,10 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         A pair of the disabled-gate count and whether the local-tools master
         gate is disabled.
     """
-    from ..config import coerce_bool_setting, get_cli_setting
+    from ..config import coerce_bool_setting
     from .local_tool_provider import ASK_USER_DEFAULT_ENABLED, ASK_USER_GATE_KEY
 
+    tools_cfg, console_cfg = _gate_config_snapshot()
     off = 0
     local_master_off = False
     for section, key in _gate_key_pairs():
@@ -892,7 +918,8 @@ def _off_tool_gate_status() -> tuple[int, bool]:
             default = ASK_USER_DEFAULT_ENABLED
         else:
             default = False
-        enabled = coerce_bool_setting(get_cli_setting(section, key, default), default)
+        section_cfg = console_cfg if section == "console" else tools_cfg
+        enabled = coerce_bool_setting(section_cfg.get(key, default), default)
         if enabled:
             continue
         off += 1
