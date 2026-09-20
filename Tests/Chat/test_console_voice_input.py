@@ -3041,3 +3041,58 @@ def test_handsfree_send_delay_rejects_non_finite_values(monkeypatch, raw):
     back to the default like any other invalid value."""
     _stub_settings(monkeypatch, {"dictation.handsfree_send_delay_seconds": raw})
     assert cvi.handsfree_send_delay_seconds() == cvi.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+
+
+# --- task-32804.8: config-path threading (gate-free) ------------------------
+# The Speech & TTS panel loads config ONCE and passes it to these readers so a
+# first-open draft build makes one storage-admission pass, not ~9. The
+# `config=` path must resolve from the mapping (no `get_cli_setting`) and stay
+# equivalent to the live read; `config=None` must stay byte-identical.
+
+
+def test_realtime_read_config_path_does_not_touch_get_cli_setting(monkeypatch):
+    def _boom(*a, **k):  # any live read is a bug when config is supplied
+        raise AssertionError("get_cli_setting called on the config path")
+
+    monkeypatch.setattr(cvi, "get_cli_setting", _boom)
+    cfg = {"realtime": {"enabled": True, "provider": "openai"}}
+    assert cvi._realtime_read("realtime", "enabled", False, config=cfg) is True
+    # dotted section resolves the same as one-level nesting
+    dcfg = {"dictation": {"acoustic_barge_in": True}}
+    assert (
+        cvi._realtime_read("dictation.acoustic_barge_in", default=False, config=dcfg)
+        is True
+    )
+    # missing key/section -> default, still no live read
+    assert cvi._realtime_read("realtime", "voice", "x", config={}) == "x"
+    assert cvi._realtime_read("realtime", "voice", "x", config=cfg) == "x"
+
+
+def test_realtime_read_config_none_delegates_to_get_cli_setting(monkeypatch):
+    _stub_settings(monkeypatch, {"realtime.enabled": True})
+    assert cvi._realtime_read("realtime", "enabled", False) is True
+    assert cvi._realtime_read("realtime", "enabled", False, config=None) is True
+
+
+def test_readers_config_path_matches_live_and_defaults(monkeypatch):
+    def _boom(*a, **k):
+        raise AssertionError("get_cli_setting called on the config path")
+
+    monkeypatch.setattr(cvi, "get_cli_setting", _boom)
+    cfg = {
+        "realtime": {
+            "enabled": True,
+            "provider": "openai",
+            "turn_detection": "server_vad",
+        },
+        "dictation": {"acoustic_barge_in": True, "handsfree_engine": "realtime"},
+    }
+    assert cvi.realtime_enabled(config=cfg) is True
+    assert cvi.realtime_provider(config=cfg) == "openai"
+    assert cvi.realtime_turn_detection(config=cfg) == "server_vad"
+    assert cvi.acoustic_barge_in_enabled(config=cfg) is True
+    assert cvi.handsfree_engine(config=cfg) == "realtime"
+    # empty config -> documented defaults, no live read
+    assert cvi.realtime_enabled(config={}) is False
+    assert cvi.acoustic_barge_in_enabled(config={}) is False
+    assert cvi.realtime_turn_detection(config={}) == cvi.DEFAULT_REALTIME_TURN_DETECTION

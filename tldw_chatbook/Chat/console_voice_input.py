@@ -951,7 +951,27 @@ def handsfree_send_delay_seconds() -> float:
     return value
 
 
-def acoustic_barge_in_enabled() -> bool:
+def _realtime_read(section, key=None, default=None, *, config=None):
+    """Read one voice-config value, from a preloaded mapping when supplied.
+
+    task-32804.8: the Speech & TTS settings panel builds its draft from ~9 of
+    these readers on first open; passing the config it loaded ONCE lets each
+    read a dict key instead of re-entering the storage-admission scope (~7 ms a
+    call). `config=None` (every non-panel caller) reads live via
+    `get_cli_setting`, byte-identical to before. Mirrors get_cli_setting's flat
+    and one-level-dotted resolution against the mapping.
+    """
+    if config is None:
+        return get_cli_setting(section, key, default)
+    if key is None and "." in section:
+        section, key = section.split(".", 1)
+    node = config.get(section)
+    if isinstance(node, dict) and key in node:
+        return node[key]
+    return default
+
+
+def acoustic_barge_in_enabled(config: dict | None = None) -> bool:
     """Return whether acoustic (voice) barge-in is enabled for hands-free.
 
     `dictation.acoustic_barge_in`, default False -- opt-in, "headphones
@@ -962,7 +982,7 @@ def acoustic_barge_in_enabled() -> bool:
     Returns:
         True when acoustic barge-in should be enabled.
     """
-    raw = get_cli_setting("dictation.acoustic_barge_in", False)
+    raw = _realtime_read("dictation.acoustic_barge_in", default=False, config=config)
     if isinstance(raw, str):
         return raw.strip().lower() not in {"false", "no", "0", "off"}
     return bool(raw)
@@ -1005,7 +1025,7 @@ _REALTIME_TURN_DETECTION_VALUES = {"semantic_vad", "server_vad"}
 DEFAULT_REALTIME_TURN_DETECTION = "semantic_vad"
 
 
-def realtime_enabled() -> bool:
+def realtime_enabled(config: dict | None = None) -> bool:
     """Return whether the realtime voice engine is enabled at all.
 
     `realtime.enabled`, default False -- opt-in: the realtime engine talks
@@ -1017,13 +1037,13 @@ def realtime_enabled() -> bool:
     Returns:
         True when the realtime engine is enabled.
     """
-    raw = get_cli_setting("realtime", "enabled", False)
+    raw = _realtime_read("realtime", "enabled", False, config=config)
     if isinstance(raw, str):
         return raw.strip().lower() not in {"false", "no", "0", "off"}
     return bool(raw)
 
 
-def realtime_provider() -> str:
+def realtime_provider(config: dict | None = None) -> str:
     """Return the configured realtime voice provider id.
 
     `realtime.provider`, default `"openai"`.
@@ -1031,10 +1051,10 @@ def realtime_provider() -> str:
     Returns:
         The provider id.
     """
-    return get_cli_setting("realtime", "provider", DEFAULT_REALTIME_PROVIDER)
+    return _realtime_read("realtime", "provider", DEFAULT_REALTIME_PROVIDER, config=config)
 
 
-def realtime_model() -> str:
+def realtime_model(config: dict | None = None) -> str:
     """Return the configured realtime voice model id.
 
     `realtime.model`, default `"gpt-realtime"`.
@@ -1042,10 +1062,10 @@ def realtime_model() -> str:
     Returns:
         The model id.
     """
-    return get_cli_setting("realtime", "model", DEFAULT_REALTIME_MODEL)
+    return _realtime_read("realtime", "model", DEFAULT_REALTIME_MODEL, config=config)
 
 
-def realtime_voice() -> str | None:
+def realtime_voice(config: dict | None = None) -> str | None:
     """Return the configured realtime output voice name.
 
     `realtime.voice`, default None -- leaving this unset means the
@@ -1055,7 +1075,7 @@ def realtime_voice() -> str | None:
     Returns:
         The configured voice name, or None to use the provider default.
     """
-    return get_cli_setting("realtime", "voice", None)
+    return _realtime_read("realtime", "voice", None, config=config)
 
 
 def realtime_idle_timeout_seconds() -> float:
@@ -1088,7 +1108,7 @@ def realtime_idle_timeout_seconds() -> float:
     return minutes * 60.0
 
 
-def realtime_turn_detection() -> str:
+def realtime_turn_detection(config: dict | None = None) -> str:
     """Return the configured realtime turn-detection mode.
 
     `realtime.turn_detection`, one of `"semantic_vad"` or `"server_vad"`;
@@ -1101,7 +1121,7 @@ def realtime_turn_detection() -> str:
     Returns:
         `"semantic_vad"` or `"server_vad"`.
     """
-    raw = get_cli_setting("realtime", "turn_detection", DEFAULT_REALTIME_TURN_DETECTION)
+    raw = _realtime_read("realtime", "turn_detection", DEFAULT_REALTIME_TURN_DETECTION, config=config)
     value = raw.strip().lower() if isinstance(raw, str) else raw
     if value not in _REALTIME_TURN_DETECTION_VALUES:
         logger.warning(
@@ -1113,7 +1133,7 @@ def realtime_turn_detection() -> str:
     return value
 
 
-def realtime_vad_threshold() -> float | None:
+def realtime_vad_threshold(config: dict | None = None) -> float | None:
     """Return the server-VAD energy threshold, or None to leave it unset.
 
     `realtime.vad_threshold`, a 0-1 float. Applies to `server_vad` ONLY --
@@ -1128,7 +1148,7 @@ def realtime_vad_threshold() -> float | None:
     Returns:
         The configured threshold, or None when unset or invalid.
     """
-    raw = get_cli_setting("realtime", "vad_threshold", None)
+    raw = _realtime_read("realtime", "vad_threshold", None, config=config)
     if raw is None:
         return None
     if isinstance(raw, bool):
@@ -1153,7 +1173,7 @@ def realtime_vad_threshold() -> float | None:
     return value
 
 
-def realtime_vad_silence_ms() -> int | None:
+def realtime_vad_silence_ms(config: dict | None = None) -> int | None:
     """Return the server-VAD end-of-turn silence window in milliseconds.
 
     `realtime.vad_silence_ms`, a positive int. Applies to `server_vad`
@@ -1166,7 +1186,7 @@ def realtime_vad_silence_ms() -> int | None:
         The configured window in milliseconds, or None when unset or
         invalid.
     """
-    raw = get_cli_setting("realtime", "vad_silence_ms", None)
+    raw = _realtime_read("realtime", "vad_silence_ms", None, config=config)
     if raw is None:
         return None
     if isinstance(raw, bool):
@@ -1186,7 +1206,7 @@ def realtime_vad_silence_ms() -> int | None:
     return value
 
 
-def handsfree_engine() -> str:
+def handsfree_engine(config: dict | None = None) -> str:
     """Return the configured hands-free engine selection.
 
     `dictation.handsfree_engine`, one of `"auto"`, `"pipeline"`, or
@@ -1197,7 +1217,7 @@ def handsfree_engine() -> str:
     Returns:
         One of `"auto"`, `"pipeline"`, `"realtime"`.
     """
-    raw = get_cli_setting("dictation", "handsfree_engine", "auto")
+    raw = _realtime_read("dictation", "handsfree_engine", "auto", config=config)
     value = raw.strip().lower() if isinstance(raw, str) else raw
     if value not in _HANDSFREE_ENGINE_VALUES:
         logger.warning("dictation.handsfree_engine invalid ({!r}); using 'auto'", raw)

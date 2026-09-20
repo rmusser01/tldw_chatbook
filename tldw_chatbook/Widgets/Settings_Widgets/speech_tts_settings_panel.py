@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_voice_input import (
     realtime_vad_silence_ms as _read_realtime_vad_silence_ms,
     realtime_vad_threshold as _read_realtime_vad_threshold,
     realtime_voice as _read_realtime_voice,
+    _realtime_read,
 )
 from tldw_chatbook.Chat.console_voice_settings import (
     RESPONSE_EAGERNESS_DEFAULT_MS,
@@ -53,7 +54,11 @@ from tldw_chatbook.Chat.console_voice_settings import (
     pipeline_aec_enabled,
     response_eagerness_ms,
 )
-from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
+from tldw_chatbook.config import (
+    get_cli_setting,
+    load_cli_config_and_ensure_existence,
+    save_settings_to_cli_config,
+)
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 from tldw_chatbook.Model_Artifacts.store import managed_service
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
@@ -288,50 +293,60 @@ class _RealtimeSavePayload:
     persisted_pipeline_draft: _PipelineVoiceSettingsDraft
 
 
-def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
-    """Read the realtime engine's live config into an editable draft."""
+def _read_realtime_settings_draft(config: dict | None = None) -> _RealtimeSettingsDraft:
+    """Read the realtime engine's live config into an editable draft.
 
+    task-32804.8: load the config ONCE and thread it through the readers so the
+    panel's first-open draft build makes one storage-admission pass instead of
+    ~9 (each `get_cli_setting` re-enters the scope, ~7 ms a call).
+    """
+    if config is None:
+        config = load_cli_config_and_ensure_existence()
     return _RealtimeSettingsDraft(
-        enabled=_read_realtime_enabled(),
-        provider=_read_realtime_provider(),
-        model=_read_realtime_model(),
-        voice=_read_realtime_voice() or "",
+        enabled=_read_realtime_enabled(config),
+        provider=_read_realtime_provider(config),
+        model=_read_realtime_model(config),
+        voice=_read_realtime_voice(config) or "",
         idle_timeout_minutes=str(
-            get_cli_setting(
+            _realtime_read(
                 "realtime",
                 "idle_timeout_minutes",
                 DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
+                config=config,
             )
         ),
-        handsfree_engine=_read_handsfree_engine(),
-        turn_detection=_read_realtime_turn_detection(),
+        handsfree_engine=_read_handsfree_engine(config),
+        turn_detection=_read_realtime_turn_detection(config),
         # Empty string means "unset" all the way through: the readers
         # return None for an unset knob, and Save deletes the key rather
         # than writing a number the user never chose.
-        vad_threshold=_format_optional_number(_read_realtime_vad_threshold()),
-        vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms()),
+        vad_threshold=_format_optional_number(_read_realtime_vad_threshold(config)),
+        vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms(config)),
         # TASK-32496: same "blank = unset" contract for the send delay --
         # an unset key lets the readers' own default win.
         handsfree_send_delay_seconds=_format_optional_number(
-            get_cli_setting("dictation", "handsfree_send_delay_seconds", None)
+            _realtime_read(
+                "dictation", "handsfree_send_delay_seconds", None, config=config
+            )
         ),
-        acoustic_barge_in=_read_acoustic_barge_in(),
+        acoustic_barge_in=_read_acoustic_barge_in(config),
     )
 
 
-def _read_pipeline_voice_settings_draft() -> _PipelineVoiceSettingsDraft:
+def _read_pipeline_voice_settings_draft(
+    config: dict | None = None,
+) -> _PipelineVoiceSettingsDraft:
     """Read only the two canonical speculative-pipeline config keys."""
 
+    if config is None:
+        config = load_cli_config_and_ensure_existence()
     section = {
-        "response_eagerness_ms": get_cli_setting(
-            "dictation",
-            "response_eagerness_ms",
-            RESPONSE_EAGERNESS_DEFAULT_MS,
+        "response_eagerness_ms": _realtime_read(
+            "dictation", "response_eagerness_ms", RESPONSE_EAGERNESS_DEFAULT_MS,
+            config=config,
         ),
-        "pipeline_aec_enabled": get_cli_setting(
-            "dictation",
-            "pipeline_aec_enabled",
-            True,
+        "pipeline_aec_enabled": _realtime_read(
+            "dictation", "pipeline_aec_enabled", True, config=config,
         ),
     }
     config = {"dictation": section}
@@ -876,9 +891,11 @@ class SpeechTTSSettingsPanel(Vertical):
         self._audio_cpp_result_cleanup_mounted = audio_cpp_result_cleanup_mounted
         self._audio_cpp_cleanup_action_mounted = False
         if restored is None:
-            self._realtime_original = _read_realtime_settings_draft()
+            # task-32804.8: one config load feeds both drafts (was ~13 reads).
+            _cfg = load_cli_config_and_ensure_existence()
+            self._realtime_original = _read_realtime_settings_draft(_cfg)
             self._realtime_draft = replace(self._realtime_original)
-            self._pipeline_voice_original = _read_pipeline_voice_settings_draft()
+            self._pipeline_voice_original = _read_pipeline_voice_settings_draft(_cfg)
             self._pipeline_voice_draft = replace(self._pipeline_voice_original)
             self._draft_revision = 0
         else:
