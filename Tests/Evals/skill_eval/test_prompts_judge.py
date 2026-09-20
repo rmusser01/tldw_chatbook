@@ -102,3 +102,34 @@ def test_judge_layer_retries_once_then_records_failure():
         semaphore=asyncio.Semaphore(1)))
     assert res.trigger_f1 is None
     assert res.failed  # non-empty
+
+
+def test_judge_layer_indeterminate_selection_is_failed_not_dropped():
+    # Erratum 8: a dict-parseable but indeterminate selection reply
+    # ({"skill": 123}) is a FAILED cell, never silently excluded.
+    gen, jud = _targets()
+    replies = [_synth_reply()]
+    for i in range(10):
+        if i == 4:      # mid-list, should_trigger=True
+            replies.append('{"skill": 123, "reason": "wrong type"}')
+        elif i < 5:
+            replies.append('{"skill": "csv-cleaner", "reason": "r"}')
+        else:
+            replies.append('{"skill": null, "reason": "r"}')
+    replies += ['{"task": "t", "rating": 4, "rationale": "ok"}' for _ in range(3)]
+    replies += ['{"rating": 5, "rationale": "ok"}', '{"rating": 3, "rationale": "ok"}']
+    chat = _ScriptedChat(replies)
+    res = asyncio.run(run_judge_layer(
+        _subject(), chat, generator=gen, judge=jud, config=_config(),
+        semaphore=asyncio.Semaphore(4)))
+    assert res.failed == ("judge-select-4",)
+    # Metrics cover the 9 determinate cells only: the 4 surviving
+    # should-trigger cells all selected -> 1.0 (recall is 4/4, not 4/5).
+    assert res.trigger_precision == 1.0 and res.trigger_recall == 1.0
+    assert res.trigger_f1 == 1.0
+    assert len(res.artifacts) == 16
+    art = next(a for a in res.artifacts if a["sample_id"] == "judge-select-4")
+    assert art["kind"] == "selection"
+    assert art["parsed"] == {"selected": None, "should": True}
+    # The rest of the layer is unaffected by the one bad cell.
+    assert res.rubrics["output_quality"] == 0.8

@@ -134,9 +134,20 @@ async def run_judge_layer(subject: SkillSubject, chat: Any, *,
         verdict = None
         if parsed is not None:
             verdict = parse_selection_reply(raw, subject.name)
+        # Erratum 8 (controller ruling): a parseable-but-indeterminate
+        # selection reply (e.g. {"skill": 123}) is a FAILED cell — it lands
+        # in `failed` under its sample_id, never silently dropped from the
+        # trigger metrics. Effective error is None only when the call
+        # succeeded AND the verdict is determinate.
+        if err is not None:
+            eff_err = err
+        elif verdict is None:
+            eff_err = "indeterminate"
+        else:
+            eff_err = None
         await record(f"judge-select-{i}", "selection",
                      {"selected": verdict, "should": item["should_trigger"]},
-                     raw, err if verdict is None else None, None)
+                     raw, eff_err, None)
         if verdict is not None:
             if item["should_trigger"] and verdict:
                 tp += 1
