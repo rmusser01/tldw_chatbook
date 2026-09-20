@@ -241,7 +241,9 @@ class TestNotesInteropService(unittest.TestCase):
         ):
             self.service.add_note(user_id, title, content)
         self.mock_notes_library_logger.error.assert_called_once_with(
-            f"add_note for user_id '{user_id}' (as client_id) returned None unexpectedly for title '{title}'."
+            "add_note returned None unexpectedly (user_ref=%s, note_ref=%s).",
+            "0a041b9462ca",
+            "generated",
         )
 
     def test_get_note_by_id(self):

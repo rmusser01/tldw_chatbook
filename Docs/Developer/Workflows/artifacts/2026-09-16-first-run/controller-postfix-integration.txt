@@ -1,0 +1,21 @@
+Controller actual-app joined-boundary check after the nonblocking Notes guard and Open Note handler change.
+Before any imports: existing test_file_to_note_integration.py standalone launcher prepared a new private controller-postfix-bootstrap.
+Environment: PYTHONPATH=.; TLDW_TEST_CONFIG_ROOT=<worktree>/.superpowers/sdd/2026-09-16-workflows-first-run/controller-postfix-bootstrap; TASK6_LIVE_PROFILE/PHASE/SIZE/ARTIFACTS unset.
+Command: <root-venv>/bin/python -m pytest -o addopts= -q --tb=short --show-capture=no --basetemp=.superpowers/sdd/2026-09-16-workflows-first-run/controller-postfix-tests Tests/Workflows/test_file_to_note_integration.py
+Real app/services/SQLite and owned HTTP test peer; no localhost:9099 POST.
+
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.s                                                                      [100%]
+=============================== warnings summary ===============================
+Tests/Workflows/test_file_to_note_integration.py::test_saved_file_controls_real_http_edited_local_note[ordinary]
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 1 skipped, 1 warning in 17.66s
+Exit code: 0
