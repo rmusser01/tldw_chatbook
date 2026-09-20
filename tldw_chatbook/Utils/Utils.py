@@ -250,15 +250,34 @@ def convert_to_seconds(time_str):
         raise ValueError(f"Invalid time format: {time_str}")
 
 
-def truncate_content(content: Optional[str], max_length: int = 200) -> Optional[str]:
-    """Truncate content to the specified maximum length with ellipsis."""
-    if not content:
-        return content
+def truncate(text: Optional[str], limit: int, *, marker: str = "\u2026") -> Optional[str]:
+    """Truncate `text` to at most `limit` characters, appending `marker` when cut.
 
-    if len(content) <= max_length:
-        return content
+    The returned string (including `marker`) never exceeds `limit`. Text at or
+    under the limit is returned unchanged; `None`/empty passes through. The
+    default marker is the single-character ellipsis ``"\u2026"`` (TASK-32808.3
+    decision, 2026-09-20); pass ``marker="..."`` for plain-ASCII or terminal
+    contexts that should not emit a multibyte glyph. This is the one shared
+    truncator the scattered ``text[:n] + "..."`` re-rolls and the various
+    ``_truncate*``/``_ellipsize`` helpers should adopt.
 
-    return content[: max_length - 3] + "..."
+    Args:
+        text: The string to truncate (or None).
+        limit: Maximum length of the result, including the marker.
+        marker: Appended when the text is cut. Defaults to ``"\u2026"``.
+
+    Returns:
+        The original text when it is None, empty, or within `limit`; otherwise a
+        string of exactly `limit` characters ending in `marker` (or a hard cut
+        when `limit` is too small to hold the marker).
+    """
+    if not text or len(text) <= limit:
+        return text
+    if limit <= 0:
+        return ""
+    if limit <= len(marker):
+        return text[:limit]
+    return text[: limit - len(marker)] + marker
 
 
 def elide_path_middle(path: str, budget: int = 48) -> str:
