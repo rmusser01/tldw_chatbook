@@ -88,3 +88,48 @@ async def test_audio_troubleshooting_dialog_mounts_and_runs_scan_worker(
         status_text = str(dialog.query_one("#status-text", Label).renderable)
         assert status_text == "✅ Audio system ready"
         assert not dialog.is_testing
+
+
+async def test_device_scan_is_submitted_as_a_thread_worker(monkeypatch):
+    """Qodo PR-2751 finding 1: _get_devices_safe must run as a thread worker.
+
+    The enumeration is a blocking, synchronous sounddevice query; submitting
+    it as an async worker raises WorkerError('Request to run a non-async
+    function as an async worker') and the scan never completes. This pins
+    the submission flags rather than just the symptom.
+    """
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.audio_troubleshooting_dialog"
+        ".LazyLiveDictationService",
+        _StubDictationService,
+    )
+
+    dialog = AudioTroubleshootingDialog()
+    submissions = []
+    real_run_worker = dialog.run_worker
+
+    def _recording_run_worker(work, **kwargs):
+        submissions.append((work, kwargs))
+        return real_run_worker(work, **kwargs)
+
+    # Instance-level wrapper: both the @work wrapper (for the async
+    # _initialize_audio worker) and the scan submission inside it resolve
+    # ``self.run_worker`` at call time, so every submission is captured and
+    # still delegated to the real machinery.
+    dialog.run_worker = _recording_run_worker
+
+    app = _ScreenHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    scan_submissions = [
+        (work, kwargs)
+        for work, kwargs in submissions
+        if getattr(work, "__name__", "") == "_get_devices_safe"
+    ]
+    assert len(scan_submissions) == 1, submissions
+    _work, kwargs = scan_submissions[0]
+    assert kwargs.get("thread") is True

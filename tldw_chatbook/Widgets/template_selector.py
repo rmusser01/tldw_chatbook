@@ -66,8 +66,15 @@ def _builtin_eval_template_records() -> list[dict[str, Any]]:
     ``get_eval_templates()`` lives in ``tldw_chatbook.Evals.eval_templates``
     (NOT the dependency-light ``tldw_chatbook.Evals`` package root, which
     stopped exporting it -- TASK-32831). Its manager maps snake_case
-    template ids to spec dicts; the selector's list/preview widgets consume
-    flat dict records with display fields, so translate once here.
+    template ids to spec dicts.
+
+    Each record carries the FULL source specification (metric, dataset,
+    generation arguments, prompts, filters, ...) with the display fields
+    overlaid on top: ``name`` stays the snake_case id (widget ids and
+    selection matching depend on it) while ``display_name`` holds the
+    spec's human-readable name. Preview/create/export/select paths
+    therefore receive the complete evaluation definition, not just the
+    display metadata (Qodo PR-2751 finding 3).
     """
     from tldw_chatbook.Evals.eval_templates import get_eval_templates
 
@@ -77,17 +84,20 @@ def _builtin_eval_template_records() -> list[dict[str, Any]]:
         for template_id, spec in manager.get_templates_by_category(
             category
         ).items():
-            metadata = dict(spec.get("metadata") or {})
-            records.append(
+            record = dict(spec)
+            metadata = record.get("metadata") or {}
+            display_name = record.get("name", template_id)
+            record.update(
                 {
                     "name": template_id,
-                    "display_name": spec.get("name", template_id),
-                    "description": spec.get("description", ""),
+                    "display_name": display_name,
+                    "description": record.get("description", ""),
                     "category": metadata.get("category", category),
-                    "task_type": spec.get("task_type", ""),
-                    "difficulty": spec.get("difficulty", "Unknown"),
+                    "task_type": record.get("task_type", ""),
+                    "difficulty": record.get("difficulty", "Unknown"),
                 }
             )
+            records.append(record)
     return records
 
 
