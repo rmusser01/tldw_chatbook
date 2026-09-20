@@ -111,8 +111,7 @@ assumed zero reader width; it was corrected to the actual list-first state.
   after the narrow reveal change.
 - The five focused new-controller governance checks pass. Only the initial pin
   for this PR’s new controller was revised for finite-worker dispatch and the
-  already-focused reader reveal;
-  existing module/screen ceilings remain unchanged.
+  already-focused reader reveal; existing module/screen ceilings remain unchanged.
 - Native `TldwCli` verification in `/private/tmp/artifact-review-native/run4/`
   records actual terminal F6/Shift+F6 cycles at 160×50, 64×30 and 50×25,
   followed by Escape/Enter, with `LinuxDriver`, `isatty=True` and exit 0.
@@ -123,6 +122,15 @@ assumed zero reader width; it was corrected to the actual list-first state.
 - The independent reviewer accepted all corrections with no remaining findings.
   New/changed focused modules pass Ruff and formatting, and the legacy files
   have zero diagnostics on added lines. `git diff --check` is clean.
+
+The previous-head CI run also identified diagnostic-inventory drift. The
+statement review against inventory commit `0e10b0b72b22` found four new warnings
+in the two artifact controllers (fixed copy, internal action names and exception
+types only), one formatting-only share-sweep count message, and one unchanged
+re-indented exception call. No new sink or path-privacy candidate was introduced.
+`Docs/security/production-diagnostic-inventory.json` was regenerated after that
+review; it adds the two owners and updates the existing share-owner digest.
+The same CI checker with `--diff` passes: no drift, 610 owners and 14 sink files.
 
 ## Known verification limits
 

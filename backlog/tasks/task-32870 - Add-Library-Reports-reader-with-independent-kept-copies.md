@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 21:57'
-updated_date: '2026-09-20 07:52'
+updated_date: '2026-09-20 07:56'
 labels:
   - library
   - artifacts
@@ -43,5 +43,7 @@ ADR required: yes. ADR path: backlog/decisions/172-library-artifacts-browse-and-
 <!-- SECTION:NOTES:BEGIN -->
 Implemented Reports and Kept in Library’s shared adaptive reader with bounded snapshot pages, exact identities, durable export/scripts/audio/watchlist actions, and service-owned Keep compatibility guards. Real tests cover imported collisions, rollback, borrowed transactions, source deletion, delayed replies, query and focus, and stale-action Retry. Final reader regressions passed, including native Enter/Down/Escape. Behavior lives in focused catalog/controller/widget modules with thin screen wiring. ADR: backlog/decisions/172-library-artifacts-browse-and-navigation.md. Evidence and explicit baseline limits: Docs/superpowers/plans/2026-09-19-library-artifacts-verification.md. User guide updated. No full suite requested; changed/new focused tests pass, added-line Ruff diagnostics are zero, generated CSS checks pass, and native private-profile TldwCli was verified. Existing recovery-initialization and repository-wide screen-size/workflows-style failures remain documented; their limits were not raised.
 
-PR #2754 independent review: fixed finite artifact-worker cache retirement through the existing Library service boundary, adaptive-shell recognition, and F6/Shift+F6 pane/grip navigation. Narrow focus reveals the reader without a deferred callback that can override newer focus. Verification: 12 real SQLite lifecycle cases, seven production-CSS focus cases, 21 affected Reports/Chatbooks integration cases, six adjacent interaction cases, and five artifact-controller governance checks passed (overlapping focused runs). Final private native TldwCli F6/Shift+F6 at160/64/50 columns exited0. Independent reviewer accepted all findings as resolved; no full suite. Updated verification record and worker-lifetime lesson; ADR-172 remains governing.
+PR #2754 independent review: fixed finite artifact-worker cache retirement through the existing Library service boundary, adaptive-shell recognition, and F6/Shift+F6 pane/grip navigation. Narrow focus reveals the reader without a deferred callback that can override newer focus. Verification: 12 real SQLite lifecycle cases, seven production-CSS focus cases, 21 affected Reports/Chatbooks integration cases, six adjacent interaction cases, and five artifact-controller governance checks passed (overlapping focused runs). Final private native TldwCli F6/Shift+F6 at 160/64/50 columns exited 0. Independent reviewer accepted all findings as resolved; no full suite. Updated verification record and worker-lifetime lesson; ADR-172 remains governing.
+
+Derived-artifact CI correction: reviewed every changed diagnostic statement against inventory commit 0e10b0b72b22 (four controller warnings with fixed action/type metadata; formatting-only share count and moved existing exception call). No new sink or path-privacy candidate. Regenerated Docs/security/production-diagnostic-inventory.json; the CI checker with --diff passed with no drift (610 owners, 14 sink files).
 <!-- SECTION:NOTES:END -->
