@@ -569,10 +569,29 @@ class ServerNotesWorkspaceService:
             ),
         )
 
-    async def delete_note_link(self, edge_id: str) -> dict[str, Any]:
+    async def delete_note_link(
+        self,
+        edge_id: str,
+        *,
+        dataset_id: str | None = None,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Forward selected-version fences; server conflicts require caller review."""
         self._enforce_policy(self._graph_action_id("delete"))
         client = self._require_client()
-        return await client.delete_note_link(edge_id)
+        preconditions = {
+            key: value
+            for key, value in {
+                "dataset_id": dataset_id,
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+                "reason": reason,
+            }.items()
+            if value is not None
+        }
+        return await client.delete_note_link(edge_id, **preconditions)
 
     async def list_workspaces(self) -> list[dict[str, Any]]:
         self._enforce_policy(self._workspace_action_id("list"))

@@ -106,6 +106,34 @@ class ServerSharingService:
         )
         return self._as_dict(result)
 
+    async def get_shared_workspace_clone_operation(
+        self,
+        share_id: int,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Read the recipient-owned durable clone receipt."""
+        return self._as_dict(
+            await self._require_client().get_shared_workspace_clone_operation(
+                int(share_id), operation_id
+            )
+        )
+
+    async def list_shared_workspace_source_page(
+        self,
+        share_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Expose pagination, source readiness, and partial failures unchanged."""
+        return self._as_dict(
+            await self._require_client().list_shared_workspace_source_page(
+                int(share_id), offset=offset, limit=limit, q=q, state=state
+            )
+        )
+
     async def list_shared_workspace_sources(
         self, share_id: int
     ) -> list[dict[str, Any]]:

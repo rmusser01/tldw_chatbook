@@ -5,9 +5,10 @@ import pytest
 
 import tldw_chatbook.Sharing.server_sharing_service as sharing_module
 import tldw_chatbook.Sharing_Interop.server_sharing_service as sharing_interop_module
+from Tests.private_profile import private_profile_test
+from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 from tldw_chatbook.Sharing import ServerSharingService as PublicServerSharingService
 from tldw_chatbook.Sharing_Interop import ServerSharingService
-from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
 class FakeSharingClient:
@@ -184,8 +185,11 @@ async def test_server_sharing_service_re_resolves_provider_without_service_local
         assert all(value is not built_client for value in vars(service).values())
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("service_cls", "_module", "_exercise"), SHARING_IMPORT_PATHS)
+@private_profile_test
 def test_server_sharing_service_from_config_returns_provider_backed_service(
+    request,
     service_cls,
     _module,
     _exercise,

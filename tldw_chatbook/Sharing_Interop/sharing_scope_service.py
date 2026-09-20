@@ -150,11 +150,15 @@ class SharingScopeService:
             return self._with_record_id(mode, "sharing_token", item, "id")
         if item.get("resource_type") and "id" in item:
             return self._with_record_id(mode, "sharing_token", item, "id")
+        if "operation_id" in item:
+            return self._with_record_id(
+                mode, "sharing_clone_operation", item, "operation_id"
+            )
         if "share_id" in item:
             return self._with_record_id(mode, "shared_workspace", item, "share_id")
         if "workspace_id" in item and "owner_user_id" in item and "id" in item:
             return self._with_record_id(mode, "workspace_share", item, "id")
-        if "workspace_id" in item and "source_type" in item:
+        if "source_id" in item or ("workspace_id" in item and "source_type" in item):
             return self._with_record_id(mode, "shared_workspace_source", item, "id")
         if "media_type" in item and "id" in item:
             return self._with_record_id(mode, "shared_media", item, "id")
@@ -370,16 +374,58 @@ class SharingScopeService:
         *,
         mode: SharingBackend | str | None = None,
         new_name: str | None = None,
+        name: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        """Admit a clone, reusing the caller's key for any explicit replay."""
+        kwargs: dict[str, Any] = {"new_name": new_name}
+        if name is not None:
+            kwargs["name"] = name
+        if idempotency_key is not None:
+            kwargs["idempotency_key"] = idempotency_key
         return await self._call(
             mode=mode,
             resource="links",
             action="launch",
             method_name="clone_shared_workspace",
-            normalize_kind="sharing_clone_job",
-            id_key="job_id",
             args=(share_id,),
-            kwargs={"new_name": new_name},
+            kwargs=kwargs,
+        )
+
+    async def get_shared_workspace_clone_operation(
+        self,
+        share_id: int,
+        operation_id: str,
+        *,
+        mode: SharingBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Read a durable receipt through the inspection policy."""
+        return await self._call(
+            mode=mode,
+            resource="links",
+            action="inspect",
+            method_name="get_shared_workspace_clone_operation",
+            args=(share_id, operation_id),
+        )
+
+    async def list_shared_workspace_source_page(
+        self,
+        share_id: int,
+        *,
+        mode: SharingBackend | str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Read a page, retaining server pagination and partial errors."""
+        return await self._call(
+            mode=mode,
+            resource="links",
+            action="inspect",
+            method_name="list_shared_workspace_source_page",
+            args=(share_id,),
+            kwargs={"offset": offset, "limit": limit, "q": q, "state": state},
         )
 
     async def list_shared_workspace_sources(

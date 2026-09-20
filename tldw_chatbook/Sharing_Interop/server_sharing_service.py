@@ -234,15 +234,53 @@ class ServerSharingService:
         return self._dump(await self._require_client().get_shared_workspace(share_id))
 
     async def clone_shared_workspace(
-        self, share_id: int, *, new_name: str | None = None
+        self,
+        share_id: int,
+        *,
+        new_name: str | None = None,
+        name: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import CloneWorkspaceRequest
 
         self._enforce("sharing.links.launch.server")
-        request = CloneWorkspaceRequest(new_name=new_name)
+        payload: dict[str, Any] = {"name": name if name is not None else new_name}
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
+        request = CloneWorkspaceRequest(**payload)
         return self._dump(
             await self._require_client().clone_shared_workspace(share_id, request)
+        )
+
+    async def get_shared_workspace_clone_operation(
+        self,
+        share_id: int,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Read an admitted operation without requiring the original share anew."""
+        self._enforce("sharing.links.inspect.server")
+        return self._dump(
+            await self._require_client().get_shared_workspace_clone_operation(
+                share_id, operation_id
+            )
+        )
+
+    async def list_shared_workspace_source_page(
+        self,
+        share_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Return source items and the server's completeness metadata."""
+        self._enforce("sharing.links.inspect.server")
+        return self._dump(
+            await self._require_client().list_shared_workspace_source_page(
+                share_id, offset=offset, limit=limit, q=q, state=state
+            )
         )
 
     async def list_shared_workspace_sources(

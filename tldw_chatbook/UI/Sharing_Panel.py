@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 from typing import TYPE_CHECKING, Any, Mapping
+from uuid import uuid4
 
 from loguru import logger
 from textual import on
@@ -13,6 +14,10 @@ from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.reactive import reactive
 from textual.validation import Number
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
+
+from ..runtime_policy.server_context import ServerContextError
+
+MAX_RETAINED_CLONE_REQUESTS = 100
 
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -73,6 +78,15 @@ class SharingPanel(ScrollableContainer):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.scope_service = getattr(app_instance, "server_sharing_scope_service", None)
+        # The app owns uncertain admissions so rebuilding this panel cannot mint
+        # a second request for a copy already accepted by the server.
+        requests = getattr(app_instance, "_sharing_clone_request_keys", None)
+        if requests is None:
+            requests = {}
+            app_instance._sharing_clone_request_keys = requests
+        self._clone_request_keys: dict[tuple[str, str, str, int, str | None], str] = (
+            requests
+        )
 
     def compose(self) -> ComposeResult:
         yield Static("Server Sharing requires server mode.", id="sharing-disabled")
@@ -125,10 +139,12 @@ class SharingPanel(ScrollableContainer):
                 with Horizontal(classes="sharing-actions"):
                     yield Button("List Shared", id="sharing-list-shared-with-me-btn")
                     yield Button("Get Workspace", id="sharing-get-shared-workspace-btn")
-                    yield Button("Clone", id="sharing-clone-btn")
+                    yield Button("Clone / retry", id="sharing-clone-btn")
                     yield Button("List Sources", id="sharing-list-sources-btn")
                     yield Button("Get Media", id="sharing-get-media-btn")
                     yield Button("Chat", id="sharing-chat-btn")
+                with Horizontal(classes="sharing-actions"):
+                    yield Button("Start another clone", id="sharing-new-clone-btn")
 
             with Container(classes="sharing-section"):
                 yield Label("Share Tokens")
@@ -216,6 +232,7 @@ class SharingPanel(ScrollableContainer):
             ("#sharing-list-shared-with-me-btn", Button),
             ("#sharing-get-shared-workspace-btn", Button),
             ("#sharing-clone-btn", Button),
+            ("#sharing-new-clone-btn", Button),
             ("#sharing-list-sources-btn", Button),
             ("#sharing-get-media-btn", Button),
             ("#sharing-chat-btn", Button),
@@ -481,13 +498,70 @@ class SharingPanel(ScrollableContainer):
             "Shared workspace", "get_shared_workspace", share_id=int(self._share_id())
         )
 
+    async def _clone_identity(self) -> tuple[str, str, str, int, str | None]:
+        """Bind an admission to the configured server and authenticated account."""
+        share_id = self._share_id()
+        if share_id <= 0:
+            raise ValueError("A positive share ID is required.")
+        new_name = " ".join(self._input_value("#sharing-clone-name").split()) or None
+        if new_name is not None and len(new_name) > 255:
+            raise ValueError("Clone name must be at most 255 characters.")
+        provider = getattr(self.app_instance, "server_context_provider", None)
+        if self._current_runtime_backend() != "server" or provider is None:
+            raise ValueError("An authenticated server context is required to clone.")
+        context = provider.get_active_context()
+        capture = provider.capture_character_authority_context(
+            expected_server_id=context.active_server_id
+        )
+        # The existing authority resolver uses the authenticated user ID, so
+        # refreshing credentials cannot silently turn a retry into another copy.
+        authority = await provider.resolve_character_authority_id(
+            expected_server_id=context.active_server_id, context_capture=capture
+        )
+        if not provider.is_character_authority_context_current(capture):
+            raise ValueError("Server context changed. Retry with the active account.")
+        return (
+            context.active_server_id,
+            context.base_url,
+            authority,
+            share_id,
+            new_name,
+        )
+
+    @on(Button.Pressed, "#sharing-new-clone-btn")
+    async def start_another_clone(self, event: Button.Pressed) -> None:
+        """Explicitly retire only this account's selected replay identity."""
+        event.stop()
+        try:
+            identity = await self._clone_identity()
+        except (ValueError, ServerContextError) as exc:
+            self.query_one("#sharing-status", Static).update(str(exc))
+            return
+        self._clone_request_keys.pop(identity, None)
+        self.query_one("#sharing-status", Static).update(
+            "The next clone will create another copy. Earlier requests remain on the server."
+        )
+
     async def clone_shared_workspace(self) -> None:
-        new_name = self._input_value("#sharing-clone-name") or None
+        try:
+            identity = await self._clone_identity()
+        except (ValueError, ServerContextError) as exc:
+            self.query_one("#sharing-status", Static).update(str(exc))
+            return
+        if identity not in self._clone_request_keys:
+            if len(self._clone_request_keys) >= MAX_RETAINED_CLONE_REQUESTS:
+                self.query_one("#sharing-status", Static).update(
+                    "Clone request limit reached. Existing copies can still be retried. "
+                    "Select an earlier request and use Start another clone to replace it."
+                )
+                return
+            self._clone_request_keys[identity] = str(uuid4())
         await self._run_operation(
             "Shared workspace clone",
             "clone_shared_workspace",
-            share_id=int(self._share_id()),
-            new_name=new_name,
+            share_id=identity[3],
+            new_name=identity[4],
+            idempotency_key=self._clone_request_keys[identity],
         )
 
     async def list_shared_workspace_sources(self) -> None:
