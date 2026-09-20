@@ -1621,9 +1621,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             and import_snapshot is not None
             and import_canvases
         ):
-            authority = self.query(f"#{self.authority_id}")
-            if authority:
-                authority.first(Static).update(self._authority_copy())
+            try:
+                self.query_one(f"#{self.authority_id}", Static).update(
+                    self._authority_copy()
+                )
+            except NoMatches:
+                pass
             child = import_canvases.first(LibraryNoteImportCanvas)
             child.compact = compact
             callback = self._post_recompose_callback
@@ -1641,9 +1644,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             and lasting_sync_snapshot is not None
             and lasting_canvases
         ):
-            authority = self.query(f"#{self.authority_id}")
-            if authority:
-                authority.first(Static).update(self._authority_copy())
+            try:
+                self.query_one(f"#{self.authority_id}", Static).update(
+                    self._authority_copy()
+                )
+            except NoMatches:
+                pass
             lasting_canvases.first(LibraryNotesAddFromFilesCanvas).sync_state(
                 lasting_sync_snapshot
             )
@@ -3144,7 +3150,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.apply_compact_presentation(self.compact)
         if self.mode != "editor" or self.presentation_state is None:
             return
-        if not self.query("#library-note-title"):
+        try:
+            self.query_one("#library-note-title")
+        except NoMatches:
             return
         self.apply_session_state(self.presentation_state)
 
@@ -3155,25 +3163,35 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if not self.is_mounted:
             return
         if self.mode == "list" and self.list_state is not None:
-            database_purpose = self.query("#library-notes-database-purpose")
-            if database_purpose:
-                database_purpose.first(Static).display = not compact
+            try:
+                self.query_one(
+                    "#library-notes-database-purpose", Static
+                ).display = not compact
+            except NoMatches:
+                pass
             rendered_count = len(self.list_state.rows)
             # task-32261 AC#1: the in-strip counter's compact hide flips on a
             # breakpoint crossing, like the two labels below -- this method
             # is the canvas's whole in-place responsive path.
-            in_row_count = self.query("#library-notes-selected-count")
-            if in_row_count:
-                in_row_count.first(Static).display = not compact
-            select_all = self.query("#library-notes-select-all")
-            if select_all:
-                select_all.first(Button).label = (
+            try:
+                self.query_one(
+                    "#library-notes-selected-count", Static
+                ).display = not compact
+            except NoMatches:
+                pass
+            try:
+                self.query_one("#library-notes-select-all", Button).label = (
                     f"All {rendered_count}"
                     if compact
                     else f"Select all {rendered_count} shown"
                 )
-            export_selected = self.query("#library-notes-export-selected")
-            if export_selected:
+            except NoMatches:
+                pass
+            try:
+                button = self.query_one("#library-notes-export-selected", Button)
+            except NoMatches:
+                button = None
+            if button is not None:
                 # Whole-branch review IMPORTANT-1: this in-place rewrite must
                 # compose through the same marker helper as compose() and the
                 # screen's `_patch_library_disabled_marker_label`, and re-tier
@@ -3181,17 +3199,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # marker on every compact-boundary crossing while disabled,
                 # and left the stash at the wrong-tier spelling for the next
                 # in-place patch.
-                button = export_selected.first(Button)
                 export_base = "Export" if compact else "Export selected"
                 button._library_disabled_marker_base = export_base
                 button.label = library_disabled_action_label(
                     export_base, button.disabled, align=True
                 )
             return
-        header_rows = self.query("#library-note-header-second-row")
-        if header_rows:
+        try:
+            second_row = self.query_one("#library-note-header-second-row", Horizontal)
+        except NoMatches:
+            second_row = None
+        if second_row is not None:
             heading = self.query_one("#library-note-heading")
-            second_row = header_rows.first(Horizontal)
             status = self.query_one("#library-note-status", Static)
             authority = self.query_one("#library-note-authority-git-status", Static)
             primary = self.query_one("#library-note-primary-actions", Horizontal)
@@ -3242,11 +3261,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 button.set_class(not compact, "h-3")
                 button.styles.min_height = 1 if compact else 3
                 button.styles.max_height = 1 if compact else 3
-        discard_new = self.query("#library-note-discard-new")
-        if discard_new:
-            discard_new.first(Button).label = (
+        try:
+            self.query_one("#library-note-discard-new", Button).label = (
                 "Discard" if compact else "Discard new note"
             )
+        except NoMatches:
+            pass
         # PR #2555 review (Qodo finding 2): the New-note and load-retry views
         # pick their Back wording at compose time only, and crossing the
         # compact breakpoint re-runs this method instead of recomposing them
@@ -3256,10 +3276,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # this method first, so a stale value there is corrected either way.)
         back_label = _library_note_back_label(compact)
         for selector in ("#library-note-back", "#library-notes-create-back"):
-            found = self.query(selector)
-            if not found:
+            try:
+                button = self.query_one(selector, Button)
+            except NoMatches:
                 continue
-            button = found.first(Button)
             if str(button.label) != back_label:
                 button.label = back_label
 
@@ -3297,10 +3317,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # Returning is complete, not lossy: the state is stored above and
         # `_apply_post_compose_state` re-applies it the moment the recompose
         # that removed these children mounts the new ones.
-        authority_matches = self.query(f"#{self.authority_id}")
-        if not authority_matches or not self.query("#library-note-title"):
+        try:
+            authority = self.query_one(f"#{self.authority_id}", Static)
+            self.query_one("#library-note-title")
+        except NoMatches:
             return
-        authority = authority_matches.first(Static)
         authority_copy = self._authority_copy()
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)
