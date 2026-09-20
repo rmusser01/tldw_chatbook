@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import base64
 from contextlib import contextmanager, nullcontext
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from secrets import token_urlsafe
 import sqlite3
 import threading
@@ -31,6 +32,7 @@ from .models import (
     DEFAULT_WORKSPACE_DESCRIPTION,
     DEFAULT_WORKSPACE_ID,
     DEFAULT_WORKSPACE_NAME,
+    BindingExclusion,
     RuntimeBindingKind,
     RuntimeBindingStatus,
     ResearchQuickNoteReceipt,
@@ -361,6 +363,58 @@ def validate_folder_binding_path(
     resolved = _validate_folder_path_rules(path)
     _validate_folder_overlap(resolved, existing_locators)
     return resolved
+
+
+_MAX_BINDING_EXCLUSIONS = 200
+
+
+def binding_exclusion_entries(binding: Any) -> tuple[BindingExclusion, ...]:
+    """Read a binding's exclusions defensively (unknown shapes dropped)."""
+    raw = (binding.metadata or {}).get("exclusions")
+    if not isinstance(raw, list):
+        return ()
+    entries: list[BindingExclusion] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        kind = item.get("kind", "directory")
+        added_at = item.get("added_at", "")
+        if isinstance(path, str) and path and kind in {"file", "directory"} and isinstance(added_at, str):
+            entries.append(BindingExclusion(path=path, kind=kind, added_at=added_at))
+    return tuple(entries)
+
+
+def _validated_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
+    """Vet one binding-relative exclusion path (spec §1).
+
+    Rejects empty, home-relative, absolute, and parent-escaping text, then
+    resolves against the binding root to catch symlink escapes; the root
+    itself is not excludable (users remove the binding instead).
+    """
+    raw = str(path).strip()
+    candidate = PurePosixPath(raw)
+    if not raw or raw.startswith("~") or candidate.is_absolute() or ".." in candidate.parts:
+        raise WorkspaceRegistryServiceError(
+            "Exclusion path must be relative to the binding root."
+        )
+    root = Path(str(binding.locator))
+    try:
+        resolved_root = root.resolve(strict=True)
+        target = (root / candidate).resolve(strict=False)
+    except OSError as exc:
+        raise WorkspaceRegistryServiceError(
+            "Binding root is not resolvable."
+        ) from exc
+    if target != resolved_root and resolved_root not in target.parents:
+        raise WorkspaceRegistryServiceError(
+            "Exclusion path escapes the binding root."
+        )
+    if target == resolved_root:
+        raise WorkspaceRegistryServiceError(
+            "Exclude specific paths; remove the binding to exclude the whole root."
+        )
+    return candidate
 
 
 class LocalWorkspaceRegistryService:
@@ -2486,6 +2540,73 @@ class LocalWorkspaceRegistryService:
                 "change_review: binding observer failed after registration"
             )
         return binding_result
+
+    def add_binding_exclusion(
+        self, workspace_id: str, binding_id: str, path: str
+    ) -> WorkspaceRuntimeBinding:
+        """Mark one binding-relative path invisible to agent file tools.
+
+        Spec §1: validates the path stays inside the binding root, infers
+        file/directory from disk (nonexistent paths read as directories for
+        pre-excluding build output), rejects case-insensitive duplicates,
+        and persists via binding metadata so the live run is untouched.
+        """
+        binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
+        relative = _validated_exclusion_relative(binding, path)
+        key = relative.as_posix().casefold()
+        entries = list(binding_exclusion_entries(binding))
+        if any(entry.path.casefold() == key for entry in entries):
+            raise WorkspaceRegistryServiceError("Path is already excluded.")
+        if len(entries) >= _MAX_BINDING_EXCLUSIONS:
+            raise WorkspaceRegistryServiceError(
+                f"Exclusion limit reached ({_MAX_BINDING_EXCLUSIONS})."
+            )
+        absolute = Path(str(binding.locator)) / relative
+        kind = "directory" if not absolute.exists() or absolute.is_dir() else "file"
+        entries.append(
+            BindingExclusion(path=relative.as_posix(), kind=kind, added_at=self._now_factory())
+        )
+        return self._save_binding_exclusions(binding, entries)
+
+    def remove_binding_exclusion(
+        self, workspace_id: str, binding_id: str, path: str
+    ) -> WorkspaceRuntimeBinding:
+        """Remove one exclusion (effective for new runs, not the live one)."""
+        binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
+        relative = PurePosixPath(str(path).strip())
+        key = relative.as_posix().casefold()
+        entries = [e for e in binding_exclusion_entries(binding) if e.path.casefold() != key]
+        return self._save_binding_exclusions(binding, entries)
+
+    def list_binding_exclusions(self, binding_id: str) -> tuple[BindingExclusion, ...]:
+        """Return the binding's exclusions (empty when binding is unknown)."""
+        binding = self.get_runtime_binding(binding_id)
+        if binding is None:
+            return ()
+        return binding_exclusion_entries(binding)
+
+    def _binding_for_exclusion_edit(
+        self, workspace_id: str, binding_id: str
+    ) -> WorkspaceRuntimeBinding:
+        binding = self.get_runtime_binding(binding_id)
+        if (
+            binding is None
+            or str(binding.workspace_id) != str(workspace_id)
+            or str(binding.binding_kind) != str(RuntimeBindingKind.LOCAL_FILESYSTEM)
+        ):
+            raise WorkspaceRegistryServiceError(
+                "Folder binding not found in this workspace."
+            )
+        return binding
+
+    def _save_binding_exclusions(
+        self, binding: WorkspaceRuntimeBinding, entries: list[BindingExclusion]
+    ) -> WorkspaceRuntimeBinding:
+        metadata = dict(binding.metadata)
+        metadata["exclusions"] = [
+            {"path": e.path, "kind": e.kind, "added_at": e.added_at} for e in entries
+        ]
+        return self.save_runtime_binding(replace(binding, metadata=metadata))
 
     def list_folder_bindings(
         self, workspace_id: str
