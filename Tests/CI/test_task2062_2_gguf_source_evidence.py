@@ -32,6 +32,9 @@ REQUIRED_NODES = (
     "Tests/LLM_Management/test_gguf_server_sources.py::test_mlx_command_snapshot_is_unchanged",
 )
 REQUIRED_UI_NODES = (
+    "Tests/UI/test_llm_gguf_source_modes.py::test_lazy_mount_cached_inventory_preserves_handoff_awaiting_fresh_read",
+    "Tests/UI/test_llm_gguf_source_modes.py::test_inventory_during_lazy_selector_mount_is_replayed_after_leaving_pane[False]",
+    "Tests/UI/test_llm_gguf_source_modes.py::test_inventory_during_lazy_selector_mount_is_replayed_after_leaving_pane[True]",
     "Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_recompose_and_not_window_selection",
     "Tests/UI/test_llm_gguf_source_modes.py::test_external_copy_keyboard_geometry_and_unrelated_views_stay_stable",
     "Tests/UI/test_llm_gguf_source_modes.py::test_supported_width_keyboard_reaches_each_provider_source_and_actions[llamacpp-llama-cpp]",
@@ -200,7 +203,7 @@ def test_windows_failure_diagnostic_keeps_exact_read_only_commands() -> None:
         "for",
         "node",
         "in",
-        *REQUIRED_UI_NODES[2:],
+        *REQUIRED_UI_NODES[-2:],
         "do",
         "python",
         "$diagnostic",

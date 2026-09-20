@@ -1,0 +1,1998 @@
+N999 Invalid module name: 'Notes_Library'
+--> tldw_chatbook/Notes/Notes_Library.py:1:1
+
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> tldw_chatbook/Notes/Notes_Library.py:20:1
+   |
+18 | from datetime import UTC, datetime
+19 | from pathlib import Path
+20 | from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+21 |
+22 | from tldw_chatbook.config import (
+   |
+help: Import from `collections.abc`
+   |
+19 | from pathlib import Path
+   - from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+20 + from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+21 + from collections.abc import Sequence
+22 |
+   |
+
+UP035 `typing.Dict` is deprecated, use `dict` instead
+  --> tldw_chatbook/Notes/Notes_Library.py:20:1
+   |
+18 | from datetime import UTC, datetime
+19 | from pathlib import Path
+20 | from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+21 |
+22 | from tldw_chatbook.config import (
+   |
+
+UP035 `typing.List` is deprecated, use `list` instead
+  --> tldw_chatbook/Notes/Notes_Library.py:20:1
+   |
+18 | from datetime import UTC, datetime
+19 | from pathlib import Path
+20 | from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+21 |
+22 | from tldw_chatbook.config import (
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> tldw_chatbook/Notes/Notes_Library.py:76:28
+   |
+74 |     def __init__(
+75 |         self,
+76 |         base_db_directory: Union[str, Path],
+   |                            ^^^^^^^^^^^^^^^^
+77 |         api_client_id: str,  # This api_client_id might be a fallback or general app id
+78 |         global_db_to_use: Optional[CharactersRAGDB] = None,
+   |
+help: Convert to `X | Y`
+   |
+75 |         self,
+   -         base_db_directory: Union[str, Path],
+76 +         base_db_directory: str | Path,
+77 |         api_client_id: str,  # This api_client_id might be a fallback or general app id
+   |
+
+UP045 [*] Use `X | None` for type annotations
+  --> tldw_chatbook/Notes/Notes_Library.py:78:27
+   |
+76 |         base_db_directory: Union[str, Path],
+77 |         api_client_id: str,  # This api_client_id might be a fallback or general app id
+78 |         global_db_to_use: Optional[CharactersRAGDB] = None,
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+79 |         failure_injector: Optional[Callable[[str], None]] = None,
+80 |     ):
+   |
+help: Convert to `X | None`
+   |
+77 |         api_client_id: str,  # This api_client_id might be a fallback or general app id
+   -         global_db_to_use: Optional[CharactersRAGDB] = None,
+78 +         global_db_to_use: CharactersRAGDB | None = None,
+79 |         failure_injector: Optional[Callable[[str], None]] = None,
+   |
+
+UP045 [*] Use `X | None` for type annotations
+  --> tldw_chatbook/Notes/Notes_Library.py:79:27
+   |
+77 |         api_client_id: str,  # This api_client_id might be a fallback or general app id
+78 |         global_db_to_use: Optional[CharactersRAGDB] = None,
+79 |         failure_injector: Optional[Callable[[str], None]] = None,
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+80 |     ):
+   |
+help: Convert to `X | None`
+   |
+78 |         global_db_to_use: Optional[CharactersRAGDB] = None,
+   -         failure_injector: Optional[Callable[[str], None]] = None,
+79 +         failure_injector: Callable[[str], None] | None = None,
+80 |     ):
+   |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+  --> tldw_chatbook/Notes/Notes_Library.py:88:29
+   |
+86 |         self._organization_failure_injector = failure_injector
+87 |
+88 |         self._db_instances: Dict[
+   |                             ^^^^
+89 |             str, CharactersRAGDB
+90 |         ] = {}  # Cache instances per user_id (as client_id)
+   |
+help: Replace with `dict`
+   |
+87 |
+   -         self._db_instances: Dict[
+88 +         self._db_instances: dict[
+89 |             str, CharactersRAGDB
+   |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+   --> tldw_chatbook/Notes/Notes_Library.py:194:24
+    |
+192 |                 return db_instance
+193 |             except (CharactersRAGDBError, SchemaError, sqlite3.Error) as e:
+194 |                 logger.error(
+    |                        ^^^^^
+195 |                     f"Failed to initialize dynamic CharactersRAGDB instance for user '{user_id}': {e}",
+196 |                     exc_info=True,
+    |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+   --> tldw_chatbook/Notes/Notes_Library.py:200:24
+    |
+198 |                 raise
+199 |             except Exception as e:  # Catch any other unexpected Python error
+200 |                 logger.error(
+    |                        ^^^^^
+201 |                     f"Unexpected error initializing dynamic CharactersRAGDB for user '{user_id}': {e}",
+202 |                     exc_info=True,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:268:64
+    |
+267 |     def add_note(
+268 |         self, user_id: str, title: str, content: str, note_id: Optional[str] = None
+    |                                                                ^^^^^^^^^^^^^
+269 |     ) -> str:
+270 |         """
+    |
+help: Convert to `X | None`
+    |
+267 |     def add_note(
+    -         self, user_id: str, title: str, content: str, note_id: Optional[str] = None
+268 +         self, user_id: str, title: str, content: str, note_id: str | None = None
+269 |     ) -> str:
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:314:61
+    |
+312 |             raise
+313 |
+314 |     def get_note_by_id(self, user_id: str, note_id: str) -> Optional[Dict[str, Any]]:
+    |                                                             ^^^^^^^^^^^^^^^^^^^^^^^^
+315 |         start_time = time.time()
+316 |         log_counter("notes_library_get_note_attempt")
+    |
+help: Convert to `X | None`
+    |
+313 |
+    -     def get_note_by_id(self, user_id: str, note_id: str) -> Optional[Dict[str, Any]]:
+314 +     def get_note_by_id(self, user_id: str, note_id: str) -> Dict[str, Any] | None:
+315 |         start_time = time.time()
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:314:70
+    |
+312 |             raise
+313 |
+314 |     def get_note_by_id(self, user_id: str, note_id: str) -> Optional[Dict[str, Any]]:
+    |                                                                      ^^^^
+315 |         start_time = time.time()
+316 |         log_counter("notes_library_get_note_attempt")
+    |
+help: Replace with `dict`
+    |
+313 |
+    -     def get_note_by_id(self, user_id: str, note_id: str) -> Optional[Dict[str, Any]]:
+314 +     def get_note_by_id(self, user_id: str, note_id: str) -> Optional[dict[str, Any]]:
+315 |         start_time = time.time()
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:336:10
+    |
+334 |     def get_note_version_states(
+335 |         self, user_id: str, note_ids: Sequence[str]
+336 |     ) -> Dict[str, Dict[str, Any]]:
+    |          ^^^^
+337 |         """Read only (version, deleted) for the given note ids (TASK-23027).
+    |
+help: Replace with `dict`
+    |
+335 |         self, user_id: str, note_ids: Sequence[str]
+    -     ) -> Dict[str, Dict[str, Any]]:
+336 +     ) -> dict[str, Dict[str, Any]]:
+337 |         """Read only (version, deleted) for the given note ids (TASK-23027).
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:336:20
+    |
+334 |     def get_note_version_states(
+335 |         self, user_id: str, note_ids: Sequence[str]
+336 |     ) -> Dict[str, Dict[str, Any]]:
+    |                    ^^^^
+337 |         """Read only (version, deleted) for the given note ids (TASK-23027).
+    |
+help: Replace with `dict`
+    |
+335 |         self, user_id: str, note_ids: Sequence[str]
+    -     ) -> Dict[str, Dict[str, Any]]:
+336 +     ) -> Dict[str, dict[str, Any]]:
+337 |         """Read only (version, deleted) for the given note ids (TASK-23027).
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:348:10
+    |
+346 |     def get_agent_lesson_preflight_snapshot(
+347 |         self, user_id: str, note_id: str
+348 |     ) -> Dict[str, Any]:
+    |          ^^^^
+349 |         """Return one private, transaction-consistent lesson review snapshot.
+    |
+help: Replace with `dict`
+    |
+347 |         self, user_id: str, note_id: str
+    -     ) -> Dict[str, Any]:
+348 +     ) -> dict[str, Any]:
+349 |         """Return one private, transaction-consistent lesson review snapshot.
+    |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:410:10
+    |
+408 |     def list_notes(
+409 |         self, user_id: str, limit: int = 100, offset: int = 0
+410 |     ) -> List[Dict[str, Any]]:
+    |          ^^^^
+411 |         start_time = time.time()
+412 |         log_counter(
+    |
+help: Replace with `list`
+    |
+409 |         self, user_id: str, limit: int = 100, offset: int = 0
+    -     ) -> List[Dict[str, Any]]:
+410 +     ) -> list[Dict[str, Any]]:
+411 |         start_time = time.time()
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:410:15
+    |
+408 |     def list_notes(
+409 |         self, user_id: str, limit: int = 100, offset: int = 0
+410 |     ) -> List[Dict[str, Any]]:
+    |               ^^^^
+411 |         start_time = time.time()
+412 |         log_counter(
+    |
+help: Replace with `dict`
+    |
+409 |         self, user_id: str, limit: int = 100, offset: int = 0
+    -     ) -> List[Dict[str, Any]]:
+410 +     ) -> List[dict[str, Any]]:
+411 |         start_time = time.time()
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:460:10
+    |
+458 |     def list_deleted_notes(
+459 |         self, user_id: str, limit: int = 20, offset: int = 0
+460 |     ) -> Dict[str, Any]:
+    |          ^^^^
+461 |         """Page the soft-deleted notes behind the Library Notes Trash view.
+    |
+help: Replace with `dict`
+    |
+459 |         self, user_id: str, limit: int = 20, offset: int = 0
+    -     ) -> Dict[str, Any]:
+460 +     ) -> dict[str, Any]:
+461 |         """Page the soft-deleted notes behind the Library Notes Trash view.
+    |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:478:10
+    |
+476 |     def get_notes_linking_to(
+477 |         self, user_id: str, note_id: str, limit: int = 50
+478 |     ) -> List[Dict[str, Any]]:
+    |          ^^^^
+479 |         """List the notes whose body links to ``note_id`` (task-32145).
+    |
+help: Replace with `list`
+    |
+477 |         self, user_id: str, note_id: str, limit: int = 50
+    -     ) -> List[Dict[str, Any]]:
+478 +     ) -> list[Dict[str, Any]]:
+479 |         """List the notes whose body links to ``note_id`` (task-32145).
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:478:15
+    |
+476 |     def get_notes_linking_to(
+477 |         self, user_id: str, note_id: str, limit: int = 50
+478 |     ) -> List[Dict[str, Any]]:
+    |               ^^^^
+479 |         """List the notes whose body links to ``note_id`` (task-32145).
+    |
+help: Replace with `dict`
+    |
+477 |         self, user_id: str, note_id: str, limit: int = 50
+    -     ) -> List[Dict[str, Any]]:
+478 +     ) -> List[dict[str, Any]]:
+479 |         """List the notes whose body links to ``note_id`` (task-32145).
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:498:10
+    |
+496 |     def list_library_notes(
+497 |         self, user_id: str, *, limit: int = 20, offset: int = 0
+498 |     ) -> Dict[str, Any]:
+    |          ^^^^
+499 |         """Page the active local notes library for agent-facing list tools.
+    |
+help: Replace with `dict`
+    |
+497 |         self, user_id: str, *, limit: int = 20, offset: int = 0
+    -     ) -> Dict[str, Any]:
+498 +     ) -> dict[str, Any]:
+499 |         """Page the active local notes library for agent-facing list tools.
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:535:16
+    |
+533 |         user_id: str,
+534 |         *,
+535 |         query: Optional[str] = None,
+    |                ^^^^^^^^^^^^^
+536 |         folder_sync_id: Optional[str] = None,
+537 |         folder: Optional[str] = None,
+    |
+help: Convert to `X | None`
+    |
+534 |         *,
+    -         query: Optional[str] = None,
+535 +         query: str | None = None,
+536 |         folder_sync_id: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:536:25
+    |
+534 |         *,
+535 |         query: Optional[str] = None,
+536 |         folder_sync_id: Optional[str] = None,
+    |                         ^^^^^^^^^^^^^
+537 |         folder: Optional[str] = None,
+538 |         keyword: Optional[str] = None,
+    |
+help: Convert to `X | None`
+    |
+535 |         query: Optional[str] = None,
+    -         folder_sync_id: Optional[str] = None,
+536 +         folder_sync_id: str | None = None,
+537 |         folder: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:537:17
+    |
+535 |         query: Optional[str] = None,
+536 |         folder_sync_id: Optional[str] = None,
+537 |         folder: Optional[str] = None,
+    |                 ^^^^^^^^^^^^^
+538 |         keyword: Optional[str] = None,
+539 |         limit: int = 20,
+    |
+help: Convert to `X | None`
+    |
+536 |         folder_sync_id: Optional[str] = None,
+    -         folder: Optional[str] = None,
+537 +         folder: str | None = None,
+538 |         keyword: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:538:18
+    |
+536 |         folder_sync_id: Optional[str] = None,
+537 |         folder: Optional[str] = None,
+538 |         keyword: Optional[str] = None,
+    |                  ^^^^^^^^^^^^^
+539 |         limit: int = 20,
+540 |         offset: int = 0,
+    |
+help: Convert to `X | None`
+    |
+537 |         folder: Optional[str] = None,
+    -         keyword: Optional[str] = None,
+538 +         keyword: str | None = None,
+539 |         limit: int = 20,
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:541:10
+    |
+539 |         limit: int = 20,
+540 |         offset: int = 0,
+541 |     ) -> Dict[str, Any]:
+    |          ^^^^
+542 |         """Search the active local notes library for agent-facing tools.
+    |
+help: Replace with `dict`
+    |
+540 |         offset: int = 0,
+    -     ) -> Dict[str, Any]:
+541 +     ) -> dict[str, Any]:
+542 |         """Search the active local notes library for agent-facing tools.
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:578:42
+    |
+576 |         else:
+577 |             with db.transaction() as connection:
+578 |                 resolved_folder_sync_id: Optional[str] = None
+    |                                          ^^^^^^^^^^^^^
+579 |                 if folder is not None:
+580 |                     resolved_folder_sync_id = self._resolve_portable_folder_sync_id(
+    |
+help: Convert to `X | None`
+    |
+577 |             with db.transaction() as connection:
+    -                 resolved_folder_sync_id: Optional[str] = None
+578 +                 resolved_folder_sync_id: str | None = None
+579 |                 if folder is not None:
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:622:16
+    |
+620 |     def _library_search_args(
+621 |         *,
+622 |         query: Optional[str],
+    |                ^^^^^^^^^^^^^
+623 |         folder_sync_id: Optional[str],
+624 |         keyword: Optional[str],
+    |
+help: Convert to `X | None`
+    |
+621 |         *,
+    -         query: Optional[str],
+622 +         query: str | None,
+623 |         folder_sync_id: Optional[str],
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:623:25
+    |
+621 |         *,
+622 |         query: Optional[str],
+623 |         folder_sync_id: Optional[str],
+    |                         ^^^^^^^^^^^^^
+624 |         keyword: Optional[str],
+625 |         limit: int,
+    |
+help: Convert to `X | None`
+    |
+622 |         query: Optional[str],
+    -         folder_sync_id: Optional[str],
+623 +         folder_sync_id: str | None,
+624 |         keyword: Optional[str],
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:624:18
+    |
+622 |         query: Optional[str],
+623 |         folder_sync_id: Optional[str],
+624 |         keyword: Optional[str],
+    |                  ^^^^^^^^^^^^^
+625 |         limit: int,
+626 |         offset: int,
+    |
+help: Convert to `X | None`
+    |
+623 |         folder_sync_id: Optional[str],
+    -         keyword: Optional[str],
+624 +         keyword: str | None,
+625 |         limit: int,
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:627:10
+    |
+625 |         limit: int,
+626 |         offset: int,
+627 |     ) -> Dict[str, Any]:
+    |          ^^^^
+628 |         """Build the compatible DB call without forwarding absent selectors."""
+    |
+help: Replace with `dict`
+    |
+626 |         offset: int,
+    -     ) -> Dict[str, Any]:
+627 +     ) -> dict[str, Any]:
+628 |         """Build the compatible DB call without forwarding absent selectors."""
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:630:22
+    |
+628 |         """Build the compatible DB call without forwarding absent selectors."""
+629 |
+630 |         search_args: Dict[str, Any] = {"limit": limit, "offset": offset}
+    |                      ^^^^
+631 |         if query is not None:
+632 |             search_args["query"] = query
+    |
+help: Replace with `dict`
+    |
+629 |
+    -         search_args: Dict[str, Any] = {"limit": limit, "offset": offset}
+630 +         search_args: dict[str, Any] = {"limit": limit, "offset": offset}
+631 |         if query is not None:
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:665:18
+    |
+663 |             )
+664 |         visited: set[str] = set()
+665 |         current: Optional[sqlite3.Row] = row
+    |                  ^^^^^^^^^^^^^^^^^^^^^
+666 |         while current is not None:
+667 |             current_id = str(current["id"])
+    |
+help: Convert to `X | None`
+    |
+664 |         visited: set[str] = set()
+    -         current: Optional[sqlite3.Row] = row
+665 +         current: sqlite3.Row | None = row
+666 |         while current is not None:
+    |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:707:18
+    |
+705 |         ).fetchall()
+706 |         by_id = {str(row["id"]): row for row in rows}
+707 |         matches: List[str] = []
+    |                  ^^^^
+708 |         for row in rows:
+709 |             if bool(row["deleted"]) or row["sync_id"] is None:
+    |
+help: Replace with `list`
+    |
+706 |         by_id = {str(row["id"]): row for row in rows}
+    -         matches: List[str] = []
+707 +         matches: list[str] = []
+708 |         for row in rows:
+    |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:711:22
+    |
+709 |             if bool(row["deleted"]) or row["sync_id"] is None:
+710 |                 continue
+711 |             lineage: List[str] = []
+    |                      ^^^^
+712 |             current: Optional[sqlite3.Row] = row
+713 |             visited: set[str] = set()
+    |
+help: Replace with `list`
+    |
+710 |                 continue
+    -             lineage: List[str] = []
+711 +             lineage: list[str] = []
+712 |             current: Optional[sqlite3.Row] = row
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:712:22
+    |
+710 |                 continue
+711 |             lineage: List[str] = []
+712 |             current: Optional[sqlite3.Row] = row
+    |                      ^^^^^^^^^^^^^^^^^^^^^
+713 |             visited: set[str] = set()
+714 |             valid = True
+    |
+help: Convert to `X | None`
+    |
+711 |             lineage: List[str] = []
+    -             current: Optional[sqlite3.Row] = row
+712 +             current: sqlite3.Row | None = row
+713 |             visited: set[str] = set()
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:752:10
+    |
+750 |     def get_library_note_text(
+751 |         self, user_id: str, note_id: str, *, start: int = 0, max_chars: int = 8000
+752 |     ) -> Optional[Dict[str, Any]]:
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^
+753 |         """Read a windowed text segment for one active note.
+    |
+help: Convert to `X | None`
+    |
+751 |         self, user_id: str, note_id: str, *, start: int = 0, max_chars: int = 8000
+    -     ) -> Optional[Dict[str, Any]]:
+752 +     ) -> Dict[str, Any] | None:
+753 |         """Read a windowed text segment for one active note.
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:752:19
+    |
+750 |     def get_library_note_text(
+751 |         self, user_id: str, note_id: str, *, start: int = 0, max_chars: int = 8000
+752 |     ) -> Optional[Dict[str, Any]]:
+    |                   ^^^^
+753 |         """Read a windowed text segment for one active note.
+    |
+help: Replace with `dict`
+    |
+751 |         self, user_id: str, note_id: str, *, start: int = 0, max_chars: int = 8000
+    -     ) -> Optional[Dict[str, Any]]:
+752 +     ) -> Optional[dict[str, Any]]:
+753 |         """Read a windowed text segment for one active note.
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:787:18
+    |
+785 |         title: str,
+786 |         content: str,
+787 |         note_id: Optional[str] = None,
+    |                  ^^^^^^^^^^^^^
+788 |         expected_version: Optional[int] = None,
+789 |         ensure_keywords: Sequence[str] = (),
+    |
+help: Convert to `X | None`
+    |
+786 |         content: str,
+    -         note_id: Optional[str] = None,
+787 +         note_id: str | None = None,
+788 |         expected_version: Optional[int] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:788:27
+    |
+786 |         content: str,
+787 |         note_id: Optional[str] = None,
+788 |         expected_version: Optional[int] = None,
+    |                           ^^^^^^^^^^^^^
+789 |         ensure_keywords: Sequence[str] = (),
+790 |         folder_sync_id: Optional[str] = None,
+    |
+help: Convert to `X | None`
+    |
+787 |         note_id: Optional[str] = None,
+    -         expected_version: Optional[int] = None,
+788 +         expected_version: int | None = None,
+789 |         ensure_keywords: Sequence[str] = (),
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:790:25
+    |
+788 |         expected_version: Optional[int] = None,
+789 |         ensure_keywords: Sequence[str] = (),
+790 |         folder_sync_id: Optional[str] = None,
+    |                         ^^^^^^^^^^^^^
+791 |         folder: Optional[str] = None,
+792 |         expected_organization_version: Optional[str] = None,
+    |
+help: Convert to `X | None`
+    |
+789 |         ensure_keywords: Sequence[str] = (),
+    -         folder_sync_id: Optional[str] = None,
+790 +         folder_sync_id: str | None = None,
+791 |         folder: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:791:17
+    |
+789 |         ensure_keywords: Sequence[str] = (),
+790 |         folder_sync_id: Optional[str] = None,
+791 |         folder: Optional[str] = None,
+    |                 ^^^^^^^^^^^^^
+792 |         expected_organization_version: Optional[str] = None,
+793 |         receipt_id: Optional[str] = None,
+    |
+help: Convert to `X | None`
+    |
+790 |         folder_sync_id: Optional[str] = None,
+    -         folder: Optional[str] = None,
+791 +         folder: str | None = None,
+792 |         expected_organization_version: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:792:40
+    |
+790 |         folder_sync_id: Optional[str] = None,
+791 |         folder: Optional[str] = None,
+792 |         expected_organization_version: Optional[str] = None,
+    |                                        ^^^^^^^^^^^^^
+793 |         receipt_id: Optional[str] = None,
+794 |         server_profile_id: Optional[str] = None,
+    |
+help: Convert to `X | None`
+    |
+791 |         folder: Optional[str] = None,
+    -         expected_organization_version: Optional[str] = None,
+792 +         expected_organization_version: str | None = None,
+793 |         receipt_id: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:793:21
+    |
+791 |         folder: Optional[str] = None,
+792 |         expected_organization_version: Optional[str] = None,
+793 |         receipt_id: Optional[str] = None,
+    |                     ^^^^^^^^^^^^^
+794 |         server_profile_id: Optional[str] = None,
+795 |         dataset_id: Optional[str] = None,
+    |
+help: Convert to `X | None`
+    |
+792 |         expected_organization_version: Optional[str] = None,
+    -         receipt_id: Optional[str] = None,
+793 +         receipt_id: str | None = None,
+794 |         server_profile_id: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:794:28
+    |
+792 |         expected_organization_version: Optional[str] = None,
+793 |         receipt_id: Optional[str] = None,
+794 |         server_profile_id: Optional[str] = None,
+    |                            ^^^^^^^^^^^^^
+795 |         dataset_id: Optional[str] = None,
+796 |         _agent_lesson_context: object | None = None,
+    |
+help: Convert to `X | None`
+    |
+793 |         receipt_id: Optional[str] = None,
+    -         server_profile_id: Optional[str] = None,
+794 +         server_profile_id: str | None = None,
+795 |         dataset_id: Optional[str] = None,
+    |
+
+UP045 [*] Use `X | None` for type annotations
+   --> tldw_chatbook/Notes/Notes_Library.py:795:21
+    |
+793 |         receipt_id: Optional[str] = None,
+794 |         server_profile_id: Optional[str] = None,
+795 |         dataset_id: Optional[str] = None,
+    |                     ^^^^^^^^^^^^^
+796 |         _agent_lesson_context: object | None = None,
+797 |         _agent_lesson_raw_arguments: Mapping[str, Any] | None = None,
+    |
+help: Convert to `X | None`
+    |
+794 |         server_profile_id: Optional[str] = None,
+    -         dataset_id: Optional[str] = None,
+795 +         dataset_id: str | None = None,
+796 |         _agent_lesson_context: object | None = None,
+    |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+   --> tldw_chatbook/Notes/Notes_Library.py:798:10
+    |
+796 |         _agent_lesson_context: object | None = None,
+797 |         _agent_lesson_raw_arguments: Mapping[str, Any] | None = None,
+798 |     ) -> Dict[str, Any]:
+    |          ^^^^
+799 |         """Save note content and additive organization in one Notes transaction."""
+    |
+help: Replace with `dict`
+    |
+797 |         _agent_lesson_raw_arguments: Mapping[str, Any] | None = None,
+    -     ) -> Dict[str, Any]:
+798 +     ) -> dict[str, Any]:
+799 |         """Save note content and additive organization in one Notes transaction."""
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> tldw_chatbook/Notes/Notes_Library.py:875:21
+    |
+873 |               if _agent_lesson_context is not None:
+874 |                   try:
+875 | /                     from tldw_chatbook.Agents.library_tool_provider import (
+876 | |                         _AgentLessonApprovalAuthority,
+877 | |                         _AgentLessonAuthorityRefusal,
+878 | |                         _AgentLessonMutationContext,
+879 | |                         LibraryToolProvider,
+880 | |                     )
+    | |_____________________^
+881 |
+882 |                       approved_attempt = (
+    |
+help: Organize imports
+    |
+875 |                     from tldw_chatbook.Agents.library_tool_provider import (
+876 +                         LibraryToolProvider,
+877 |                         _AgentLessonApprovalAuthority,
+878 |                         _AgentLessonAuthorityRefusal,
+879 |                         _AgentLessonMutationContext,
+    -                         LibraryToolProvider,
+880 |                     )
+    |
+
+RUF010 [*] Use explicit conversion flag
+   --> tldw_chatbook/Notes/Notes_Library.py:922:24
+    |
+920 |                 receipt_version = (
+921 |                     f"{int(authority_receipt['note_version'])}:"
+922 |                     f"{str(authority_receipt['organization_version'])}"
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+923 |                     if authority_receipt
+924 |                     else None
+    |
+help: Replace with conversion flag
+    |
+921 |                     f"{int(authority_receipt['note_version'])}:"
+    -                     f"{str(authority_receipt['organization_version'])}"
+922 +                     f"{authority_receipt['organization_version']!s}"
+923 |                     if authority_receipt
+    |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1148:27
+     |
+1146 |             self._inject_organization_failure("after_folder_ensure")
+1147 |
+1148 |             keyword_rows: List[sqlite3.Row] = []
+     |                           ^^^^
+1149 |             created_keyword_rows: List[sqlite3.Row] = []
+1150 |             for keyword in requested_keywords:
+     |
+help: Replace with `list`
+     |
+1147 |
+     -             keyword_rows: List[sqlite3.Row] = []
+1148 +             keyword_rows: list[sqlite3.Row] = []
+1149 |             created_keyword_rows: List[sqlite3.Row] = []
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1149:35
+     |
+1148 |             keyword_rows: List[sqlite3.Row] = []
+1149 |             created_keyword_rows: List[sqlite3.Row] = []
+     |                                   ^^^^
+1150 |             for keyword in requested_keywords:
+1151 |                 row = cursor.execute(
+     |
+help: Replace with `list`
+     |
+1148 |             keyword_rows: List[sqlite3.Row] = []
+     -             created_keyword_rows: List[sqlite3.Row] = []
+1149 +             created_keyword_rows: list[sqlite3.Row] = []
+1150 |             for keyword in requested_keywords:
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1178:28
+     |
+1176 |                 )
+1177 |                 folder_link_created = before is None
+1178 |             keyword_links: List[sqlite3.Row] = []
+     |                            ^^^^
+1179 |             for row in keyword_rows:
+1180 |                 if db.link_note_to_keyword(
+     |
+help: Replace with `list`
+     |
+1177 |                 folder_link_created = before is None
+     -             keyword_links: List[sqlite3.Row] = []
+1178 +             keyword_links: list[sqlite3.Row] = []
+1179 |             for row in keyword_rows:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1247:28
+     |
+1245 |             self._inject_organization_failure("after_intent")
+1246 |
+1247 |             receipt_state: Optional[str] = None
+     |                            ^^^^^^^^^^^^^
+1248 |             if folder_collisions:
+1249 |                 review_id = self._ensure_folder_placement_review(
+     |
+help: Convert to `X | None`
+     |
+1246 |
+     -             receipt_state: Optional[str] = None
+1247 +             receipt_state: str | None = None
+1248 |             if folder_collisions:
+     |
+
+TRY004 Prefer `TypeError` exception for invalid type
+    --> tldw_chatbook/Notes/Notes_Library.py:1300:13
+     |
+1298 |     def _normalize_ensured_keywords(values: Sequence[str]) -> tuple[str, ...]:
+1299 |         if isinstance(values, (str, bytes)):
+1300 |             raise ValueError("ensure_keywords must be a sequence of keywords")
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1301 |         normalized: List[str] = []
+1302 |         for value in values:
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1301:21
+     |
+1299 |         if isinstance(values, (str, bytes)):
+1300 |             raise ValueError("ensure_keywords must be a sequence of keywords")
+1301 |         normalized: List[str] = []
+     |                     ^^^^
+1302 |         for value in values:
+1303 |             if not isinstance(value, str) or not value.strip():
+     |
+help: Replace with `list`
+     |
+1300 |             raise ValueError("ensure_keywords must be a sequence of keywords")
+     -         normalized: List[str] = []
+1301 +         normalized: list[str] = []
+1302 |         for value in values:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1318:28
+     |
+1316 |         cursor: sqlite3.Cursor,
+1317 |         *,
+1318 |         server_profile_id: Optional[str],
+     |                            ^^^^^^^^^^^^^
+1319 |         dataset_id: Optional[str],
+1320 |     ) -> tuple[Optional[str], Optional[str], bool]:
+     |
+help: Convert to `X | None`
+     |
+1317 |         *,
+     -         server_profile_id: Optional[str],
+1318 +         server_profile_id: str | None,
+1319 |         dataset_id: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1319:21
+     |
+1317 |         *,
+1318 |         server_profile_id: Optional[str],
+1319 |         dataset_id: Optional[str],
+     |                     ^^^^^^^^^^^^^
+1320 |     ) -> tuple[Optional[str], Optional[str], bool]:
+1321 |         if (server_profile_id is None) != (dataset_id is None):
+     |
+help: Convert to `X | None`
+     |
+1318 |         server_profile_id: Optional[str],
+     -         dataset_id: Optional[str],
+1319 +         dataset_id: str | None,
+1320 |     ) -> tuple[Optional[str], Optional[str], bool]:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1320:16
+     |
+1318 |         server_profile_id: Optional[str],
+1319 |         dataset_id: Optional[str],
+1320 |     ) -> tuple[Optional[str], Optional[str], bool]:
+     |                ^^^^^^^^^^^^^
+1321 |         if (server_profile_id is None) != (dataset_id is None):
+1322 |             raise ValueError("server_profile_id and dataset_id must be supplied together")
+     |
+help: Convert to `X | None`
+     |
+1319 |         dataset_id: Optional[str],
+     -     ) -> tuple[Optional[str], Optional[str], bool]:
+1320 +     ) -> tuple[str | None, Optional[str], bool]:
+1321 |         if (server_profile_id is None) != (dataset_id is None):
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1320:31
+     |
+1318 |         server_profile_id: Optional[str],
+1319 |         dataset_id: Optional[str],
+1320 |     ) -> tuple[Optional[str], Optional[str], bool]:
+     |                               ^^^^^^^^^^^^^
+1321 |         if (server_profile_id is None) != (dataset_id is None):
+1322 |             raise ValueError("server_profile_id and dataset_id must be supplied together")
+     |
+help: Convert to `X | None`
+     |
+1319 |         dataset_id: Optional[str],
+     -     ) -> tuple[Optional[str], Optional[str], bool]:
+1320 +     ) -> tuple[Optional[str], str | None, bool]:
+1321 |         if (server_profile_id is None) != (dataset_id is None):
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1370:18
+     |
+1368 |         keywords: Sequence[str],
+1369 |         *,
+1370 |         profile: Optional[str],
+     |                  ^^^^^^^^^^^^^
+1371 |         dataset: Optional[str],
+1372 |     ) -> bool:
+     |
+help: Convert to `X | None`
+     |
+1369 |         *,
+     -         profile: Optional[str],
+1370 +         profile: str | None,
+1371 |         dataset: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1371:18
+     |
+1369 |         *,
+1370 |         profile: Optional[str],
+1371 |         dataset: Optional[str],
+     |                  ^^^^^^^^^^^^^
+1372 |     ) -> bool:
+1373 |         rows = cursor.execute(
+     |
+help: Convert to `X | None`
+     |
+1370 |         profile: Optional[str],
+     -         dataset: Optional[str],
+1371 +         dataset: str | None,
+1372 |     ) -> bool:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1400:17
+     |
+1398 |         cursor: sqlite3.Cursor,
+1399 |         *,
+1400 |         folder: Optional[str],
+     |                 ^^^^^^^^^^^^^
+1401 |         folder_sync_id: Optional[str],
+1402 |     ) -> tuple[Optional[sqlite3.Row], bool, tuple[str, ...]]:
+     |
+help: Convert to `X | None`
+     |
+1399 |         *,
+     -         folder: Optional[str],
+1400 +         folder: str | None,
+1401 |         folder_sync_id: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1401:25
+     |
+1399 |         *,
+1400 |         folder: Optional[str],
+1401 |         folder_sync_id: Optional[str],
+     |                         ^^^^^^^^^^^^^
+1402 |     ) -> tuple[Optional[sqlite3.Row], bool, tuple[str, ...]]:
+1403 |         if folder_sync_id is not None:
+     |
+help: Convert to `X | None`
+     |
+1400 |         folder: Optional[str],
+     -         folder_sync_id: Optional[str],
+1401 +         folder_sync_id: str | None,
+1402 |     ) -> tuple[Optional[sqlite3.Row], bool, tuple[str, ...]]:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1402:16
+     |
+1400 |         folder: Optional[str],
+1401 |         folder_sync_id: Optional[str],
+1402 |     ) -> tuple[Optional[sqlite3.Row], bool, tuple[str, ...]]:
+     |                ^^^^^^^^^^^^^^^^^^^^^
+1403 |         if folder_sync_id is not None:
+1404 |             sync_id = NotesInteropService._active_portable_folder_sync_id(
+     |
+help: Convert to `X | None`
+     |
+1401 |         folder_sync_id: Optional[str],
+     -     ) -> tuple[Optional[sqlite3.Row], bool, tuple[str, ...]]:
+1402 +     ) -> tuple[sqlite3.Row | None, bool, tuple[str, ...]]:
+1403 |         if folder_sync_id is not None:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1524:32
+     |
+1522 |         note_version: int,
+1523 |         state: str,
+1524 |         requested_folder_name: Optional[str],
+     |                                ^^^^^^^^^^^^^
+1525 |         requested_folder_sync_id: Optional[str],
+1526 |         requested_keywords: Sequence[str],
+     |
+help: Convert to `X | None`
+     |
+1523 |         state: str,
+     -         requested_folder_name: Optional[str],
+1524 +         requested_folder_name: str | None,
+1525 |         requested_folder_sync_id: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1525:35
+     |
+1523 |         state: str,
+1524 |         requested_folder_name: Optional[str],
+1525 |         requested_folder_sync_id: Optional[str],
+     |                                   ^^^^^^^^^^^^^
+1526 |         requested_keywords: Sequence[str],
+1527 |         request_binding: Mapping[str, object],
+     |
+help: Convert to `X | None`
+     |
+1524 |         requested_folder_name: Optional[str],
+     -         requested_folder_sync_id: Optional[str],
+1525 +         requested_folder_sync_id: str | None,
+1526 |         requested_keywords: Sequence[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1528:20
+     |
+1526 |         requested_keywords: Sequence[str],
+1527 |         request_binding: Mapping[str, object],
+1528 |         review_id: Optional[str] = None,
+     |                    ^^^^^^^^^^^^^
+1529 |         collision_ids: Sequence[str] = (),
+1530 |     ) -> None:
+     |
+help: Convert to `X | None`
+     |
+1527 |         request_binding: Mapping[str, object],
+     -         review_id: Optional[str] = None,
+1528 +         review_id: str | None = None,
+1529 |         collision_ids: Sequence[str] = (),
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1666:18
+     |
+1664 |         title: str,
+1665 |         content: str,
+1666 |         note_id: Optional[str],
+     |                  ^^^^^^^^^^^^^
+1667 |         expected_version: Optional[int],
+1668 |         folder: Optional[str],
+     |
+help: Convert to `X | None`
+     |
+1665 |         content: str,
+     -         note_id: Optional[str],
+1666 +         note_id: str | None,
+1667 |         expected_version: Optional[int],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1667:27
+     |
+1665 |         content: str,
+1666 |         note_id: Optional[str],
+1667 |         expected_version: Optional[int],
+     |                           ^^^^^^^^^^^^^
+1668 |         folder: Optional[str],
+1669 |         folder_sync_id: Optional[str],
+     |
+help: Convert to `X | None`
+     |
+1666 |         note_id: Optional[str],
+     -         expected_version: Optional[int],
+1667 +         expected_version: int | None,
+1668 |         folder: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1668:17
+     |
+1666 |         note_id: Optional[str],
+1667 |         expected_version: Optional[int],
+1668 |         folder: Optional[str],
+     |                 ^^^^^^^^^^^^^
+1669 |         folder_sync_id: Optional[str],
+1670 |         keywords: Sequence[str],
+     |
+help: Convert to `X | None`
+     |
+1667 |         expected_version: Optional[int],
+     -         folder: Optional[str],
+1668 +         folder: str | None,
+1669 |         folder_sync_id: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1669:25
+     |
+1667 |         expected_version: Optional[int],
+1668 |         folder: Optional[str],
+1669 |         folder_sync_id: Optional[str],
+     |                         ^^^^^^^^^^^^^
+1670 |         keywords: Sequence[str],
+1671 |         expected_organization_version: Optional[str],
+     |
+help: Convert to `X | None`
+     |
+1668 |         folder: Optional[str],
+     -         folder_sync_id: Optional[str],
+1669 +         folder_sync_id: str | None,
+1670 |         keywords: Sequence[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1671:40
+     |
+1669 |         folder_sync_id: Optional[str],
+1670 |         keywords: Sequence[str],
+1671 |         expected_organization_version: Optional[str],
+     |                                        ^^^^^^^^^^^^^
+1672 |         profile: Optional[str],
+1673 |         dataset: Optional[str],
+     |
+help: Convert to `X | None`
+     |
+1670 |         keywords: Sequence[str],
+     -         expected_organization_version: Optional[str],
+1671 +         expected_organization_version: str | None,
+1672 |         profile: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1672:18
+     |
+1670 |         keywords: Sequence[str],
+1671 |         expected_organization_version: Optional[str],
+1672 |         profile: Optional[str],
+     |                  ^^^^^^^^^^^^^
+1673 |         dataset: Optional[str],
+1674 |     ) -> Dict[str, object]:
+     |
+help: Convert to `X | None`
+     |
+1671 |         expected_organization_version: Optional[str],
+     -         profile: Optional[str],
+1672 +         profile: str | None,
+1673 |         dataset: Optional[str],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1673:18
+     |
+1671 |         expected_organization_version: Optional[str],
+1672 |         profile: Optional[str],
+1673 |         dataset: Optional[str],
+     |                  ^^^^^^^^^^^^^
+1674 |     ) -> Dict[str, object]:
+1675 |         canonical_request = {
+     |
+help: Convert to `X | None`
+     |
+1672 |         profile: Optional[str],
+     -         dataset: Optional[str],
+1673 +         dataset: str | None,
+1674 |     ) -> Dict[str, object]:
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1674:10
+     |
+1672 |         profile: Optional[str],
+1673 |         dataset: Optional[str],
+1674 |     ) -> Dict[str, object]:
+     |          ^^^^
+1675 |         canonical_request = {
+1676 |             "content": content,
+     |
+help: Replace with `dict`
+     |
+1673 |         dataset: Optional[str],
+     -     ) -> Dict[str, object]:
+1674 +     ) -> dict[str, object]:
+1675 |         canonical_request = {
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1802:24
+     |
+1800 |         cursor: sqlite3.Cursor,
+1801 |         note_id: str,
+1802 |         receipt_state: Optional[str],
+     |                        ^^^^^^^^^^^^^
+1803 |     ) -> Dict[str, Any]:
+1804 |         note = cursor.execute(
+     |
+help: Convert to `X | None`
+     |
+1801 |         note_id: str,
+     -         receipt_state: Optional[str],
+1802 +         receipt_state: str | None,
+1803 |     ) -> Dict[str, Any]:
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1803:10
+     |
+1801 |         note_id: str,
+1802 |         receipt_state: Optional[str],
+1803 |     ) -> Dict[str, Any]:
+     |          ^^^^
+1804 |         note = cursor.execute(
+1805 |             "SELECT id, title, version FROM notes WHERE id = ? AND deleted = 0",
+     |
+help: Replace with `dict`
+     |
+1802 |         receipt_state: Optional[str],
+     -     ) -> Dict[str, Any]:
+1803 +     ) -> dict[str, Any]:
+1804 |         note = cursor.execute(
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1812:17
+     |
+1810 |                 "note_not_found", "receipt note is missing or deleted"
+1811 |             )
+1812 |         result: Dict[str, Any] = {
+     |                 ^^^^
+1813 |             "id": str(note["id"]),
+1814 |             "title": str(note["title"]),
+     |
+help: Replace with `dict`
+     |
+1811 |             )
+     -         result: Dict[str, Any] = {
+1812 +         result: dict[str, Any] = {
+1813 |             "id": str(note["id"]),
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1825:22
+     |
+1823 |         user_id: str,
+1824 |         note_id: str,
+1825 |         update_data: Dict[str, Any],
+     |                      ^^^^
+1826 |         expected_version: int,
+1827 |     ) -> bool:
+     |
+help: Replace with `dict`
+     |
+1824 |         note_id: str,
+     -         update_data: Dict[str, Any],
+1825 +         update_data: dict[str, Any],
+1826 |         expected_version: int,
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1965:26
+     |
+1963 |         search_term: str,
+1964 |         limit: int = 10,
+1965 |         fts_match_query: Optional[str] = None,
+     |                          ^^^^^^^^^^^^^
+1966 |         *,
+1967 |         id_allowlist: Optional[Sequence[str]] = None,
+     |
+help: Convert to `X | None`
+     |
+1964 |         limit: int = 10,
+     -         fts_match_query: Optional[str] = None,
+1965 +         fts_match_query: str | None = None,
+1966 |         *,
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:1967:23
+     |
+1965 |         fts_match_query: Optional[str] = None,
+1966 |         *,
+1967 |         id_allowlist: Optional[Sequence[str]] = None,
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^
+1968 |     ) -> List[Dict[str, Any]]:
+1969 |         """Search notes, optionally restricted to a caller-provided id allowlist.
+     |
+help: Convert to `X | None`
+     |
+1966 |         *,
+     -         id_allowlist: Optional[Sequence[str]] = None,
+1967 +         id_allowlist: Sequence[str] | None = None,
+1968 |     ) -> List[Dict[str, Any]]:
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1968:10
+     |
+1966 |         *,
+1967 |         id_allowlist: Optional[Sequence[str]] = None,
+1968 |     ) -> List[Dict[str, Any]]:
+     |          ^^^^
+1969 |         """Search notes, optionally restricted to a caller-provided id allowlist.
+     |
+help: Replace with `list`
+     |
+1967 |         id_allowlist: Optional[Sequence[str]] = None,
+     -     ) -> List[Dict[str, Any]]:
+1968 +     ) -> list[Dict[str, Any]]:
+1969 |         """Search notes, optionally restricted to a caller-provided id allowlist.
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:1968:15
+     |
+1966 |         *,
+1967 |         id_allowlist: Optional[Sequence[str]] = None,
+1968 |     ) -> List[Dict[str, Any]]:
+     |               ^^^^
+1969 |         """Search notes, optionally restricted to a caller-provided id allowlist.
+     |
+help: Replace with `dict`
+     |
+1967 |         id_allowlist: Optional[Sequence[str]] = None,
+     -     ) -> List[Dict[str, Any]]:
+1968 +     ) -> List[dict[str, Any]]:
+1969 |         """Search notes, optionally restricted to a caller-provided id allowlist.
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2081:40
+     |
+2080 |     @staticmethod
+2081 |     def _note_link_record(row: Any) -> Dict[str, Any]:
+     |                                        ^^^^
+2082 |         metadata = json.loads(row["metadata_json"] or "{}")
+2083 |         return {
+     |
+help: Replace with `dict`
+     |
+2080 |     @staticmethod
+     -     def _note_link_record(row: Any) -> Dict[str, Any]:
+2081 +     def _note_link_record(row: Any) -> dict[str, Any]:
+2082 |         metadata = json.loads(row["metadata_json"] or "{}")
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2102:17
+     |
+2100 |         *,
+2101 |         directed: bool = False,
+2102 |         weight: Optional[float] = None,
+     |                 ^^^^^^^^^^^^^^^
+2103 |         metadata: Optional[Dict[str, Any]] = None,
+2104 |     ) -> Dict[str, Any]:
+     |
+help: Convert to `X | None`
+     |
+2101 |         directed: bool = False,
+     -         weight: Optional[float] = None,
+2102 +         weight: float | None = None,
+2103 |         metadata: Optional[Dict[str, Any]] = None,
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2103:19
+     |
+2101 |         directed: bool = False,
+2102 |         weight: Optional[float] = None,
+2103 |         metadata: Optional[Dict[str, Any]] = None,
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+2104 |     ) -> Dict[str, Any]:
+2105 |         db = self._get_db(user_id)
+     |
+help: Convert to `X | None`
+     |
+2102 |         weight: Optional[float] = None,
+     -         metadata: Optional[Dict[str, Any]] = None,
+2103 +         metadata: Dict[str, Any] | None = None,
+2104 |     ) -> Dict[str, Any]:
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2103:28
+     |
+2101 |         directed: bool = False,
+2102 |         weight: Optional[float] = None,
+2103 |         metadata: Optional[Dict[str, Any]] = None,
+     |                            ^^^^
+2104 |     ) -> Dict[str, Any]:
+2105 |         db = self._get_db(user_id)
+     |
+help: Replace with `dict`
+     |
+2102 |         weight: Optional[float] = None,
+     -         metadata: Optional[Dict[str, Any]] = None,
+2103 +         metadata: Optional[dict[str, Any]] = None,
+2104 |     ) -> Dict[str, Any]:
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2104:10
+     |
+2102 |         weight: Optional[float] = None,
+2103 |         metadata: Optional[Dict[str, Any]] = None,
+2104 |     ) -> Dict[str, Any]:
+     |          ^^^^
+2105 |         db = self._get_db(user_id)
+2106 |         self._ensure_note_link_schema(db)
+     |
+help: Replace with `dict`
+     |
+2103 |         metadata: Optional[Dict[str, Any]] = None,
+     -     ) -> Dict[str, Any]:
+2104 +     ) -> dict[str, Any]:
+2105 |         db = self._get_db(user_id)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2140:25
+     |
+2138 |         user_id: str,
+2139 |         *,
+2140 |         center_note_id: Optional[str] = None,
+     |                         ^^^^^^^^^^^^^
+2141 |         limit: int = 200,
+2142 |     ) -> List[Dict[str, Any]]:
+     |
+help: Convert to `X | None`
+     |
+2139 |         *,
+     -         center_note_id: Optional[str] = None,
+2140 +         center_note_id: str | None = None,
+2141 |         limit: int = 200,
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2142:10
+     |
+2140 |         center_note_id: Optional[str] = None,
+2141 |         limit: int = 200,
+2142 |     ) -> List[Dict[str, Any]]:
+     |          ^^^^
+2143 |         db = self._get_db(user_id)
+2144 |         self._ensure_note_link_schema(db)
+     |
+help: Replace with `list`
+     |
+2141 |         limit: int = 200,
+     -     ) -> List[Dict[str, Any]]:
+2142 +     ) -> list[Dict[str, Any]]:
+2143 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2142:15
+     |
+2140 |         center_note_id: Optional[str] = None,
+2141 |         limit: int = 200,
+2142 |     ) -> List[Dict[str, Any]]:
+     |               ^^^^
+2143 |         db = self._get_db(user_id)
+2144 |         self._ensure_note_link_schema(db)
+     |
+help: Replace with `dict`
+     |
+2141 |         limit: int = 200,
+     -     ) -> List[Dict[str, Any]]:
+2142 +     ) -> List[dict[str, Any]]:
+2143 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2167:63
+     |
+2165 |         return [self._note_link_record(row) for row in rows]
+2166 |
+2167 |     def delete_note_link(self, user_id: str, edge_id: str) -> Dict[str, Any]:
+     |                                                               ^^^^
+2168 |         db = self._get_db(user_id)
+2169 |         self._ensure_note_link_schema(db)
+     |
+help: Replace with `dict`
+     |
+2166 |
+     -     def delete_note_link(self, user_id: str, edge_id: str) -> Dict[str, Any]:
+2167 +     def delete_note_link(self, user_id: str, edge_id: str) -> dict[str, Any]:
+2168 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2181:68
+     |
+2179 |         return {"deleted": cursor.rowcount > 0, "edge_id": edge_id}
+2180 |
+2181 |     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
+     |                                                                    ^^^^
+2182 |         db = self._get_db(user_id)
+2183 |         return [
+     |
+help: Replace with `list`
+     |
+2180 |
+     -     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
+2181 +     def get_keywords_for_note(self, user_id: str, note_id: str) -> list[Dict[str, Any]]:
+2182 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2181:73
+     |
+2179 |         return {"deleted": cursor.rowcount > 0, "edge_id": edge_id}
+2180 |
+2181 |     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
+     |                                                                         ^^^^
+2182 |         db = self._get_db(user_id)
+2183 |         return [
+     |
+help: Replace with `dict`
+     |
+2180 |
+     -     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[Dict[str, Any]]:
+2181 +     def get_keywords_for_note(self, user_id: str, note_id: str) -> List[dict[str, Any]]:
+2182 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2191:10
+     |
+2189 |     def get_notes_for_keyword(
+2190 |         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0
+2191 |     ) -> List[Dict[str, Any]]:
+     |          ^^^^
+2192 |         db = self._get_db(user_id)
+2193 |         keyword = db.get_keyword_by_id(keyword_id=keyword_id)
+     |
+help: Replace with `list`
+     |
+2190 |         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0
+     -     ) -> List[Dict[str, Any]]:
+2191 +     ) -> list[Dict[str, Any]]:
+2192 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2191:15
+     |
+2189 |     def get_notes_for_keyword(
+2190 |         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0
+2191 |     ) -> List[Dict[str, Any]]:
+     |               ^^^^
+2192 |         db = self._get_db(user_id)
+2193 |         keyword = db.get_keyword_by_id(keyword_id=keyword_id)
+     |
+help: Replace with `dict`
+     |
+2190 |         self, user_id: str, keyword_id: int, limit: int = 50, offset: int = 0
+     -     ) -> List[Dict[str, Any]]:
+2191 +     ) -> List[dict[str, Any]]:
+2192 |         db = self._get_db(user_id)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2204:63
+     |
+2202 |     # The client_id set by _get_db() when adding/deleting keywords will be the user_id.
+2203 |
+2204 |     def add_keyword(self, user_id: str, keyword_text: str) -> Optional[int]:
+     |                                                               ^^^^^^^^^^^^^
+2205 |         db = self._get_db(user_id)
+2206 |         return db.add_keyword(keyword_text=keyword_text)
+     |
+help: Convert to `X | None`
+     |
+2203 |
+     -     def add_keyword(self, user_id: str, keyword_text: str) -> Optional[int]:
+2204 +     def add_keyword(self, user_id: str, keyword_text: str) -> int | None:
+2205 |         db = self._get_db(user_id)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2210:10
+     |
+2208 |     def get_keyword_by_id(
+2209 |         self, user_id: str, keyword_id: int
+2210 |     ) -> Optional[Dict[str, Any]]:
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+2211 |         db = self._get_db(user_id)
+2212 |         row = db.get_keyword_by_id(keyword_id=keyword_id)
+     |
+help: Convert to `X | None`
+     |
+2209 |         self, user_id: str, keyword_id: int
+     -     ) -> Optional[Dict[str, Any]]:
+2210 +     ) -> Dict[str, Any] | None:
+2211 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2210:19
+     |
+2208 |     def get_keyword_by_id(
+2209 |         self, user_id: str, keyword_id: int
+2210 |     ) -> Optional[Dict[str, Any]]:
+     |                   ^^^^
+2211 |         db = self._get_db(user_id)
+2212 |         row = db.get_keyword_by_id(keyword_id=keyword_id)
+     |
+help: Replace with `dict`
+     |
+2209 |         self, user_id: str, keyword_id: int
+     -     ) -> Optional[Dict[str, Any]]:
+2210 +     ) -> Optional[dict[str, Any]]:
+2211 |         db = self._get_db(user_id)
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2217:10
+     |
+2215 |     def get_keyword_by_text(
+2216 |         self, user_id: str, keyword_text: str
+2217 |     ) -> Optional[Dict[str, Any]]:
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+2218 |         db = self._get_db(user_id)
+2219 |         row = db.get_keyword_by_text(keyword_text=keyword_text)
+     |
+help: Convert to `X | None`
+     |
+2216 |         self, user_id: str, keyword_text: str
+     -     ) -> Optional[Dict[str, Any]]:
+2217 +     ) -> Dict[str, Any] | None:
+2218 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2217:19
+     |
+2215 |     def get_keyword_by_text(
+2216 |         self, user_id: str, keyword_text: str
+2217 |     ) -> Optional[Dict[str, Any]]:
+     |                   ^^^^
+2218 |         db = self._get_db(user_id)
+2219 |         row = db.get_keyword_by_text(keyword_text=keyword_text)
+     |
+help: Replace with `dict`
+     |
+2216 |         self, user_id: str, keyword_text: str
+     -     ) -> Optional[Dict[str, Any]]:
+2217 +     ) -> Optional[dict[str, Any]]:
+2218 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2224:10
+     |
+2222 |     def list_keywords(
+2223 |         self, user_id: str, limit: int = 100, offset: int = 0
+2224 |     ) -> List[Dict[str, Any]]:
+     |          ^^^^
+2225 |         db = self._get_db(user_id)
+2226 |         return [
+     |
+help: Replace with `list`
+     |
+2223 |         self, user_id: str, limit: int = 100, offset: int = 0
+     -     ) -> List[Dict[str, Any]]:
+2224 +     ) -> list[Dict[str, Any]]:
+2225 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2224:15
+     |
+2222 |     def list_keywords(
+2223 |         self, user_id: str, limit: int = 100, offset: int = 0
+2224 |     ) -> List[Dict[str, Any]]:
+     |               ^^^^
+2225 |         db = self._get_db(user_id)
+2226 |         return [
+     |
+help: Replace with `dict`
+     |
+2223 |         self, user_id: str, limit: int = 100, offset: int = 0
+     -     ) -> List[Dict[str, Any]]:
+2224 +     ) -> List[dict[str, Any]]:
+2225 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `list` instead of `List` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2242:10
+     |
+2240 |     def search_keywords(
+2241 |         self, user_id: str, search_term: str, limit: int = 10
+2242 |     ) -> List[Dict[str, Any]]:
+     |          ^^^^
+2243 |         db = self._get_db(user_id)
+2244 |         return [
+     |
+help: Replace with `list`
+     |
+2241 |         self, user_id: str, search_term: str, limit: int = 10
+     -     ) -> List[Dict[str, Any]]:
+2242 +     ) -> list[Dict[str, Any]]:
+2243 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2242:15
+     |
+2240 |     def search_keywords(
+2241 |         self, user_id: str, search_term: str, limit: int = 10
+2242 |     ) -> List[Dict[str, Any]]:
+     |               ^^^^
+2243 |         db = self._get_db(user_id)
+2244 |         return [
+     |
+help: Replace with `dict`
+     |
+2241 |         self, user_id: str, search_term: str, limit: int = 10
+     -     ) -> List[Dict[str, Any]]:
+2242 +     ) -> List[dict[str, Any]]:
+2243 |         db = self._get_db(user_id)
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2253:45
+     |
+2252 |     def add_character_card(
+2253 |         self, user_id: str, character_data: Dict[str, Any]
+     |                                             ^^^^
+2254 |     ) -> Optional[Dict[str, Any]]:
+2255 |         """Adds a new character card for the specified user.
+     |
+help: Replace with `dict`
+     |
+2252 |     def add_character_card(
+     -         self, user_id: str, character_data: Dict[str, Any]
+2253 +         self, user_id: str, character_data: dict[str, Any]
+2254 |     ) -> Optional[Dict[str, Any]]:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2254:10
+     |
+2252 |     def add_character_card(
+2253 |         self, user_id: str, character_data: Dict[str, Any]
+2254 |     ) -> Optional[Dict[str, Any]]:
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+2255 |         """Adds a new character card for the specified user.
+2256 |         Assumes user_id is used by the underlying DB method if it needs it for multi-user contexts,
+     |
+help: Convert to `X | None`
+     |
+2253 |         self, user_id: str, character_data: Dict[str, Any]
+     -     ) -> Optional[Dict[str, Any]]:
+2254 +     ) -> Dict[str, Any] | None:
+2255 |         """Adds a new character card for the specified user.
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2254:19
+     |
+2252 |     def add_character_card(
+2253 |         self, user_id: str, character_data: Dict[str, Any]
+2254 |     ) -> Optional[Dict[str, Any]]:
+     |                   ^^^^
+2255 |         """Adds a new character card for the specified user.
+2256 |         Assumes user_id is used by the underlying DB method if it needs it for multi-user contexts,
+     |
+help: Replace with `dict`
+     |
+2253 |         self, user_id: str, character_data: Dict[str, Any]
+     -     ) -> Optional[Dict[str, Any]]:
+2254 +     ) -> Optional[dict[str, Any]]:
+2255 |         """Adds a new character card for the specified user.
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2276:22
+     |
+2274 |         character_id: str,
+2275 |         user_id: str,
+2276 |         update_data: Dict[str, Any],
+     |                      ^^^^
+2277 |         expected_version: Optional[int],
+2278 |     ) -> Optional[Dict[str, Any]]:
+     |
+help: Replace with `dict`
+     |
+2275 |         user_id: str,
+     -         update_data: Dict[str, Any],
+2276 +         update_data: dict[str, Any],
+2277 |         expected_version: Optional[int],
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2277:27
+     |
+2275 |         user_id: str,
+2276 |         update_data: Dict[str, Any],
+2277 |         expected_version: Optional[int],
+     |                           ^^^^^^^^^^^^^
+2278 |     ) -> Optional[Dict[str, Any]]:
+2279 |         """Updates an existing character card for the specified user with optimistic locking."""
+     |
+help: Convert to `X | None`
+     |
+2276 |         update_data: Dict[str, Any],
+     -         expected_version: Optional[int],
+2277 +         expected_version: int | None,
+2278 |     ) -> Optional[Dict[str, Any]]:
+     |
+
+UP045 [*] Use `X | None` for type annotations
+    --> tldw_chatbook/Notes/Notes_Library.py:2278:10
+     |
+2276 |         update_data: Dict[str, Any],
+2277 |         expected_version: Optional[int],
+2278 |     ) -> Optional[Dict[str, Any]]:
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+2279 |         """Updates an existing character card for the specified user with optimistic locking."""
+2280 |         if not self.unified_db:
+     |
+help: Convert to `X | None`
+     |
+2277 |         expected_version: Optional[int],
+     -     ) -> Optional[Dict[str, Any]]:
+2278 +     ) -> Dict[str, Any] | None:
+2279 |         """Updates an existing character card for the specified user with optimistic locking."""
+     |
+
+UP006 [*] Use `dict` instead of `Dict` for type annotation
+    --> tldw_chatbook/Notes/Notes_Library.py:2278:19
+     |
+2276 |         update_data: Dict[str, Any],
+2277 |         expected_version: Optional[int],
+2278 |     ) -> Optional[Dict[str, Any]]:
+     |                   ^^^^
+2279 |         """Updates an existing character card for the specified user with optimistic locking."""
+2280 |         if not self.unified_db:
+     |
+help: Replace with `dict`
+     |
+2277 |         expected_version: Optional[int],
+     -     ) -> Optional[Dict[str, Any]]:
+2278 +     ) -> Optional[dict[str, Any]]:
+2279 |         """Updates an existing character card for the specified user with optimistic locking."""
+     |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> tldw_chatbook/Notes/Notes_Library.py:2307:28
+     |
+2305 |                     logger.debug(f"Closed DB instance for user context '{user_id}'.")
+2306 |                 except Exception as e:
+2307 |                     logger.error(
+     |                            ^^^^^
+2308 |                         f"Error closing DB instance for user context '{user_id}': {e}",
+2309 |                         exc_info=True,
+     |
+
+G201 Logging `.exception(...)` should be used instead of `.error(..., exc_info=True)`
+    --> tldw_chatbook/Notes/Notes_Library.py:2326:28
+     |
+2324 |                     )
+2325 |                 except Exception as e:
+2326 |                     logger.error(
+     |                            ^^^^^
+2327 |                         f"Error closing DB instance for user context '{user_id}': {e}",
+2328 |                         exc_info=True,
+     |
+
+Found 115 errors.
+[*] 107 fixable with the `--fix` option.

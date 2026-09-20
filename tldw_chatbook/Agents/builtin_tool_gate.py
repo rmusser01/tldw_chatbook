@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import contextlib
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -22,15 +22,16 @@ from tldw_chatbook.Agents.approval_provenance import (
     ApprovalStamp,
     approval_stamp,
 )
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 from tldw_chatbook.MCP.permission_store import (
     _DEFAULT_PROFILE_ID,
     BUILTIN_TOOL_SERVER_KEY,
     EffectiveToolState,
     GatedToolRef,
+    PermissionStoreSnapshotError,
     _as_mapping,
     resolve_builtin_state,
 )
-from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 from tldw_chatbook.Tools.tool_executor import Tool
 
 
@@ -40,6 +41,9 @@ class BuiltinGateDecision:
 
     refusal: str | None
     approval_decision: ApprovalDecision | None = None
+    refusal_code: (
+        Literal["approval_required", "denied", "kill_switch", "unavailable"] | None
+    ) = None
 
 
 #: Stamp values that permit execution for this turn.
@@ -301,14 +305,47 @@ class BuiltinToolGate:
                         logger.warning(f"builtin permission load failed: {exc}")
             return self._payload
 
-    def resolve(self, tool: Tool) -> EffectiveToolState:
+    def _strict_payload(self) -> Mapping[str, Any]:
+        """Read fresh authority through its owner, without touching the turn cache."""
+        try:
+            store = getattr(self._service, "permission_store", None)
+            if store is None:
+                raise PermissionStoreSnapshotError("unavailable")
+            snapshot = store.read_snapshot_strict()
+        except PermissionStoreSnapshotError:
+            raise
+        except Exception as exc:
+            # Service access can fail independently of the store's strict reader.
+            # Keep private exception text out of the public refusal and logs.
+            raise PermissionStoreSnapshotError("unavailable") from exc
+        if not snapshot.file_exists:
+            raise PermissionStoreSnapshotError("missing")
+        if (
+            not isinstance(self._profile_id, str)
+            or not self._profile_id
+            or self._profile_id not in snapshot.payload["profiles"]
+        ):
+            raise PermissionStoreSnapshotError("profile_unavailable")
+        return snapshot.payload
+
+    def resolve(self, tool: Tool, *, strict: bool = False) -> EffectiveToolState:
         """Resolve ``tool``'s effective state (no stamps, no kill switch).
 
         The gate captures one permission profile at construction and uses
         that exact id for every resolution and session-approval path.
+
+        Args:
+            tool: The built-in tool to resolve.
+            strict: Read fresh, existing authority without legacy recovery.
+
+        Raises:
+            PermissionStoreSnapshotError: Strict authority or the captured
+                profile is unavailable. Ordinary callers retain their defaults.
         """
         return resolve_builtin_state(
-            self._load_payload(), tool_ref(tool), profile_id=self._profile_id
+            self._strict_payload() if strict else self._load_payload(),
+            tool_ref(tool),
+            profile_id=self._profile_id,
         )
 
     def _kill_switch(self) -> bool:
@@ -424,7 +461,14 @@ class BuiltinToolGate:
         """Keep the compatible refusal-string API over one detailed check."""
         return self.check_detailed(tool, run_id).refusal
 
-    def check_detailed(self, tool: Tool, run_id: str) -> BuiltinGateDecision:
+    def check_detailed(
+        self,
+        tool: Tool,
+        run_id: str,
+        *,
+        strict: bool = False,
+        allow_session_approvals: bool = True,
+    ) -> BuiltinGateDecision:
         """Execution-time verdict for ``run_id``'s call to ``tool``.
 
         Args:
@@ -438,6 +482,10 @@ class BuiltinToolGate:
                 review hook ever writes -- such a call falls through to
                 the resolved state exactly as it did before per-run
                 keying.
+            strict: Use one fresh strict snapshot for both kill switch and
+                effective state, returning a structured refusal on failure.
+            allow_session_approvals: Consult the service's session grants when
+                Ask has no stamp. Exact-effect callers disable this fallback.
 
         Returns:
             A detailed result whose refusal is ``None`` when the call may
@@ -449,12 +497,26 @@ class BuiltinToolGate:
             in a try/except and fail closed (see
             ``BuiltinToolProvider.invoke``).
         """
-        if self._kill_switch():
+        if strict:
+            try:
+                payload = self._strict_payload()
+            except PermissionStoreSnapshotError:
+                return BuiltinGateDecision(
+                    "tool permission authority is unavailable",
+                    refusal_code="unavailable",
+                )
+            kill_switch = payload["kill_switch"]
+        else:
+            kill_switch = self._kill_switch()
+        if kill_switch:
             # task-32285 (Qodo #2597 #2): the sentence has ONE definition,
             # `Agents.tool_refusals.TOOL_KILL_SWITCH_REFUSAL` -- this was
             # a raw literal, and the other four sites each had their own
             # copy, while downstream classifiers key on the wording.
-            return BuiltinGateDecision(TOOL_KILL_SWITCH_REFUSAL)
+            return BuiltinGateDecision(
+                TOOL_KILL_SWITCH_REFUSAL,
+                refusal_code="kill_switch" if strict else None,
+            )
 
         # An effective `deny` (the user set the tool -- or its server
         # default -- to "Off") is absolute: it must be consulted BEFORE
@@ -467,28 +529,39 @@ class BuiltinToolGate:
         # deny. `resolve()` is cheap here even on the stamped path:
         # `_load_payload` caches per turn (`begin_turn()` clears it), so
         # this adds no extra I/O within a turn.
-        state = self.resolve(tool)
+        state = (
+            resolve_builtin_state(payload, tool_ref(tool), profile_id=self._profile_id)
+            if strict
+            else self.resolve(tool)
+        )
         if state.state == "deny":
-            return BuiltinGateDecision(f"tool is set to Off: {tool.name}", "denied")
+            return BuiltinGateDecision(
+                f"tool is set to Off: {tool.name}",
+                "denied",
+                refusal_code="denied" if strict else None,
+            )
 
         detail = self._stamp_detail(run_id, tool.name)
         stamp = detail.decision if detail is not None else None
         if stamp == "deny":
             return BuiltinGateDecision(
-                user_denial_refusal(tool.name), detail.approval_decision
+                user_denial_refusal(tool.name),
+                detail.approval_decision,
+                refusal_code="denied" if strict else None,
             )
         if isinstance(stamp, str) and stamp in _PERMITTING:
             return BuiltinGateDecision(None, detail.approval_decision)
 
         if state.state == "allow":
             return BuiltinGateDecision(None)
-        if self._session_approved(tool.name):
+        if allow_session_approvals and self._session_approved(tool.name):
             return BuiltinGateDecision(None, "approved")
         # "ask" with no stamp and no session approval: fail closed. In P1
         # this is unreachable (nothing is tagged high-risk yet); P2's
         # mutating tools make it live.
         return BuiltinGateDecision(
-            f"tool requires approval and none was granted: {tool.name}"
+            f"tool requires approval and none was granted: {tool.name}",
+            refusal_code="approval_required" if strict else None,
         )
 
 

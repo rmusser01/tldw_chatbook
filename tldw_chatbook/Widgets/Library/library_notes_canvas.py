@@ -998,6 +998,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             **kwargs: Additional keyword arguments forwarded to ``Vertical``.
         """
         super().__init__(**kwargs)
+        self._children_ready = False
         self.list_state = list_state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
@@ -1065,6 +1066,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         (task-15457 review round 1, minor 5): with the override form, a
         ``then=`` that focused a control saw its pre-compact label.
         """
+        self._children_ready = True
         self._apply_post_compose_state()
         focus_id = self._tree_pager_focus_id
         guard = self._tree_pager_focus_guard
@@ -1131,6 +1133,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 newest_focus_id = focused.id
                 if focus_intent_generation_getter is not None:
                     focus_intent_generation = focus_intent_generation_getter()
+        if self.is_attached and not self._pruning:
+            self._children_ready = False
         await super().recompose()
         if (
             not newest_focus_id
@@ -3120,6 +3124,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     def on_mount(self) -> None:
         """Apply initial visibility after the stable editor subtree mounts."""
+        self._children_ready = True
         self._apply_post_compose_state()
         if self.mode == "lasting_add":
             self.call_after_refresh(self._focus_initial_lasting_sync_control)
@@ -3295,7 +3300,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         idempotent. The screen owns the presentation-sync guard around calls
         that may assign ``Input`` or ``TextArea`` values.
         """
-        if self.mode != "editor" or not self.is_mounted:
+        # Shallow title/authority nodes can precede nested toolbar children.
+        # Retain updates until the mount hook can apply them to the whole tree.
+        if self.mode != "editor" or not self.is_mounted or not self._children_ready:
             self.presentation_state = state
             self.compact = state.compact
             return

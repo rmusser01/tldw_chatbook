@@ -1,0 +1,21 @@
+E                                                                        [100%]
+==================================== ERRORS ====================================
+_____________________ ERROR at setup of test_live_full_app _____________________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/pathlib.py:1311: in mkdir
+    os.mkdir(self, mode)
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/.superpowers/sdd/2026-09-16-workflows-first-run/task-6-live-a/probes/160x48-walk'
+=============================== warnings summary ===============================
+Tests/Workflows/test_file_to_note_integration.py::test_live_full_app
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR Tests/Workflows/test_file_to_note_integration.py::test_live_full_app - ...
+1 warning, 1 error in 1.04s

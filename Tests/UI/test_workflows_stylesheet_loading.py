@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_screen_navigation import _wait_for_initial_screen
@@ -17,11 +18,12 @@ from tldw_chatbook.UI.Workflows_Modules.library import ChoiceModal
 
 
 @pytest.mark.parametrize("initial_route", ["home", "workflows"])
+@private_profile_test
 async def test_first_workflows_entry_loads_styles_and_paints_dialog(
-    tmp_path, monkeypatch, initial_route
+    request, tmp_path, monkeypatch, initial_route
 ):
     """Both route entry paths style compact controls without a boot tax on Home."""
-    save_setting_to_cli_config("splash_screen", "enabled", False)
+    assert save_setting_to_cli_config("splash_screen", "enabled", False)
     monkeypatch.setattr(
         "tldw_chatbook.config.get_workflows_db_path",
         lambda: tmp_path / "workflows.sqlite3",
@@ -50,7 +52,7 @@ async def test_first_workflows_entry_loads_styles_and_paints_dialog(
         context = screen.query_one("#workflows-console-unavailable")
         assert context.region.height == 1
         assert_hit(screen, context)
-        assert "No active workflow run" in painted_text(screen)
+        assert "No existing Console handoff" in painted_text(screen)
 
         assert await pilot.click("#workflow-more")
         await pilot.pause()

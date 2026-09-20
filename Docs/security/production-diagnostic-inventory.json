@@ -807,7 +807,7 @@
     },
     {
       "call_count": 366,
-      "diagnostic_digest": "b34d0f654d133cd41bf0",
+      "diagnostic_digest": "d6d048bc69989a6c0cd9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1626,7 +1626,7 @@
     },
     {
       "call_count": 22,
-      "diagnostic_digest": "0edce7b7dd37d46e5b94",
+      "diagnostic_digest": "042a7d966f71d7ac6012",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Notes/Notes_Library.py",
       "reason": "remaining Chatbook production diagnostic owner"

@@ -1,0 +1,20 @@
+.......F................................................................ [ 42%]
+........................................................................ [ 84%]
+...........................                                              [100%]
+=================================== FAILURES ===================================
+_____ test_import_status_lines_patch_the_mounted_static_without_recompose ______
+Tests/UI/test_library_canvas_scoped_sync.py:437: in test_import_status_lines_patch_the_mounted_static_without_recompose
+    LibraryScreen._apply_library_skills_import_status(skill_screen, "Imported")
+tldw_chatbook/UI/Screens/library_screen.py:24616: in _apply_library_skills_import_status
+    self._patch_library_skills_import_status_line(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute '_patch_library_skills_import_status_line'. Did you mean: '_library_skills_import_status'?
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_canvas_scoped_sync.py::test_import_status_lines_patch_the_mounted_static_without_recompose
+1 failed, 170 passed, 1 warning in 98.55s (0:01:38)

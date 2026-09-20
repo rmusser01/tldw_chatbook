@@ -1,0 +1,131 @@
+....................................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+............... [  4%]
+........................................................................ [  9%]
+........................................................................ [ 13%]
+........................................................................ [ 18%]
+.................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.s..................................... [ 23%]
+........................................................................ [ 27%]
+........................................................................ [ 32%]
+........................................................................ [ 37%]
+........................................................................ [ 41%]
+........................................................................ [ 46%]
+........................................................................ [ 50%]
+........................................................................ [ 55%]
+........................................................................ [ 60%]
+.............................................................F.......... [ 64%]
+........................................................................ [ 69%]
+........................................................................ [ 74%]
+........................................................................ [ 78%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+..F..................................................................... [ 92%]
+.......................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..{'compact': False, 'page_seconds': 0.006792208179831505, 'project_calls': 0, 'projected_bytes': 0}
+.{'compact': True, 'page_seconds': 0.07070966716855764, 'project_calls': 0, 'projected_bytes': 0}
+.......{'raw_edit_seconds': 0.03935249987989664, 'max_heartbeat_gap_seconds': 0.050909957848489285}
+....................... [ 97%]
+..........--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+................................                              [100%]
+=================================== FAILURES ===================================
+___ test_sensitive_direct_llama_logs_no_request_response_or_endpoint_secrets ___
+Tests/Chat/test_sensitive_llm_logging.py:979: in test_sensitive_direct_llama_logs_no_request_response_or_endpoint_secrets
+    assert "ordinary downstream HTTP diagnostic" in "\n".join(logs)
+E   AssertionError: assert 'ordinary downstream HTTP diagnostic' in ''
+E    +  where '' = <built-in method join of str object at 0x105fa6570>([])
+E    +    where <built-in method join of str object at 0x105fa6570> = '\n'.join
+___________ test_pressed_flow_edits_note_navigates_and_paints[size1] ___________
+Tests/UI/test_workflows_run.py:253: in test_pressed_flow_edits_note_navigates_and_paints
+    await pilot.pause()
+../../.venv/lib/python3.12/site-packages/textual/pilot.py:544: in pause
+    await wait_for_idle(0)
+../../.venv/lib/python3.12/site-packages/textual/_wait.py:29: in wait_for_idle
+    await sleep(SLEEP_GRANULARITY)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:665: in sleep
+    return await future
+           ^^^^^^^^^^^^
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+Tests/UI/test_workflows_run.py:251: in test_pressed_flow_edits_note_navigates_and_paints
+    async with asyncio.timeout(15):
+               ^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_workflows_run.py:196: in test_pressed_flow_edits_note_navigates_and_paints
+    async with app.run_test(size=size) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../.venv/lib/python3.12/site-packages/textual/message_pump.py:689: in _process_messages_loop
+    await invoke(method, event)
+../../.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/_callback.py:58: in _invoke
+    result = await result
+             ^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/screen.py:1186: in _on_idle
+    await self._invoke_and_clear_callbacks()
+../../.venv/lib/python3.12/site-packages/textual/screen.py:1272: in _invoke_and_clear_callbacks
+    await invoke(callback)
+../../.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/library_screen.py:8435: in _rehydrate_library_notes_after_recompose
+    return self._notes_controller._rehydrate_library_notes_after_recompose(restore)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py:2946: in _rehydrate_library_notes_after_recompose
+    self._apply_library_note_presentation_state()
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py:1677: in _apply_library_note_presentation_state
+    canvas.apply_session_state(self._library_note_presentation_state())
+tldw_chatbook/Widgets/Library/library_notes_canvas.py:3455: in apply_session_state
+    self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#library-note-edit' on LibraryNoteWorkPane(id='library-note-work-pane', classes='library-notes-mode-editor library-adaptive-reader-work')
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_sensitive_llm_logging.py::test_sensitive_direct_llama_logs_no_request_response_or_endpoint_secrets
+FAILED Tests/UI/test_workflows_run.py::test_pressed_flow_edits_note_navigates_and_paints[size1]
+2 failed, 1552 passed, 1 skipped, 1 warning in 406.41s (0:06:46)
