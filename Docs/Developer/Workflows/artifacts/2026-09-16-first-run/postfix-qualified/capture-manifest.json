@@ -1,0 +1,155 @@
+{
+  "evidence_kind": "Actual full TldwCli.run_test, real localhost9099/Notes; post-fix; no native PTY/font claim",
+  "runs": [
+    {
+      "phase": "walk",
+      "pid": 83194,
+      "request_count": 3,
+      "notes_before": 0,
+      "result": "passed",
+      "model_authority_before_after_independently_verified": true,
+      "approved_note_id": "993e7ced-1fe9-434a-bfe0-a50d8adea490",
+      "notes_after": 1
+    },
+    {
+      "phase": "restart",
+      "pid": 83684,
+      "request_count": 0,
+      "notes_before": 1,
+      "result": "passed",
+      "model_authority_before_after_independently_verified": true
+    }
+  ],
+  "captures": [
+    {
+      "file": "live-110x36-setup-inputs.svg",
+      "sha256": "c2fb5d65df834ac83d71c3167001c5b3e8cb919770e0199fadeeb4d70953594f",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-setup-destinations.svg",
+      "sha256": "e100e3ad38d652d88d95b9a06afe21d14c8c60e5b9982536062717ef9be97c0f",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-file-ask.svg",
+      "sha256": "7954cee5afd4430990c098167d5ddcde8b64815fcec252ebb36fcfe5bf5ad48c",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-model-ask.svg",
+      "sha256": "84a26b110607d69cb5de4f5d585bd87bb7fc39b5d0af41296f226ff2a5c5dee3",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-edited-review.svg",
+      "sha256": "1f39f05f39fec1da1349f27c8b3a7e797dafa678460478f0d72d777978cd1f3a",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-offscreen-stay.svg",
+      "sha256": "8c5a76dbbe2819fbda466886d93c73f65658f8d31f67061b992ecc4b7d83a3f4",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-note-ask.svg",
+      "sha256": "51ed27be2d6bd379e8e2ce7e48685bcaf0f32a129d3369d021a65729e2188ee6",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-completed.svg",
+      "sha256": "294aceae9337c8839c0fdcacad8c546fe089afdd492a316c282dffc5d819e3e6",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-open-note.svg",
+      "sha256": "ccca055bfd29c98f53127569c9a0443da54267788dc4a21e28bfde63a1f46b28",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-cancelled.svg",
+      "sha256": "702a26de35261d2129aa59229ecc30943c33a939938243008afa6c1deda586c0",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-rejected.svg",
+      "sha256": "a73b9dc2e747ccf41d369d65a8cf11d681a71d0dfa35bdda19e43df6e545a7d1",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-quit-loss.svg",
+      "sha256": "d4ec72afeded4a82b32e01fdfc1fbfb6d83715649d372fa0103d40004873c43c",
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-walk.json"
+    },
+    {
+      "file": "live-110x36-restart.svg",
+      "sha256": "f6d8d2d1af99255245e07921ca5ce37deb48acdd1ca737b0670c5d99f82ca5de",
+      "phase": "restart",
+      "size": [
+        110,
+        36
+      ],
+      "source_manifest": "live-110x36-restart.json"
+    }
+  ]
+}

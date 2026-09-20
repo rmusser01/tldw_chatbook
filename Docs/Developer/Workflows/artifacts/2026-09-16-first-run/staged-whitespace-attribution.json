@@ -1,0 +1,392 @@
+{
+  "command": "git diff --cached --check",
+  "exit_code": 2,
+  "diagnostics": [
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-cancelled.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-completed.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-edited-review.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-file-ask.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-model-ask.svg",
+      "line": 212,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-note-ask.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-offscreen-stay.svg",
+      "line": 204,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-open-note.svg",
+      "line": 210,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-quit-loss.svg",
+      "line": 214,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-rejected.svg",
+      "line": 210,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-setup-destinations.svg",
+      "line": 209,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/attempt-1/live-160x48-setup-inputs.svg",
+      "line": 214,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/integration-red.txt",
+      "line": 10,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-cancelled.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-completed.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-edited-review.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-file-ask.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-model-ask.svg",
+      "line": 177,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-note-ask.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-offscreen-stay.svg",
+      "line": 168,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-open-note.svg",
+      "line": 172,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-quit-loss.svg",
+      "line": 179,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-rejected.svg",
+      "line": 175,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-restart.svg",
+      "line": 171,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-setup-destinations.svg",
+      "line": 173,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-110x36-setup-inputs.svg",
+      "line": 178,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-cancelled.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-completed.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-edited-review.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-file-ask.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-model-ask.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-note-ask.svg",
+      "line": 211,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-offscreen-stay.svg",
+      "line": 204,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-open-note.svg",
+      "line": 210,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-quit-loss.svg",
+      "line": 214,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-rejected.svg",
+      "line": 210,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-restart.svg",
+      "line": 210,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-setup-destinations.svg",
+      "line": 209,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-160x48-setup-inputs.svg",
+      "line": 214,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-cancelled.svg",
+      "line": 123,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-completed.svg",
+      "line": 124,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-edited-review.svg",
+      "line": 124,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-file-ask.svg",
+      "line": 124,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-model-ask.svg",
+      "line": 125,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-note-ask.svg",
+      "line": 124,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-offscreen-stay.svg",
+      "line": 120,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-open-note.svg",
+      "line": 122,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-quit-loss.svg",
+      "line": 122,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-rejected.svg",
+      "line": 123,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-restart.svg",
+      "line": 121,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-setup-destinations.svg",
+      "line": 123,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/live-60x20-setup-inputs.svg",
+      "line": 125,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-cancelled.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-completed.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-edited-review.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-file-ask.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-model-ask.svg",
+      "line": 177,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-note-ask.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-offscreen-stay.svg",
+      "line": 168,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-open-note.svg",
+      "line": 172,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-quit-loss.svg",
+      "line": 179,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-rejected.svg",
+      "line": 175,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-restart.svg",
+      "line": 171,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-setup-destinations.svg",
+      "line": 173,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix-qualified/live-110x36-setup-inputs.svg",
+      "line": 178,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-cancelled.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-completed.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-edited-review.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-file-ask.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-model-ask.svg",
+      "line": 177,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-note-ask.svg",
+      "line": 176,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-offscreen-stay.svg",
+      "line": 168,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-open-note.svg",
+      "line": 172,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-quit-loss.svg",
+      "line": 179,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-rejected.svg",
+      "line": 175,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-setup-destinations.svg",
+      "line": 173,
+      "classification": "unchanged raw generated evidence padding"
+    },
+    {
+      "file": "Docs/Developer/Workflows/artifacts/2026-09-16-first-run/postfix/live-110x36-setup-inputs.svg",
+      "line": 178,
+      "classification": "unchanged raw generated evidence padding"
+    }
+  ],
+  "policy": "Preserve original SVG capture hashes and failed-test output; no source/doc whitespace defect; no whitespace configuration override."
+}

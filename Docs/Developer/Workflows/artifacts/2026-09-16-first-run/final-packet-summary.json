@@ -1,0 +1,312 @@
+{
+  "passing_live_processes": 8,
+  "passing_walks": 4,
+  "passing_restarts": 4,
+  "control_complete_but_qualification_failed_walks": 2,
+  "pre_app_bootstrap_failure": "attempt-1/live-160x48-bootstrap-error.txt (not counted as an app walkthrough)",
+  "actual_posts_all_attempts": 18,
+  "created_notes_all_attempts": 6,
+  "runs": [
+    {
+      "manifest": "attempt-1/live-160x48-walk.json",
+      "pid": 61382,
+      "phase": "walk",
+      "size": [
+        160,
+        48
+      ],
+      "pytest_passed": false,
+      "actual_post_count": 3,
+      "controls_result": "passed",
+      "note_id": "fd394da4-6f79-4f99-8292-16251b1083aa"
+    },
+    {
+      "manifest": "live-110x36-restart.json",
+      "pid": 64517,
+      "phase": "restart",
+      "size": [
+        110,
+        36
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 0,
+      "controls_result": "passed",
+      "note_id": null
+    },
+    {
+      "manifest": "live-110x36-walk.json",
+      "pid": 64331,
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 3,
+      "controls_result": "passed",
+      "note_id": "154e4fbe-02ce-4555-8e16-06279cf484d6"
+    },
+    {
+      "manifest": "live-160x48-restart.json",
+      "pid": 64110,
+      "phase": "restart",
+      "size": [
+        160,
+        48
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 0,
+      "controls_result": "passed",
+      "note_id": null
+    },
+    {
+      "manifest": "live-160x48-walk.json",
+      "pid": 62205,
+      "phase": "walk",
+      "size": [
+        160,
+        48
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 3,
+      "controls_result": "passed",
+      "note_id": "40dbcb35-d7a4-4a2d-8add-696cb5b69dfe"
+    },
+    {
+      "manifest": "live-60x20-restart.json",
+      "pid": 65937,
+      "phase": "restart",
+      "size": [
+        60,
+        20
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 0,
+      "controls_result": "passed",
+      "note_id": null
+    },
+    {
+      "manifest": "live-60x20-walk.json",
+      "pid": 65664,
+      "phase": "walk",
+      "size": [
+        60,
+        20
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 3,
+      "controls_result": "passed",
+      "note_id": "f4a603b7-b0e4-410e-8c9c-17261a235ca8"
+    },
+    {
+      "manifest": "postfix/live-110x36-walk.json",
+      "pid": 79963,
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "pytest_passed": false,
+      "actual_post_count": 3,
+      "controls_result": "passed",
+      "note_id": "0fd41344-7caa-4cb9-87f2-16236cb3e59d"
+    },
+    {
+      "manifest": "postfix-qualified/live-110x36-restart.json",
+      "pid": 83684,
+      "phase": "restart",
+      "size": [
+        110,
+        36
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 0,
+      "controls_result": "passed",
+      "note_id": null
+    },
+    {
+      "manifest": "postfix-qualified/live-110x36-walk.json",
+      "pid": 83194,
+      "phase": "walk",
+      "size": [
+        110,
+        36
+      ],
+      "pytest_passed": true,
+      "actual_post_count": 3,
+      "controls_result": "passed",
+      "note_id": "993e7ced-1fe9-434a-bfe0-a50d8adea490"
+    }
+  ],
+  "controller_inspected_pngs": [
+    {
+      "file": "output/playwright/live-110x36-cancelled.png",
+      "sha256": "de54f6519132fb9b77a9414c54b1dc37290f53eea26684fedf7a566fe39a60df"
+    },
+    {
+      "file": "output/playwright/live-110x36-completed.png",
+      "sha256": "a47beaffd08da0661bed1fee8782dfb4749b0a85f4e7e286d405e922de0cd600"
+    },
+    {
+      "file": "output/playwright/live-110x36-edited-review.png",
+      "sha256": "811af0a05f26c17ccde0612b2166ad34b8058507ef1a69dd33bd8a54e60bd63e"
+    },
+    {
+      "file": "output/playwright/live-110x36-file-ask.png",
+      "sha256": "094bbd74bf62419f3f9473f29538406a4bca2146a24bb7db3c1f3bf8d4bd6bc0"
+    },
+    {
+      "file": "output/playwright/live-110x36-model-ask.png",
+      "sha256": "4f0a9574644c4652d309a9e0e824963b69c29b88c9fba5b484da6a0ad495d620"
+    },
+    {
+      "file": "output/playwright/live-110x36-note-ask.png",
+      "sha256": "91a609a49f09404860cbe6a90b3d5a934ef80428c7fd441f904c8c715b8577da"
+    },
+    {
+      "file": "output/playwright/live-110x36-offscreen-stay.png",
+      "sha256": "29eceb9ae77bb5815bef17713741091008b3b9a1bfbf05d13de75ee5b9bd7633"
+    },
+    {
+      "file": "output/playwright/live-110x36-open-note.png",
+      "sha256": "a54bdb41a896c13cfbdeee0057360ba97fdc02c608d10bcf0199e5cab4248ae4"
+    },
+    {
+      "file": "output/playwright/live-110x36-quit-loss.png",
+      "sha256": "b724d847c682ec5febd91c3964fe9759b1af9d7736bd63166c403d6fdd50f927"
+    },
+    {
+      "file": "output/playwright/live-110x36-rejected.png",
+      "sha256": "0ad9c3cc8b6a5e6c2b6e2d3885a27be7990148dfae4844a0f1dd7351fdb10413"
+    },
+    {
+      "file": "output/playwright/live-110x36-restart.png",
+      "sha256": "be6a3cdb824adc3d536eb8d99c7f2033f5181a3312f6f2131cebfd1d4a8e9d7c"
+    },
+    {
+      "file": "output/playwright/live-110x36-setup-destinations.png",
+      "sha256": "1ce141c77583b2f90377e092b4bca3864311ba09949817e6c7d6cac59c122892"
+    },
+    {
+      "file": "output/playwright/live-110x36-setup-inputs.png",
+      "sha256": "4c9d937652ccf2682995c98ec21ebc1c28134a551363452c6e67a54da2570b18"
+    },
+    {
+      "file": "output/playwright/live-160x48-cancelled.png",
+      "sha256": "c0d1587f053130c519e04269f74221456cf94fc221fee6e7a85a2ac1c200e60e"
+    },
+    {
+      "file": "output/playwright/live-160x48-completed.png",
+      "sha256": "f3362f5ac9d286dca9008c4d8be3fa908625bb4bd759a53300c66f5e8ed4905e"
+    },
+    {
+      "file": "output/playwright/live-160x48-edited-review.png",
+      "sha256": "987774a5e3eee45474fa0f042c61df1abc52d88a32752a9e05ab97d44696093e"
+    },
+    {
+      "file": "output/playwright/live-160x48-file-ask.png",
+      "sha256": "00fcaf85bc71885281c872b358adc47d585ca084464503c3d631005f53357c9e"
+    },
+    {
+      "file": "output/playwright/live-160x48-model-ask.png",
+      "sha256": "9b4d6288190070899444a4e1587925bb170e17bfcbf5d43d1245b879cc14278c"
+    },
+    {
+      "file": "output/playwright/live-160x48-note-ask.png",
+      "sha256": "877b591eab3590ada4953ae94dabd3b20eedb33edcf2ede370f4a069a1e7c39b"
+    },
+    {
+      "file": "output/playwright/live-160x48-offscreen-stay.png",
+      "sha256": "7ccb1f285b405dfa3d914f54cb002e0c5cbb0c5ad3d4545ccd37fcdf52928562"
+    },
+    {
+      "file": "output/playwright/live-160x48-open-note.png",
+      "sha256": "96d94535ac267934a3ab54c303cbd91d1764c654393f69733b4cc7764b3af3e8"
+    },
+    {
+      "file": "output/playwright/live-160x48-quit-loss.png",
+      "sha256": "faca28e97634505103f521952722c6b35ab7d50506b2e4ee404f3d3064471635"
+    },
+    {
+      "file": "output/playwright/live-160x48-rejected.png",
+      "sha256": "42c0257604c27f76496c16c6ff1f99dcf3c5272149e9a9da4f754b4eef727704"
+    },
+    {
+      "file": "output/playwright/live-160x48-restart.png",
+      "sha256": "c7e88664af158d76530a9b5ebe7ca08612aff52fcf2a3d264fbfda4596d27f76"
+    },
+    {
+      "file": "output/playwright/live-160x48-setup-destinations.png",
+      "sha256": "07e77cfa91befc3fc3556672e796b9973ac8a9090ea40d0ce4f44e4681183afc"
+    },
+    {
+      "file": "output/playwright/live-160x48-setup-inputs.png",
+      "sha256": "7de7611e2da2bb68bfd42f85820cc324737eb2aa79283649dad7b038f3e4d915"
+    },
+    {
+      "file": "output/playwright/live-60x20-cancelled.png",
+      "sha256": "3dfb421c941e5d9dfc1b0cc36b1f3330b396208487ed8173f147cc73e265d8e1"
+    },
+    {
+      "file": "output/playwright/live-60x20-completed.png",
+      "sha256": "4bbf19aefc4fbd4c935fff574756502490a00f36094daed19db7b59269ec6613"
+    },
+    {
+      "file": "output/playwright/live-60x20-edited-review.png",
+      "sha256": "1ecb739f11c3701eeacdc6cd6ab6a0143877c766a0e6655d7185aee202150621"
+    },
+    {
+      "file": "output/playwright/live-60x20-file-ask.png",
+      "sha256": "04b297f0f438c4f1436bd8b15da207e8b20ee477aeb9fb959f869b6bfe70c70d"
+    },
+    {
+      "file": "output/playwright/live-60x20-model-ask.png",
+      "sha256": "10cd6175d9c85a33b860531ec59a6444e7ee965c5806b83af35ca0b9789378ab"
+    },
+    {
+      "file": "output/playwright/live-60x20-note-ask.png",
+      "sha256": "38f9f94f62706ac2480a4ef36936a5f508adeabb664892e52138ca720d919383"
+    },
+    {
+      "file": "output/playwright/live-60x20-offscreen-stay.png",
+      "sha256": "07ed1df326c31febb2d1449d9cb2ee3b7809c30868c66184ae6c5049c880c052"
+    },
+    {
+      "file": "output/playwright/live-60x20-open-note.png",
+      "sha256": "905ae5dd00bdb635113e063863dadb8d84e1c6ca08e7c77722c45ba352dca5c0"
+    },
+    {
+      "file": "output/playwright/live-60x20-quit-loss.png",
+      "sha256": "7b9b430dc40302c5250379c689019207d8f1ede881ba2720d91df2ef60eef94a"
+    },
+    {
+      "file": "output/playwright/live-60x20-rejected.png",
+      "sha256": "ead334a3ebe1c88578553d632ff4f7726c5923e037860a5d93252e74871dbb86"
+    },
+    {
+      "file": "output/playwright/live-60x20-restart.png",
+      "sha256": "d8979d9ef98d08a6a793ffa10085fe599f5362814af85e136e7f3614868502e0"
+    },
+    {
+      "file": "output/playwright/live-60x20-setup-destinations.png",
+      "sha256": "ac76ee06221256ca3972db2740d9bbf081e59294158b9f9ec23bb14838900b4a"
+    },
+    {
+      "file": "output/playwright/live-60x20-setup-inputs.png",
+      "sha256": "c035b1b7c903c934c380afa5e93fcbabb577695e8384f116090f4cca7363bece"
+    },
+    {
+      "file": "postfix-qualified/output/playwright/live-110x36-edited-review.png",
+      "sha256": "2a8cabaa6d9034f2b845a3f796e29c32b901f3f38e0ab5f68e4db4fc17b727fb"
+    },
+    {
+      "file": "postfix-qualified/output/playwright/live-110x36-open-note.png",
+      "sha256": "8ef04ba0a0509cb52808cb4ba278f7bdc07a21d451089b24007d2045723b7bc1"
+    },
+    {
+      "file": "postfix-qualified/output/playwright/live-110x36-restart.png",
+      "sha256": "be6a3cdb824adc3d536eb8d99c7f2033f5181a3312f6f2131cebfd1d4a8e9d7c"
+    }
+  ],
+  "visual_limit": "42 inspected PNGs, not every one of 52 passing SVGs; offline fallback fonts, no native PTY claim"
+}

@@ -1,0 +1,24 @@
+Controller final verification at bcc8290dd2d883893c781a83a3e5cd0f13f27eb5.
+Prepared isolated controller-final-bootstrap using existing standalone integration-test launcher before any application imports.
+Environment: PYTHONPATH=.; TLDW_TEST_CONFIG_ROOT=<worktree>/.superpowers/sdd/2026-09-16-workflows-first-run/controller-final-bootstrap; TASK6_LIVE_PROFILE/PHASE/SIZE/ARTIFACTS unset.
+Command: <root-venv>/bin/python -m pytest -o addopts= -q --tb=short --show-capture=no --basetemp=.superpowers/sdd/2026-09-16-workflows-first-run/controller-final-tests Tests/UI/test_workflows_run.py::test_open_note_during_second_note_keeps_loop_and_stop_responsive Tests/UI/test_workflows_run.py::test_queued_open_note_rechecks_destination Tests/Workflows/test_file_to_note_integration.py
+Owned HTTP test peer only; no localhost:9099 POST. Actual app/Notes/SQLite for joined tests.
+
+.........--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.s                                                             [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+11 passed, 1 skipped, 1 warning in 38.16s
+
+Exit code: 0
+
+Static: Ruff check and format --check of workflows_screen.py, test_workflows_run.py and test_local_steps.py passed (All checks passed; 3 files already formatted). Unchanged legacy Notes debt remains separately attributed.

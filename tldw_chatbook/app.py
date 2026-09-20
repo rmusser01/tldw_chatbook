@@ -812,6 +812,9 @@ if TYPE_CHECKING:
 else:
     TerminalBackend = Any
 
+if TYPE_CHECKING:
+    from .Workflows.session import WorkflowSession
+
 _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
 
 API_IMPORTS_SUCCESSFUL = True
@@ -8316,6 +8319,8 @@ class TldwCli(
 
         # Lazily initialized by the Workflows destination; survives screen replacement.
         self._workflow_authoring = None
+        self._workflow_session = None
+        self._workflow_database_path = None
         self.workflow_documents = None
         self.workflow_drafts = None
 
@@ -19114,6 +19119,7 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        await self._shutdown_workflow_session()
         self._mcp_local_config_saves_closed = True
         self._tool_profile_operations_closed = True
         local_config_saves = getattr(self, "_mcp_local_config_saves", None)
@@ -19421,6 +19427,8 @@ class TldwCli(
         """Clean up logging resources on application exit."""
         import asyncio
 
+        # Do not close Notes or arm forced-exit cleanup while its worker is live.
+        await self._shutdown_workflow_session()
         recovery_cleanup_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cleanup_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
         self._speech_initialization_closed = True
@@ -20165,10 +20173,92 @@ class TldwCli(
             from .config import get_workflows_db_path
             from .Workflows.authoring import WorkflowAuthoring
 
-            self._workflow_authoring = WorkflowAuthoring(get_workflows_db_path)
+            def workflow_path():
+                self._workflow_database_path = get_workflows_db_path()
+                return self._workflow_database_path
+
+            self._workflow_authoring = WorkflowAuthoring(workflow_path)
         await self._workflow_authoring.open()
         self.workflow_documents = self._workflow_authoring.documents
         self.workflow_drafts = self._workflow_authoring.drafts
+
+    def ensure_workflow_session(self) -> "WorkflowSession":
+        """Compose one lazy session using the existing Notes and permission owners."""
+        from .Agents.builtin_tool_gate import BuiltinToolGate
+        from .Workflows.session import SessionError, WorkflowSession
+        from .Workflows.session_permissions import WorkflowPermissions
+
+        if self._workflow_session is None:
+            if (
+                getattr(self, "notes_scope_service", None) is None
+                or not getattr(self, "notes_user_id", None)
+                or getattr(self, "unified_mcp_service", None) is None
+            ):
+                raise SessionError("services_unavailable")
+            self._workflow_session = WorkflowSession(
+                WorkflowPermissions(
+                    BuiltinToolGate(self.unified_mcp_service, profile_id="default")
+                ),
+                notes_scope=lambda: self.notes_scope_service,
+                notes_user=lambda: self.notes_user_id,
+            )
+        return self._workflow_session
+
+    async def _confirm_workflow_session_quit(self) -> bool:
+        """Pin the current session projection, including off-screen pending review."""
+        from .Widgets.confirmation_dialog import ConfirmationDialog
+
+        self._workflow_quit_approved_view = None
+        owner = getattr(self, "_workflow_session", None)
+        if owner is None:
+            return True
+        while True:
+            view = owner.view()
+            if view is None or view.state in {
+                "completed",
+                "cancelled",
+                "failed",
+                "rejected",
+                "uncertain",
+            }:
+                self._workflow_quit_approved_view = view
+                return True
+            decision = await self.push_screen_wait(
+                ConfirmationDialog(
+                    title="Quit with a workflow in progress?",
+                    message=(
+                        f"Workflow {view.workflow_id}\nRevision {view.revision_id}\n"
+                        "Session only: leaving this screen keeps the run; "
+                        "quitting loses pending review and intermediate results. Saved Notes remain."
+                    ),
+                    confirm_label="Cancel run and quit",
+                    cancel_label="Stay",
+                )
+            )
+            if not decision:
+                return False
+            if owner.view() == view:
+                self._workflow_quit_approved_view = view
+                return True
+            self.notify(
+                "Workflow activity changed; review quitting again.", severity="warning"
+            )
+
+    async def _shutdown_workflow_session(self) -> None:
+        """Fence, flush drafts, then physically drain before dependent services close."""
+        owner = getattr(self, "_workflow_session", None)
+        if owner is None:
+            return
+        owner.begin_close()
+        try:
+            authoring = getattr(self, "_workflow_authoring", None)
+            if authoring is not None:
+                await authoring.flush()
+        except (Exception, asyncio.CancelledError):
+            owner.abort_close()
+            raise
+        # close retains its settlement task and fence even if this waiter cancels.
+        await owner.close()
 
     async def action_focus_next_workbench_pane(self) -> None:
         """Delegate pane focus cycling to the active Workbench screen."""
@@ -20213,6 +20303,10 @@ class TldwCli(
         promotion_token = None
         promotion_permit = None
         promotion_permit_consumed = False
+        workflow_owner = getattr(self, "_workflow_session", None)
+        workflow_close_accepted = False
+        workflow_close_settled = False
+        workflow_authoring = None
         try:
             try:
                 begin_quit = getattr(promotion_owner, "begin_quit", None)
@@ -20229,6 +20323,8 @@ class TldwCli(
                         return
                 if not await self._confirm_console_runtime_quit():
                     self._quit_in_progress = False
+                    return
+                if not await self._confirm_workflow_session_quit():
                     return
                 if promotion_token is not None:
                     wait_for_quiescence = getattr(
@@ -20264,9 +20360,18 @@ class TldwCli(
                 return
 
             try:
+                workflow_owner = getattr(self, "_workflow_session", None)
+                if workflow_owner is not None:
+                    if workflow_owner.view() != self._workflow_quit_approved_view:
+                        self.notify(
+                            "Workflow activity changed; quit again to review it.",
+                            severity="warning",
+                        )
+                        return
+                    workflow_owner.begin_close()
                 workflow_authoring = getattr(self, "_workflow_authoring", None)
                 if workflow_authoring is not None:
-                    await workflow_authoring.flush()
+                    await workflow_authoring.prepare_quit()
                 prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
                 if callable(prepare_for_quit):
                     preparation = prepare_for_quit()
@@ -20286,6 +20391,19 @@ class TldwCli(
                     pass
                 return
 
+            # Keep the reversible promotion permit unconsumed through fallible
+            # workflow settlement. Permanent Console disposal cannot be undone.
+            if workflow_owner is not None:
+                try:
+                    workflow_close_accepted = True
+                    await workflow_owner.close()
+                    workflow_close_settled = True
+                except Exception:  # noqa: BLE001 - failed physical drain must never enter unconditional exit cleanup.
+                    self.notify(
+                        "Workflow is stopping; physical drain failed. Staying in Chatbook.",
+                        severity="error",
+                    )
+                    return
             fence_console = getattr(runtime, "begin_dispose", None)
             from .Chat.console_chat_models import ConsoleLifecycleRevisionChanged
 
@@ -20325,16 +20443,6 @@ class TldwCli(
                     except Exception:
                         pass
                     return
-            if workflow_authoring is not None:
-                try:
-                    await workflow_authoring.close()
-                except (OSError, RuntimeError, sqlite3.Error):
-                    self._quit_in_progress = False
-                    self.notify(
-                        "Workflow draft could not be saved; staying in Chatbook. Retry.",
-                        severity="warning",
-                    )
-                    return
             self._shutting_down = True
             # TASK-22215: the user has approved the quit -- nothing further from
             # the staggered boot fleet may start (idempotent with the same call in
@@ -20352,6 +20460,20 @@ class TldwCli(
                 False,
             ):
                 self._quit_in_progress = False
+            if workflow_authoring is not None and not getattr(
+                self, "_shutting_down", False
+            ):
+                workflow_authoring.abort_quit()
+            workflow_owner = getattr(self, "_workflow_session", None)
+            if workflow_owner is not None and not getattr(
+                self, "_shutting_down", False
+            ):
+                self._quit_in_progress = False
+                if workflow_close_settled:
+                    workflow_owner.reopen_after_drained_quit()
+                elif not workflow_close_accepted:
+                    # Publish reopened controls only after the app quit flag clears.
+                    workflow_owner.abort_close()
 
     async def _await_console_quit_confirmation(self, dialog: Any) -> bool:
         """Await one app-level Console-loss dialog from the quit worker."""
