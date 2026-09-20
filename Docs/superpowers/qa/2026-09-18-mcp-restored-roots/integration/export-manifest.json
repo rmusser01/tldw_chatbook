@@ -20,210 +20,6 @@
       "export_sha256": "d8088ef293031301526ff457403ea67cfd237104f672a72e2fbd5de4d44fa578"
     },
     {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/result.json",
-      "export": "native/result.json",
-      "source_sha256": "9d2da2bd30204e797c0955ab8a89b6e8e19a7df9ec97c4235362504af0e346a9",
-      "export_sha256": "9d2da2bd30204e797c0955ab8a89b6e8e19a7df9ec97c4235362504af0e346a9"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-cancel-control.svg",
-      "export": "native/textual-dark-120x40-cancel-control.svg",
-      "source_sha256": "dae08c96b882f3b174009e6918fcdef186952f1b754d7e8c7bdc7e140b013720",
-      "export_sha256": "1bb01a3e4ffa7d2a0b8db238105871b1f3b67589502bfeb1cfe3013bb3665c12"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-cancel-control.txt",
-      "export": "native/textual-dark-120x40-cancel-control.txt",
-      "source_sha256": "f2882dd3f22386e3970c08a6327cdf70d81f62f8d79e0eb4cd6c26ab2aac4a76",
-      "export_sha256": "f2882dd3f22386e3970c08a6327cdf70d81f62f8d79e0eb4cd6c26ab2aac4a76"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-confirm-control.svg",
-      "export": "native/textual-dark-120x40-confirm-control.svg",
-      "source_sha256": "140a5442c7d4f202c32b68ae35f2cf2158754f532525f7c964788a5f76581779",
-      "export_sha256": "36bd202eb76d979b46a4c5d903b6d7d680281dedfe4308f85d998642856b6dd8"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-confirm-control.txt",
-      "export": "native/textual-dark-120x40-confirm-control.txt",
-      "source_sha256": "f2882dd3f22386e3970c08a6327cdf70d81f62f8d79e0eb4cd6c26ab2aac4a76",
-      "export_sha256": "f2882dd3f22386e3970c08a6327cdf70d81f62f8d79e0eb4cd6c26ab2aac4a76"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-fresh-defaults.svg",
-      "export": "native/textual-dark-120x40-fresh-defaults.svg",
-      "source_sha256": "a329fad90b3383695b8a31d7e73b5e4ebd81e933e44ec3fe994027955d78b164",
-      "export_sha256": "2230ba468745b267aa0c27516f698e3c6527fbe72a0e8ce1b77b07fc4b74422c"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-fresh-defaults.txt",
-      "export": "native/textual-dark-120x40-fresh-defaults.txt",
-      "source_sha256": "2d5dbc84ecb32ddc2544360744c055332bc5d5c72c698a3ae14f614a0fa059f1",
-      "export_sha256": "2d5dbc84ecb32ddc2544360744c055332bc5d5c72c698a3ae14f614a0fa059f1"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-review.svg",
-      "export": "native/textual-dark-120x40-review.svg",
-      "source_sha256": "94caa4ae0585c0e46b9575f6a39b283876f25c38c3d737736203b844bec8be1d",
-      "export_sha256": "6f03bd6ba47578fdfff5fe551d6af395ac3def9f14b908939d72b47015089d4a"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-120x40-review.txt",
-      "export": "native/textual-dark-120x40-review.txt",
-      "source_sha256": "167b30a35eabe19e223c6bc9a274e819996a1935f988aeb3deae3b79d96927f6",
-      "export_sha256": "167b30a35eabe19e223c6bc9a274e819996a1935f988aeb3deae3b79d96927f6"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-cancel-control.svg",
-      "export": "native/textual-dark-170x48-cancel-control.svg",
-      "source_sha256": "501db5c7dd2fd2cfa920b1819987cdea8827de8f657513142a3f736184a1bd31",
-      "export_sha256": "c7bf434fabcafda2b9001770585998c89f02f27481453b2f69fd56b334d509e9"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-cancel-control.txt",
-      "export": "native/textual-dark-170x48-cancel-control.txt",
-      "source_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a",
-      "export_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-confirm-control.svg",
-      "export": "native/textual-dark-170x48-confirm-control.svg",
-      "source_sha256": "093ae83510a5b533b68dedc02832196836ff00c0815e56ab3866f8b22205e6b6",
-      "export_sha256": "3429c9dd4496a28cdde804c6bcef21e9f93e879920f2c35a9395ff03ea3c4e52"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-confirm-control.txt",
-      "export": "native/textual-dark-170x48-confirm-control.txt",
-      "source_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a",
-      "export_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-fresh-defaults.svg",
-      "export": "native/textual-dark-170x48-fresh-defaults.svg",
-      "source_sha256": "92a28c168081bec001377fd3ea55538cca846c36bffa44c93c81fb1958f70841",
-      "export_sha256": "b5612ac8aea04b112df65a642610e77fdea84186f0a15b93af22ce3bb6c511ec"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-fresh-defaults.txt",
-      "export": "native/textual-dark-170x48-fresh-defaults.txt",
-      "source_sha256": "3d95fcafecd130c5d8d73eb9c540ab9c3d00881f8c76f0a23a9d7190958e78a1",
-      "export_sha256": "3d95fcafecd130c5d8d73eb9c540ab9c3d00881f8c76f0a23a9d7190958e78a1"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-review.svg",
-      "export": "native/textual-dark-170x48-review.svg",
-      "source_sha256": "ebfed602a12fd27700332a1e07103c2a7f5aa5798946902342d196176e4a0111",
-      "export_sha256": "76b76e0ea818feca6479bf0df337fefc73140ab8bbd3edd5353939f1d0bf5629"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-dark-170x48-review.txt",
-      "export": "native/textual-dark-170x48-review.txt",
-      "source_sha256": "336500e7038a7ad074394156448f91ab917f8a026cd3386dce1e707aa3587354",
-      "export_sha256": "336500e7038a7ad074394156448f91ab917f8a026cd3386dce1e707aa3587354"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-cancel-control.svg",
-      "export": "native/textual-light-120x40-cancel-control.svg",
-      "source_sha256": "e0ac80df3ff107ddc81195fec2f03500ad69deec499b316cb318ab93a59fce9c",
-      "export_sha256": "7bea0bad96b7a308073b804828b76da5d65c259ea2ef455e8342863a9ae5865f"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-cancel-control.txt",
-      "export": "native/textual-light-120x40-cancel-control.txt",
-      "source_sha256": "4edabe4d4b36bd00628e5412c7fd59f6c7bd773f335d6e2c81f2c9e952295cac",
-      "export_sha256": "4edabe4d4b36bd00628e5412c7fd59f6c7bd773f335d6e2c81f2c9e952295cac"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-confirm-control.svg",
-      "export": "native/textual-light-120x40-confirm-control.svg",
-      "source_sha256": "209f011a8a8d0aea4aec72e8b4b58eb434facfe1f45222fb5d57df116e4f45fc",
-      "export_sha256": "db14c158ff36171a8707ac490db15a64cc9431839ff3702de516b4aec20bda7e"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-confirm-control.txt",
-      "export": "native/textual-light-120x40-confirm-control.txt",
-      "source_sha256": "4edabe4d4b36bd00628e5412c7fd59f6c7bd773f335d6e2c81f2c9e952295cac",
-      "export_sha256": "4edabe4d4b36bd00628e5412c7fd59f6c7bd773f335d6e2c81f2c9e952295cac"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-fresh-defaults.svg",
-      "export": "native/textual-light-120x40-fresh-defaults.svg",
-      "source_sha256": "9a2dc870da52a34481b1a32c1bba0dd7da6bfb9a8d73e5ea1d949d7bbd6d4a91",
-      "export_sha256": "97b27fa5c934b20ed9bf65ccec00fbb905426b67f05bd792a8e82b1518e24a71"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-fresh-defaults.txt",
-      "export": "native/textual-light-120x40-fresh-defaults.txt",
-      "source_sha256": "2d5dbc84ecb32ddc2544360744c055332bc5d5c72c698a3ae14f614a0fa059f1",
-      "export_sha256": "2d5dbc84ecb32ddc2544360744c055332bc5d5c72c698a3ae14f614a0fa059f1"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-review.svg",
-      "export": "native/textual-light-120x40-review.svg",
-      "source_sha256": "3adf15bc873e577f52ce9073fd871d43c281b7c8ff10f2c1f315eedd6e7f7105",
-      "export_sha256": "fc6827a24e1a64cb9c5be4cf6dfe58f52e915d7f20e5821f1fba5bce8bffe9a9"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-120x40-review.txt",
-      "export": "native/textual-light-120x40-review.txt",
-      "source_sha256": "2116e958bbec6f71f3005282ed2d07438e726648e4fd7e2deb00f7526479c3f6",
-      "export_sha256": "2116e958bbec6f71f3005282ed2d07438e726648e4fd7e2deb00f7526479c3f6"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-cancel-control.svg",
-      "export": "native/textual-light-170x48-cancel-control.svg",
-      "source_sha256": "05347b89e832c1610a9bc579bfc945a6f2dc294928eb9e562f4c6a0510990ab9",
-      "export_sha256": "75b4763feba6a8e2be1104b1d4c76018bb1ee4877a43252dd24271411dfa057e"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-cancel-control.txt",
-      "export": "native/textual-light-170x48-cancel-control.txt",
-      "source_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a",
-      "export_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-confirm-control.svg",
-      "export": "native/textual-light-170x48-confirm-control.svg",
-      "source_sha256": "67efff52df6235675d66eda4e91b68156cb1a353e20d4191e5c5624cdee667db",
-      "export_sha256": "41f6299d41395846fe0adad36911773e27f3355a6037ce968f378bcfd322e308"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-confirm-control.txt",
-      "export": "native/textual-light-170x48-confirm-control.txt",
-      "source_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a",
-      "export_sha256": "0619d5dcbd864201d664b22d40e897a825e9629a94e74c16a77936d3f0e8d38a"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-fresh-defaults.svg",
-      "export": "native/textual-light-170x48-fresh-defaults.svg",
-      "source_sha256": "cf1773fd71677a8e571204f608f5d611d67b3f0c275fdb53d72d022ffd2bcfc6",
-      "export_sha256": "4b51a70a981355364b96cf7a814066c3d0efe017601c0feac4133e6569c86b8c"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-fresh-defaults.txt",
-      "export": "native/textual-light-170x48-fresh-defaults.txt",
-      "source_sha256": "3d95fcafecd130c5d8d73eb9c540ab9c3d00881f8c76f0a23a9d7190958e78a1",
-      "export_sha256": "3d95fcafecd130c5d8d73eb9c540ab9c3d00881f8c76f0a23a9d7190958e78a1"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-review.svg",
-      "export": "native/textual-light-170x48-review.svg",
-      "source_sha256": "18f5d63f9d73a82b6f948292af3c374b5fdd0e1be71b734e48551d5660450037",
-      "export_sha256": "92186a12668c5b4cbe10ba9c5acac6f0664f2ee22356cebd118d615014265a94"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/evidence/textual-light-170x48-review.txt",
-      "export": "native/textual-light-170x48-review.txt",
-      "source_sha256": "336500e7038a7ad074394156448f91ab917f8a026cd3386dce1e707aa3587354",
-      "export_sha256": "336500e7038a7ad074394156448f91ab917f8a026cd3386dce1e707aa3587354"
-    },
-    {
-      "source": "/private/tmp/tldw-32839-native-integrated-002/lifecycle.json",
-      "export": "lifecycle.json",
-      "source_sha256": "5defa806d0228a63a1a78e1a01f351e7581ed1df0cf14f346da4a061e7cd6e1e",
-      "export_sha256": "5defa806d0228a63a1a78e1a01f351e7581ed1df0cf14f346da4a061e7cd6e1e"
-    },
-    {
       "source": "/private/tmp/2749-closeout-receipt.json",
       "export": "pr2749-closeout.json",
       "source_sha256": "d4a17e4b3bb847ed244f3aef0861c4e4ce3dcd357ceb57fc337bea77d767c518",
@@ -234,12 +30,6 @@
       "export": "rebase-conflicts.json",
       "source_sha256": "e440a558c24475c0cedf34144faffc8a943c158b9bbe6ae1c439f6301382d603",
       "export_sha256": "e440a558c24475c0cedf34144faffc8a943c158b9bbe6ae1c439f6301382d603"
-    },
-    {
-      "source": "/private/tmp/32839-static.json",
-      "export": "static-analysis.json",
-      "source_sha256": "7e3a3d53608e8e249106a7d261c7f2dbf86b605eb8eaab9aefc81025b0da14ef",
-      "export_sha256": "7e3a3d53608e8e249106a7d261c7f2dbf86b605eb8eaab9aefc81025b0da14ef"
     },
     {
       "source": "/private/tmp/mcp-roots-integrated-formatting.txt",
@@ -270,6 +60,228 @@
       "export": "historical-native-check.py.txt",
       "source_sha256": "f0fe118d931e2170a6b1e8058aaa814c977d54bd84bbaec934225ff916cfef28",
       "export_sha256": "f0fe118d931e2170a6b1e8058aaa814c977d54bd84bbaec934225ff916cfef28"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-runner-red-001.log",
+      "export": "tests/runner-red-001.txt",
+      "source_sha256": "1f7d368bc77f00161dc5d7eeb8d3adbda5bf5384b83124f3095700b92d86d666",
+      "export_sha256": "8d8a5916199ed953a09e0c04ffeb1469d786eebb566e1fff40b2fd8760facc27"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-runner-green-001.log",
+      "export": "tests/runner-green-001.txt",
+      "source_sha256": "33f13d0db376b4350ff35cb54a30661216d96c1f8490a8be648a23089b31fc5c",
+      "export_sha256": "33f13d0db376b4350ff35cb54a30661216d96c1f8490a8be648a23089b31fc5c"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/result.json",
+      "export": "native/result.json",
+      "source_sha256": "8c70f33eb8223752a288559a130d73b58e8c68704e470513bae61c6f3cf4130a",
+      "export_sha256": "8c70f33eb8223752a288559a130d73b58e8c68704e470513bae61c6f3cf4130a"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-cancel-control.svg",
+      "export": "native/textual-dark-120x40-cancel-control.svg",
+      "source_sha256": "c465168cab7425770f2298c5a48ba738e35ee7f987253b6f70ca7dcc5e1509e2",
+      "export_sha256": "615bdd168b203f5f77a4099d53653b8aca1c64105bc805040340069860a95c27"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-cancel-control.txt",
+      "export": "native/textual-dark-120x40-cancel-control.txt",
+      "source_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50",
+      "export_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-confirm-control.svg",
+      "export": "native/textual-dark-120x40-confirm-control.svg",
+      "source_sha256": "0412fb350f1ab226081daf9319933d3c4431b99546feb428eb8e0cc6ccead872",
+      "export_sha256": "16514ab696480151a1ce94a592a874e37b72310469cf902f580f0198ff626c79"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-confirm-control.txt",
+      "export": "native/textual-dark-120x40-confirm-control.txt",
+      "source_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50",
+      "export_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-fresh-defaults.svg",
+      "export": "native/textual-dark-120x40-fresh-defaults.svg",
+      "source_sha256": "1952418c7929cd56df25e2b555d229ab42fef1e3fbc9db7c3db1adc08c8bf90e",
+      "export_sha256": "993a51d98f1544362483129dfc43e17724af4ddf570073f95ba9d276b9228efb"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-fresh-defaults.txt",
+      "export": "native/textual-dark-120x40-fresh-defaults.txt",
+      "source_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb",
+      "export_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-review.svg",
+      "export": "native/textual-dark-120x40-review.svg",
+      "source_sha256": "83b4f213e0fecdd3e6fd513db7bcecc532c0d5c7f020d76642ae15b63414ebee",
+      "export_sha256": "9551df2e7aeafe36c7c0b3c51c9d403744df532cd39b4639a7e240874dcf93d1"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-review.txt",
+      "export": "native/textual-dark-120x40-review.txt",
+      "source_sha256": "0996373d7033b5dfa28185a93a223ac8bf6e945f2580e435a59741261e7f5b95",
+      "export_sha256": "0996373d7033b5dfa28185a93a223ac8bf6e945f2580e435a59741261e7f5b95"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-cancel-control.svg",
+      "export": "native/textual-dark-170x48-cancel-control.svg",
+      "source_sha256": "c16d07a21c9df5dc32a79b475cbc22d92db28c7a3ba80bdeae9a33e682176f90",
+      "export_sha256": "a2749e51035cfe17e44b2bf04b2c13d6eccbd76984c333384821b4b71840c4e2"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-cancel-control.txt",
+      "export": "native/textual-dark-170x48-cancel-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-confirm-control.svg",
+      "export": "native/textual-dark-170x48-confirm-control.svg",
+      "source_sha256": "8ef7252f034c475d274188f80547e64106c73252324f2cb17b00cf5d0e42ac4e",
+      "export_sha256": "c26846204a3d64a272b9ab75e634b1e0fb7d407ebaff798f884c238bbda8f3e2"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-confirm-control.txt",
+      "export": "native/textual-dark-170x48-confirm-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-fresh-defaults.svg",
+      "export": "native/textual-dark-170x48-fresh-defaults.svg",
+      "source_sha256": "b204f60688cc1f328f714b5c735e358c21d9fc5abd0c22b368e116cdd9e1a0e3",
+      "export_sha256": "368b0d04c4df844241df1977e53567a546454f9f1663aef544f970d5f3775580"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-fresh-defaults.txt",
+      "export": "native/textual-dark-170x48-fresh-defaults.txt",
+      "source_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01",
+      "export_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-review.svg",
+      "export": "native/textual-dark-170x48-review.svg",
+      "source_sha256": "22c4541071927a4299017c51c2bb2aac0bfd985153b7e472bfe5aa321c29f539",
+      "export_sha256": "2fbfab1110c3d65f217af81e0c447a7291629d96feeb00a7f572865b72e4da57"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-review.txt",
+      "export": "native/textual-dark-170x48-review.txt",
+      "source_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe",
+      "export_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-cancel-control.svg",
+      "export": "native/textual-light-120x40-cancel-control.svg",
+      "source_sha256": "a2ac5f8196ef75b471b98028bd63c63899e157d1b4622829fbe261093a62a959",
+      "export_sha256": "1dc927f8e5bdaf653e99a0ad1bac3252244ab00ab7bb919c0a28eb367264c5e4"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-cancel-control.txt",
+      "export": "native/textual-light-120x40-cancel-control.txt",
+      "source_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5",
+      "export_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-confirm-control.svg",
+      "export": "native/textual-light-120x40-confirm-control.svg",
+      "source_sha256": "46c81b62c82f267abf5560ca00ca55287e8d169c5087c25c05347f4b34a911eb",
+      "export_sha256": "09269e6355c8a9d09aca4e6c539f00996a3628edc5a0d1bcf657c9f5a9f7277f"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-confirm-control.txt",
+      "export": "native/textual-light-120x40-confirm-control.txt",
+      "source_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5",
+      "export_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-fresh-defaults.svg",
+      "export": "native/textual-light-120x40-fresh-defaults.svg",
+      "source_sha256": "e4c913c2c0dc0162e0fa44646ce8a36da6e1d075eabedf9a5e3a49826361547a",
+      "export_sha256": "8ed23de49492d7bf8f83288a38acbcbb10c6da3267796e5062707ec86148d9a8"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-fresh-defaults.txt",
+      "export": "native/textual-light-120x40-fresh-defaults.txt",
+      "source_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb",
+      "export_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-review.svg",
+      "export": "native/textual-light-120x40-review.svg",
+      "source_sha256": "991a73481272ea3dc84fdaab86ccb63b2a58dce2510897aa5d3adf0fa0eebef3",
+      "export_sha256": "11aa9abdbaa215aef59e83dd6cd927182cf561a695e6db88b85d3759e8041398"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-review.txt",
+      "export": "native/textual-light-120x40-review.txt",
+      "source_sha256": "42119a85ac3182bf687a7c6171fb06274b75868c02c57fc7c83c2a7ce85fba39",
+      "export_sha256": "42119a85ac3182bf687a7c6171fb06274b75868c02c57fc7c83c2a7ce85fba39"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-cancel-control.svg",
+      "export": "native/textual-light-170x48-cancel-control.svg",
+      "source_sha256": "d5b775084c675ad1bae87c812ec30b236f1dbf027d1a737f24143534bccb9cf8",
+      "export_sha256": "03b15f43a3ee5b01f6f0437b4f74f2ad7cd692e8b922d89eafe873ced7bcef0b"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-cancel-control.txt",
+      "export": "native/textual-light-170x48-cancel-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-confirm-control.svg",
+      "export": "native/textual-light-170x48-confirm-control.svg",
+      "source_sha256": "8de4483e77cd0de00d60c991ffdf633e5419a4c1d2f125674b5c6674fc2ef9da",
+      "export_sha256": "9bd0bfb93da9cf5fa84d897801c6704fef8c40ce8664183c7bf7bfcd582250f9"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-confirm-control.txt",
+      "export": "native/textual-light-170x48-confirm-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-fresh-defaults.svg",
+      "export": "native/textual-light-170x48-fresh-defaults.svg",
+      "source_sha256": "1e06e5fb62b402db636b9dd596634a44c0f6974bafa4e391b2b18623d06aaa7c",
+      "export_sha256": "22a09ba19e1c1fa082ef02148c69999eef012509e24b3c76c21f48aa2d96a92e"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-fresh-defaults.txt",
+      "export": "native/textual-light-170x48-fresh-defaults.txt",
+      "source_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01",
+      "export_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-review.svg",
+      "export": "native/textual-light-170x48-review.svg",
+      "source_sha256": "baa8fdf34720ddf28a4ce2180a6f6fdf79bc1879082a9c889b9d1e9ce39bb1c5",
+      "export_sha256": "a243c31ddf29a028480f9c286b2b01316fb52462c6b09df9fedf2d55d15de6d0"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-review.txt",
+      "export": "native/textual-light-170x48-review.txt",
+      "source_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe",
+      "export_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/lifecycle.json",
+      "export": "lifecycle.json",
+      "source_sha256": "9711e8a6bdec3f4365f6a9ff505b253106361f6f00d7b41252e76d36790dde9a",
+      "export_sha256": "9711e8a6bdec3f4365f6a9ff505b253106361f6f00d7b41252e76d36790dde9a"
+    },
+    {
+      "source": "/private/tmp/32839-static.json",
+      "export": "static-analysis.json",
+      "source_sha256": "7e3a3d53608e8e249106a7d261c7f2dbf86b605eb8eaab9aefc81025b0da14ef",
+      "export_sha256": "7e3a3d53608e8e249106a7d261c7f2dbf86b605eb8eaab9aefc81025b0da14ef"
     }
   ]
 }

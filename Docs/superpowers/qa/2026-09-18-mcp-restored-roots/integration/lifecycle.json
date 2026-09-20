@@ -1,6 +1,6 @@
 {
-  "root": "/private/tmp/tldw-32839-native-integrated-002",
-  "pid": 47869,
+  "root": "/private/tmp/tldw-32839-native-qodo-001",
+  "pid": 55800,
   "pid_absent": true,
   "exit_code": 0,
   "app_run_returned": true,
@@ -81,7 +81,7 @@
   "errors": [
     {
       "path": "native.log",
-      "line": "2026-09-19 22:24:32.655 | ERROR    | tldw_chatbook.Evals.config_loader:_load_config:63 - Error loading configuration: storage_scope_not_enrolled"
+      "line": "2026-09-19 22:37:30.567 | ERROR    | tldw_chatbook.Evals.config_loader:_load_config:63 - Error loading configuration: storage_scope_not_enrolled"
     }
   ],
   "source_hashes_match": true

@@ -2,30 +2,30 @@
  ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
 ──────────────────────────────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█──────────────────────────────
  MCP                          █                                                          █
- MCP (Model Context Protocol) █  estored/data/Local/mcp-recovery-742237b5141b403ea717    █ change anything here.
-   Servers    Tools     Permis█           182bb09d7008/local_mcp_store.json              █
+ MCP (Model Context Protocol) █  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █ change anything here.
+   Servers    Tools     Permis█              ebf331/local_mcp_store.json                 █
 ╭─────────────────────────────█                    mcp.permissions:                      █─────────────────────────────╮
-│                             █  /private/tmp/tldw-32839-native-integrated-002/home/r    █                             │
-│ Source                      █       estored/data/Local/mcp_permissions.json →          █nspector                     │
-│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎█  /private/tmp/tldw-32839-native-integrated-002/home/r    █Pick a server, tool, or      │
-│ ▊  Local                ▼  ▎█  estored/data/Local/mcp-recovery-742237b5141b403ea717    █entry to see what's wrong    │
-│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎█           182bb09d7008/mcp_permissions.json              █and what you can do.         │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│ Source                      █          d/data/Local/mcp_permissions.json →             █nspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █Pick a server, tool, or      │
+│ ▊  Local                ▼  ▎█  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █entry to see what's wrong    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎█              ebf331/mcp_permissions.json                 █and what you can do.         │
 │                             █                        history:                          █                             │
-│ Servers                     █  /private/tmp/tldw-32839-native-integrated-002/home/r    █                             │
-│    All servers              █     estored/data/Local/mcp_permissions.json.bak →    ▃▃  █  Advanced…                  │
-│  No servers yet — Add       █  /private/tmp/tldw-32839-native-integrated-002/home/r    █                             │
-│  server to connect one.     █      estored/data/Local/mcp_permissions.json.bak         █                             │
+│ Servers                     █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│    All servers              █        d/data/Local/mcp_permissions.json.bak →       ▃▃  █  Advanced…                  │
+│  No servers yet — Add       █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│  server to connect one.     █         d/data/Local/mcp_permissions.json.bak            █                             │
 │                             █                      mcp.targets:                        █                             │
-│                             █  /private/tmp/tldw-32839-native-integrated-002/home/r    █                             │
-│                             █      estored/data/Local/mcp_server_targets.json →        █                             │
-│                             █  /private/tmp/tldw-32839-native-integrated-002/home/r    █                             │
-│                             █       estored/data/Local/mcp_server_targets.json         █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █         d/data/Local/mcp_server_targets.json →           █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █          d/data/Local/mcp_server_targets.json            █                             │
 │                             █                      mcp.context:                        █                             │
-│                             █  /private/tmp/tldw-32839-native-integrated-002/home/r    █                             │
-│                             █     estored/data/Local/unified_mcp_context.json →        █                             │
-│                             █  /private/tmp/tldw-32839-native-integrated-002/home/r    █                             │
-│                             █  estored/data/Local/mcp-recovery-742237b5141b403ea717    █                             │
-│                             █         182bb09d7008/unified_mcp_context.json            █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █        d/data/Local/unified_mcp_context.json →           █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █                             │
+│                             █            ebf331/unified_mcp_context.json               █                             │
 │                             █                                                          █                             │
 │                             █   Create fresh Ask/local permission state for these      █                             │
 │                             █    MCP roots? Historical rules, grants and context       █                             │

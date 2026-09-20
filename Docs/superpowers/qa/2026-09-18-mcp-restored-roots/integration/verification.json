@@ -10,9 +10,15 @@
     "tldw_chatbook/UI/Screens/mcp_screen.py": "c3db4e0c4817ee1002f3d6556e0f24f4ea1e4f6451527c4f3765a9bae9a75bb0",
     "Tests/Backup_Recovery/test_mcp_recovery_publication.py": "d5b0fa8f15713d5d928de0fa52b611d08a0100f061fb55532c2f6f5c7cbbe282",
     "Tests/UI/test_destination_shells.py": "a4b003cf2cbce605989e3733ae9d65be73e1cbf176ab9a7a04ad2dac9f489cc8",
-    "Docs/superpowers/qa/2026-09-18-mcp-restored-roots/native_check.py": "2b8649e3fc98363b38812a4da18b1d9fa44befc544aace7db28ea658333c79b3"
+    "Docs/superpowers/qa/2026-09-18-mcp-restored-roots/native_check.py": "8ba4a52b87679b588fbe6e1c5a0896233e5c000fc58fffc00a6edd36024e1e55",
+    "Tests/Utils/test_mcp_native_qa_args.py": "750979a7ddc269faabdc7adb7721ce488109c10572ea751c9b1d390c0a47cd1f",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a"
   },
-  "native_runner_sha256": "2b8649e3fc98363b38812a4da18b1d9fa44befc544aace7db28ea658333c79b3",
+  "native_runner_sha256": "8ba4a52b87679b588fbe6e1c5a0896233e5c000fc58fffc00a6edd36024e1e55",
   "final_visual_approval": "pending",
-  "github_current_head_checks": "pending"
+  "github_current_head_checks": "pending",
+  "runner_boundary_cases": 70,
+  "distinct_passing_cases": 155,
+  "product_test_head": "bb824eba9ab7e39197a939655216d2ae88a30ef3",
+  "qodo_runner_findings_addressed": 2
 }

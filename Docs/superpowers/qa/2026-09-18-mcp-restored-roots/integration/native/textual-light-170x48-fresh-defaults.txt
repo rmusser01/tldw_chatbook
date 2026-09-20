@@ -8,8 +8,8 @@
 │                                            ││  Review restored MCP roots                                                ││                                             │
 │ Source                                     ││ Restored permissions stay inactive until reviewed. Review creates fresh   ││ Inspector                                   │
 │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Ask/local defaults; connecting and granting tools remain separate         ││  Pick a server, tool, or entry to see       │
-│ ▊  Local                              ▼  ▎ ││ actions.                                                                  ││  what's wrong and what you can do.          │
-│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Block all tool calls in chat: Off ▸                                    ▆ ││                                             │
+│ ▊  Local                              ▼  ▎ ││ actions.                                                                ▁ ││  what's wrong and what you can do.          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Block all tool calls in chat: Off ▸                                      ││                                             │
 │                                            ││  Also blocks the app's own built-in tools (calculator, date/time, file    ││                                             │
 │ Servers                                    ││  and note tools).                                                         ││    Advanced…                                │
 │    All servers                             ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ││                                             │
@@ -40,7 +40,7 @@
 │                                            ││    watchlists_get_operation_status                      Ask    —          ││                                             │
 │                                            ││    watchlists_get_operations_status                     Ask    —          ││                                             │
 │                                            ││    watchlists_list_briefings                            Ask    —          ││                                             │
-│                                            ││    watchlists_list_collections                          Ask    —        ▅ ││                                             │
+│                                            ││    watchlists_list_collections                          Ask    —          ││                                             │
 │                                            ││                                                                      ▏    ││                                             │
 │                                            ││ global default: ask                                                       ││                                             │
 │                                            ││ • override · ⚠ definition changed · ⚑ high-risk floor · ≡ exact-input     ││                                             │

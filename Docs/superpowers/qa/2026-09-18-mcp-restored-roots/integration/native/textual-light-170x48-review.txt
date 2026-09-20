@@ -5,42 +5,42 @@
  MCP (Model Context Protocol) lets chatbook use externa█               Review restored MCP roots                  █
    Servers    Tools     Permissions    Audit           █                                                          █
 ╭────────────────────────────────────────────╮╭────────█                       Workspace:                         █───────╮╭─────────────────────────────────────────────╮
-│                                            ││  Review█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│ Source                                     ││ Restore█                     estored/config                       █resh   ││ Inspector                                   │
-│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Ask/loc█     Generations: 742237b5141b403ea717182bb09d7008        █       ││  Pick a server, tool, or entry to see       │
-│ ▊  Local                              ▼  ▎ ││ actions█                    Files present: 5                      █       ││  what's wrong and what you can do.          │
-│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Block █                        config:                           █     ▆ ││                                             │
-│                                            ││  Also b█  /private/tmp/tldw-32839-native-integrated-002/home/r    █ile    ││                                             │
-│ Servers                                    ││  and no█              estored/config/config.toml →                █       ││    Advanced…                                │
-│    All servers                             ││ ▊▔▔▔▔▔▔█  /private/tmp/tldw-32839-native-integrated-002/home/r    █▔▔▔▔▎  ││                                             │
-│  No servers yet — Add server to connect    ││ ▊  Filt█               estored/config/config.toml                 █    ▎  ││                                             │
+│                                            ││  Review█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│ Source                                     ││ Restore█                        d/config                          █resh   ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Ask/loc█     Generations: eba69205d0064f82b4be5b85e5ebf331        █       ││  Pick a server, tool, or entry to see       │
+│ ▊  Local                              ▼  ▎ ││ actions█                    Files present: 5                      █     ▁ ││  what's wrong and what you can do.          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Block █                        config:                           █       ││                                             │
+│                                            ││  Also b█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █ile    ││                                             │
+│ Servers                                    ││  and no█                 d/config/config.toml →                   █       ││    Advanced…                                │
+│    All servers                             ││ ▊▔▔▔▔▔▔█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █▔▔▔▔▎  ││                                             │
+│  No servers yet — Add server to connect    ││ ▊  Filt█                  d/config/config.toml                    █    ▎  ││                                             │
 │  one.                                      ││ ▊▁▁▁▁▁▁█                       mcp.local:                         █▁▁▁▁▎  ││                                             │
-│                                            ││  Tool  █  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│                                            ││  Global█       estored/data/Local/local_mcp_store.json →          █       ││                                             │
-│                                            ││  Server█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│                                            ││    fs_e█  estored/data/Local/mcp-recovery-742237b5141b403ea717    █tes    ││                                             │
-│                                            ││    fs_g█           182bb09d7008/local_mcp_store.json              █       ││                                             │
+│                                            ││  Tool  █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│                                            ││  Global█          d/data/Local/local_mcp_store.json →             █       ││                                             │
+│                                            ││  Server█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│                                            ││    fs_e█  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █tes    ││                                             │
+│                                            ││    fs_g█              ebf331/local_mcp_store.json                 █       ││                                             │
 │                                            ││    fs_g█                    mcp.permissions:                      █       ││                                             │
-│                                            ││    fs_l█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│                                            ││    fs_p█       estored/data/Local/mcp_permissions.json →          █tes    ││                                             │
-│                                            ││    fs_r█  /private/tmp/tldw-32839-native-integrated-002/home/r    █   ▂▂  ││                                             │
-│                                            ││    fs_w█  estored/data/Local/mcp-recovery-742237b5141b403ea717    █tes    ││                                             │
-│                                            ││    git_█           182bb09d7008/mcp_permissions.json              █       ││                                             │
+│                                            ││    fs_l█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│                                            ││    fs_p█          d/data/Local/mcp_permissions.json →             █tes    ││                                             │
+│                                            ││    fs_r█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █   ▂▂  ││                                             │
+│                                            ││    fs_w█  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █tes    ││                                             │
+│                                            ││    git_█              ebf331/mcp_permissions.json                 █       ││                                             │
 │                                            ││    git_█                        history:                          █       ││                                             │
-│                                            ││    git_█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│                                            ││    git_█     estored/data/Local/mcp_permissions.json.bak →        █       ││                                             │
-│                                            ││    git_█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│                                            ││    shel█      estored/data/Local/mcp_permissions.json.bak         █ess    ││                                             │
+│                                            ││    git_█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│                                            ││    git_█        d/data/Local/mcp_permissions.json.bak →           █       ││                                             │
+│                                            ││    git_█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│                                            ││    shel█         d/data/Local/mcp_permissions.json.bak            █ess    ││                                             │
 │                                            ││    watc█                      mcp.targets:                        █tes    ││                                             │
-│                                            ││    watc█  /private/tmp/tldw-32839-native-integrated-002/home/r    █tes    ││                                             │
-│                                            ││    watc█      estored/data/Local/mcp_server_targets.json →    ▂▂  █tes    ││                                             │
-│                                            ││    watc█  /private/tmp/tldw-32839-native-integrated-002/home/r    █tes    ││                                             │
-│                                            ││    watc█       estored/data/Local/mcp_server_targets.json         █       ││                                             │
+│                                            ││    watc█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █tes    ││                                             │
+│                                            ││    watc█         d/data/Local/mcp_server_targets.json →       ▂▂  █tes    ││                                             │
+│                                            ││    watc█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █tes    ││                                             │
+│                                            ││    watc█          d/data/Local/mcp_server_targets.json            █       ││                                             │
 │                                            ││    watc█                      mcp.context:                        █       ││                                             │
-│                                            ││    watc█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│                                            ││    watc█     estored/data/Local/unified_mcp_context.json →        █       ││                                             │
-│                                            ││    watc█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
-│                                            ││    watc█  estored/data/Local/mcp-recovery-742237b5141b403ea717    █     ▅ ││                                             │
+│                                            ││    watc█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│                                            ││    watc█        d/data/Local/unified_mcp_context.json →           █       ││                                             │
+│                                            ││    watc█  /private/tmp/tldw-32839-native-qodo-001/home/restore    █       ││                                             │
+│                                            ││    watc█  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █       ││                                             │
 │                                            ││        █                                                          █  ▏    ││                                             │
 │                                            ││ global █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█       ││                                             │
 │                                            ││ • override · ⚠ definition changed · ⚑ high-risk floor · ≡ exact-input     ││                                             │

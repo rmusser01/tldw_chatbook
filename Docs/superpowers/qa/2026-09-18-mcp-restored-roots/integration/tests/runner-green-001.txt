@@ -1,0 +1,12 @@
+......................................................................   [100%]
+------- generated xml file: /private/tmp/mcp-roots-runner-green-001.xml --------
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+70 passed in 4.74s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0e9e4f84-b6db-43d2-9f78-a9e27c02bdfe/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0e9e4f84-b6db-43d2-9f78-a9e27c02bdfe/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0e9e4f84-b6db-43d2-9f78-a9e27c02bdfe
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-0e9e4f84-b6db-43d2-9f78-a9e27c02bdfe'
+  warnings.warn(

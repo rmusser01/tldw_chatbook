@@ -6,7 +6,8 @@ PR2749 has merged. PR2727 is rebased onto its verified merged dev state, with a
 further selection-ownership repair: later Permissions row/profile selections
 retire an older completion receipt while retaining the native write.
 [Current integration and conflict choices](CURRENT-DEV-REVIEW.md) record 85
-targeted passes, seven guards and 16 fresh native captures.
+targeted product passes, 70 runner boundary passes, seven guards and 16 fresh
+native captures after the Qodo runner fixes.
 [Current gallery](GALLERY.md) awaits this PR's own visual approval.
 
 ## Historical original qualification

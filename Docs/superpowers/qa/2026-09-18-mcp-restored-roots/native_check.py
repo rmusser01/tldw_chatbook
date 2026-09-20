@@ -14,14 +14,26 @@ import traceback
 from pathlib import Path
 
 
-def main():
-    root = Path(sys.argv[1]).resolve()
-    socket, session = sys.argv[2:4]
+def main() -> None:
+    """Run ROOT TMUX_SOCKET SESSION in an existing native tmux session.
+
+    ROOT is an unused, prepared private profile under /tmp. Shared validation
+    checks arguments, profile paths and tmux before app imports or output writes.
+    The journey creates an actual isolated restore and records its review UI,
+    cancellation, fresh defaults and shutdown in native.log and evidence/.
+
+    Raises:
+        SystemExit: Status 0 after success, 1 after a journey or application
+            failure, or 2 for invalid command-line input or profile paths.
+    """
     here = Path(__file__).resolve()
     repo = here.parents[4]
-    runpy.run_path(
-        str(repo / "Docs/superpowers/qa/2026-09-16-ingest-lifecycle/native_check.py")
-    )["validate_profile"](root)
+    sys.path.insert(0, str(repo))
+    args = runpy.run_path(str(here.parent.parent / "native_runner_args.py"))[
+        "parse_native_args"
+    ]()
+    root, socket, session = args.root, args.tmux_socket, args.session
+    tmux_path = args.tmux_path
     os.environ.update(
         HOME=str(root / "home"),
         USERPROFILE=str(root / "home"),
@@ -38,7 +50,6 @@ def main():
         "SERPER_API_KEY",
     ):
         os.environ.pop(key, None)
-    sys.path.insert(0, str(repo))
     from loguru import logger
     from textual.css.query import NoMatches, QueryError
     from textual.widgets import Button, DataTable
@@ -101,6 +112,7 @@ def main():
         )
     ]
     paths += [
+        "Docs/superpowers/qa/native_runner_args.py",
         "tldw_chatbook/UI/Screens/mcp_screen.py",
         "tldw_chatbook/MCP/recovery_activation.py",
         "tldw_chatbook/MCP/local_control_service.py",
@@ -122,7 +134,7 @@ def main():
     async def tmux(*args):
         return await asyncio.to_thread(
             subprocess.run,
-            ["/opt/homebrew/bin/tmux", "-L", socket, *args],
+            [tmux_path, "-L", socket, *args],
             check=True,
             text=True,
             capture_output=True,

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 06:18'
-updated_date: '2026-09-20 05:30'
+updated_date: '2026-09-20 05:40'
 labels: []
 dependencies: []
 ---
@@ -22,6 +22,7 @@ Make restored-root review finish without overwriting later navigation or leaving
 - [x] #2 Successful current-view review refreshes passive server, tool, permission and Audit displays without connecting or granting tools.
 - [x] #3 Confirmation, cancellation and changed-root rejection remain intact, with targeted real-owner tests and native dark/light evidence.
 - [x] #4 Selecting another Permissions row or policy profile while an accepted review is pending preserves the newer selection and suppresses the superseded completion receipt.
+- [x] #5 The native evidence runner rejects invalid arguments and unsafe profiles before app startup or output writes, using the existing shared validation boundary.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -32,6 +33,7 @@ Make restored-root review finish without overwriting later navigation or leaving
 3. Run focused new and existing real-owner controls/activation tests, static checks, guards and independent review. Verify private native dark/light confirmation, cancellation and success; save an independent draft PR against dev.
 4. Integrate merged PR2749, retain both report histories and reproduce same-mode Permissions row/profile changes during a held native write, including round trips.
 5. Invalidate the existing recovery receipt at the accepted selection boundary, preserve native completion, and rerun the affected real-owner, selection/navigation and native visual checks before saving updated PR2727.
+6. Address Qodo runner findings by reusing shared native CLI validation, documenting the entry point, extending existing boundary tests and requalifying a fresh native run.
 ADR required: no
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md
 Reason: routine caller-lifetime and passive UI repair under existing restored-authority policy; no owner policy, storage or service contract changes.
@@ -51,4 +53,8 @@ Integrated onto merged PR2749/dev 65d79cc2b7, retaining both report histories wi
 Current integration: 85 targeted cases and all seven guards pass; no new static diagnostics, changed ranges/new files formatted, independent final review found no blockers and verified current source/export hashes. Sixteen fresh native captures qualify cancellation, confirmation and Ask/local publication at both theme/size combinations. Exit0, released lock, ten healthy private databases, zero conversations/messages and three unchanged default files verified. One separately documented Evals enrollment diagnostic remains. Updated the native evidence runner to use the application image warm-up after an early private-library import failure; preserved historical runner/evidence and recorded the lesson.
 
 Current integration notes/gallery: Docs/superpowers/qa/2026-09-18-mcp-restored-roots/CURRENT-DEV-REVIEW.md. Existing ADR126/150/161 apply; no new ADR. Implementation complete; PR2727 still requires current-head CI, accumulated review and its own final visual approval before merge. Long-path presentation, status/catalog repopulation and connected runtime remain separate review scope.
+
+Qodo review of bb824eba9a found no product bugs and two runner rule findings. Plan: reuse native_runner_args.py, document the entry point, extend the existing runner-input regressions, and verify a fresh native lifecycle. This reuses existing QA validation and changes no app behavior or architectural boundary.
+
+Addressed both Qodo runner findings using the existing shared native_runner_args.py validation boundary and an explicit main() CLI/exit contract. Seven new runner-entry cases failed before the fix; all70 shared boundary checks pass. Product source/tests remain unchanged from the85-case qualified head bb824eba9a (155 distinct passes total). A fresh corrected-runner native journey passed all16captures and full lifecycle, with13 native source hashes and runner hash verified. Independent delta review found no blockers. Evidence manifest/gallery refreshed; prior integrated captures remain in bb824eba9a. Final-head CI/review and owner visual approval remain before merge.
 <!-- SECTION:NOTES:END -->

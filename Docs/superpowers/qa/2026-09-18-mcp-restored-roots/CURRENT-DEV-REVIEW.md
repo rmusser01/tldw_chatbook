@@ -20,6 +20,16 @@ and unchanged profile selections retain their existing behavior.
 
 ## Current evidence
 
+Qodo on `bb824eba9a` found no product bugs and two evidence-runner rule issues.
+The entry point now documents its CLI/exit contract and reuses the existing
+shared `native_runner_args.py` boundary before app imports or output writes.
+Only its returned canonical profile, validated identifiers and PATH-resolved
+tmux are used. [Seven entry-point failures](integration/tests/runner-red-001.txt)
+are reproduced before the fix; all [70 shared boundary cases pass](integration/tests/runner-green-001.txt).
+Together with the unchanged product checks below, 155 distinct cases pass.
+The fresh native captures/lifecycle in this packet use the corrected runner.
+The first integrated capture set remains in commit `bb824eba9a`.
+
 - [85 targeted cases](integration/tests/integrated-001.json) pass in 203.81s:
   the original 45, four new selection cases and 36 adjacent profile/navigation
   cases. [Exact selection](integration/selected-cases.txt). No full suite ran.
