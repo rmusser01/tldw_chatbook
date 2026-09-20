@@ -1205,8 +1205,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 143,
-      "diagnostic_digest": "79e6d9261f07f7972efc",
+      "call_count": 133,
+      "diagnostic_digest": "7db71eb22661618ffcdf",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1230,6 +1230,34 @@
       "diagnostic_digest": "d37486940059e7af2679",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "70615959cf4152f88e44",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/LLM_Calls/deepseek.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "58f935383e01ea4b1c07",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/LLM_Calls/groq.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "9408a1b296938f3dbb5d",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/LLM_Calls/mistral.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "27aed1a64689336b542f",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/LLM_Calls/openrouter.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
@@ -11533,11 +11561,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 611,
+    "owner_files": 615,
     "path_privacy_candidate_calls": 701,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
-    "task_492_calls": 1409,
+    "task_492_calls": 1410,
     "task_494_calls": 7770
   }
 }

@@ -23,6 +23,22 @@ from loguru import logger as loguru_logger
 
 from Tests.ast_shape import stable_dump
 from scripts import check_persistent_diagnostic_inventory as diagnostic_inventory
+
+import tldw_chatbook.LLM_Calls.recovery_review as recovery_review
+
+
+def _is_lazy_provider_stream(value: object) -> bool:
+    """Lazy-stream predicate for summarize_with_* streaming returns.
+
+    TASK-32628's recovery admission retains every Iterator a provider call
+    returns behind recovery_review._OpenAIStream, so the laziness contracts
+    these tests pin must accept both the raw generator and the wrapper --
+    the wrapper defers all iteration and close() to the wrapped stream.
+    """
+    return inspect.isgenerator(value) or isinstance(
+        value, recovery_review._OpenAIStream
+    )
+
 from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_summarization
 from tldw_chatbook.LLM_Calls import (
     Summarization_General_Lib as general_summarization,
@@ -4264,7 +4280,7 @@ def test_general_openai_truthy_non_boolean_streaming_value_is_not_logged(
             "fixed prompt",
             streaming=GENERAL_OPENAI_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -4344,7 +4360,7 @@ def test_general_openai_stream_iterator_exception_preserves_lazy_error_contract(
             "fixed prompt",
             streaming=True,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -4739,7 +4755,7 @@ def test_cohere_stream_is_lazy_and_hides_rejected_lines(
             "fixed prompt",
             streaming=COHERE_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -4786,7 +4802,7 @@ def test_cohere_unknown_stream_event_hides_provider_controlled_type(
             "fixed prompt",
             streaming=True,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -4960,7 +4976,7 @@ def test_groq_stream_preserves_raw_flag_and_hides_malformed_line(
             "fixed prompt",
             streaming=GROQ_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         chunks = list(stream)
 
@@ -5541,7 +5557,7 @@ def test_huggingface_stream_is_lazy_and_hides_rejected_events(
             "fixed prompt",
             streaming=HUGGINGFACE_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -5583,7 +5599,7 @@ def test_deepseek_stream_preserves_yields_and_hides_decode_and_key_failures(
             "fixed prompt",
             streaming=DEEPSEEK_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -5631,7 +5647,7 @@ def test_mistral_stream_preserves_yields_and_hides_rejected_events(
             "fixed prompt",
             streaming=MISTRAL_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         assert response.closed is False
         chunks = list(stream)
@@ -5998,7 +6014,7 @@ def test_google_stream_preserves_yields_and_hides_rejected_lines(
             "fixed prompt",
             streaming=GOOGLE_PRIVATE_STREAMING_VALUE,
         )
-        assert inspect.isgenerator(stream)
+        assert _is_lazy_provider_stream(stream)
         assert response.iter_lines_started is False
         chunks = list(stream)
 
@@ -6184,7 +6200,7 @@ def test_mock_llm_hides_prompt_system_and_arbitrary_streaming_value(
             streaming=streaming,
         )
         if streaming:
-            assert inspect.isgenerator(result)
+            assert _is_lazy_provider_stream(result)
             result = list(result)
 
     if streaming:

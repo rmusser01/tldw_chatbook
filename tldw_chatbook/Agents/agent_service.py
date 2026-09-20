@@ -193,6 +193,7 @@ from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     NEW_CHAT_TOOL_SCHEMA,
     FORK_CHAT_TOOL_SCHEMA,
+    build_chat_create_schema,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
@@ -750,8 +751,10 @@ def _chat_create_runtime_schemas(
     fork_chat_tool: "Callable[[dict], ToolResult] | None",
     new_chat_tool: "Callable[[dict], ToolResult] | None",
 ) -> list[ToolSchema]:
-    """ADR-150: fork_chat/new_chat are primary-only in v1 (sub-agents: TASK-32480)."""
-    if agent_kind != AGENT_KIND_PRIMARY:
+    """ADR-150 v1 pinned these to primary; TASK-32531 extends to sub-agents
+    (children are scoped to the parent conversation, so the fork source is
+    that same conversation; the per-call confirm still gates every call)."""
+    if agent_kind not in (AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT):
         return []
     schemas: list[ToolSchema] = []
     if fork_chat_tool is not None:
@@ -892,10 +895,29 @@ def build_first_request_schema_plan(
             runtime.append(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA)
         if run_skill_script_enabled:
             runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
-        if fork_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(FORK_CHAT_TOOL_SCHEMA)
-        if new_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(NEW_CHAT_TOOL_SCHEMA)
+        if fork_chat_enabled:
+            # TASK-32874: the DISCLOSED schema is built per run (preset
+            # roster + gated override args, ADR-147 pattern); the static
+            # constant remains only as the nothing-to-add identity base.
+            # TASK-32531: disclosed to sub-agents too (children are scoped
+            # to the parent conversation; confirm still gates every call).
+            runtime.append(
+                build_chat_create_schema(
+                    FORK_CHAT_TOOL_SCHEMA,
+                    agent_definitions or (),
+                    override_enabled=spawn_override_enabled,
+                    override_targets=spawn_override_targets,
+                )
+            )
+        if new_chat_enabled:
+            runtime.append(
+                build_chat_create_schema(
+                    NEW_CHAT_TOOL_SCHEMA,
+                    agent_definitions or (),
+                    override_enabled=spawn_override_enabled,
+                    override_targets=spawn_override_targets,
+                )
+            )
         log_active = bool(
             agent_kind == AGENT_KIND_PRIMARY
             and run_log_active
@@ -4991,14 +5013,8 @@ class AgentService:
                     and self._prepare_managed_skill_promotion_tool is not None
                 ),
                 run_skill_script_enabled=self._run_skill_script_tool is not None,
-                fork_chat_enabled=bool(
-                    agent_kind == AGENT_KIND_PRIMARY
-                    and self._fork_chat_tool is not None
-                ),
-                new_chat_enabled=bool(
-                    agent_kind == AGENT_KIND_PRIMARY
-                    and self._new_chat_tool is not None
-                ),
+                fork_chat_enabled=bool(self._fork_chat_tool is not None),
+                new_chat_enabled=bool(self._new_chat_tool is not None),
                 run_log_active=bool(
                     agent_kind == AGENT_KIND_PRIMARY and writer.is_active
                 ),
@@ -8070,18 +8086,8 @@ class AgentService:
                 if self._post_tool_call is not None
                 else None
             ),
-            fork_chat=(
-                self._fork_chat_tool
-                if agent_kind == AGENT_KIND_PRIMARY
-                and self._fork_chat_tool is not None
-                else None
-            ),
-            new_chat=(
-                self._new_chat_tool
-                if agent_kind == AGENT_KIND_PRIMARY
-                and self._new_chat_tool is not None
-                else None
-            ),
+            fork_chat=self._fork_chat_tool,
+            new_chat=self._new_chat_tool,
             search_run_log=(
                 search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
             ),

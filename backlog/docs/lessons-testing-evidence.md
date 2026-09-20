@@ -16148,3 +16148,18 @@ only in the header row. For cache/rendering defects, assert the composed screen,
 then compare it with terminal capture; a new render can skip the stale layer
 that the user still sees. The receipts and initial fixture correction are in
 `Docs/superpowers/qa/2026-09-19-mcp-tools-header/README.md`.
+
+### TASK-32880 (originally TASK-32829): hold cancellation cleanup before asserting admission is released
+
+The MCP lifecycle review found that clicking Cancel popped the per-server busy
+marker before the cancelled operation finished cleanup. A retry could start, and
+the old wrapper could later clear the newer attempt's marker. A fixture that
+immediately raised `CancelledError` missed the interval. Holding an explicit gate
+inside cancellation cleanup exposed the lost marker, premature “Cancelled” toast,
+and duplicate same-server launch. Also hold awaited detail rendering: a CHECKING
+snapshot and its operation must be captured together before yielding, or a stale
+Cancel view can bind to a replacement operation. Cancel-before-start coverage
+must force coroutine collection; both service and redraw workers need lazy
+callbacks when their body may never execute. In Textual tests, a cancelled
+worker's `wait()` raises `WorkerCancelled`; settle that expected outcome without
+masking the behavior assertions or swallowing other worker failures.

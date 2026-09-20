@@ -1578,9 +1578,12 @@ def test_chat_create_pin_gating_matrix():
     from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT
 
     tool = lambda args: ToolResult(ok=True, content="{}")  # noqa: E731
+    # TASK-32531: sub-agents now receive the tools too (children share the
+    # parent conversation; the per-call confirm still gates every call).
     primary = _chat_create_runtime_schemas(AGENT_KIND_PRIMARY, tool, tool)
     assert [s.name for s in primary] == ["fork_chat", "new_chat"]
-    assert _chat_create_runtime_schemas(AGENT_KIND_SUBAGENT, tool, tool) == []
+    assert _chat_create_runtime_schemas(AGENT_KIND_SUBAGENT, tool, tool) == primary
+    assert _chat_create_runtime_schemas("other", tool, tool) == []
     assert _chat_create_runtime_schemas(AGENT_KIND_PRIMARY, None, tool) == [
         s for s in primary if s.name == "new_chat"
     ]

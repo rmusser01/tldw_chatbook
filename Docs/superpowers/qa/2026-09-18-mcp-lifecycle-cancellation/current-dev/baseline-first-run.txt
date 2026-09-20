@@ -1,0 +1,928 @@
+FFFF.FFFFFF                                                              [100%]
+=================================== FAILURES ===================================
+_________ test_cancel_reserves_server_until_cleanup_then_permits_retry _________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_reserves_server_un0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _________ test_cancel_reserves_server_until_cleanup_then_permits_retry _________
+E
+E   request = <FixtureRequest for <Coroutine test_cancel_reserves_server_until_cleanup_then_permits_retry>>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_cancel_reserves_server_until_cleanup_then_permits_retry(request):
+E           app = LifecycleApp()
+E           service = app.unified_mcp_service = CleanupService()
+E           async with app.run_test(size=(120, 40)) as pilot:
+E               wb = await ready(app, pilot)
+E               notices = _capture_notifications(app)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await service.started.wait()
+E               original = wb._in_flight["local:docs"]
+E               wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
+E               await service.cancelling.wait()
+E               await pilot.pause()
+E               during = {
+E                   "owner": wb._in_flight.get("local:docs") is original,
+E                   "state": wb._snapshot_for_display("local:docs").state,
+E                   "message": wb._snapshot_for_display("local:docs").message,
+E                   "notices": list(notices),
+E               }
+E               cancel = app.query(MCPInspector).first().query("#mcp-inspector-cancel")
+E               during["cancel_disabled"] = bool(cancel) and cancel.first(Button).disabled
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               wb._start_lifecycle("local:other", "other", "connect")
+E               wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
+E               await pilot.pause()
+E               during["calls"] = list(service.lifecycle_calls)
+E               during["interrupted"] = service.interrupted
+E               service.release.set()
+E               await finish(app)
+E               await pilot.pause()
+E   >           assert during["owner"]
+E   E           assert False
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:105: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:06.633 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:06.670 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:06.704 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:06.705 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:06.853 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:07.193 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:07.645 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:07.899 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:08.098 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:08.366 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:08.547 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:08.806 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   =============================== warnings summary ===============================
+E   Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+E     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/pydantic/main.py:766: RuntimeWarning: coroutine 'MCPWorkbench._lifecycle_wrapper' was never awaited
+E       return cls.__pydantic_validator__.validate_json(
+E     Enable tracemalloc to get traceback where the object was allocated.
+E     See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+E     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/pydantic/main.py:766: RuntimeWarning: coroutine 'MCPWorkbench._sync_children' was never awaited
+E       return cls.__pydantic_validator__.validate_json(
+E     Enable tracemalloc to get traceback where the object was allocated.
+E     See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+E     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/pydantic/main.py:766: RuntimeWarning: coroutine 'CleanupService.connect_local_profile' was never awaited
+E       return cls.__pydantic_validator__.validate_json(
+E     Enable tracemalloc to get traceback where the object was allocated.
+E     See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+E
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_reserves_server_un0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.68s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+E   1 failed, 3 warnings in 2.96s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 12:31:05.709 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 12:31:05.781 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 12:31:05.821 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 12:31:05.827 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_____ test_retired_cancel_cannot_stop_a_replacement_operation[docs-button] _____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_retired_cancel_cannot_sto0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _____ test_retired_cancel_cannot_stop_a_replacement_operation[docs-button] _____
+E
+E   request = <FixtureRequest for <Coroutine test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]>>
+E   boundary = 'button', replacement = 'docs'
+E
+E       @pytest.mark.parametrize("boundary", ["button", "message"])
+E       @pytest.mark.parametrize("replacement", ["docs", "other"])
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_retired_cancel_cannot_stop_a_replacement_operation(
+E           request, boundary, replacement
+E       ):
+E           app = LifecycleApp()
+E           service = app.unified_mcp_service
+E           gates = [asyncio.Event(), asyncio.Event()]
+E           calls = []
+E           catalog = service.local_external_catalog
+E
+E           async def two_profiles():
+E               rows = await catalog()
+E               return rows + [dict(rows[0], profile_id="other")]
+E
+E           async def connect(profile_id):
+E               index = len(calls)
+E               calls.append(profile_id)
+E               await gates[index].wait()
+E               return {"tools": []}
+E
+E           service.local_external_catalog = two_profiles
+E           service.connect_local_profile = connect
+E           async with app.run_test(size=(120, 40)) as pilot:
+E               wb = await ready(app, pilot)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await pilot.pause()
+E               inspector = app.query_one(MCPInspector)
+E               post = inspector.post_message
+E               held = []
+E
+E               def hold(message):
+E                   if (
+E                       boundary == "button"
+E                       and isinstance(message, Button.Pressed)
+E                       and message.button.id == "mcp-inspector-cancel"
+E                   ) or (
+E                       boundary == "message"
+E                       and isinstance(message, MCPInspector.CancelRequested)
+E                   ):
+E                       held.append(message)
+E                       return True
+E                   return post(message)
+E
+E               inspector.post_message = hold
+E               inspector.query_one("#mcp-inspector-cancel", Button).press()
+E               await pilot.pause()
+E               assert len(held) == 1
+E               inspector.post_message = post
+E               gates[0].set()
+E               await finish(app)
+E               wb._start_lifecycle(f"local:{replacement}", replacement, "connect")
+E               await wb._select_server_key(f"local:{replacement}")
+E               await pilot.pause()
+E               worker = wb._in_flight[f"local:{replacement}"]
+E               post(held[0])
+E               await pilot.pause()
+E               cancelled = worker.is_cancelled
+E               gates[1].set()
+E               await finish(app)
+E   >           assert not cancelled
+E   E           assert not True
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:182: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:10.262 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:10.299 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:10.333 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:10.334 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:10.447 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:10.677 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:11.090 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:11.394 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:11.644 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:12.046 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:12.306 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:12.594 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:12.912 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:13.143 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_retired_cancel_cannot_sto0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   2.53s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]
+E   1 failed in 3.67s
+____ test_retired_cancel_cannot_stop_a_replacement_operation[docs-message] _____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_retired_cancel_cannot_sto1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_retired_cancel_cannot_stop_a_replacement_operation[docs-message] _____
+E
+E   request = <FixtureRequest for <Coroutine test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]>>
+E   boundary = 'message', replacement = 'docs'
+E
+E       @pytest.mark.parametrize("boundary", ["button", "message"])
+E       @pytest.mark.parametrize("replacement", ["docs", "other"])
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_retired_cancel_cannot_stop_a_replacement_operation(
+E           request, boundary, replacement
+E       ):
+E           app = LifecycleApp()
+E           service = app.unified_mcp_service
+E           gates = [asyncio.Event(), asyncio.Event()]
+E           calls = []
+E           catalog = service.local_external_catalog
+E
+E           async def two_profiles():
+E               rows = await catalog()
+E               return rows + [dict(rows[0], profile_id="other")]
+E
+E           async def connect(profile_id):
+E               index = len(calls)
+E               calls.append(profile_id)
+E               await gates[index].wait()
+E               return {"tools": []}
+E
+E           service.local_external_catalog = two_profiles
+E           service.connect_local_profile = connect
+E           async with app.run_test(size=(120, 40)) as pilot:
+E               wb = await ready(app, pilot)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await pilot.pause()
+E               inspector = app.query_one(MCPInspector)
+E               post = inspector.post_message
+E               held = []
+E
+E               def hold(message):
+E                   if (
+E                       boundary == "button"
+E                       and isinstance(message, Button.Pressed)
+E                       and message.button.id == "mcp-inspector-cancel"
+E                   ) or (
+E                       boundary == "message"
+E                       and isinstance(message, MCPInspector.CancelRequested)
+E                   ):
+E                       held.append(message)
+E                       return True
+E                   return post(message)
+E
+E               inspector.post_message = hold
+E               inspector.query_one("#mcp-inspector-cancel", Button).press()
+E               await pilot.pause()
+E               assert len(held) == 1
+E               inspector.post_message = post
+E               gates[0].set()
+E               await finish(app)
+E               wb._start_lifecycle(f"local:{replacement}", replacement, "connect")
+E               await wb._select_server_key(f"local:{replacement}")
+E               await pilot.pause()
+E               worker = wb._in_flight[f"local:{replacement}"]
+E               post(held[0])
+E               await pilot.pause()
+E               cancelled = worker.is_cancelled
+E               gates[1].set()
+E               await finish(app)
+E   >           assert not cancelled
+E   E           assert not True
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:182: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:14.599 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:14.636 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:14.671 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:14.672 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:14.795 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:15.027 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:15.443 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:15.735 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:15.942 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:16.229 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:16.428 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:16.627 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:16.889 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:17.072 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_retired_cancel_cannot_sto1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   2.11s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]
+E   1 failed in 3.27s
+____ test_retired_cancel_cannot_stop_a_replacement_operation[other-button] _____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_retired_cancel_cannot_sto2/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_retired_cancel_cannot_stop_a_replacement_operation[other-button] _____
+E
+E   request = <FixtureRequest for <Coroutine test_retired_cancel_cannot_stop_a_replacement_operation[other-button]>>
+E   boundary = 'button', replacement = 'other'
+E
+E       @pytest.mark.parametrize("boundary", ["button", "message"])
+E       @pytest.mark.parametrize("replacement", ["docs", "other"])
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_retired_cancel_cannot_stop_a_replacement_operation(
+E           request, boundary, replacement
+E       ):
+E           app = LifecycleApp()
+E           service = app.unified_mcp_service
+E           gates = [asyncio.Event(), asyncio.Event()]
+E           calls = []
+E           catalog = service.local_external_catalog
+E
+E           async def two_profiles():
+E               rows = await catalog()
+E               return rows + [dict(rows[0], profile_id="other")]
+E
+E           async def connect(profile_id):
+E               index = len(calls)
+E               calls.append(profile_id)
+E               await gates[index].wait()
+E               return {"tools": []}
+E
+E           service.local_external_catalog = two_profiles
+E           service.connect_local_profile = connect
+E           async with app.run_test(size=(120, 40)) as pilot:
+E               wb = await ready(app, pilot)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await pilot.pause()
+E               inspector = app.query_one(MCPInspector)
+E               post = inspector.post_message
+E               held = []
+E
+E               def hold(message):
+E                   if (
+E                       boundary == "button"
+E                       and isinstance(message, Button.Pressed)
+E                       and message.button.id == "mcp-inspector-cancel"
+E                   ) or (
+E                       boundary == "message"
+E                       and isinstance(message, MCPInspector.CancelRequested)
+E                   ):
+E                       held.append(message)
+E                       return True
+E                   return post(message)
+E
+E               inspector.post_message = hold
+E               inspector.query_one("#mcp-inspector-cancel", Button).press()
+E               await pilot.pause()
+E               assert len(held) == 1
+E               inspector.post_message = post
+E               gates[0].set()
+E               await finish(app)
+E               wb._start_lifecycle(f"local:{replacement}", replacement, "connect")
+E               await wb._select_server_key(f"local:{replacement}")
+E               await pilot.pause()
+E               worker = wb._in_flight[f"local:{replacement}"]
+E               post(held[0])
+E               await pilot.pause()
+E               cancelled = worker.is_cancelled
+E               gates[1].set()
+E               await finish(app)
+E   >           assert not cancelled
+E   E           assert not True
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:182: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:18.475 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:18.515 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:18.549 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:18.550 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:18.664 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:18.889 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:19.298 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:19.593 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:19.812 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:20.129 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:20.361 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:20.609 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:20.880 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:21.101 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_retired_cancel_cannot_sto2/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   2.27s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-button]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-button]
+E   1 failed in 3.42s
+__________ test_cancel_before_start_does_not_create_service_coroutine __________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_before_start_does_0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   __________ test_cancel_before_start_does_not_create_service_coroutine __________
+E
+E   request = <FixtureRequest for <Coroutine test_cancel_before_start_does_not_create_service_coroutine>>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_cancel_before_start_does_not_create_service_coroutine(request):
+E           app = LifecycleApp()
+E           service = app.unified_mcp_service
+E           original = service.connect_local_profile
+E           created = []
+E
+E           def create(profile_id):
+E               created.append(profile_id)
+E               return original(profile_id)
+E
+E           service.connect_local_profile = create
+E           async with app.run_test() as pilot:
+E               wb = await ready(app, pilot)
+E               with warnings.catch_warnings(record=True) as caught:
+E                   warnings.simplefilter("always", RuntimeWarning)
+E                   wb._start_lifecycle("local:docs", "docs", "connect")
+E                   wb.on_mcp_inspector_cancel_requested(
+E                       MCPInspector.CancelRequested("local:docs")
+E                   )
+E                   await finish(app)
+E                   await pilot.pause()
+E                   gc.collect()
+E   >           assert created == []
+E   E           AssertionError: assert ['docs'] == []
+E   E
+E   E             Left contains one more item: 'docs'
+E   E             Use -v to get more diff
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:209: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:26.172 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:26.211 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:26.244 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:26.245 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:26.360 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:26.593 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:27.030 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:27.311 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:27.503 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_before_start_does_0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E
+E   (3 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_before_start_does_not_create_service_coroutine
+E   1 failed in 2.15s
+____ test_cancel_request_does_not_hide_the_actual_terminal_outcome[success] ____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_request_does_not_h0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ____ test_cancel_request_does_not_hide_the_actual_terminal_outcome[success] ____
+E
+E   request = <FixtureRequest for <Coroutine test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]>>
+E   outcome = 'success'
+E
+E       @pytest.mark.parametrize("outcome", ["success", "error"])
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_cancel_request_does_not_hide_the_actual_terminal_outcome(
+E           request, outcome
+E       ):
+E           app = LifecycleApp()
+E           service = app.unified_mcp_service = CleanupService(outcome)
+E           async with app.run_test() as pilot:
+E               wb = await ready(app, pilot)
+E               notices = _capture_notifications(app)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await service.started.wait()
+E               wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
+E               await service.cancelling.wait()
+E               service.release.set()
+E               await finish(app)
+E               await pilot.pause()
+E   >           assert not any("Cancelled" in text for text, _ in notices)
+E   E           assert not True
+E   E            +  where True = any(<generator object test_cancel_request_does_not_hide_the_actual_terminal_outcome.<locals>.<genexpr> at 0x11a945700>)
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:236: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:28.981 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:29.018 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:29.052 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:29.053 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:29.166 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:29.388 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:29.801 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:30.092 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:30.309 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:30.489 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_request_does_not_h0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.14s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]
+E   1 failed in 2.26s
+_____ test_cancel_request_does_not_hide_the_actual_terminal_outcome[error] _____
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_request_does_not_h1/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _____ test_cancel_request_does_not_hide_the_actual_terminal_outcome[error] _____
+E
+E   request = <FixtureRequest for <Coroutine test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]>>
+E   outcome = 'error'
+E
+E       @pytest.mark.parametrize("outcome", ["success", "error"])
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_cancel_request_does_not_hide_the_actual_terminal_outcome(
+E           request, outcome
+E       ):
+E           app = LifecycleApp()
+E           service = app.unified_mcp_service = CleanupService(outcome)
+E           async with app.run_test() as pilot:
+E               wb = await ready(app, pilot)
+E               notices = _capture_notifications(app)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await service.started.wait()
+E               wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
+E               await service.cancelling.wait()
+E               service.release.set()
+E               await finish(app)
+E               await pilot.pause()
+E   >           assert not any("Cancelled" in text for text, _ in notices)
+E   E           assert not True
+E   E            +  where True = any(<generator object test_cancel_request_does_not_hide_the_actual_terminal_outcome.<locals>.<genexpr> at 0x11c703b90>)
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:236: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:31.885 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:31.921 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:31.955 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:31.956 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:32.074 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:32.312 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:32.743 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:33.026 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:33.255 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:33.440 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'CleanupService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_request_does_not_h1/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.16s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]
+E   1 failed in 2.30s
+_______ test_success_keeps_admission_until_final_projection_is_collected _______
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_success_keeps_admission_u0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______ test_success_keeps_admission_until_final_projection_is_collected _______
+E
+E   request = <FixtureRequest for <Coroutine test_success_keeps_admission_until_final_projection_is_collected>>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_success_keeps_admission_until_final_projection_is_collected(request):
+E           app = LifecycleApp()
+E           async with app.run_test() as pilot:
+E               wb = await ready(app, pilot)
+E               collect = wb._collect_snapshots
+E               entered, release = asyncio.Event(), asyncio.Event()
+E
+E               async def held_collect():
+E                   entered.set()
+E                   await release.wait()
+E                   return await collect()
+E
+E               wb._collect_snapshots = held_collect
+E               notices = _capture_notifications(app)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await entered.wait()
+E               wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
+E               wb._start_lifecycle("local:docs", "docs", "refresh")
+E               # Collection is deliberately held; a full message-pump drain waits on it.
+E               for _ in range(10):
+E                   await asyncio.sleep(0)
+E               calls = list(app.unified_mcp_service.lifecycle_calls)
+E               release.set()
+E               await finish(app)
+E               await pilot.pause()
+E   >           assert calls == [("connect", "docs")]
+E   E           AssertionError: assert [('connect', ...esh', 'docs')] == [('connect', 'docs')]
+E   E
+E   E             Left contains one more item: ('refresh', 'docs')
+E   E             Use -v to get more diff
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:269: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:34.796 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:34.834 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:34.868 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:34.869 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:34.988 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:35.219 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:35.635 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:35.940 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:36.213 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:36.392 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:36.572 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_success_keeps_admission_u0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.40s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_success_keeps_admission_until_final_projection_is_collected
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_success_keeps_admission_until_final_projection_is_collected
+E   1 failed in 2.55s
+_______ test_cancel_render_keeps_original_operation_across_detail_await ________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_render_keeps_origi0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _______ test_cancel_render_keeps_original_operation_across_detail_await ________
+E
+E   request = <FixtureRequest for <Coroutine test_cancel_render_keeps_original_operation_across_detail_await>>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_cancel_render_keeps_original_operation_across_detail_await(request):
+E           app = LifecycleApp()
+E           gates = [asyncio.Event(), asyncio.Event()]
+E           started = []
+E
+E           async def connect(profile_id):
+E               index = len(started)
+E               started.append(profile_id)
+E               await gates[index].wait()
+E               return {"tools": []}
+E
+E           app.unified_mcp_service.connect_local_profile = connect
+E           async with app.run_test(size=(120, 40)) as pilot:
+E               wb = await ready(app, pilot)
+E               wb._start_lifecycle("local:docs", "docs", "connect")
+E               await pilot.pause()
+E               original = wb._in_flight["local:docs"]
+E               show = wb._show_selected_detail
+E               entered, release = asyncio.Event(), asyncio.Event()
+E               inspector = app.query_one(MCPInspector)
+E               update = inspector.update_readiness
+E               rendered = []
+E
+E               async def held_show(canvas, selected):
+E                   if not entered.is_set():
+E                       entered.set()
+E                       await release.wait()
+E                   await show(canvas, selected)
+E
+E               async def capture_binding(selected, **kwargs):
+E                   if not rendered and selected.state is ReadinessState.CHECKING:
+E                       rendered.append(kwargs.get("cancel_operation"))
+E                   await update(selected, **kwargs)
+E
+E               wb._show_selected_detail = held_show
+E               inspector.update_readiness = capture_binding
+E               rendering = asyncio.create_task(wb._sync_children())
+E               await entered.wait()
+E               gates[0].set()
+E   >           await original.wait()
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:317:
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+E
+E   self = <Worker CANCELLED name='_lifecycle_wrapper' group='mcp-lifecycle' description='<coroutine object MCPWorkbench._lifecycle_wrapper at 0x11ac38c10>'>
+E
+E       async def wait(self) -> ResultType:
+E           """Wait for the work to complete.
+E
+E           Raises:
+E               WorkerFailed: If the Worker raised an exception.
+E               WorkerCancelled: If the Worker was cancelled before it completed.
+E
+E           Returns:
+E               The return value of the work.
+E           """
+E           try:
+E               if active_worker.get() is self:
+E                   raise DeadlockError(
+E                       "Can't call worker.wait from within the worker function!"
+E                   )
+E           except LookupError:
+E               # Not in a worker
+E               pass
+E
+E           if self.state == WorkerState.PENDING:
+E               raise WorkerError("Worker must be started before calling this method.")
+E           if self._task is not None:
+E               try:
+E                   await self._task
+E               except asyncio.CancelledError as error:
+E                   self.state = WorkerState.CANCELLED
+E                   self._error = error
+E           if self.state == WorkerState.ERROR:
+E               assert self._error is not None
+E               raise WorkerFailed(self._error)
+E           elif self.state == WorkerState.CANCELLED:
+E   >           raise WorkerCancelled("Worker was cancelled, and did not complete.")
+E   E           textual.worker.WorkerCancelled: Worker was cancelled, and did not complete.
+E
+E   .venv/lib/python3.12/site-packages/textual/worker.py:454: WorkerCancelled
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:31:38.021 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:31:38.061 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:31:38.097 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:31:38.098 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:31:38.217 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:31:38.458 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:31:39.106 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:39.878 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:31:40.526 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_cancel_render_keeps_origi0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   54.72s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_render_keeps_original_operation_across_detail_await
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_render_keeps_original_operation_across_detail_await
+E   1 failed in 55.92s
+__________ test_immediate_native_worker_completion_releases_admission __________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_immediate_native_worker_c0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   __________ test_immediate_native_worker_completion_releases_admission __________
+E
+E   request = <FixtureRequest for <Coroutine test_immediate_native_worker_completion_releases_admission>>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_immediate_native_worker_completion_releases_admission(request):
+E           """Native App.run uses eager tasks; run_test normally hides this boundary."""
+E           app = LifecycleApp()
+E           calls = []
+E
+E           async def immediate(profile_id):
+E               calls.append(profile_id)
+E               return {"tools": []}
+E
+E           app.unified_mcp_service.refresh_local_profile = immediate
+E           async with app.run_test() as pilot:
+E               wb = await ready(app, pilot)
+E               loop = asyncio.get_running_loop()
+E               previous_factory = loop.get_task_factory()
+E               loop.set_task_factory(asyncio.eager_task_factory)
+E               try:
+E                   wb._start_lifecycle("local:docs", "docs", "refresh")
+E                   await finish(app)
+E   >               assert "local:docs" not in wb._in_flight
+E   E               AssertionError: assert 'local:docs' not in {'local:docs': <Worker SUCCESS name='_lifecycle_wrapper' group='mcp-lifecycle' description='<coroutine object MCPWorkbench._lifecycle_wrapper at 0x11e0c8c10>'>}
+E   E                +  where {'local:docs': <Worker SUCCESS name='_lifecycle_wrapper' group='mcp-lifecycle' description='<coroutine object MCPWorkbench._lifecycle_wrapper at 0x11e0c8c10>'>} = MCPWorkbench(id='mcp-workbench')._in_flight
+E
+E   Tests/UI/test_mcp_lifecycle_cancellation.py:355: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 12:32:34.530 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 12:32:34.569 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 12:32:34.608 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 12:32:34.609 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   2026-09-20 12:32:34.724 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+E   2026-09-20 12:32:34.957 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 12:32:35.382 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:32:35.646 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:32:35.860 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   2026-09-20 12:32:36.054 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'LifecycleFakeHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-797/test_immediate_native_worker_c0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.09s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_immediate_native_worker_completion_releases_admission
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_immediate_native_worker_completion_releases_admission
+E   1 failed in 2.24s
+============================= slowest 25 durations =============================
+56.50s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_render_keeps_original_operation_across_detail_await
+4.28s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]
+4.02s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-button]
+3.85s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]
+3.58s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-message]
+3.56s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+3.15s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_success_keeps_admission_until_final_projection_is_collected
+2.87s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]
+2.85s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]
+2.81s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_immediate_native_worker_completion_releases_admission
+2.79s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_before_start_does_not_create_service_coroutine
+
+(14 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-button]
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_before_start_does_not_create_service_coroutine
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_success_keeps_admission_until_final_projection_is_collected
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_render_keeps_original_operation_across_detail_await
+FAILED Tests/UI/test_mcp_lifecycle_cancellation.py::test_immediate_native_worker_completion_releases_admission
+10 failed, 1 passed in 91.76s (0:01:31)
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e61fcbe6-e403-454e-aa40-92d4689c7e63/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e61fcbe6-e403-454e-aa40-92d4689c7e63/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e61fcbe6-e403-454e-aa40-92d4689c7e63
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e61fcbe6-e403-454e-aa40-92d4689c7e63'
+  warnings.warn(
