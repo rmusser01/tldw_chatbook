@@ -1,6 +1,6 @@
 # ADR-173: Canonical UTC timestamp storage format
 
-Status: Proposed
+Status: Accepted
 Date: 2026-09-20
 Task: TASK-32803.1
 Related: TASK-32803 (time work stream)
