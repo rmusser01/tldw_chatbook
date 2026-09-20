@@ -120,6 +120,7 @@ from ...Workspaces.models import (
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
+    binding_exclusion_entries,
 )
 from ..character_display_text import sanitize_character_display_label
 
@@ -251,6 +252,63 @@ class _WorkspaceFilesResolution:
     active_workspace_name: str
     bindings: tuple[WorkspaceFilesBinding, ...]
     had_bindings: bool
+
+
+class _WorkspaceFilesVisitService:
+    """One visit's narrow service: safe reads plus exclusion toggles.
+
+    The Workspace Files modal deliberately owns no registry dependency, so
+    its inspector gains exclusion edits by composition: the read-only
+    ``WorkspaceFileInspector`` handles listing/filtering/preview and the
+    controller's validated ``set_exclusion`` seam handles toggles.
+    """
+
+    def __init__(self, reads: Any, toggles: Any) -> None:
+        self._reads = reads
+        self._toggles = toggles
+
+    def list_directory(
+        self,
+        scope: Any,
+        directory_parts: tuple[str, ...] = (),
+        *,
+        continuation: Any | None = None,
+    ) -> Any:
+        return self._reads.list_directory(
+            scope, directory_parts, continuation=continuation
+        )
+
+    def filter_paths(
+        self,
+        scope: Any,
+        query: str,
+        *,
+        is_cancelled: Any | None = None,
+        on_progress: Any | None = None,
+    ) -> Any:
+        return self._reads.filter_paths(
+            scope, query, is_cancelled=is_cancelled, on_progress=on_progress
+        )
+
+    def read_file(
+        self,
+        scope: Any,
+        raw_parts: tuple[str, ...],
+        *,
+        page_offset: int | None = None,
+        expected_revision: Any | None = None,
+    ) -> Any:
+        return self._reads.read_file(
+            scope,
+            raw_parts,
+            page_offset=page_offset,
+            expected_revision=expected_revision,
+        )
+
+    def set_exclusion(
+        self, binding_id: str, relative_path: str, excluded: bool
+    ) -> None:
+        self._toggles.set_exclusion(binding_id, relative_path, excluded)
 
 
 def _normalized_console_workspace_id(workspace_id: str | None) -> str:
@@ -1008,8 +1066,15 @@ class ConsoleWorkspaceController:
                     from ...Workspaces.file_inspector import WorkspaceFileInspector
 
                     self._workspace_files_modal = self.open_workspace_files_modal(
-                        inspector=WorkspaceFileInspector(
-                            getattr(self.app_instance, "workspace_registry_service", None)
+                        inspector=_WorkspaceFilesVisitService(
+                            WorkspaceFileInspector(
+                                getattr(
+                                    self.app_instance,
+                                    "workspace_registry_service",
+                                    None,
+                                )
+                            ),
+                            self,
                         ),
                         inspected_workspace_id=resolution.workspace_id,
                         inspected_workspace_name=resolution.workspace_name,
@@ -1031,6 +1096,41 @@ class ConsoleWorkspaceController:
             # cleanup itself interruptible by a second cancellation.
             if self._workspace_files_admission_claim == requested_id:
                 self._workspace_files_admission_claim = None
+
+    def set_exclusion(
+        self, binding_id: str, relative_path: str, excluded: bool
+    ) -> None:
+        """Apply or remove one binding exclusion through the workspace registry.
+
+        The Workspace Files visit service delegates here so exclusion edits
+        reuse the registry's validation (spec §1) while the modal keeps its
+        narrow service boundary.  Callers run this off the Textual event
+        loop, matching the visit admission's registry discipline.
+
+        Args:
+            binding_id: Stable local-folder binding identity.
+            relative_path: Binding-relative path to exclude or restore.
+            excluded: True to hide the path from agent file tools, False to
+                restore it.
+
+        Raises:
+            WorkspaceRegistryServiceError: If the registry is unavailable,
+                the binding is unknown, or the path fails exclusion
+                validation; callers translate failures to status copy.
+        """
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            raise WorkspaceRegistryServiceError("Workspace registry is unavailable.")
+        binding = registry.get_runtime_binding(binding_id)
+        if binding is None:
+            raise WorkspaceRegistryServiceError(
+                "Folder binding not found in this workspace."
+            )
+        workspace_id = str(binding.workspace_id)
+        if excluded:
+            registry.add_binding_exclusion(workspace_id, binding_id, relative_path)
+        else:
+            registry.remove_binding_exclusion(workspace_id, binding_id, relative_path)
 
     def _resolve_workspace_files_visit(
         self, workspace_id: str
@@ -1060,6 +1160,9 @@ class ConsoleWorkspaceController:
         for binding in raw_bindings:
             access = str(getattr(binding, "metadata", {}).get("access", "ro")).lower()
             access_label = "Read/write" if access == "rw" else "Read-only"
+            exclusions = tuple(
+                entry.path for entry in binding_exclusion_entries(binding)
+            )
             try:
                 scope = inspector.capture_binding(workspace_id, binding.binding_id)
             except ScopeCaptureError:
@@ -1071,6 +1174,7 @@ class ConsoleWorkspaceController:
                         access_label=access_label,
                         available=False,
                         availability_copy="Unavailable: folder access changed.",
+                        exclusions=exclusions,
                     )
                 )
             else:
@@ -1080,6 +1184,7 @@ class ConsoleWorkspaceController:
                         label=binding.label,
                         scope=scope,
                         access_label=access_label,
+                        exclusions=exclusions,
                     )
                 )
         return _WorkspaceFilesResolution(

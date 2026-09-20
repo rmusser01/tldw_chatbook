@@ -106,6 +106,19 @@ class WorkspaceFilesService(Protocol):
         """
         ...
 
+    def set_exclusion(
+        self, binding_id: str, relative_path: str, excluded: bool
+    ) -> None:
+        """Apply or remove one binding exclusion for agent file tools.
+
+        Args:
+            binding_id: Stable local-folder binding identity.
+            relative_path: Binding-relative path to exclude or restore.
+            excluded: True to hide the path from agent file tools, False to
+                restore it.
+        """
+        ...
+
 
 @dataclass(frozen=True)
 class WorkspaceFilesBinding:
@@ -117,6 +130,7 @@ class WorkspaceFilesBinding:
     access_label: str = "Read-only"
     available: bool = True
     availability_copy: str = "Available"
+    exclusions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -247,6 +261,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         Binding("f", "focus_filter", "Filter"),
         Binding("left", "collapse_or_parent", "Collapse"),
         Binding("right", "expand_selected", "Expand"),
+        Binding("x", "toggle_exclusion", "Exclude/Unexclude"),
     ]
     AUTO_FOCUS = None
     NO_FOLDERS_COPY = "No local folders are attached. Add one in Settings."
@@ -444,6 +459,14 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def _selected_binding(self) -> WorkspaceFilesBinding | None:
         return self._binding_for_id(self._state.selected_binding_id)
+
+    @staticmethod
+    def _is_excluded(relative_path: str, exclusions: tuple[str, ...]) -> bool:
+        """Whether one binding-relative path equals or lies under an exclusion."""
+        return any(
+            relative_path == exclusion or relative_path.startswith(exclusion + "/")
+            for exclusion in exclusions
+        )
 
     def _can_publish(self, generation: int) -> bool:
         return (
@@ -765,6 +788,8 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         rows: list[Button] = []
         self._tree_entries = {}
         self._tree_more = {}
+        binding = self._selected_binding()
+        exclusions = binding.exclusions if binding is not None else ()
 
         def append_page(
             directory_parts: tuple[str, ...], current: DirectoryPage, depth: int
@@ -774,8 +799,11 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                 self._tree_entries[row_id] = entry
                 expanded = entry.raw_parts in self._state.expanded_directory_parts
                 prefix = "▾ " if entry.is_directory and expanded else "▸ " if entry.is_directory else "  "
+                label = "  " * depth + prefix + entry.display_name
+                if self._is_excluded("/".join(entry.raw_parts), exclusions):
+                    label += " [excluded]"
                 row = Button(
-                    Text("  " * depth + prefix + entry.display_name),
+                    Text(label),
                     id=row_id,
                     classes="console-workspace-files-entry",
                     compact=True,
@@ -925,6 +953,67 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         )
         if entry is not None and selected not in self._state.expanded_directory_parts:
             self._expand_directory(entry)
+
+    async def action_toggle_exclusion(self) -> None:
+        """Exclude or restore the selected entry for agent file tools.
+
+        The path-or-under match against the binding's exclusion snapshot
+        decides the direction.  Unexcluding a path covered by a parent
+        exclusion restores the covering entry itself, because registry
+        removal is exact-path (Task 1); toggling the deeper path alone would
+        be a registry no-op.
+        """
+        binding = self._selected_binding()
+        if binding is None or binding.scope is None or not binding.available:
+            return
+        selected_parts = self._state.selected_tree_parts
+        if not selected_parts:
+            return
+        relative_path = "/".join(selected_parts)
+        covering = next(
+            (
+                exclusion
+                for exclusion in binding.exclusions
+                if self._is_excluded(relative_path, (exclusion,))
+            ),
+            None,
+        )
+        try:
+            if covering is not None:
+                await asyncio.to_thread(
+                    self._inspector.set_exclusion,
+                    binding.binding_id,
+                    covering,
+                    False,
+                )
+                updated_exclusions = tuple(
+                    exclusion
+                    for exclusion in binding.exclusions
+                    if exclusion != covering
+                )
+                status_copy = f"Included {relative_path} for agent file tools."
+            else:
+                await asyncio.to_thread(
+                    self._inspector.set_exclusion,
+                    binding.binding_id,
+                    relative_path,
+                    True,
+                )
+                updated_exclusions = (*binding.exclusions, relative_path)
+                status_copy = f"Excluded {relative_path} from agent file tools."
+        except Exception:  # noqa: BLE001 -- registry failures become copy only
+            self._state = replace(self._state, status_copy="Exclusion change failed.")
+            self._sync_status()
+            return
+        self._workspace_bindings = tuple(
+            item
+            if item.binding_id != binding.binding_id
+            else replace(item, exclusions=updated_exclusions)
+            for item in self._workspace_bindings
+        )
+        self._state = replace(self._state, status_copy=status_copy)
+        await self._render_tree()
+        self._sync_status()
 
     def _cancel_filter_timer(self) -> None:
         if self._filter_timer is not None:
