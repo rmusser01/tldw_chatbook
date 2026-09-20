@@ -1205,8 +1205,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 143,
-      "diagnostic_digest": "79e6d9261f07f7972efc",
+      "call_count": 138,
+      "diagnostic_digest": "79496d15d614ace3c0f5",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1230,6 +1230,20 @@
       "diagnostic_digest": "d37486940059e7af2679",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "58f935383e01ea4b1c07",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/LLM_Calls/groq.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "27aed1a64689336b542f",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/LLM_Calls/openrouter.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
