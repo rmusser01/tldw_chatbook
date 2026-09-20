@@ -330,8 +330,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 109,
-      "diagnostic_digest": "11b40a875437e64f8f53",
+      "call_count": 56,
+      "diagnostic_digest": "3da468c85ef747fe03f2",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/Chat_Functions.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -11565,7 +11565,7 @@
     "path_privacy_candidate_calls": 701,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
-    "task_492_calls": 1410,
+    "task_492_calls": 1357,
     "task_494_calls": 7770
   }
 }
