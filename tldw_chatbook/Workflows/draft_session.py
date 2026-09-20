@@ -44,6 +44,7 @@ class DraftSession:
         self._listeners: list[Callable[[], None]] = []
         self._closed = False
         self._closing = False
+        self._quit_preparing = False
         self._field_edit: FieldEdit | None = None
         self._field_checkpoints: list[tuple[Draft, FieldEdit]] = []
         self._durable_field_edits: dict[tuple[str, str], tuple[Draft, FieldEdit]] = {}
@@ -89,7 +90,7 @@ class DraftSession:
         return self._confirmation_version
 
     def _check_editable(self) -> None:
-        if self._closed or self._closing or self.editing_locked:
+        if self._closed or self._closing or self._quit_preparing or self.editing_locked:
             raise DraftWriteFailed(
                 "Draft owner is closed or recovery is still in progress"
             )
@@ -573,27 +574,45 @@ class DraftSession:
         # between releasing it and admitting the existing retained repair task.
         return await self.repair_raw(draft, confirmation_version=version)
 
+    async def prepare_quit(self) -> None:
+        """Fence edits and settle persistence without closing this draft owner.
+
+        The authoring owner retains this operation if its quit waiter cancels.
+        Abort explicitly to reopen edits; no buffer or provenance is replaced.
+        """
+        if self._closed or self._closing:
+            raise DraftWriteFailed("Draft owner is closing or closed")
+        self._quit_preparing = True
+        await self._drain_accepted()
+
+    def abort_quit(self) -> None:
+        """Release only the reversible quit fence, never a permanent close."""
+        self._quit_preparing = False
+
+    async def _drain_accepted(self) -> None:
+        if self._recovery_task:
+            await asyncio.shield(
+                asyncio.gather(self._recovery_task, return_exceptions=True)
+            )
+        if self._selections:
+            await asyncio.shield(
+                asyncio.gather(*self._selections, return_exceptions=True)
+            )
+        if self._save_task and not self._save_task.done():
+            try:
+                await asyncio.shield(self._save_task)
+            except (InvalidDraft, RevisionConflict, DraftConflict):
+                # A rejected revision is not lost draft text. The final
+                # flush must still run and its write failures must escape.
+                pass
+        if self.current:
+            await self.flush()
+
     async def close(self) -> None:
         """Drain authoring before app-owned store teardown; failure is retryable."""
         self._closing = True
         try:
-            if self._recovery_task:
-                await asyncio.shield(
-                    asyncio.gather(self._recovery_task, return_exceptions=True)
-                )
-            if self._selections:
-                await asyncio.shield(
-                    asyncio.gather(*self._selections, return_exceptions=True)
-                )
-            if self._save_task and not self._save_task.done():
-                try:
-                    await asyncio.shield(self._save_task)
-                except (InvalidDraft, RevisionConflict, DraftConflict):
-                    # A rejected revision is not lost draft text. The final
-                    # flush must still run and its write failures must escape.
-                    pass
-            if self.current:
-                await self.flush()
+            await self._drain_accepted()
             self._closed = True
         finally:
             self._closing = False

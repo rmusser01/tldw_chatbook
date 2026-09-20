@@ -3334,6 +3334,20 @@ ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;bac
         align: center middle;
     }
 
+/* ===== WIDGET: TemplateSelectorDialog (Widgets/template_selector.py) ===== */
+
+    TemplateSelectorDialog {
+        align: center middle;
+    }
+    TemplateSelectorDialog .template-selector-dialog {
+        width: 76;
+        max-width: 95%;
+        height: 80%;
+        border: round $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
 /* ===== WIDGET: WorkspaceCreateModal (Widgets/workspace_create_modal.py) ===== */
 
     WorkspaceCreateModal {

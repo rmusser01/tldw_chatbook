@@ -1,9 +1,10 @@
-# Workflows — Local definition authoring
+# Workflows — Local authoring and session runs
 
 The Workflows destination creates and edits portable JSON definitions locally.
-**Run is disabled in this release.** Saving or validating a definition does not
-execute steps, call a model, publish to a server, or write a Note. Sequential
-execution belongs to v1; branching is v2 and parallel execution is v3.
+**Run** can execute the supported sequential file → prompt → local llama.cpp →
+editable review → Local Note workflow. Saving or validating alone never executes
+steps, calls a model, publishes to a server, or writes a Note. Runs belong to
+the current app session; saved definitions and committed Notes are durable.
 
 ## Open and author a workflow
 
@@ -43,6 +44,98 @@ including case-insensitive Unicode text. Paging or searching does not change
 your open draft. Pages reflect the current store, not a frozen snapshot.
 Search accepts up to 512 characters. If an oversized search cannot load, shorten
 the query to retry; the open draft is retained.
+
+## Run a local file to a reviewed Note
+
+Start with the [file-to-note example](../../Tests/fixtures/workflows/file_to_note.json)
+using Import, or author the equivalent five steps and Save revision. The example
+requests three summary bullets with a 512-token output allowance. It binds your
+file, selected provider/model, current Notes user, and Local Note destination
+during setup; importing the definition grants no permission to execute it.
+
+1. Configure a keyless local llama.cpp provider and its actual model ID. The
+   qualified endpoint is `http://localhost:9099`; select `llama_cpp`, not an
+   unrelated provider name. Setup shows configured choices and lets you enter
+   the actual model ID. This workflow does not require tldw_server.
+2. Select **Run** on a valid saved revision. Pending draft edits are not part of
+   that run. Choose one existing, owned, regular UTF-8 `.txt` file and review
+   ordinary inputs such as the Note title.
+3. Choose **Review destinations**. Check the saved revision, source, provider,
+   model, endpoint, current reviewer, and captured Local Note destination, then
+   choose **Start run**. The displayed session-loss warning applies to every run.
+4. If permissions are Ask, inspect each pending file read, model request, or Note
+   creation and choose **Approve once** or **Reject**. The model approval displays
+   the resolved prompt; Note approval includes the exact text to be saved.
+   Allow can advance without asking; Off and the global kill switch still block
+   effects. Unavailable permission authority fails closed. Approvals cannot
+   override a newly applied denial.
+5. At human review, edit the generated summary and choose **Accept**. The Note
+   receives your edited text. **Reject** ends the run without creating that Note.
+   Approve the Note effect if asked; a completed run offers **Open Note**, which
+   opens that saved Note in Library. Confirm its content there.
+
+If **Open Note** reports that Notes is busy, retry after the current operation
+settles. The app stays responsive; navigation is not silently queued for later.
+
+Leaving Workflows keeps the run and unsaved review in memory. Return to Workflows
+to continue; changing the selected workflow or provider configuration does not
+retarget a launched run. Only one run is active per app instance. **Cancel run**
+stops further progression and waits for owned work to settle. Cancellation does
+not prove the server stopped generation, and a Note that already committed is
+still saved. It is not rolled back.
+
+Normal quit offers **Stay** or **Cancel run and quit**, including when review is
+off-screen. Stay keeps the pending review. Quitting loses intermediate outputs,
+review edits, counters, and run history. Restart retains saved definitions,
+authoring drafts, and committed Notes, but does not resume a run, restore a
+review, or automatically replay model requests or Note writes. Separate app
+instances have independent sessions; they do not deduplicate one another.
+
+If a Note write is uncertain, inspect Local Notes before manually rerunning.
+The session checks the same attempted Note identity; it does not blindly retry
+with a new identity. A crash can leave a saved Note without a workflow receipt.
+This is not an exactly-once or crash-recovery guarantee.
+
+## Execution limits and unsupported operations
+
+Run admission is narrower than authoring/import validation. Supported steps are
+bounded local text-file reading (`media_ingest` in the example), template prompts,
+keyless loopback llama.cpp completion, human review, and Local Note creation.
+The file-read step does not ingest a media record. Note updates/deletes, remote
+Notes, remote/cloud or authenticated model endpoints, Ollama fallback, arbitrary
+tools, other media extraction, callbacks, branching, parallelism, schedules,
+durable waits, and automatic retry/resume are not supported here. Unsupported
+definitions may remain editable/exportable without being executable. Local
+execution does not establish server schema parity or publish/sync support.
+
+| Run boundary | Limit |
+| --- | --- |
+| Saved executable definition | 2 MiB UTF-8; 1–100 sequential steps |
+| Setup's ordinary inputs JSON field | 1 MiB UTF-8, checked before parsing; rejected edits stay in the form |
+| Materialized inputs | 10 MiB serialized JSON |
+| Source `.txt` | 1 MiB raw bytes; also must fit its serialized result |
+| Resolved config, step output, review text | 1 MiB serialized JSON per value |
+| Aggregate step outputs | 100 MiB |
+| Active execution time | 1 hour, excluding approval/review waits |
+| Model reservation budget | 100,000 conservative units across the run; not the model's tokenizer |
+| HTTP response | 1 MiB bounded body; one non-streaming attempt, no retries, redirects, or proxies |
+
+The model request has an absolute deadline bounded by the captured request
+timeout and remaining attempt/run allowance. The example's setup uses 120 seconds
+and each step declares 300 seconds. Human review has its own deadline: the example
+allows one hour; missing or nonpositive review timeout waits until answered,
+cancelled, or quit. Expired review cannot authorize a Note.
+
+Keep the source file, its containing path, and the open databases stable during
+the run: do not externally move, replace, or relink them. Symlinks, multiple hard
+links, non-regular sources, and known workflow/Notes DB aliases are refused.
+The read does not change source permissions. Metadata checks do not eliminate
+concurrent pathname-substitution races. File execution was qualified on macOS;
+platforms lacking the required POSIX file checks are refused, not silently
+given weaker checks.
+
+See the [qualification record](../Developer/Workflows/2026-09-16-first-run-uat.md)
+for exact tested versions, model, evidence, and limitations.
 
 ## Draft recovery
 

@@ -1,0 +1,22 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________________________ test_live_full_app ______________________________
+Tests/Workflows/test_file_to_note_integration.py:520: in test_live_full_app
+    assert not report["log_scan"]["unhandled_exception_or_app_stopping"]
+E   assert not True
+=============================== warnings summary ===============================
+Tests/Workflows/test_file_to_note_integration.py::test_live_full_app
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+Tests/Workflows/test_file_to_note_integration.py::test_live_full_app
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/workflows-authoring-dev/tldw_chatbook/DB/Client_Media_DB_v2.py:4430: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED Tests/Workflows/test_file_to_note_integration.py::test_live_full_app
+1 failed, 2 warnings in 21.72s

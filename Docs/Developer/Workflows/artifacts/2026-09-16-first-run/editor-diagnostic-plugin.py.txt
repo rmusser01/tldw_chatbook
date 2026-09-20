@@ -1,0 +1,95 @@
+"""Archived diagnostic plugin, formerly Tests/Workflows/_task6_editor_probe.py.
+
+Application imports follow existing pytest isolation. Not a permanent test.
+TASK6_EDITOR_HOLD_LAYOUT selects the single held-callback ordering experiment.
+"""
+
+import json
+import os
+from pathlib import Path
+import traceback
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def trace_editor_geometry(isolate_test_environment, monkeypatch, request):
+    if "test_incomplete_field_is_repairable" not in request.node.name:
+        yield
+        return
+    from textual.widget import Widget
+    from Tests.UI import test_workflows_editor as tests
+    from tldw_chatbook.UI.Workflows_Modules.editor import WorkflowEditor
+
+    rows = []
+
+    def record(event, editor):
+        if not editor.is_mounted:
+            return
+        matches = [key for key, binding in editor.field_bindings.items()
+                   if binding[0] == "/steps/2/config/max_tokens"]
+        if not matches or not editor.query("#" + matches[0]):
+            return
+        field = editor.query_one("#" + matches[0])
+        form = editor.query_one("#workflow-form")
+        screen = editor.screen
+        rows.append({"event": event, "field": list(field.region),
+                     "form": list(form.region), "scroll_y": form.scroll_y,
+                     "scroll_target_y": form.scroll_target_y,
+                     "focused": getattr(editor.app.focused, "id", None),
+                     "draft_error": bool(editor.draft.error),
+                     "status": list(screen.query_one("#workflow-draft-status").region),
+                     "callers": [f.name for f in traceback.extract_stack(limit=6)[:-1]]})
+
+    original_focus = Widget.focus
+    original_scroll = Widget.scroll_visible
+    original_render = WorkflowEditor.render_draft
+    original_hit = tests.assert_hit
+    original_after_refresh = WorkflowEditor.call_after_refresh
+    held_layout = []
+
+    def after_refresh(editor, callback, *args, **kwargs):
+        if (os.environ.get("TASK6_EDITOR_HOLD_LAYOUT")
+                and editor.section == "step:summarize"
+                and getattr(callback, "__qualname__", "").endswith("restore_view.<locals>.after_layout")
+                and not held_layout):
+            held_layout.append((editor, callback, args, kwargs))
+            return True
+        return original_after_refresh(editor, callback, *args, **kwargs)
+
+    def focus(widget, *args, **kwargs):
+        if widget.id and widget.id.startswith("workflow-field-"):
+            record("focus:" + widget.id, widget.screen.query_one(WorkflowEditor))
+        result = original_focus(widget, *args, **kwargs)
+        if widget.id == "workflow-field-4" and held_layout and held_layout[0] is not None:
+            editor, callback, saved_args, saved_kwargs = held_layout[0]
+            held_layout[0] = None
+            record("release_older_section_layout", editor)
+            original_after_refresh(editor, callback, *saved_args, **saved_kwargs)
+        return result
+
+    def scroll(widget, *args, **kwargs):
+        if widget.id and widget.id.startswith("workflow-field-"):
+            record("scroll:" + widget.id, widget.screen.query_one(WorkflowEditor))
+        return original_scroll(widget, *args, **kwargs)
+
+    async def render(editor, *args, **kwargs):
+        record("before_render", editor)
+        result = await original_render(editor, *args, **kwargs)
+        record("after_render", editor)
+        return result
+
+    def hit(screen, widget):
+        record("assert_hit", screen.query_one(WorkflowEditor))
+        return original_hit(screen, widget)
+
+    monkeypatch.setattr(Widget, "focus", focus)
+    monkeypatch.setattr(Widget, "scroll_visible", scroll)
+    monkeypatch.setattr(WorkflowEditor, "render_draft", render)
+    monkeypatch.setattr(WorkflowEditor, "call_after_refresh", after_refresh)
+    monkeypatch.setattr(tests, "assert_hit", hit)
+    try:
+        yield
+    finally:
+        name = "editor-held-layout-trace.json" if os.environ.get("TASK6_EDITOR_HOLD_LAYOUT") else "editor-geometry-trace.json"
+        Path("Docs/Developer/Workflows/artifacts/2026-09-16-first-run", name).write_text(json.dumps(rows, indent=2))

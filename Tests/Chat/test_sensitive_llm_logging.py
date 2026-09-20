@@ -100,14 +100,28 @@ def _captured_logs() -> Iterator[list[str]]:
     root = logging.getLogger()
     handler = _ListHandler(messages)
     old_level = root.level
+    httpx_logger = logging.getLogger("httpx")
+    old_httpx_level = httpx_logger.level
     root.setLevel(logging.DEBUG)
+    httpx_logger.setLevel(logging.DEBUG)
     root.addHandler(handler)
     try:
         yield messages
     finally:
         root.removeHandler(handler)
         root.setLevel(old_level)
+        httpx_logger.setLevel(old_httpx_level)
         logger.remove(sink_id)
+
+
+def test_log_capture_restores_httpx_level_after_application_logging(monkeypatch):
+    """An app's WARNING level must not disable the positive privacy control."""
+    httpx_logger = logging.getLogger("httpx")
+    monkeypatch.setattr(httpx_logger, "level", logging.WARNING)
+    with _captured_logs() as messages:
+        httpx_logger.info("ordinary downstream HTTP diagnostic")
+    assert "ordinary downstream HTTP diagnostic" in "\n".join(messages)
+    assert httpx_logger.level == logging.WARNING
 
 
 def _assert_canaries_absent(*values: object) -> None:

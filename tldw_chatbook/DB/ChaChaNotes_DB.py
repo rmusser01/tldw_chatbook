@@ -17529,7 +17529,7 @@ UPDATE db_schema_version
             ) from e
         except CharactersRAGDBError as e:
             logger.error(
-                f"Database error adding note '{title.strip()}': exception_type={type(e).__name__}"
+                f"Database error adding note: exception_type={type(e).__name__}"
             )
             raise
 
