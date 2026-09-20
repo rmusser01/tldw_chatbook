@@ -1,3 +1,5 @@
+from Tests.private_profile import private_profile_test
+
 from tldw_chatbook.Constants import (
     ALL_TABS,
     TAB_CCP,
@@ -43,14 +45,15 @@ def test_tab_navigation_provider_includes_settings_and_mcp_shell_commands():
     assert TAB_TOOLS_SETTINGS not in tab_ids
 
 
-def test_command_palette_has_one_entry_per_shell_destination():
+@private_profile_test
+def test_command_palette_has_one_entry_per_shell_destination(request):
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
     command_tab_ids = TabNavigationProvider.command_palette_tab_ids()
 
     # One labeled palette command per destination; nothing else.
     assert command_tab_ids == TabNavigationProvider.navigation_tab_ids()
-    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 15
+    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 14
 
     # Legacy route ids are aliases, not separate labeled commands.
     legacy_tab_ids = set(ALL_TABS) - set(command_tab_ids)
@@ -59,7 +62,8 @@ def test_command_palette_has_one_entry_per_shell_destination():
     assert "notes" not in command_tab_ids
 
 
-def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
+@private_profile_test
+def test_legacy_routes_are_searchable_alias_terms_on_their_destination(request):
     from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
 
     alias_terms = {
@@ -75,7 +79,6 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
             "personas",
             "watchlists_collections",
             "mcp",
-            "artifacts",
             "lab",
             "settings",
         )
@@ -114,7 +117,7 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
         "watchlists_collections"
     ]
     assert {"tools_settings", "MCP"} <= alias_terms["mcp"]
-    assert {"chatbooks", "Chatbooks"} <= alias_terms["artifacts"]
+    assert {"chatbooks", "Chatbooks"} <= alias_terms["library"]
     assert {
         "llm_management",
         "Models",

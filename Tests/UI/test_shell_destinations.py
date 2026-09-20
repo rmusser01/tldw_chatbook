@@ -1,3 +1,5 @@
+from Tests.private_profile import private_profile_test
+
 from tldw_chatbook.UI.Navigation.shell_destinations import (
     SHELL_DESTINATION_ORDER,
     get_shell_destination,
@@ -6,14 +8,14 @@ from tldw_chatbook.UI.Navigation.shell_destinations import (
 from Tests.UI.app_factory import _build_test_app
 
 
-def test_master_shell_destination_order_matches_spec():
+@private_profile_test
+def test_master_shell_destination_order_matches_spec(request):
     assert [destination.label for destination in SHELL_DESTINATION_ORDER] == [
         "Home",
         "Console",
         "Library",
         "Roleplay",
         "Watchlists",
-        "Artifacts",
         "Schedules",
         "Workflows",
         "MCP",
@@ -66,7 +68,8 @@ def test_tab_display_labels_use_roleplay_for_personas_and_ccp_tabs():
     assert get_tab_display_label(TAB_PERSONAS) == "Roleplay"
 
 
-def test_legacy_routes_resolve_to_master_destinations():
+@private_profile_test
+def test_legacy_routes_resolve_to_master_destinations(request):
     expectations = {
         "chat": ("console", "chat"),
         "home": ("home", "home"),

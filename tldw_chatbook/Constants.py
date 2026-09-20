@@ -101,6 +101,7 @@ ALL_TABS = [
     TAB_RESEARCH,
     TAB_WATCHLISTS_COLLECTIONS,
     TAB_CHATBOOKS,
+    TAB_ARTIFACTS,  # Compatibility route into Library; retained in saved preferences.
     TAB_TOOLS_SETTINGS,
     TAB_LOGS,
     TAB_CODING,

@@ -113,12 +113,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         # the per-visit connection churn reuse exists to retire.
         reusable=True,
     ),
-    "artifacts": ScreenRoute(
-        "artifacts",
-        "artifacts",
-        "tldw_chatbook.UI.Screens.artifacts_screen",
-        "ArtifactsScreen",
-    ),
     "personas": ScreenRoute(
         "personas",
         "personas",
