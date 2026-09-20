@@ -1226,8 +1226,10 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+<<<<<<< HEAD
       "call_count": 269,
       "diagnostic_digest": "e8225e3610bdbf11071a",
+<<<<<<< HEAD
 <<<<<<< HEAD
 =======
 =======
@@ -1323,6 +1325,12 @@
 >>>>>>> 15cf5a05bc (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
 =======
 >>>>>>> bb1a14bf43 (chore(diagnostic): re-pin for the summarize-c tree)
+=======
+=======
+      "call_count": 270,
+      "diagnostic_digest": "ab24d7b53a0c59345be3",
+>>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 44660c8c72 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -11665,6 +11673,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -11741,7 +11750,12 @@
 >>>>>>> f18f5f639e (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
+=======
+>>>>>>> 44660c8c72 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_492_calls": 1355,
+=======
+    "task_492_calls": 1356,
+>>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_494_calls": 7770
 >>>>>>> bb1a14bf43 (chore(diagnostic): re-pin for the summarize-c tree)
   }
