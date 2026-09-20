@@ -1,5 +1,24 @@
 # MCP component review
 
+## Current checkpoint — PR2727 merged; PR2728 integrated
+
+[PR2727](https://github.com/rmusser01/tldw_chatbook/pull/2727) merged at
+`ebee42fab8a7f55def6a03fc7b3301935940eebf` after owner visual approval,
+current-head CI and accumulated review. Concurrent PR2751 changed unrelated
+Chatbook/audio/Evals components during merge. The actual merged app passed all
+85 affected checks and the 16-capture native journey; MCP sources/styles match
+the approved head. [Actual merge receipt](../qa/2026-09-19-mcp-recovery-catalog/integration/pr2727-closeout.json).
+
+Saved PR2728 / TASK-32840 is integrated onto that verified merged state.
+The report conflict retains both histories; the diagnostic inventory was rebuilt
+after reviewing its sole added redacted warning. No product conflict occurred.
+[182 targeted passes, seven guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/CURRENT-DEV-REVIEW.md)
+qualify passive catalog repopulation and accurate retained-history guidance.
+This PR's own current-head CI/review and final visual approval remain before merge.
+Long-path presentation, inspector refresh, connected-runtime journeys and saved
+Console approval draft PR2730 remain follow-ups. PR2707's heartbeat stays paused.
+Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2749 merged; PR2727 integrated
 
 [PR2749](https://github.com/rmusser01/tldw_chatbook/pull/2749) merged at
@@ -173,6 +192,21 @@ This fresh-dev branch does not include that or the inspector refresh/layout/
 guidance follow-ups. Refresh of an already-open inspector, 80×24 reachability
 and connected-runtime qualification remain separate. Current-head CI and final
 visual approval still gate merging. Next: Permissions restored-roots review.
+
+## Post-review MCP catalog and guidance — TASK-32840
+
+[49 targeted cases, seven preflight guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/README.md)
+qualify passive repopulation of reviewed local definitions, current-view
+publication through navigation/service changes, successful approval with a
+catalog retry warning, and accurate retained-history guidance. No discovery,
+connection or grants occur. The private native app exits normally with unchanged
+user defaults; one unrelated Evals enrollment diagnostic is recorded.
+
+This follow-up stacks on PR #2727's ownership guards and closes its deferred
+catalog/guidance items. Retarget its draft to dev after the parent merges.
+Next review: bulk permission actions and approval workflows, then remaining
+connected-runtime journeys. Current-head CI and final visual approval still
+gate merging. The resume heartbeat remains paused.
 
 ## Post-merge restored MCP review completion — TASK-32839
 
