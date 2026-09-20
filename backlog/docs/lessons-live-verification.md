@@ -3308,3 +3308,17 @@ The same run exposed `ConsoleMessageRole.ASSISTANT` in usage rows and counted
 assistant estimates as input. Existing cost tests used strings; a parameterized
 case with the production enum failed. Normalize its `.value` before string
 conversion and include the real enum in boundary tests.
+
+
+## Markdown scroll restoration must wait for parsing and mount
+
+**Incident (TASK-32871, 2026-09-20).** The Library artifact reader restored a
+Reports scroll position of 40 to 0 after switching from Chatbooks. The query,
+selected identity, and list offset were correct, and waiting another two
+seconds did not repair the body. `call_after_refresh` had run while Textual's
+`Markdown.update()` was still parsing/mounting asynchronously, so the empty
+body clamped the requested offset to zero. Awaiting the update's `AwaitComplete`
+before the layout callback fixed the real production-CSS regression. Keep the
+existing profile, selection, visit, and exact shell guards around the final
+scroll application; a layout refresh alone is not evidence that Markdown
+children are ready.

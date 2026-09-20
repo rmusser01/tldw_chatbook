@@ -246,7 +246,7 @@ Watchlists navigation, audio validation, and shared adaptive reader.
 **Produces:** The common contracts above and a Reports reader accepting
 `ArtifactScope(view="reports", kept_only=False)` by default.
 
-- [ ] **1. Add the first real-storage regression and run it red.** Use isolated
+- [x] **1. Add the first real-storage regression and run it red.** Use isolated
   file-backed SQLite for worker compatibility. Put this test in the new catalog
   test module (imports are complete below); the new catalog import must fail
   before implementation.
@@ -284,14 +284,14 @@ def test_kept_is_readable_without_its_source(tmp_path):
 Run: `python -m pytest Tests/Library/test_library_artifacts_catalog.py::test_kept_is_readable_without_its_source -q`.
 Expected initially: import failure for the new catalog, then PASS after steps 2–3.
 
-- [ ] **2. Implement immutable contracts and source-owned metadata reads.**
+- [x] **2. Implement immutable contracts and source-owned metadata reads.**
   Add parameterized SQL projections that omit body/script/audio-path blobs from
   list rows. Metadata search uses watchlist/snapshot name; count and window share
   predicates. Read kept rows directly, never by enumerating live reports first.
   Full live/kept body reads happen only through `read_detail` on selection.
   Keep all existing DB/service APIs compatible.
 
-- [ ] **2a. Guard Keep conflicts in the service before copying any scripts.**
+- [x] **2a. Guard Keep conflicts in the service before copying any scripts.**
   Keep the `keep_briefing` signature/result shape and existing `KeepRefused`
   error type. Add a private compatibility guard in `briefing_keep.py` and call
   it for both an initially existing parent and the parent returned after a
@@ -356,7 +356,7 @@ def test_keep_conflict_does_not_attach_scripts_to_imported_parent(tmp_path):
   origin, and equal instants with different timestamp representations. Existing
   additive-script and complete-script-only tests must still pass.
 
-- [ ] **3. Implement bounded merging and direct location.** Both report owners
+- [x] **3. Implement bounded merging and direct location.** Both report owners
   participate in All reports; only ChaChaNotes participates in Kept. For a
   boundary, request up to 20 candidates per source, then merge the first 20
   (after) or last 20 (before) in ascending order. Sum exact totals. For after,
@@ -382,7 +382,7 @@ def merge_candidates(windows, *, direction):
   inclusive location must not alter ordinary strict cursors. Rank counts remain
   strict and the locator validates them before application.
 
-- [ ] **4. Add boundary, identity, and failure tests before wiring the UI.**
+- [x] **4. Add boundary, identity, and failure tests before wiring the UI.**
   Extend the real-DB setup above to 45 live and 45 kept copies, deliberately
   overlapping source IDs. Traverse first/next/previous/last; expect 90 distinct
   namespaced identities, no page over 20, and correct ranges. Locate the final
@@ -403,7 +403,7 @@ def merge_candidates(windows, *, direction):
   coordination events and close each thread's own DB handle in
   test cleanup so a failing assertion cannot leave a writer waiting.
 
-- [ ] **5. Build the concrete reader and controller.** Construct
+- [x] **5. Build the concrete reader and controller.** Construct
   `LibraryArtifactsReaderShell` from `LibraryAdaptiveReaderShell` with concrete
   list/work builders. Add toolbar/reader IDs prefixed `library-artifacts-`.
   Controller methods are `request_scope(scope)`, `select(key)`,
@@ -440,7 +440,7 @@ request_identity = (profile_id, scope, selected_key, selected_revision, detail_g
   the existing path/existence checks. Use the kept-script browser for saved
   scripts; retain report export and Watchlists/demo actions with their owners.
 
-- [ ] **6. Integrate rail, preferences, and onboarding atomically.** Add Reports
+- [x] **6. Integrate rail, preferences, and onboarding atomically.** Add Reports
   to a collapsible Artifacts group. Extend the six-source evidence tuple to an
   explicitly defined seven-source contract, with the seventh value aggregating
   available local artifact owners: any user content wins, all known-empty is
@@ -450,7 +450,7 @@ request_identity = (profile_id, scope, selected_key, selected_revision, detail_g
   through existing normalized preference code; share Library visibility and use
   destination-specific Items visibility/width. Resize must not reread data.
 
-- [ ] **7. Verify interaction with production CSS.** In
+- [x] **7. Verify interaction with production CSS.** In
   `test_library_artifacts_canvas.py`, use the existing
   `_CssTrueDestinationHarness` pattern from `Tests/UI/test_destination_shells.py`.
   Test list arrows change selection; Enter focuses the reader; reader arrows do
@@ -467,7 +467,7 @@ request_identity = (profile_id, scope, selected_key, selected_revision, detail_g
   stopped debounce timers and stale focus callbacks cannot run against another
   foreground screen. The explicit dialog-publication cases are in stage 2.
 
-- [ ] **8. Run targeted checks, review, and commit the releasable stage.**
+- [x] **8. Run targeted checks, review, and commit the releasable stage.**
 
 ```bash
 python tldw_chatbook/css/build_css.py
@@ -499,7 +499,7 @@ and existing share dialog/screen tests where shared helpers change.
 **Produces:** `ArtifactScope(view="chatbooks")` reads, capability-derived actions,
 and a Library-wide share-status projection independent of selection/view.
 
-- [ ] **1. Add pure action-policy regressions before presentation changes.**
+- [x] **1. Add pure action-policy regressions before presentation changes.**
   Define `chatbook_actions(*, is_saved_response: bool, usable_zip: bool) ->
   frozenset[str]` in `library_artifacts_state.py` with this complete behavior:
 
@@ -519,7 +519,7 @@ def test_saved_response_does_not_pretend_to_be_an_exported_bundle():
   metadata or saved body; source navigation is resolved separately, not assumed
   by this policy.
 
-- [ ] **2. Extend registry reads without changing its inventory.** Add a
+- [x] **2. Extend registry reads without changing its inventory.** Add a
   read-only snapshot operation to `LocalChatbookService` that loads the registry
   once and returns a request-owned view exposing window and exact-ID queries.
   Filter/sort all registered records before slicing candidates; do not use
@@ -529,14 +529,14 @@ def test_saved_response_does_not_pretend_to_be_an_exported_bundle():
   response payload and truncation flag; do not reuse the old 1,000-character
   preview as a complete body. Existing source conversation handoff stays exact.
 
-- [ ] **3. Wire the Chatbooks reader and manager link.** Add the Chatbooks rail
+- [x] **3. Wire the Chatbooks reader and manager link.** Add the Chatbooks rail
   row only once the view works. Mount **Manage Chatbook packs…** in its toolbar
   and empty state; dispatch the existing `chatbooks` route. Display the inventory
   explanation from the spec and validate the manager remains its actual screen.
   Render capability failures inline: missing export, missing file, excerpt,
   unavailable source. Do not add a new pack export action to saved responses.
 
-- [ ] **4. Add a Library share adapter, preserving application ownership.**
+- [x] **4. Add a Library share adapter, preserving application ownership.**
   `LibraryArtifactsShareController` exposes `open_dialog(preselected_key=None)`,
   `refresh_status()`, `stop_share()`, `suspend()`, `resume()`,
   `invalidate_pending_presentation()`, and `dispose()` (all return None). It uses
@@ -564,7 +564,7 @@ def test_saved_response_does_not_pretend_to_be_an_exported_bundle():
   collapse cannot hide Stop. Refresh it on mount/resume and controller events;
   do not poll all artifact data to update status.
 
-- [ ] **5. Exercise source/capability and sharing regressions.** Seed more than
+- [x] **5. Exercise source/capability and sharing regressions.** Seed more than
   25 registry records including a saved response with >1,000 stored characters,
   a response marked truncated, a valid ZIP, and a missing ZIP. Every matching
   registry record must be reachable in deterministic pages; a newer record at
@@ -583,7 +583,7 @@ def test_saved_response_does_not_pretend_to_be_an_exported_bundle():
   after real unmount remain rejected. Active/approved sharing survives all the
   presentation invalidations above.
 
-- [ ] **6. Run targeted checks, live manager/share navigation, and commit.**
+- [x] **6. Run targeted checks, live manager/share navigation, and commit.**
 
 ```bash
 python -m pytest Tests/Chatbooks/test_local_chatbook_service.py Tests/Chatbooks/test_local_chatbook_service_export.py Tests/Library/test_library_artifacts_state.py Tests/Library/test_library_artifacts_catalog.py Tests/UI/test_library_artifacts_canvas.py Tests/UI/test_library_artifacts_sharing.py Tests/UI/test_artifacts_screen_share.py Tests/UI/test_artifact_share_dialog.py -q
@@ -614,7 +614,7 @@ share adapter. Existing `ARTIFACT_CHATBOOK_TARGET` pending handoff is retained.
 **Produces:** `ArtifactScope(view="all")`, compatibility route dispatch into
 Library, and the complete visual/behavioral design.
 
-- [ ] **1. Extend exact composite tests first.** The existing read coordinator
+- [x] **1. Extend exact composite tests first.** The existing read coordinator
   now admits registry Chatbooks alongside the two report sources. Reuse the
   bounded candidate algorithm; no fourth storage layer. Build a real-source
   fixture with >20 records in each source and timestamps interleaved across all
@@ -636,7 +636,7 @@ while page.start + len(page.items) < page.total:
 assert [row.key for row in seen] == expected
 ```
 
-- [ ] **2. Add All artifacts and honest failure recovery.** Its source scope
+- [x] **2. Add All artifacts and honest failure recovery.** Its source scope
   is registered Chatbooks plus live and kept report copies. Hide no failed
   source behind a smaller total. A configured-source failure retains the last
   good composite page as stale, hides exact counts and disables stale actions;
@@ -644,7 +644,7 @@ assert [row.key for row in seen] == expected
   unconfigured from failure. Verify artifact-only profiles reach the expanded
   rail without remote fetches, auto-indexing, or creating source services.
 
-- [ ] **3. Write route/shortcut/handoff regressions before changing routes.**
+- [x] **3. Write route/shortcut/handoff regressions before changing routes.**
   Keep `artifacts` accepted in saved preferences, command palette, default
   destination, and direct navigation. It resolves once into Library Artifacts;
   Ctrl+6 targets the same view without changing Ctrl+1…other destinations or F4.
@@ -654,7 +654,7 @@ assert [row.key for row in seen] == expected
   semantics. `chatbooks` still opens `ChatbooksScreen` and has Library parent
   navigation; it must not redirect back into the registry view.
 
-- [ ] **4. Cut over permanent shell navigation.** Remove only the permanent
+- [x] **4. Cut over permanent shell navigation.** Remove only the permanent
   Artifacts destination entry after route parity tests pass. Keep compatibility
   registration/dispatch as a thin adapter, not a second browse implementation.
   Migrate existing report/share tests to assert equivalent Library behavior and
@@ -662,7 +662,7 @@ assert [row.key for row in seen] == expected
   actions in the actual focus context. Source-specific aliases and manager
   routes must remain distinct.
 
-- [ ] **5. Run targeted integration/governance checks and native verification.**
+- [x] **5. Run targeted integration/governance checks and native verification.**
 
 ```bash
 python tldw_chatbook/css/build_css.py
@@ -681,7 +681,7 @@ git diff --check
   Back/Escape → list. Record images plus
   observed behavior; browser prototype screenshots cannot substitute.
 
-- [ ] **6. Finish task documentation and commit.** Confirm the capability table
+- [x] **6. Finish task documentation and commit.** Confirm the capability table
   below has evidence for every row. Run changed-file lint/format checks, record
   test outcomes/remaining limitations, link ADR-172 in final task notes, and
   update docs that advertise a separate top-level Artifacts destination. Commit
@@ -715,3 +715,11 @@ suspend/resume, and one consistent reader/list keyboard sequence. ADR-172's
 accepted architecture remains unchanged.
 The plan creates no production-code changes by itself. Execute and collect the
 listed evidence before claiming the new TUI is implemented or verified.
+
+
+## Completion evidence — 2026-09-20
+
+All three stages are implemented under ADR-172. See
+[the verification record](2026-09-19-library-artifacts-verification.md) for
+focused results, native captures, review fixes, sequencing adjustments, and
+explicit baseline test limitations. Full-suite execution was not requested.
