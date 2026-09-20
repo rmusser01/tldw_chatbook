@@ -1042,13 +1042,20 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
     # fails closed with RecoveryRequired("raw_source_selection_changed"), so
     # 20 transport contract nodes went red the day that admission landed. They
     # fake the transport itself, not the config getters, so they keep the
-    # bootstrap profile like the MCP widgets do.
+    # bootstrap profile like the MCP widgets do. The summarization suites
+    # (TASK-32853) are the same class: every summarize_with_* handler reads
+    # provider settings through get_cli_setting on its hot path, and their
+    # broad excepts turn the admission failure into an error STRING, so the
+    # 119 pre-existing reds (91 diagnostic-privacy + 28 model-capabilities,
+    # failing since TASK-32628 landed) are this exact signature swallowed.
     keep_bootstrap_profile = (
         is_private_profile_child(request)
         or request.node.path.name in {
             "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
             "test_hosted_chat.py", "test_qwencloud.py",
             "test_groq_openrouter_migration_characterization.py",
+            "test_summarization_diagnostic_privacy.py",
+            "test_summarization_model_capabilities.py",
         }
     )
     test_data_dir = (
