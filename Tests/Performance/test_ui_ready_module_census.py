@@ -127,7 +127,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: exception for backup startup admission/activation and registered storage
 #: participants. Same-probe dev/current measurements: 975/1022 modules.
 #: Preserve existing headroom; timing and absent-family guards are unchanged.
-MAX_TLDW_MODULES_AT_UI_READY = 1022
+#: 1022 -> 1023 (2026-09-19, TASK-32851): the groq/openrouter handlers moved
+#: out of LLM_API_Calls.py into focused provider-profile modules (groq.py,
+#: openrouter.py) onto the hosted_chat engine. The code was already resident
+#: inside LLM_API_Calls at first paint -- the split adds module objects, not
+#: new mount work -- and app.py's provider map imports the names eagerly, so
+#: lazy re-export surgery would buy nothing.
+MAX_TLDW_MODULES_AT_UI_READY = 1023
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
