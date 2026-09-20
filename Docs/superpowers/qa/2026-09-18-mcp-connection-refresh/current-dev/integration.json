@@ -19,5 +19,12 @@
     "mcp_ui_css_overlap": false,
     "native_tested_head": "1ad83a1dbe25bd0e5cce465db7720cf3a4e0aec4",
     "later_source_change": "Only corrected public docstring; executable AST identical, see native-doc-only-change.json."
+  },
+  "qodo_second_pass": {
+    "base": "7bfd3300465c67e28580dda710a35b6746e3ef69",
+    "native_tested_head": "8a749cc5bf647939094478ae7ca588134f65f36e",
+    "conflicts": false,
+    "production_scope": "Canonical stored IDs and retained-owner postcondition in existing local service only.",
+    "exact_source_hashes": true
   }
 }

@@ -1,5 +1,5 @@
 {
-  "pid": 5689,
+  "pid": 19978,
   "cells": [
     {
       "theme": "textual-dark",
@@ -7,23 +7,23 @@
         80,
         24
       ],
-      "original_pid": 5897,
-      "refreshed_pid": 5961,
+      "original_pid": 20097,
+      "refreshed_pid": 20130,
       "fresh_tools_resources_prompts": true,
       "failure_preserved_catalog": true,
       "failed_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:06:40.201507+00:00",
+        "last_attempt_at": "2026-09-20T22:27:54.857329+00:00",
         "last_error": "Failed to connect profile: wire-review",
-        "last_ok_at": "2026-09-20T22:06:34.201061+00:00",
+        "last_ok_at": "2026-09-20T22:27:48.867731+00:00",
         "ok": false
       },
       "retry_restored_disconnected_state": true,
       "recovered_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:06:46.328580+00:00",
+        "last_attempt_at": "2026-09-20T22:28:00.857373+00:00",
         "last_error": null,
-        "last_ok_at": "2026-09-20T22:06:46.328580+00:00",
+        "last_ok_at": "2026-09-20T22:28:00.857373+00:00",
         "ok": true
       },
       "final_disconnect": true
@@ -34,23 +34,23 @@
         170,
         48
       ],
-      "original_pid": 6265,
-      "refreshed_pid": 6333,
+      "original_pid": 20344,
+      "refreshed_pid": 20365,
       "fresh_tools_resources_prompts": true,
       "failure_preserved_catalog": true,
       "failed_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:07:09.199778+00:00",
+        "last_attempt_at": "2026-09-20T22:28:23.182397+00:00",
         "last_error": "Failed to connect profile: wire-review",
-        "last_ok_at": "2026-09-20T22:07:03.090064+00:00",
+        "last_ok_at": "2026-09-20T22:28:17.223873+00:00",
         "ok": false
       },
       "retry_restored_disconnected_state": true,
       "recovered_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:07:15.616184+00:00",
+        "last_attempt_at": "2026-09-20T22:28:29.492792+00:00",
         "last_error": null,
-        "last_ok_at": "2026-09-20T22:07:15.616184+00:00",
+        "last_ok_at": "2026-09-20T22:28:29.492792+00:00",
         "ok": true
       },
       "final_disconnect": true
@@ -61,23 +61,23 @@
         80,
         24
       ],
-      "original_pid": 6622,
-      "refreshed_pid": 6668,
+      "original_pid": 20549,
+      "refreshed_pid": 20582,
       "fresh_tools_resources_prompts": true,
       "failure_preserved_catalog": true,
       "failed_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:07:39.228108+00:00",
+        "last_attempt_at": "2026-09-20T22:28:51.850083+00:00",
         "last_error": "Failed to connect profile: wire-review",
-        "last_ok_at": "2026-09-20T22:07:33.330199+00:00",
+        "last_ok_at": "2026-09-20T22:28:45.884548+00:00",
         "ok": false
       },
       "retry_restored_disconnected_state": true,
       "recovered_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:07:45.308517+00:00",
+        "last_attempt_at": "2026-09-20T22:28:57.934212+00:00",
         "last_error": null,
-        "last_ok_at": "2026-09-20T22:07:45.308517+00:00",
+        "last_ok_at": "2026-09-20T22:28:57.934212+00:00",
         "ok": true
       },
       "final_disconnect": true
@@ -88,23 +88,23 @@
         170,
         48
       ],
-      "original_pid": 6833,
-      "refreshed_pid": 6863,
+      "original_pid": 20707,
+      "refreshed_pid": 20751,
       "fresh_tools_resources_prompts": true,
       "failure_preserved_catalog": true,
       "failed_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:08:07.235404+00:00",
+        "last_attempt_at": "2026-09-20T22:29:19.983151+00:00",
         "last_error": "Failed to connect profile: wire-review",
-        "last_ok_at": "2026-09-20T22:08:01.309295+00:00",
+        "last_ok_at": "2026-09-20T22:29:13.962100+00:00",
         "ok": false
       },
       "retry_restored_disconnected_state": true,
       "recovered_attempt": {
         "last_action": "refresh",
-        "last_attempt_at": "2026-09-20T22:08:13.301344+00:00",
+        "last_attempt_at": "2026-09-20T22:29:26.202841+00:00",
         "last_error": null,
-        "last_ok_at": "2026-09-20T22:08:13.301344+00:00",
+        "last_ok_at": "2026-09-20T22:29:26.202841+00:00",
         "ok": true
       },
       "final_disconnect": true
@@ -124,9 +124,9 @@
     "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
     "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
     "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
-    "tldw_chatbook/MCP/local_control_service.py": "a35c6f70332f4dd3f851b217d4b6bcab32968bff2f92a2391901b9eee3db6424",
+    "tldw_chatbook/MCP/local_control_service.py": "87fcb22bb68c35476fe3de259980fa99bd88010866ac298e255fa32ebd30142d",
     "tldw_chatbook/MCP/client.py": "9fce5defe045f633a98244c2d4a0f757765c097305085f2fe04cee373e479d97",
-    "Tests/MCP/fixtures/stdio_catalog_server.py": "a3b09c5e54aee20128ab41024017801427a91f559506e7500b49b9863f5a60a8"
+    "Tests/MCP/fixtures/stdio_catalog_server.py": "84e7d0290edcc90f821cd27184b9b59ac68fa48510f59585bc206ba929376588"
   },
   "runner_sha256": "bf35072d8e4cc38ae42ef5c7947f0fc888b1b5e97c636a1915059b0b5190b41d",
   "driver": "LinuxDriver",
@@ -160,6 +160,10 @@
     ],
     "textual-dark-170x48-connected": [
       {
+        "message": "wire-review: connected \u2014 1 tool.",
+        "severity": "information"
+      },
+      {
         "message": "wire-review: disconnected.",
         "severity": "information"
       },
@@ -187,6 +191,10 @@
       }
     ],
     "textual-light-80x24-connected": [
+      {
+        "message": "wire-review: disconnected.",
+        "severity": "information"
+      },
       {
         "message": "wire-review: connected \u2014 1 tool.",
         "severity": "information"
@@ -245,411 +253,411 @@
   },
   "processes": [
     {
-      "pid": 5897,
+      "pid": 20097,
       "returncode": -15
     },
     {
-      "pid": 5961,
+      "pid": 20130,
       "returncode": -15
     },
     {
-      "pid": 6205,
+      "pid": 20306,
       "returncode": -15
     },
     {
-      "pid": 6265,
+      "pid": 20344,
       "returncode": -15
     },
     {
-      "pid": 6333,
+      "pid": 20365,
       "returncode": -15
     },
     {
-      "pid": 6558,
+      "pid": 20526,
       "returncode": -15
     },
     {
-      "pid": 6622,
+      "pid": 20549,
       "returncode": -15
     },
     {
-      "pid": 6668,
+      "pid": 20582,
       "returncode": -15
     },
     {
-      "pid": 6759,
+      "pid": 20665,
       "returncode": -15
     },
     {
-      "pid": 6833,
+      "pid": 20707,
       "returncode": -15
     },
     {
-      "pid": 6863,
+      "pid": 20751,
       "returncode": -15
     },
     {
-      "pid": 7038,
+      "pid": 21054,
       "returncode": -15
     }
   ],
   "fixture_pids": [
-    5897,
-    5961,
-    6055,
-    6117,
-    6205,
-    6265,
-    6333,
-    6416,
-    6491,
-    6558,
-    6622,
-    6668,
-    6702,
-    6732,
-    6759,
-    6833,
-    6863,
-    6901,
-    6952,
-    7038
+    20097,
+    20130,
+    20219,
+    20274,
+    20306,
+    20344,
+    20365,
+    20400,
+    20451,
+    20526,
+    20549,
+    20582,
+    20602,
+    20621,
+    20665,
+    20707,
+    20751,
+    20804,
+    21040,
+    21054
   ],
   "wire_requests": [
     {
-      "pid": 5897,
+      "pid": 20097,
       "method": "initialize"
     },
     {
-      "pid": 5897,
+      "pid": 20097,
       "method": "notifications/initialized"
     },
     {
-      "pid": 5897,
+      "pid": 20097,
       "method": "tools/list"
     },
     {
-      "pid": 5897,
+      "pid": 20097,
       "method": "resources/list"
     },
     {
-      "pid": 5897,
+      "pid": 20097,
       "method": "prompts/list"
     },
     {
-      "pid": 5961,
+      "pid": 20130,
       "method": "initialize"
     },
     {
-      "pid": 5961,
+      "pid": 20130,
       "method": "notifications/initialized"
     },
     {
-      "pid": 5961,
+      "pid": 20130,
       "method": "tools/list"
     },
     {
-      "pid": 5961,
+      "pid": 20130,
       "method": "resources/list"
     },
     {
-      "pid": 5961,
+      "pid": 20130,
       "method": "prompts/list"
     },
     {
-      "pid": 6055,
+      "pid": 20219,
       "method": "initialize"
     },
     {
-      "pid": 6117,
+      "pid": 20274,
       "method": "initialize"
     },
     {
-      "pid": 6117,
+      "pid": 20274,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6117,
+      "pid": 20274,
       "method": "tools/list"
     },
     {
-      "pid": 6117,
+      "pid": 20274,
       "method": "resources/list"
     },
     {
-      "pid": 6117,
+      "pid": 20274,
       "method": "prompts/list"
     },
     {
-      "pid": 6205,
+      "pid": 20306,
       "method": "initialize"
     },
     {
-      "pid": 6205,
+      "pid": 20306,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6205,
+      "pid": 20306,
       "method": "tools/list"
     },
     {
-      "pid": 6205,
+      "pid": 20306,
       "method": "resources/list"
     },
     {
-      "pid": 6205,
+      "pid": 20306,
       "method": "prompts/list"
     },
     {
-      "pid": 6265,
+      "pid": 20344,
       "method": "initialize"
     },
     {
-      "pid": 6265,
+      "pid": 20344,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6265,
+      "pid": 20344,
       "method": "tools/list"
     },
     {
-      "pid": 6265,
+      "pid": 20344,
       "method": "resources/list"
     },
     {
-      "pid": 6265,
+      "pid": 20344,
       "method": "prompts/list"
     },
     {
-      "pid": 6333,
+      "pid": 20365,
       "method": "initialize"
     },
     {
-      "pid": 6333,
+      "pid": 20365,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6333,
+      "pid": 20365,
       "method": "tools/list"
     },
     {
-      "pid": 6333,
+      "pid": 20365,
       "method": "resources/list"
     },
     {
-      "pid": 6333,
+      "pid": 20365,
       "method": "prompts/list"
     },
     {
-      "pid": 6416,
+      "pid": 20400,
       "method": "initialize"
     },
     {
-      "pid": 6491,
+      "pid": 20451,
       "method": "initialize"
     },
     {
-      "pid": 6491,
+      "pid": 20451,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6491,
+      "pid": 20451,
       "method": "tools/list"
     },
     {
-      "pid": 6491,
+      "pid": 20451,
       "method": "resources/list"
     },
     {
-      "pid": 6491,
+      "pid": 20451,
       "method": "prompts/list"
     },
     {
-      "pid": 6558,
+      "pid": 20526,
       "method": "initialize"
     },
     {
-      "pid": 6558,
+      "pid": 20526,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6558,
+      "pid": 20526,
       "method": "tools/list"
     },
     {
-      "pid": 6558,
+      "pid": 20526,
       "method": "resources/list"
     },
     {
-      "pid": 6558,
+      "pid": 20526,
       "method": "prompts/list"
     },
     {
-      "pid": 6622,
+      "pid": 20549,
       "method": "initialize"
     },
     {
-      "pid": 6622,
+      "pid": 20549,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6622,
+      "pid": 20549,
       "method": "tools/list"
     },
     {
-      "pid": 6622,
+      "pid": 20549,
       "method": "resources/list"
     },
     {
-      "pid": 6622,
+      "pid": 20549,
       "method": "prompts/list"
     },
     {
-      "pid": 6668,
+      "pid": 20582,
       "method": "initialize"
     },
     {
-      "pid": 6668,
+      "pid": 20582,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6668,
+      "pid": 20582,
       "method": "tools/list"
     },
     {
-      "pid": 6668,
+      "pid": 20582,
       "method": "resources/list"
     },
     {
-      "pid": 6668,
+      "pid": 20582,
       "method": "prompts/list"
     },
     {
-      "pid": 6702,
+      "pid": 20602,
       "method": "initialize"
     },
     {
-      "pid": 6732,
+      "pid": 20621,
       "method": "initialize"
     },
     {
-      "pid": 6732,
+      "pid": 20621,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6732,
+      "pid": 20621,
       "method": "tools/list"
     },
     {
-      "pid": 6732,
+      "pid": 20621,
       "method": "resources/list"
     },
     {
-      "pid": 6732,
+      "pid": 20621,
       "method": "prompts/list"
     },
     {
-      "pid": 6759,
+      "pid": 20665,
       "method": "initialize"
     },
     {
-      "pid": 6759,
+      "pid": 20665,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6759,
+      "pid": 20665,
       "method": "tools/list"
     },
     {
-      "pid": 6759,
+      "pid": 20665,
       "method": "resources/list"
     },
     {
-      "pid": 6759,
+      "pid": 20665,
       "method": "prompts/list"
     },
     {
-      "pid": 6833,
+      "pid": 20707,
       "method": "initialize"
     },
     {
-      "pid": 6833,
+      "pid": 20707,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6833,
+      "pid": 20707,
       "method": "tools/list"
     },
     {
-      "pid": 6833,
+      "pid": 20707,
       "method": "resources/list"
     },
     {
-      "pid": 6833,
+      "pid": 20707,
       "method": "prompts/list"
     },
     {
-      "pid": 6863,
+      "pid": 20751,
       "method": "initialize"
     },
     {
-      "pid": 6863,
+      "pid": 20751,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6863,
+      "pid": 20751,
       "method": "tools/list"
     },
     {
-      "pid": 6863,
+      "pid": 20751,
       "method": "resources/list"
     },
     {
-      "pid": 6863,
+      "pid": 20751,
       "method": "prompts/list"
     },
     {
-      "pid": 6901,
+      "pid": 20804,
       "method": "initialize"
     },
     {
-      "pid": 6952,
+      "pid": 21040,
       "method": "initialize"
     },
     {
-      "pid": 6952,
+      "pid": 21040,
       "method": "notifications/initialized"
     },
     {
-      "pid": 6952,
+      "pid": 21040,
       "method": "tools/list"
     },
     {
-      "pid": 6952,
+      "pid": 21040,
       "method": "resources/list"
     },
     {
-      "pid": 6952,
+      "pid": 21040,
       "method": "prompts/list"
     },
     {
-      "pid": 7038,
+      "pid": 21054,
       "method": "initialize"
     },
     {
-      "pid": 7038,
+      "pid": 21054,
       "method": "notifications/initialized"
     },
     {
-      "pid": 7038,
+      "pid": 21054,
       "method": "tools/list"
     },
     {
-      "pid": 7038,
+      "pid": 21054,
       "method": "resources/list"
     },
     {
-      "pid": 7038,
+      "pid": 21054,
       "method": "prompts/list"
     }
   ],
