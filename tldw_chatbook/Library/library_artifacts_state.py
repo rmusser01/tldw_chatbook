@@ -55,6 +55,7 @@ class ArtifactSummary:
     status: str
     type_label: str
     revision: str
+    created_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,8 @@ class ArtifactDetail:
     can_share: bool
     source_available: bool
     details: tuple[tuple[str, str], ...]
+    source_conversation_id: str | None = None
+    source_message_id: str | None = None
 
 
 def validate_artifact_window(
@@ -129,4 +132,23 @@ def report_summary(row: dict, source: ArtifactSource) -> ArtifactSummary:
         status=row["status"],
         type_label="Report",
         revision=revision,
+        created_at=str(
+            row.get("created_at")
+            or row.get("original_created_at")
+            or row.get("kept_at")
+            or ""
+        ),
     )
+
+
+def chatbook_actions(*, is_saved_response: bool, usable_zip: bool) -> frozenset[str]:
+    """Derive actions from a usable export, never from the Chatbook label alone.
+
+    Saved responses and pack records both remain previewable/manageable. A
+    saved-response label does not imply an export; only an existing usable ZIP
+    enables sharing. Source navigation is resolved separately against its owner.
+    """
+    actions = {"preview", "manage_packs"}
+    if usable_zip:
+        actions.add("share")
+    return frozenset(actions)

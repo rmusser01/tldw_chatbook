@@ -17,6 +17,7 @@ from .library_artifacts_state import (
     ArtifactSourceWindow,
     ArtifactSummary,
     ReadDirection,
+    chatbook_actions,
     validate_artifact_window,
 )
 
@@ -48,17 +49,25 @@ class LibraryArtifactsCatalog:
     @contextmanager
     def _snapshots(self, scope: ArtifactScope) -> Iterator[list[tuple[str, object]]]:
         owners = []
-        # Stage one admits Reports only. Later stages explicitly add the registry.
-        if scope.view != "reports":
-            raise ValueError("This artifact view is not available yet")
+        reports = scope.view in ("reports", "all")
+        registry = scope.view in ("chatbooks", "all") and not scope.kept_only
         source = "live_report"
         try:
+            # Parse the detached registry before entering DB-specific operation
+            # leases; the content owner cannot borrow a different DB's lease.
+            if registry and self.chatbook_service is not None:
+                source = "chatbook"
+                owners.append((source, self.chatbook_service.artifact_read_snapshot()))
             with ExitStack() as stack:
-                if not scope.kept_only and self.subscriptions_db is not None:
+                if (
+                    reports
+                    and not scope.kept_only
+                    and self.subscriptions_db is not None
+                ):
                     source = "live_report"
                     stack.enter_context(self.subscriptions_db.artifact_read_snapshot())
                     owners.append((source, self.subscriptions_db))
-                if self.chachanotes_db is not None:
+                if reports and self.chachanotes_db is not None:
                     source = "kept_report"
                     stack.enter_context(self.chachanotes_db.transaction())
                     owners.append((source, self.chachanotes_db))
@@ -252,9 +261,9 @@ class LibraryArtifactsCatalog:
             return page
 
     def read_detail(self, key: ArtifactKey) -> ArtifactDetail | None:
-        """Read only the selected report body through its owner; scripts stay separate."""
+        """Read only the selected artifact body through its existing owner."""
         if key.source == "chatbook":
-            raise ValueError("Chatbook artifacts are not available yet")
+            return self._read_chatbook_detail(key)
         live = key.source == "live_report"
         owner = self.subscriptions_db if live else self.chachanotes_db
         if owner is None:
@@ -308,6 +317,119 @@ class LibraryArtifactsCatalog:
                     source_available=live,
                     details=details,
                 )
+        except ArtifactReadError:
+            raise
+        except Exception as exc:
+            raise ArtifactReadError(key.source) from exc
+
+    def _read_chatbook_detail(self, key: ArtifactKey) -> ArtifactDetail | None:
+        if self.chatbook_service is None:
+            return None
+        try:
+            snapshot = self.chatbook_service.artifact_read_snapshot()
+            summary = snapshot.get_artifact_summary(
+                ArtifactScope(view="chatbooks"), key
+            )
+            if summary is None:
+                return None
+            record = snapshot.get_record(key.native_id)
+            if record is None:
+                raise ArtifactReadError(key.source, "Selected artifact disappeared")
+            metadata = record.get("metadata") or {}
+            saved = self.chatbook_service._is_console_saved_artifact(record)
+            body = str(record.get("description") or "No description available.")
+            truncated = False
+            if saved:
+                from tldw_chatbook.Chat.console_save_targets import (
+                    CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS,
+                )
+
+                stored = metadata.get("content")
+                stored = stored if isinstance(stored, str) else ""
+                body = stored[:CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS]
+                truncated = (
+                    metadata.get("content_truncated") is True
+                    or len(stored) > CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS
+                )
+            from tldw_chatbook.Chatbooks.artifact_registry_snapshot import (
+                usable_chatbook_bundle,
+            )
+
+            usable_zip, sharing = usable_chatbook_bundle(record.get("file_path"))
+            actions = chatbook_actions(is_saved_response=saved, usable_zip=usable_zip)
+            conversation_id = metadata.get("conversation_id")
+            conversation_id = (
+                conversation_id
+                if isinstance(conversation_id, str) and conversation_id
+                else None
+            )
+            message_id = metadata.get("message_id")
+            message_id = (
+                message_id if isinstance(message_id, str) and message_id else None
+            )
+            source_available = False
+            if conversation_id is not None and self.chachanotes_db is not None:
+                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+                from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+
+                try:
+                    source_available = (
+                        self.chachanotes_db.get_conversation_by_id(conversation_id)
+                        is not None
+                    )
+                except (CharactersRAGDBError, RecoveryRequired):
+                    # Optional source navigation must not hide a durable saved response.
+                    source_available = False
+            details = [
+                (
+                    "Preview",
+                    "Saved response excerpt"
+                    if truncated
+                    else "Saved response"
+                    if saved
+                    else "Registry metadata",
+                ),
+                ("Sharing", sharing),
+                (
+                    "Source",
+                    "Conversation available"
+                    if source_available
+                    else "Source conversation unavailable",
+                ),
+            ]
+            details.extend(
+                (label, str(record[field]))
+                for label, field in (
+                    ("Created", "created_at"),
+                    ("Updated", "updated_at"),
+                )
+                if record.get(field) is not None
+            )
+            details.extend(
+                (label, str(metadata[field]))
+                for label, field in (
+                    ("Conversation", "conversation_id"),
+                    ("Message", "message_id"),
+                    ("Role", "message_role"),
+                    ("Provider", "provider"),
+                    ("Model", "model"),
+                )
+                if isinstance(metadata.get(field), str) and metadata[field]
+            )
+            return ArtifactDetail(
+                key=key,
+                revision=summary.revision,
+                body=body,
+                truncated=truncated,
+                can_keep=False,
+                can_export=False,
+                can_play=False,
+                can_share="share" in actions,
+                source_available=source_available,
+                details=tuple(details),
+                source_conversation_id=conversation_id,
+                source_message_id=message_id,
+            )
         except ArtifactReadError:
             raise
         except Exception as exc:
