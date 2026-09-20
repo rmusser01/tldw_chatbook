@@ -5435,8 +5435,16 @@ class SpeechTTSSettingsPanel(Vertical):
         else:
             self.state.defaults.voice_id = value
         self._custom_id_rebuild_pending.add(axis)
+        # TASK-32800.5: `exclusive=True` without a `group=` cancels every other
+        # ungrouped worker on this widget, not just the previous rebuild -- this
+        # was the only such call site in the package. The rebuild is fenced per
+        # axis by `_custom_id_rebuild_pending`, so the group has to be per axis
+        # too: a model rebuild must not cancel an in-flight voice rebuild.
         self.run_worker(
-            self._rebuild_after_custom_id(axis), exclusive=True, exit_on_error=False
+            self._rebuild_after_custom_id(axis),
+            group=f"speech-tts-custom-id-rebuild-{axis}",
+            exclusive=True,
+            exit_on_error=False,
         )
 
     async def _rebuild_after_custom_id(self, axis: str) -> None:

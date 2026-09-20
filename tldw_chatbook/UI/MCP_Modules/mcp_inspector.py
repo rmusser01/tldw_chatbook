@@ -3657,9 +3657,19 @@ class MCPInspector(Vertical):
         if self._service is None:
             return
         payload = await self._service.load_section(section)
-        self.query_one("#mcp-adv-content", Static).update(
-            _render_section_payload(section, payload)
-        )
+        # TASK-32800.1: `_hide_advanced()` removes the whole Advanced
+        # collapsible, and it can run while this await is in flight -- the
+        # reveal toggle is re-enabled before this worker is scheduled, so the
+        # window is the entire round trip. `exclusive=True` does not protect
+        # us: it cancels another worker in the same GROUP, never this one. The
+        # await therefore used to resume into a removed subtree, raise
+        # NoMatches, and -- with exit_on_error defaulting to True -- take the
+        # whole app down. Everything below this point touches that subtree,
+        # including `_refresh_advanced_actions()`, so bail out as one.
+        content = self.query("#mcp-adv-content")
+        if not content:
+            return
+        content.first(Static).update(_render_section_payload(section, payload))
         # C2: available_actions() is section-dependent (mirrors the legacy
         # panel, unified_mcp_panel.py). `load_section()` above is what
         # actually moves the service's notion of "current section" forward,

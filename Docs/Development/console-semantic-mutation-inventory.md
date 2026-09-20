@@ -297,7 +297,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._create_terminal_message::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._discard_provider_continuation::call:db:update_provider_continuation` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._normalize_restored_provider_continuation::call:dispatch:normalize_provider_continuation_owner` — model-visible
-- `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_locked::call:persistence:append_message_exchanges` — presentation-only
+- `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_exchanges_only_admitted::call:persistence:append_message_exchanges` — presentation-only
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_existing_message::call:persistence:update_message_content` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_generation_variant::call:persistence:replace_assistant_generation_projection` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_metadata_only::call:persistence:update_message_metadata` — presentation-only
