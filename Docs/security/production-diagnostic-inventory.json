@@ -1226,8 +1226,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+<<<<<<< HEAD
       "call_count": 269,
       "diagnostic_digest": "e8225e3610bdbf11071a",
+=======
+      "call_count": 270,
+      "diagnostic_digest": "ab24d7b53a0c59345be3",
+>>>>>>> c96066bcf5 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -11565,7 +11570,11 @@
     "path_privacy_candidate_calls": 701,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
+<<<<<<< HEAD
     "task_492_calls": 1355,
+=======
+    "task_492_calls": 1356,
+>>>>>>> c96066bcf5 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_494_calls": 7770
   }
 }
