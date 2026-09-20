@@ -2431,7 +2431,29 @@ class NotesScopeService:
         idempotency_key: str | None = None,
         reason: str | None = None,
     ) -> Any:
-        """Delete the selected server link without refreshing its version."""
+        """Delete the selected link with caller-owned version preconditions.
+
+        Args:
+            scope: Notes scope; graph deletion requires server_note.
+            edge_id: Identifier of the selected Notes graph link.
+            dataset_id: Optional dataset containing the selected link.
+            expected_version: Version observed when the link was selected; never
+                refreshed here.
+            idempotency_key: Caller-retained key reused for retries of the same logical
+                operation.
+            reason: Optional audit reason for deleting the link.
+
+        Returns:
+            The server deletion acknowledgement; conflicts are not retried
+                automatically.
+
+        Raises:
+            ValueError: The requested scope or configured server service is unavailable.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+                Server 409 and 428 precondition failures remain visible to the caller.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         self._require_server_graph_scope(scope)
         self._enforce_policy(self._graph_action_id("delete"))
         preconditions = {

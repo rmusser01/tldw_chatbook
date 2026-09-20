@@ -1143,6 +1143,33 @@ def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> in
     return number
 
 
+def validate_sharing_clone_input(
+    share_id: object, name: object
+) -> tuple[int, str | None]:
+    """Normalize a clone form before looking up its retained request identity.
+
+    Args:
+        share_id: Positive database identifier, supplied as integer or form text.
+        name: Optional display name; blank text requests the server default name.
+
+    Returns:
+        The positive share ID and name with server-equivalent whitespace folding.
+
+    Raises:
+        ValueError: The identifier is invalid, or the name is not text or exceeds
+            255 characters after whitespace normalization.
+    """
+    normalized_id = validate_bounded_integer(
+        share_id, minimum=1, maximum=SQLITE_INTEGER_MAX
+    )
+    normalized_name = TypeAdapter(str | None).validate_python(name, strict=True)
+    if normalized_name is not None:
+        normalized_name = " ".join(normalized_name.split()) or None
+    if normalized_name is not None and len(normalized_name) > 255:
+        raise ValueError("Clone name must be at most 255 characters.")
+    return normalized_id, normalized_name
+
+
 class BuddyManagementInput(BaseModel):
     """Bound raw Buddy form values before resolving selected application identities."""
 

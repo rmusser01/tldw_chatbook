@@ -1034,6 +1034,7 @@ from .sharing_schemas import (
     SharedWorkspaceResponse,
     SharedWorkspaceSourceResponse,
     SharedWorkspaceSourcePage,
+    SharedWorkspaceSourceQuery,
     TokenListResponse,
     TokenResponse,
     UpdateShareRequest,
@@ -2548,7 +2549,26 @@ class TLDWAPIClient:
         idempotency_key: str | None = None,
         reason: str | None = None,
     ) -> Dict[str, Any]:
-        """Delete the selected link version; never substitute a newer server version."""
+        """Delete the selected link with caller-owned version preconditions.
+
+        Args:
+            edge_id: Identifier of the selected Notes graph link.
+            dataset_id: Optional dataset containing the selected link.
+            expected_version: Version observed when the link was selected; never
+                refreshed here.
+            idempotency_key: Caller-retained key reused for retries of the same logical
+                operation.
+            reason: Optional audit reason for deleting the link.
+
+        Returns:
+            The server deletion acknowledgement; conflicts are not retried
+                automatically.
+
+        Raises:
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+                Server 409 and 428 precondition failures remain visible to the caller.
+        """
         params = {
             key: value
             for key, value in {
@@ -8973,7 +8993,21 @@ class TLDWAPIClient:
         share_id: int,
         request_data: CloneWorkspaceRequest,
     ) -> CloneWorkspaceResponse:
-        """Admit/replay one request-owned key; retain the request after a lost reply."""
+        """Admit or replay a logical clone using its caller-retained key.
+
+        Args:
+            share_id: Recipient share identifier.
+            request_data: Clone request containing canonical name and its retained
+                idempotency key.
+
+        Returns:
+            The durable operation receipt or a compatible legacy job response.
+
+        Raises:
+            ValueError: The clone request or returned receipt fails validation.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
         response = await self._request(
             "POST",
             f"/api/v1/sharing/shared-with-me/{share_id}/clone",
@@ -8987,7 +9021,20 @@ class TLDWAPIClient:
         share_id: int,
         operation_id: str,
     ) -> CloneWorkspaceResponse:
-        """Read an existing recipient receipt, including after share revocation."""
+        """Read a recipient-owned clone receipt, including after share revocation.
+
+        Args:
+            share_id: Recipient share identifier.
+            operation_id: UUID of the recipient-owned durable clone receipt.
+
+        Returns:
+            The receipt with operation identity, progress, result, and error details.
+
+        Raises:
+            ValueError: The operation UUID or returned receipt is invalid.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
         from uuid import UUID
 
         normalized_id = str(UUID(operation_id))
@@ -9006,17 +9053,26 @@ class TLDWAPIClient:
         q: str | None = None,
         state: str | None = None,
     ) -> SharedWorkspaceSourcePage:
-        """Read one source page without dropping pagination or partial errors."""
-        params = {
-            key: value
-            for key, value in {
-                "offset": offset,
-                "limit": limit,
-                "q": q,
-                "state": state,
-            }.items()
-            if value is not None
-        }
+        """Read one validated source page with completeness metadata.
+
+        Args:
+            share_id: Recipient share identifier.
+            offset: Nonnegative source offset, defaulting to zero.
+            limit: Page size from 1 through 200, defaulting to 50.
+            q: Optional search text, 1 through 512 characters; sent unchanged.
+            state: Optional free-text status filter, 1 through 64 characters.
+
+        Returns:
+            Source items, pagination, summary, and partial errors without truncation.
+
+        Raises:
+            ValueError: Page filters or the returned page fail validation.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
+        params = SharedWorkspaceSourceQuery(
+            offset=offset, limit=limit, q=q, state=state
+        ).model_dump(exclude_none=True)
         response = await self._request(
             "GET",
             f"/api/v1/sharing/shared-with-me/{share_id}/sources",
@@ -9028,7 +9084,19 @@ class TLDWAPIClient:
         self,
         share_id: int,
     ) -> list[SharedWorkspaceSourceResponse]:
-        """Compatibility list convenience; use page API for status/partial errors."""
+        """Collect sources across advancing pages, including empty pages.
+
+        Args:
+            share_id: Recipient share identifier.
+
+        Returns:
+            All source rows in server page order.
+
+        Raises:
+            ValueError: A returned page is invalid or its cursor does not advance.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+        """
         items: list[SharedWorkspaceSourceResponse] = []
         offset = 0
         while True:
@@ -9037,7 +9105,7 @@ class TLDWAPIClient:
             if not page.pagination.has_more:
                 return items
             next_offset = page.pagination.offset + page.pagination.limit
-            if not page.items or next_offset <= offset:
+            if next_offset <= offset:
                 raise ValueError("Shared source pagination did not advance")
             offset = next_offset
 

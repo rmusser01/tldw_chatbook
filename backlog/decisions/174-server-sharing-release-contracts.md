@@ -63,3 +63,14 @@ Exercise real httpx MockTransport through TLDWAPIClient for canonical headers/bo
 replay after a lost response, operation polling, pages/aliases and exact selected
 Notes deletion preconditions; cover both Sharing families and Notes scope policy.
 Run only focused suites, scoped lint/format and Bandit; record results in TASK-32881.
+
+## PR-2763 review clarification
+
+The panel consumes the application's `sharing_scope_service` (Sharing_Interop),
+with the older alternate attribute accepted only as a compatibility fallback.
+Clone form values pass through shared input validation before retained-key lookup.
+Source query bounds match the server: offset >= 0, limit 1–200, optional query
+1–512 characters and optional state 1–64 characters. State is free text, not a
+closed client enum. Empty pages remain valid when their offset/limit advances;
+nonadvancing cursors still fail. A null optional operation ID never overrides a
+valid legacy job ID during service normalization.

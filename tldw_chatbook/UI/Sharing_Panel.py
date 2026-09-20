@@ -16,6 +16,7 @@ from textual.validation import Number
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
 from ..runtime_policy.server_context import ServerContextError
+from ..Utils.input_validation import validate_sharing_clone_input
 
 MAX_RETAINED_CLONE_REQUESTS = 100
 
@@ -77,7 +78,11 @@ class SharingPanel(ScrollableContainer):
     def __init__(self, app_instance: "TldwCli", **kwargs: Any):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.scope_service = getattr(app_instance, "server_sharing_scope_service", None)
+        self.scope_service = getattr(app_instance, "sharing_scope_service", None)
+        if self.scope_service is None:
+            self.scope_service = getattr(
+                app_instance, "server_sharing_scope_service", None
+            )
         # The app owns uncertain admissions so rebuilding this panel cannot mint
         # a second request for a copy already accepted by the server.
         requests = getattr(app_instance, "_sharing_clone_request_keys", None)
@@ -500,12 +505,10 @@ class SharingPanel(ScrollableContainer):
 
     async def _clone_identity(self) -> tuple[str, str, str, int, str | None]:
         """Bind an admission to the configured server and authenticated account."""
-        share_id = self._share_id()
-        if share_id <= 0:
-            raise ValueError("A positive share ID is required.")
-        new_name = " ".join(self._input_value("#sharing-clone-name").split()) or None
-        if new_name is not None and len(new_name) > 255:
-            raise ValueError("Clone name must be at most 255 characters.")
+        share_id, new_name = validate_sharing_clone_input(
+            self.query_one("#sharing-share-id", Input).value,
+            self.query_one("#sharing-clone-name", Input).value,
+        )
         provider = getattr(self.app_instance, "server_context_provider", None)
         if self._current_runtime_backend() != "server" or provider is None:
             raise ValueError("An authenticated server context is required to clone.")
@@ -530,7 +533,15 @@ class SharingPanel(ScrollableContainer):
 
     @on(Button.Pressed, "#sharing-new-clone-btn")
     async def start_another_clone(self, event: Button.Pressed) -> None:
-        """Explicitly retire only this account's selected replay identity."""
+        """Retire only the active account's selected replay identity for a new copy.
+
+        Args:
+            event: Button event whose propagation stops before input validation.
+
+        Returns:
+            None. Valid input clears the selected key; validation or authority
+            errors are shown in the panel without changing retained identities.
+        """
         event.stop()
         try:
             identity = await self._clone_identity()
@@ -543,6 +554,12 @@ class SharingPanel(ScrollableContainer):
         )
 
     async def clone_shared_workspace(self) -> None:
+        """Replay the current clone intent or create its first admission key.
+
+        Returns:
+            None. The panel displays the receipt or error. Uncertain results keep
+            their key, and reaching the retention quota rejects new intents.
+        """
         try:
             identity = await self._clone_identity()
         except (ValueError, ServerContextError) as exc:

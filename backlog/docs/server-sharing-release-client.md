@@ -62,3 +62,10 @@ The scope, service, and client forward these preconditions unchanged. They do no
 fetch the newest link and replace the selected version. Let 409 conflicts return
 to the user for review. A Sync-backed deletion without a version retains the
 server's 428 response; older non-Sync servers may still accept an unversioned delete.
+
+Page parameters are validated before transport: offset is nonnegative, limit is
+1–200, query text is 1–512 characters when provided, and state is 1–64 characters.
+State remains a free-text server filter so new server states work without a client
+upgrade. Empty advancing pages are followed; repeated/nonadvancing cursors fail.
+The mounted Sharing panel uses the production `sharing_scope_service` wrapper and
+passes its share ID/name through shared input validation before retaining a key.

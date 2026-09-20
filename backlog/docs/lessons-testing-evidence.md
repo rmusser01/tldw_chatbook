@@ -16146,3 +16146,11 @@ new-copy intent. The retained identity also needs stable server/account scope,
 server-normalized inputs, and quota behavior that never evicts uncertain requests.
 Exercise the UI or workflow that owns the logical request, not just a transport
 helper whose test already assumes the required ownership.
+
+The PR-2763 follow-up found that the mounted Sharing test still supplied a
+`server_sharing_scope_service` attribute that the production application never
+sets. Its correct transport assertions therefore missed disabled production
+controls. The fixture now uses the actual `sharing_scope_service` attribute and
+Sharing_Interop wrapper constructed by TldwCli; it failed before fixing the panel
+lookup. A mounted workflow test must also match the application's wiring names
+and service family, not only the underlying HTTP contract (TASK-32881).
