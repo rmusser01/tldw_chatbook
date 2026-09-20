@@ -1,5 +1,15 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2749 approved closeout
+
+The owner approved the Tools header gallery. The final dev rebase onto
+`b91340a5db` preserves both sides of a documentation-only conflict; Tools sources
+are unchanged. [Fresh 152-case validation, seven guards, native lifecycle and
+four pixel-identical approved views](../qa/2026-09-19-mcp-tools-header/CLOSEOUT.md)
+qualify the integration. Current-head CI/review and live-dev inspection remain
+before the authorized merge. Existing PR2727 is next; PR2707's heartbeat stays
+paused. Earlier pending-approval checkpoints below are historical.
+
 ## Current checkpoint — PR2726 merged; Tools header follow-up
 
 [PR2726](https://github.com/rmusser01/tldw_chatbook/pull/2726) merged at

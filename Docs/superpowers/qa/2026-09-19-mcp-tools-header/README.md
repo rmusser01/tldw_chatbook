@@ -1,5 +1,8 @@
 # MCP Tools header alignment — TASK-32868
 
+[Approved closeout on current dev](CLOSEOUT.md) supersedes the pending-approval
+statements in the earlier evidence checkpoints below.
+
 The intermittent header mismatch retained by PR2726 is reproduced on merged dev
 `ad0f76e23b8737904f24eb34760bbee9ac01a04c`. When a catalog refresh paints before
 Textual 8.2.8's idle measurement, header labels keep their initial widths while

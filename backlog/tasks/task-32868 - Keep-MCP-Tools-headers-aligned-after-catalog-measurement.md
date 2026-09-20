@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 21:37'
-updated_date: '2026-09-19 22:15'
+updated_date: '2026-09-20 04:57'
 labels: []
 dependencies: []
 ---
@@ -52,4 +52,6 @@ ADR required: no. Existing backlog/decisions/150-design-token-system-and-design-
 PR2749 Qodo follow-up: extracted EXECUTION_LOG_SNAPSHOT_LIMIT = 200 for both native log snapshots. The normalized syntax tree is identical after inlining the constant; seven targeted native CLI cases, Ruff and formatting pass. Independent delta review found no blockers. Original native captures and 152-test receipts remain unchanged with explicit historical source provenance in review-followup.json. No new ADR or product behavior change.
 
 Rebased PR2749 onto dev 495b2c4522 without conflicts. Fresh validation: 152 targeted tests pass; six artifact guards pass locally and the network-dependent Mermaid guard passes on retry with access to its pinned public input. A fresh native journey with the named constant and incoming dev styles passes all four alignment views and lifecycle checks. The four rendered captures are pixel-identical to the existing gallery. Evidence: Docs/superpowers/qa/2026-09-19-mcp-tools-header/rebased/verification.json. Final visual approval and current-head CI/review remain pending.
+
+Owner approved the PR2749 gallery at 35c254040d. Final integration onto dev b91340a5db preserves both documentation additions in the sole conflict; production/test/runner sources remain byte-identical. Fresh 152 targeted tests, all seven guards, native lifecycle and all four pixel-identical comparisons pass. Independent code/base review found no blockers. CLOSEOUT.md records exact conflict choices and current-head CI/review as the remaining merge gate.
 <!-- SECTION:NOTES:END -->
