@@ -68,25 +68,37 @@ class SkillEvalRunner:
         judge_result: Optional[JudgeLayerResult] = None
         sim_result = None
         warnings: list = []
+        # Layer-internal progress callbacks report cumulative counters
+        # (judge: successful calls; sim: recorded cells). Convert them to
+        # deltas so each completed call advances the outer count by 1
+        # (controller ruling, plan erratum 9: live per-call progress).
+        prev: dict = {"judge": 0, "sim": 0}
+
+        def forward(layer: str) -> ProgressCallback:
+            def _forward(completed: int, _layer_total: int) -> None:
+                delta = completed - prev[layer]
+                prev[layer] = completed
+                if delta > 0:
+                    tick(delta)
+            return _forward
 
         if config.depth is not SkillEvalDepth.QUICK:
             judge_result = await run_judge_layer(
                 subject, self._chat, generator=generator, judge=judge,
                 config=config, semaphore=semaphore,
-                progress=lambda d, t: tick(0), cancel=self._cancel)
-            done += 16
+                progress=forward("judge"), cancel=self._cancel)
 
         if config.depth is SkillEvalDepth.DEEP and not (
                 self._cancel is not None and self._cancel.is_cancelled):
             sim_prompts = await self._generate_sim_prompts(
                 subject, generator, config, semaphore)
-            done += 1
+            tick(1)
             decoys = select_decoys(decoy_pool, subject.name, k=8,
                                    seed=config.seed)
             sim_result = await run_simulation_layer(
                 subject, sim_prompts, decoys, self._chat, target=generator,
-                config=config, semaphore=semaphore, cancel=self._cancel)
-            done += len(sim_result.cells)
+                config=config, semaphore=semaphore,
+                progress=forward("sim"), cancel=self._cancel)
         elif config.depth is SkillEvalDepth.DEEP:
             warnings.append("simulation skipped: cancelled")
 

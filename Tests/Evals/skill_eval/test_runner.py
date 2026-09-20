@@ -112,3 +112,31 @@ def test_preflight_reports_unready_provider(monkeypatch):
                         lambda provider, cfg, **kw: _R())
     problems = run_preflight(_subject(), *_targets(), {"anything": 1})
     assert problems == ["no key"]
+
+
+def test_progress_is_live_and_monotonic():
+    gen, jud = _targets()
+    seen = []
+
+    def progress(done, total):
+        seen.append((done, total))
+
+    chat = _Chat()
+    asyncio.run(SkillEvalRunner(chat).run(
+        _subject(), _config(SkillEvalDepth.STANDARD), generator=gen, judge=jud,
+        builtin_tool_names=frozenset({"fs_read"}), progress=progress))
+    assert seen and seen[-1] == (16, 16)
+    assert all(t == 16 for _, t in seen)
+    values = [d for d, _ in seen]
+    assert all(a <= b for a, b in zip(values, values[1:]))  # monotonic
+    assert any(0 < d < 16 for d in values)  # live, not layer-end-only
+
+    seen.clear()
+    chat2 = _Chat()
+    asyncio.run(SkillEvalRunner(chat2).run(
+        _subject(), _config(SkillEvalDepth.DEEP), generator=gen, judge=jud,
+        builtin_tool_names=frozenset({"fs_read"}), progress=progress))
+    assert seen[-1] == (67, 67)
+    assert all(t == 67 for _, t in seen)
+    values = [d for d, _ in seen]
+    assert all(a <= b for a, b in zip(values, values[1:]))  # monotonic
