@@ -870,11 +870,6 @@ def summarize_with_openai(
         logging.debug("OpenAI: Custom prompt configured")
         logging.debug("OpenAI: Request options prepared")
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-
         logging.debug("OpenAI: Credential configured")
         logging.debug("openai: Preparing data + prompt for submittal")
         openai_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
@@ -910,74 +905,71 @@ def summarize_with_openai(
         if not openai_model_rejects_sampling_params(openai_model):
             payload["temperature"] = temp
 
-        # --- Retry Logic --- (Copied from original, seems reasonable)
-        session = create_default_session()
+        # TASK-32853: transport, bounded retries (capped Retry-After), and
+        # exactly-once resource closure moved to the hosted engine; the
+        # capability-gated payload construction above is unchanged.
         retry_count = int(get_cli_setting("openai_api", "api_retries", 3))
-        retry_delay = int(
-            get_cli_setting("openai_api", "api_retry_delay", 1)
-        )  # Using 1s default backoff factor
-        retry_strategy = Retry(
-            total=retry_count,
-            backoff_factor=retry_delay,
-            status_forcelist=[429, 500, 502, 503, 504],  # Added 500
+        retry_delay = int(get_cli_setting("openai_api", "api_retry_delay", 1))
+        request_timeout = int(get_cli_setting("openai_api", "api_timeout", 120))
+        base_url = get_cli_setting(
+            "openai_api", "api_base_url", "https://api.openai.com/v1"
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)  # Mount for http too if needed
-
-        api_url = (
-            get_cli_setting("openai_api", "api_base_url", "https://api.openai.com/v1")
-            + "/chat/completions"
-        )
-
         logging.debug("OpenAI: Endpoint configured")
-        response = session.post(
-            api_url,
-            headers=headers,
-            json=payload,
-            stream=streaming,
-            timeout=int(get_cli_setting("openai_api", "api_timeout", 120)),
+        transport_config = HostedHTTPTransportConfig(
+            provider="openai",
+            base_url=base_url,
+            api_key=api_key,
+            timeout=float(request_timeout),
+            retries=retry_count,
+            retry_delay=float(retry_delay),
         )
-        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
 
         if streaming:
             logging.debug("OpenAI: Processing streaming response.")
 
+            records = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=payload,
+                streaming=True,
+            )
+
             def stream_generator():
                 try:
-                    for line in response.iter_lines():
-                        line = line.decode("utf-8").strip()
-                        if not line:
+                    for record in records:
+                        if record.data == "[DONE]":
+                            break
+                        try:
+                            data_json = json.loads(record.data)
+                            chunk = data_json["choices"][0]["delta"].get(
+                                "content", ""
+                            )
+                        except json.JSONDecodeError:
+                            logging.error("OpenAI Stream: Response event rejected")
                             continue
-                        if line.startswith("data: "):
-                            data_str = line[len("data: ") :]
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                data_json = json.loads(data_str)
-                                chunk = data_json["choices"][0]["delta"].get(
-                                    "content", ""
-                                )
-                                yield chunk
-                            except json.JSONDecodeError:
-                                logging.error("OpenAI Stream: Response event rejected")
-                                continue
-                            except (KeyError, IndexError):
-                                logging.error("OpenAI Stream: Response event rejected")
-                                continue
+                        except (KeyError, IndexError):
+                            logging.error("OpenAI Stream: Response event rejected")
+                            continue
+                        if chunk:
+                            yield chunk
                 except Exception as stream_error:
                     logging.error(
                         "OpenAI Stream: Streaming failed; exception_type=%s",
                         safe_metadata_token(type(stream_error).__name__),
                     )
-                    yield f"Error during streaming: {stream_error}"  # Yield error in stream
+                    yield f"Error during streaming: {stream_error}"
                 finally:
-                    response.close()  # Ensure connection is closed
+                    records.close()
 
             return stream_generator()
         else:
             logging.debug("OpenAI: Processing non-streaming response.")
-            response_data = response.json()
+            response_data = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=payload,
+                streaming=False,
+            )
             if (
                 "choices" in response_data
                 and len(response_data["choices"]) > 0

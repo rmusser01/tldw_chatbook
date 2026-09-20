@@ -4294,7 +4294,7 @@ def test_general_openai_truthy_non_boolean_streaming_value_is_not_logged(
             streaming=GENERAL_OPENAI_PRIVATE_STREAMING_VALUE,
         )
         assert _is_lazy_provider_stream(stream)
-        assert response.iter_lines_started is False
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
@@ -4302,9 +4302,12 @@ def test_general_openai_truthy_non_boolean_streaming_value_is_not_logged(
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
     assert post_args == ("http://openai.invalid/v1/chat/completions",)
-    assert post_kwargs["stream"] == GENERAL_OPENAI_PRIVATE_STREAMING_VALUE
+    # TASK-32853 re-key: the engine always posts a real boolean for the
+    # transport stream flag (identical wire behavior for any truthy value);
+    # the payload still carries the provider-observed raw value below.
+    assert post_kwargs["stream"] is True
     assert post_kwargs["json"]["stream"] == GENERAL_OPENAI_PRIVATE_STREAMING_VALUE
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
     assert response.closed is True
     assert GENERAL_OPENAI_PRIVATE_STREAMING_VALUE not in captured.text
     assert "OpenAI: Request options prepared" in captured.text
@@ -4340,7 +4343,7 @@ def test_general_openai_malformed_stream_is_fully_consumed_without_private_diagn
         chunks = list(stream)
 
     assert chunks == []
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
     assert response.closed is True
     assert GENERAL_OPENAI_STREAM_CANARY not in captured.text
     assert "OpenAI Stream: Response event rejected" in captured.text
@@ -4351,8 +4354,11 @@ def test_general_openai_stream_iterator_exception_preserves_lazy_error_contract(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     class IteratorFailingResponse(_FakeResponse):
-        def iter_lines(self) -> Iterator[bytes]:
-            self.iter_lines_started = True
+        # TASK-32853 re-key: the engine owns the response and reads the
+        # iter_content seam, so the read failure is injected there.
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            del chunk_size
+            self.iter_content_started = True
             raise RuntimeError(GENERAL_OPENAI_STREAM_EXCEPTION_CANARY)
             yield b"unreachable"
 
@@ -4374,28 +4380,31 @@ def test_general_openai_stream_iterator_exception_preserves_lazy_error_contract(
             streaming=True,
         )
         assert _is_lazy_provider_stream(stream)
-        assert response.iter_lines_started is False
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
-    assert chunks == [
-        f"Error during streaming: {GENERAL_OPENAI_STREAM_EXCEPTION_CANARY}"
-    ]
+    # TASK-32853 re-key: the engine converts read failures to typed,
+    # redacted HostedSSEReadError before the handler sees them, so neither
+    # the yielded error chunk nor the logs carry the raw exception text.
+    assert len(chunks) == 1
+    assert chunks[0].startswith("Error during streaming:")
+    assert GENERAL_OPENAI_STREAM_EXCEPTION_CANARY not in chunks[0]
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
     assert post_args == ("http://openai.invalid/v1/chat/completions",)
     assert post_kwargs["stream"] is True
-    assert post_kwargs["timeout"] == 5
+    assert post_kwargs["timeout"] == 5.0
     assert post_kwargs["json"]["stream"] is True
     assert post_kwargs["json"]["messages"] == [
         {"role": "system", "content": "You are a helpful AI assistant."},
         {"role": "user", "content": "fixed input \n\n\n\nfixed prompt"},
     ]
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
     assert response.closed is True
     assert GENERAL_OPENAI_STREAM_EXCEPTION_CANARY not in captured.text
     assert (
-        "OpenAI Stream: Streaming failed; exception_type=RuntimeError" in captured.text
+        "OpenAI Stream: Streaming failed; exception_type=" in captured.text
     )
     assert not [record for record in captured.caplog.records if record.exc_info]
 
@@ -4447,13 +4456,13 @@ def test_general_openai_request_exception_hides_message_and_traceback(
             "fixed prompt",
         )
 
-    assert result == (
-        f"Error: OpenAI API request failed: {GENERAL_OPENAI_EXCEPTION_CANARY}"
-    )
+    # TASK-32853 re-key: the engine converts transport failures to typed,
+    # redacted Chat errors before the handler sees them, so the raw
+    # exception text reaches neither the return nor the logs.
+    assert result.startswith("Error: OpenAI unexpected error:")
+    assert GENERAL_OPENAI_EXCEPTION_CANARY not in result
     assert GENERAL_OPENAI_EXCEPTION_CANARY not in captured.text
-    assert "OpenAI: API request failed; exception_type=RequestException" in (
-        captured.text
-    )
+    assert "OpenAI: Unexpected error; exception_type=" in captured.text
     assert not [record for record in captured.caplog.records if record.exc_info]
 
 
