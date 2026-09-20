@@ -1,0 +1,81 @@
+{
+  "pid": 75272,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "bulk_only_edits_choices": true,
+      "real_controller_round_trip": true,
+      "decisions": {
+        "search": "approve_once",
+        "lookup": "approve_once"
+      },
+      "tool_dispatches": 0
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "7d6d50f92c967ec4ec9e9423276263ae5083217c9159e166bbd0a0674f9fe29d",
+    "tldw_chatbook/Chat/console_chat_controller.py": "2f571609f882a839b98b6a6c6209f4b2992e1ca96708955be5f8ab4e4dbf4fca",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "eaebda3ad49687e1bb9322996a34d689b502e441e5a4b47423e8f87ee4affe7a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "2e86d1be0adfeab0ef3b38551f594c600a08224ce677d0077b4b2134bdcc31da",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "2d5387eb572fbb82d53de4e3766ce72ac80378677a5aeda36df9a52902fc2322",
+    "tldw_chatbook/css/core/_variables.tcss": "134124fb32a187c7279ac6b02ceed338e85bbb4a64b56d6617063b23c538f709"
+  },
+  "runner_sha256": "96d589cb7f74efab3a36d836e2e2c4a1b246e92f4dce025fe599730a121410d1",
+  "fixture_scope": "Synthetic pending-call metadata enters the real controller request/resolve round trip. Returned decisions are checked and never passed to a provider or tool executor.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "approval cleared",
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

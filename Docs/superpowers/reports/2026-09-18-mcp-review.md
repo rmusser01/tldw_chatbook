@@ -1,5 +1,32 @@
 # MCP component review
 
+## Current checkpoint — PR2730 approved closeout
+
+The owner approved PR2730’s Console gallery and merge. Its rebase onto current
+dev `d1a0649cd2` (PR2754 Library/Artifacts integration) had no conflicts and keeps
+the approved approval logic and Console controls unchanged. [211 targeted passes,
+18 reproduced baseline failures, seven guards and fresh native comparison](../qa/2026-09-19-approval-action-ownership/CLOSEOUT.md)
+qualify the combined state. Only upstream main-navigation pixels changed.
+Current-head CI/review and actual merge-tree verification remain before the
+authorized closeout. Saved MCP inspector work resumes after confirmed merge.
+PR2707’s heartbeat stays paused; earlier checkpoints are historical.
+
+## Current checkpoint — PR2728 merged; PR2730 integrated
+
+[PR2728](https://github.com/rmusser01/tldw_chatbook/pull/2728) merged at
+`de10a62e67124a2b21b78edf1a4887cea03ff139` after owner visual approval,
+current-head CI and accumulated review; its actual tree equals the approved tree.
+[Merge receipt](../qa/2026-09-19-approval-action-ownership/integration/pr2728-closeout.json).
+
+Saved PR2730 / TASK-32841 is integrated onto that merged dev. Both report histories
+are retained; there were no product conflicts. [210 distinct targeted passes,
+19 reproduced baseline failures, seven guards and eight inspected current-source
+native captures](../qa/2026-09-19-approval-action-ownership/CURRENT-DEV-REVIEW.md)
+qualify the bounded Console approval ownership repair. Current-head CI/review and
+this PR's own final visual approval remain before merge. MCP inspector refresh,
+long-path/compact presentation and connected-runtime journeys remain follow-ups.
+PR2707's heartbeat stays paused. Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2727 merged; PR2728 integrated
 
 [PR2727](https://github.com/rmusser01/tldw_chatbook/pull/2727) merged at
@@ -226,6 +253,26 @@ inspector/lifecycle follow-ups. It does not reload discovery or qualify connecte
 runtime use. Next review: post-review catalog repopulation/status guidance,
 then bulk permission actions and approval workflows. Current-head CI and final
 visual approval still gate merging this draft.
+
+## Post-merge continuation: Console approval actions
+
+PR2707 has merged; its closeout statements below are historical checkpoints.
+The continuation heartbeat is paused. TASK-32841 is an independent bounded
+follow-up from merged dev, separate from draft PR2727/PR2728.
+
+Queued Console Approve all, Deny all and Submit actions now retain their displayed
+batch identity, and each batch can submit only once. Unchanged resyncs preserve
+choices; changed/cleared/finishing batches invalidate old actions and fresh rounds
+remain usable. [123 passing targeted cases, 19 identical baseline failures and
+eight inspected native captures](../qa/2026-09-19-approval-action-ownership/README.md)
+cover the existing controls. All seven derived guards pass, including a separate
+Canvas input-fetch retry. Native uses synthetic pending calls with the real
+controller and never dispatches a tool. No connected-runtime claim is made.
+
+The proposed MCP permission-matrix bulk-actions ADR is not implemented here.
+Next: session-grant review/revocation and remaining approval/connected-runtime
+journeys. This draft requires current-head CI/review and final visual approval
+before merge; the wider component review remains open.
 
 ## Qualified
 

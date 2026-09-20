@@ -1,5 +1,29 @@
 # Lessons: verifying against the real thing
 
+## Pin the checkout before a shared validator imports the application
+
+**TASK-32841 integration, 2026-09-20.** The native runner called the shared CLI
+validator before putting its worktree on `sys.path`. That validator imported
+application utilities through an editable installation, caching the main checkout
+package. Later path insertion and hashes of the intended files did not change the
+already loaded package. A sidebar difference in the captures and an independent
+review exposed the mismatch. The final runner pins the worktree before any project
+import and asserts/records actual loaded module paths, including the controller.
+The first run is unqualified; a fresh run with explicit import provenance supplies
+the current evidence. Hashing a file is not proof that Python executed that file.
+
+## A clipped region check does not prove a control is painted
+
+**TASK-32841, 2026-09-19.** A native approval probe completed real controller
+round trips and accepted `region.intersection(clip) == region`, yet all eight
+screenshots showed the provider-setup overlay instead of the approval card.
+The empty/occluded geometry was not useful visual evidence. The corrected
+disposable profile represents completed onboarding; the final probe requires
+positive dimensions, the expected widget at the control's center, and its full
+label in the screen compositor's painted strips before pressing it. Replacement
+captures visibly show the real approval controls. Keep functional round-trip
+results distinct from visual qualification and inspect the captures.
+
 ## Private config and data paths do not replace a private recovery HOME
 
 **TASK-32749, 2026-09-17.** The first integration probe selected private config

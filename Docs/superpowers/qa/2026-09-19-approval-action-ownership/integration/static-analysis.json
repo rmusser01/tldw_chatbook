@@ -1,0 +1,65 @@
+{
+  "base": "de10a62e67124a2b21b78edf1a4887cea03ff139",
+  "production_baseline_diagnostics": 6,
+  "production_current_diagnostics": 6,
+  "introduced_diagnostics": [],
+  "baseline": [
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`",
+      "except Exception:"
+    ],
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`",
+      "except Exception:"
+    ],
+    [
+      "BLE001",
+      "Do not catch blind exception: `Exception`",
+      "except Exception:"
+    ],
+    [
+      "I001",
+      "Import block is un-sorted or un-formatted",
+      "from __future__ import annotations"
+    ],
+    [
+      "S110",
+      "`try`-`except`-`pass` detected, consider logging the exception",
+      "except Exception:"
+    ],
+    [
+      "UP035",
+      "Import from `collections.abc` instead: `Mapping`, `Sequence`",
+      "from typing import Any, Mapping, Sequence"
+    ]
+  ],
+  "new_files": [
+    "Tests/UI/test_approval_action_ownership.py",
+    "Tests/Utils/test_mcp_native_qa_args.py",
+    "Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py"
+  ],
+  "formatted_production_ranges": [
+    "578-595",
+    "687-687",
+    "765-765",
+    "770-770",
+    "776-776",
+    "847-849",
+    "909-911",
+    "1076-1076",
+    "1082-1082",
+    "1089-1089",
+    "1091-1091",
+    "1273-1273",
+    "1275-1275",
+    "1282-1282",
+    "1284-1284",
+    "1359-1368",
+    "1510-1512",
+    "1515-1523",
+    "1526-1531",
+    "1572-1576"
+  ]
+}

@@ -1,5 +1,32 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2730 approved closeout
+
+The owner approved PR2730’s Console gallery and merge. Its rebase onto current
+dev `d1a0649cd2` (PR2754 Library/Artifacts integration) had no conflicts and keeps
+the approved approval logic and Console controls unchanged. [211 targeted passes,
+18 reproduced baseline failures, seven guards and fresh native comparison](../qa/2026-09-19-approval-action-ownership/CLOSEOUT.md)
+qualify the combined state. Only upstream main-navigation pixels changed.
+Current-head CI/review and actual merge-tree verification remain before the
+authorized closeout. Saved MCP inspector work resumes after confirmed merge.
+PR2707’s heartbeat stays paused; earlier checkpoints are historical.
+
+## Current checkpoint — PR2728 merged; PR2730 integrated
+
+[PR2728](https://github.com/rmusser01/tldw_chatbook/pull/2728) merged at
+`de10a62e67124a2b21b78edf1a4887cea03ff139` after owner visual approval,
+current-head CI and accumulated review; its actual tree equals the approved tree.
+[Merge receipt](../qa/2026-09-19-approval-action-ownership/integration/pr2728-closeout.json).
+
+Saved PR2730 / TASK-32841 is integrated onto that merged dev. Both report histories
+are retained; there were no product conflicts. [210 distinct targeted passes,
+19 reproduced baseline failures, seven guards and eight inspected current-source
+native captures](../qa/2026-09-19-approval-action-ownership/CURRENT-DEV-REVIEW.md)
+qualify the bounded Console approval ownership repair. Current-head CI/review and
+this PR's own final visual approval remain before merge. MCP inspector refresh,
+long-path/compact presentation and connected-runtime journeys remain follow-ups.
+PR2707's heartbeat stays paused. Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2727 merged; PR2728 integrated
 
 [PR2727](https://github.com/rmusser01/tldw_chatbook/pull/2727) merged at
@@ -557,3 +584,22 @@ connected-runtime journeys. Current-head CI and final visual approval still
 gate merging. The resume heartbeat remains paused.
 
 The wider component workstream remains open; see the [MCP ledger](2026-09-18-mcp-review.md).
+
+## Post-merge continuation: Console approval action ownership
+
+PR2707 is now merged; earlier open-PR statements are historical. The continuation
+heartbeat remains paused. TASK-32841 is an independent follow-up from dev, separate
+from draft PR2727/PR2728. Queued bulk and submit gestures cannot affect a later
+approval batch, duplicate submissions are suppressed, and fresh rounds remain
+actionable without changing existing layout or decision scopes.
+
+[123 passing targeted cases and eight inspected native captures](../qa/2026-09-19-approval-action-ownership/README.md)
+qualify the bounded repair. Nineteen broader-module failures match unchanged dev
+exactly and remain documented debt. All seven derived guards pass; native normal
+exit, released lock, healthy private databases and unchanged defaults are verified.
+The exact isolated source was retested after concurrent changes appeared in the
+original checkout. No tool/provider calls were dispatched.
+
+The draft remains subject to current-head CI/review and final visual approval.
+MCP session-grant review/revocation, other approval journeys and connected-runtime
+coverage remain next; the wider destination review is not complete.
