@@ -578,6 +578,11 @@ _SLACK_TOLERANCE_LINES = 50
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 817
 
 
+# ADR-172 / TASK-32870–32872: initial exact pins for the new artifact owners.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 776
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
+
+
 @lru_cache(maxsize=None)
 def _measure(rel_path: str) -> int:
     """Line count of a `Library_Modules` controller module.

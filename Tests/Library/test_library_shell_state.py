@@ -568,7 +568,7 @@ def test_library_selection_count_line_names_the_action_a_zero_blocks():
 
 
 @pytest.mark.parametrize("runtime_source", ["local", "server"])
-def test_reports_is_the_only_artifact_route_and_remains_local(runtime_source):
+def test_artifact_routes_remain_local(runtime_source):
     shell = build_library_shell_state(
         LibraryShellInput(runtime_source=runtime_source),
         selected_row_id="artifacts-reports",
@@ -578,7 +578,11 @@ def test_reports_is_the_only_artifact_route_and_remains_local(runtime_source):
     )
     assert [
         (row.row_id, row.title, row.target_kind, row.target_id) for row in section.rows
-    ] == [("artifacts-reports", "Reports", "canvas", "artifacts-reports")]
+    ] == [
+        ("artifacts-all", "All artifacts", "canvas", "artifacts-all"),
+        ("artifacts-chatbooks", "Chatbooks", "canvas", "artifacts-chatbooks"),
+        ("artifacts-reports", "Reports", "canvas", "artifacts-reports"),
+    ]
     assert not section.rows[0].disabled
     assert shell.canvas_kind == "artifacts-reports"
     assert shell.selected_row_id == "artifacts-reports"

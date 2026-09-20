@@ -1,5 +1,5 @@
 from Tests.private_profile import private_profile_test
-
+from tldw_chatbook.app import TabNavigationProvider
 from tldw_chatbook.Constants import (
     ALL_TABS,
     TAB_CCP,
@@ -21,7 +21,6 @@ from tldw_chatbook.Constants import (
     TAB_TOOLS_SETTINGS,
     TAB_WRITING,
 )
-from tldw_chatbook.app import TabNavigationProvider
 
 
 def test_chunking_lab_is_a_separate_library_tool_command():

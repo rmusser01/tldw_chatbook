@@ -31,18 +31,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import (
-    Iterator,
-    List,
-    Dict,
-    Any,
-    Literal,
-    Mapping,
-    Optional,
-    Sequence,
-    TYPE_CHECKING,
-    Union,
-)
+from typing import Iterator, List, Dict, Any, Literal, Mapping, Optional, Sequence, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 

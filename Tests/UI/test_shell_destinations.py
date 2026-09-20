@@ -1,11 +1,10 @@
 from Tests.private_profile import private_profile_test
-
+from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.shell_destinations import (
     SHELL_DESTINATION_ORDER,
     get_shell_destination,
     resolve_shell_route,
 )
-from Tests.UI.app_factory import _build_test_app
 
 
 @private_profile_test

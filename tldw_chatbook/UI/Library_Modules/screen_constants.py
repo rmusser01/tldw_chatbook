@@ -398,6 +398,9 @@ LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
 # ``import-export`` values, degrades quietly, unchanged from before this
 # table existed.
 LIBRARY_NAV_MODE_TO_ROW_ID = {
+    "artifacts-all": "artifacts-all",
+    "artifacts-reports": "artifacts-reports",
+    "artifacts-chatbooks": "artifacts-chatbooks",
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
