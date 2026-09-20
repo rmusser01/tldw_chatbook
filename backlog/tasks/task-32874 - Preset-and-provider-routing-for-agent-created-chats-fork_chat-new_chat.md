@@ -1,11 +1,11 @@
 ---
 id: TASK-32874
 title: Preset and provider routing for agent-created chats (fork_chat/new_chat)
-status: In Progress
+status: Done
 assignee:
   - '@robert'
 created_date: '2026-09-20 16:47'
-updated_date: '2026-09-20 18:23'
+updated_date: '2026-09-20 19:25'
 labels: []
 dependencies: []
 ---
@@ -29,26 +29,6 @@ The deferred integration from ADR-150 decision 7, now unblocked: the agent provi
 
 ## Implementation Notes
 
-Implemented 2026-09-13 per plan. `build_chat_create_schema` (tool_catalog)
-mirrors `build_spawn_schema`'s ADR-147 pattern: identity when no routed
-presets and the override gate is closed; optional `preset` enum+roster for
-definitions carrying provider/model; gated `provider`/`model` args with
-allowlisted targets enumerated (identity only). The first-request plan
-appends the BUILT schemas (it already receives agent_definitions +
-spawn_override flags); the static constants remain the identity base and
-the `_run_one` defense pin. Bridge closures parse the three routing args
-as strict strings. The card renders a "Runs on:" line (preset and/or
-provider/model) before allow. The executor resolves -- BEFORE creating
-anything -- via `resolve_spawn_target` with parent = the source session's
-provider/model, with the [agents] sub-agent default level uniformly
-cleared (chat creation is not a spawn; levels are ad-hoc -> preset ->
-parent-fill), builds the new chat's `ConsoleSessionSettings` via
-`build_default_console_session_settings`, and threads it through the
-completion's restore. `RoutingError.code` surfaces as the outcome kind;
-two chat-specific kinds added: `unknown_preset`, `preset_unrouted`.
-Tests: builder identity/roster/override matrix, executor gating matrix
-incl. the final-provider guard on model-only overrides, preset ride,
-settings-build, card rendering. Local full-suite note: ~150 tests on this
-machine fail with `RecoveryRequired: raw_source_selection_changed` from
-the backup-recovery bootstrap -- verified IDENTICAL on clean origin/dev
-(stash check); CI runners are clean (see task-32873).
+<!-- SECTION:NOTES:BEGIN -->
+Merged via PR #2760 (Qodo round addressed in 7984fb1e79): bridge passes spawn_override flags to the prebuilt plan (also un-blinding spawn's own override args on that path), preset/endpoint params ride extra_sources, routed snapshot persisted to conversation metadata, executor strict-types routing inputs, honest glob wording.
+<!-- SECTION:NOTES:END -->

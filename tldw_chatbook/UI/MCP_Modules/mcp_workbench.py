@@ -22,7 +22,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import ContentSwitcher, DataTable
-from textual.worker import Worker
+from textual.worker import Worker, WorkerCancelled
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
@@ -1475,6 +1475,11 @@ class MCPWorkbench(Container):
         """
         if snapshot.server_key in self._in_flight:
             action = self._in_flight_action.get(snapshot.server_key, "update")
+            if self._in_flight[snapshot.server_key].is_cancelled:
+                return replace(
+                    as_checking(snapshot, action),
+                    message=f"Cancelling {action} — waiting for cleanup.",
+                )
             timeout_seconds = _hub_lifecycle_timeout_seconds()
             bounded_action = f"{action} (up to {int(round(timeout_seconds))}s)"
             return as_checking(snapshot, bounded_action)
@@ -1562,12 +1567,18 @@ class MCPWorkbench(Container):
             ):
                 return
             selected = self._snapshot_for_display(self._selected_server_key)
+            # Keep the operation paired with this snapshot across DOM awaits.
+            worker = self._in_flight.get(selected.server_key) if selected else None
             await self._show_selected_detail(canvas, selected)
             if recovery_token is not None and not self._mcp_recovery_current(
                 recovery_token
             ):
                 return
-            await self.query_one(MCPInspector).update_readiness(selected)
+            await self.query_one(MCPInspector).update_readiness(
+                selected,
+                cancelling=bool(worker and worker.is_cancelled),
+                cancel_operation=worker,
+            )
             if recovery_token is not None and not self._mcp_recovery_current(
                 recovery_token
             ):
@@ -6630,18 +6641,20 @@ class MCPWorkbench(Container):
         awaited inline.
         """
         event.stop()
-        worker = self._in_flight.pop(event.server_key, None)
-        self._in_flight_action.pop(event.server_key, None)
-        if worker is None:
-            # Stale cancel: the operation already finished and popped itself
-            # (its own completion toast + resync have run). Toasting
-            # "Cancelled." here would falsely claim a completed operation
-            # was stopped -- silent no-op instead.
+        worker = self._in_flight.get(event.server_key)
+        if (
+            worker is None
+            or worker.is_finished
+            or worker.is_cancelled
+            or (event.operation is not None and event.operation is not worker)
+        ):
+            # A repeated or retired intent must not interrupt cleanup or
+            # cancel a later attempt on the same profile.
             return
         worker.cancel()
-        self.app.notify("Cancelled.")
+        self.app.notify("Cancelling…")
         self.run_worker(
-            self._sync_children(), group="mcp-lifecycle-sync", exclusive=True
+            self._sync_children, group="mcp-lifecycle-sync", exclusive=True
         )
 
     # -- lifecycle actions (T5: connect/test/refresh/disconnect) --------------
@@ -6675,39 +6688,32 @@ class MCPWorkbench(Container):
                 f"(server_key={server_key!r})"
             )
             return
-        coro = method(profile_id)
         worker = self.run_worker(
-            self._lifecycle_wrapper(server_key, profile_id, action, coro),
+            partial(self._lifecycle_wrapper, profile_id, action, method),
             group="mcp-lifecycle",
             exclusive=False,
         )
         self._in_flight[server_key] = worker
         self._in_flight_action[server_key] = action
+        self.run_worker(
+            partial(self._observe_lifecycle, server_key, worker),
+            group="mcp-lifecycle-observe",
+            exclusive=False,
+        )
         # Render the CHECKING badge + inspector Cancel button immediately --
         # decoupled from the lifecycle worker above, which may be sitting on
         # a slow (or, in tests, gated) network/subprocess call and must not
         # block this optimistic UI update.
         self.run_worker(
-            self._sync_children(), group="mcp-lifecycle-sync", exclusive=True
+            self._sync_children, group="mcp-lifecycle-sync", exclusive=True
         )
 
     async def _lifecycle_wrapper(
-        self, server_key: str, profile_id: str, action: str, coro: Any
+        self, profile_id: str, action: str, method: Any
     ) -> None:
-        """Run one lifecycle coroutine, then always clean up and resync.
-
-        The T2 typed methods (`connect_local_profile` etc.) already record
-        their own attempt state and raise a user-ready message on failure --
-        this must not duplicate that recording, only surface the outcome and
-        drop the in-flight marker. `except Exception` deliberately does not
-        catch `asyncio.CancelledError` (a `BaseException` since Python 3.8):
-        a cancelled worker skips straight to `finally`, which is exactly the
-        cleanup `on_mcp_inspector_cancel_requested()` needs and which the
-        cancel handler's own notify()/resync above already covers, so no
-        redundant "cancelled" notification is sent from here.
-        """
+        """Create service work only after start and surface its actual outcome."""
         try:
-            result = await coro
+            result = await method(profile_id)
         except Exception as exc:
             self.app.notify(
                 _toast(f"{profile_id}: {action} failed — {exc}"), severity="error"
@@ -6720,11 +6726,21 @@ class MCPWorkbench(Container):
             else:
                 noun = "tool" if tool_count == 1 else "tools"
                 self.app.notify(_toast(f"{profile_id}: {verb} — {tool_count} {noun}."))
+
+    async def _observe_lifecycle(self, server_key: str, worker: Worker) -> None:
+        """Retain admission through settlement, including cancellation before start."""
+        try:
+            await worker.wait()
+        except WorkerCancelled:
+            self.app.notify("Cancelled.")
         finally:
-            self._in_flight.pop(server_key, None)
-            self._in_flight_action.pop(server_key, None)
-            self._snapshots = await self._collect_snapshots()
-            await self._sync_children()
+            if self._in_flight.get(server_key) is worker:
+                try:
+                    self._snapshots = await self._collect_snapshots()
+                finally:
+                    self._in_flight.pop(server_key, None)
+                    self._in_flight_action.pop(server_key, None)
+                await self._sync_children()
 
     @staticmethod
     def _lifecycle_tool_count(result: Any) -> int | None:

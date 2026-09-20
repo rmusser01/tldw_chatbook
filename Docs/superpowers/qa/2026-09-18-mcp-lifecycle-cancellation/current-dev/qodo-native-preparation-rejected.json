@@ -1,0 +1,9 @@
+{
+  "root": "/private/tmp/tldw-32880-native-001",
+  "exit_code": 2,
+  "app_started": false,
+  "launch_file_absent": true,
+  "evidence_absent": true,
+  "defaults_unchanged": true,
+  "reason": "Profile preparation omitted required data/db directory; shared parser rejected before app imports. An initial preparation retry used host Python without tomllib and never created the next profile; reran with project Python."
+}

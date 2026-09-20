@@ -1,0 +1,9 @@
+{
+  "root": "/private/tmp/tldw-32829-current-native-001",
+  "pid": 10599,
+  "pid_absent": true,
+  "exit_code": 1,
+  "qualified": false,
+  "cause": "Runner inspected lazy mcp_workbench module before navigation imported it. No App.run or visual evidence. Origin recording moved after actual navigation.",
+  "defaults_unchanged": true
+}
