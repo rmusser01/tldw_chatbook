@@ -1,11 +1,11 @@
 ---
 id: TASK-32880
 title: Keep MCP lifecycle cancellation busy until cleanup finishes
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 01:17'
-updated_date: '2026-09-20 20:47'
+updated_date: '2026-09-20 21:09'
 labels:
   - mcp
   - ui
@@ -52,4 +52,6 @@ Resumed PR2713 on ab57681864. Old TASK-32829 collided with an unrelated landed t
 Addressed all five Qodo findings: retired the obsolete executable runner while preserving its pinned historical source; added explicit lifecycle test contracts; rejected an occupied cleanup-demo profile before saving, and limited cleanup to the created fixture. Real-store collision baseline failed as expected and passes after the guard. 35 selected follow-up cases pass (eleven repeats, 24 additional runner/input cases), bringing the distinct local total to 96. Seven preflight guards and independent review pass. Repeated four-cell native qualification and all twelve captures match final runner and unchanged production hashes; exit/lock/databases/defaults remain clean. Current-head remote CI/review and fresh owner visual approval remain before merge.
 
 Owner approved the gallery at a3fd318d94. Rebased without conflicts onto dev 45d67a6704 after unrelated PR2746 landed during CI. MCP production, styles, tests and runner are byte-identical; all twelve fresh native SVGs match the approved captures after normalization. 35 repeated targeted cases, seven guards and fresh native shutdown/lock/DB/defaults verification pass. Prior approved head CI passed 1152 cases and all guards; current rebased-head CI/review remains the only merge gate. Evidence: current-dev/latest-dev-rebase.json.
+
+Merged PR2713 at 5e0f9f82c3dc5673ddba47415b490e61a0e192cb on 2026-09-20T21:07:36Z. Owner approved twelve native captures; subsequent rebase reproduced them identically. Head 4a88e65762 had zero unresolved review threads and Qodo zero findings. CI run 35536712650 passed 1152 Fast Lane cases and all artifact guards; performance, CSS and backlog checks passed. Actual CI checkout b3403a1e4537ccbdecc34b9f429ded4f85291a11 integrated dev c768376092 and the approved head. Its tree 221b9f1eb38e790b9028f72d972b002bda6aed55 equals the final squash merge tree. Local qualification: 96 distinct targeted cases, seven guards, no introduced lint diagnostics and private native lifecycle verified. Existing ADR-161 applies. PR2714 resumes on merged dev; cancellation slice complete.
 <!-- SECTION:NOTES:END -->

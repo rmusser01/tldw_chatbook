@@ -1,5 +1,45 @@
 # MCP component review
 
+## Current checkpoint — PR2714 owner approval and review follow-ups
+
+Owner approved the catalog-refresh gallery at `f8d1731abc`. PR2714 is rebased
+without conflicts onto dev `7bfd330046`. Qodo follow-ups validate fixture paths
+and malformed requests, document the API, add isolated tests, use canonical IDs
+for cleanup and report failed temporary-session teardown honestly. The real
+control plane records `ok=False` while an owned process remains alive; retry
+reaps it. The original race claim was independently disproved and Qodo dismissed it.
+
+[Current evidence](../qa/2026-09-18-mcp-connection-refresh/current-dev/README.md)
+includes 47 distinct affected cases, seven artifact guards, independent review,
+and final native004's four cells/32 captures with exact source hashes and clean
+shutdown/defaults/database/lock checks. The approved controls/styles are unchanged;
+compact toast overlap, toolbar clipping and catalog scrolling remain disclosed.
+Current-head CI/Qodo and final dev review still gate merge. PR2716 tool execution
+is the next saved bounded slice; it has not been integrated. PR2707 heartbeat
+remains paused. Older checkpoints below are historical.
+
+## Current checkpoint — PR2713 merged; catalog refresh resumes
+
+[PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) merged as
+`5e0f9f82c3` on 2026-09-20 after owner approval of twelve native captures,
+zero remaining Qodo findings, all five review threads resolved, and current-head
+CI: 1,152 Fast Lane cases plus artifact, performance, CSS and backlog checks.
+The final merge tree exactly matches CI's merge with current dev `c768376092`.
+[TASK-32880 closeout receipt](../qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/merge-closeout.json).
+
+Existing draft [PR2714](https://github.com/rmusser01/tldw_chatbook/pull/2714)
+resumes from this merged dev on a fresh branch. TASK-32830 covers actual local
+catalog discovery during refresh, original connection state, permission denials,
+failure/retry and owned-process cleanup. Current integration has 49 distinct focused passes, seven artifact guards,
+independent review, and four real native cells with 32 inspected captures.
+[Current QA](../qa/2026-09-18-mcp-connection-refresh/current-dev/README.md).
+Immediate compact notifications temporarily cover inspector actions; feedback
+captures preserve this UI follow-up alongside PR2712 toolbar clipping and
+below-fold catalog scrolling. Current-head review/CI and owner visual approval
+remain before its merge. Connected
+execution (PR2716), compact actions (PR2712) and wider screen reviews remain
+separate. Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2713 cancellation integration ready for review
 
 Saved [PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) resumes on

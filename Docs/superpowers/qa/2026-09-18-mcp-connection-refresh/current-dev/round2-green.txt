@@ -1,0 +1,20 @@
+.........................................                                [100%]
+----------- generated xml file: /private/tmp/32830-round2-green.xml ------------
+============================= slowest 25 durations =============================
+1.34s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]
+1.32s call     Tests/MCP/test_profile_refresh.py::test_failed_refresh_preserves_saved_catalog_and_can_retry[False]
+1.29s call     Tests/MCP/test_profile_refresh.py::test_padded_profile_id_restores_canonical_connection_state[False]
+1.27s call     Tests/MCP/test_profile_refresh.py::test_refresh_cleanup_preserves_a_concurrent_replacement
+1.26s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[True]
+1.26s call     Tests/MCP/test_profile_refresh.py::test_refresh_discovers_changes_and_preserves_connection_state[False]
+1.24s call     Tests/MCP/test_profile_refresh.py::test_padded_profile_id_restores_canonical_connection_state[True]
+1.17s call     Tests/MCP/test_profile_refresh.py::test_padded_profile_id_cleans_owned_session_on_save_failure
+1.15s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[False]
+1.14s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[launch]
+1.13s call     Tests/MCP/test_profile_refresh.py::test_refresh_denial_preserves_live_session_and_catalog[observe]
+1.12s call     Tests/MCP/test_profile_refresh.py::test_rejected_refresh_does_not_stop_another_pending_connection[True]
+1.11s call     Tests/MCP/test_profile_refresh.py::test_real_client_cleanup_failure_is_reported_and_can_retry_disconnect
+1.05s call     Tests/MCP/test_profile_refresh.py::test_disconnected_refresh_cleans_up_if_saving_catalog_fails
+
+(11 durations < 1s hidden.)
+41 passed in 20.13s
