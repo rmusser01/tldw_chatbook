@@ -11876,6 +11876,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -11895,6 +11896,8 @@
 >>>>>>> d3f102bb11 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 =======
 >>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+>>>>>>> b88823bc35 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
     "task_492_calls": 1355,
 =======
     "task_492_calls": 1356,
@@ -11949,7 +11952,12 @@
 =======
 =======
 >>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+>>>>>>> c20810dcc1 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
+>>>>>>> b88823bc35 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
     "task_492_calls": 1356,
 =======
 =======
@@ -11990,7 +11998,12 @@
 =======
 =======
 >>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+>>>>>>> 0c6e8c5019 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
+>>>>>>> b88823bc35 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
     "task_492_calls": 1409,
 >>>>>>> b463addfd6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 <<<<<<< HEAD
@@ -12022,7 +12035,13 @@
 =======
     "task_492_calls": 1407,
 >>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+    "task_492_calls": 1408,
+>>>>>>> 7a108e2d37 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
+>>>>>>> b88823bc35 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
     "task_494_calls": 7765
 >>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
