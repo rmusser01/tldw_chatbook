@@ -1,20 +1,25 @@
-"""Groq hosted Chat-Completions provider profile (TASK-32851, ADR-062).
+"""Mistral hosted Chat-Completions provider profile (TASK-32852, ADR-062).
 
 Transport, bounded retries, strict SSE framing, streamed usage capture, and
 exactly-once resource closure live in :mod:`tldw_chatbook.LLM_Calls.hosted_chat`;
-this module owns Groq's request resolution, payload allowlist, finish policy,
-and the legacy consumer surfaces: the shared
-:class:`~tldw_chatbook.LLM_Calls.legacy_line_stream.LegacyLineStream`
-(newline data lines, one trailing sentinel) and the legacy ``GroqResponse``
-choices/usage dict.
+this module owns Mistral's request resolution, payload allowlist (including
+the provider-specific ``random_seed``/``safe_prompt`` keys, the
+``Accept: application/json`` header, and the system-message dedup), finish
+policy, and the legacy consumer surfaces (the shared ``LegacyLineStream``
+and the legacy ``MistralResponse`` choices/usage dict).
 
-Defects the migration fixes, each pinned in
+Provider-specific behavior preserved from the pre-migration handler: Mistral
+uses ``random_seed`` (not ``seed``), does not support ``top_k``/``stop``/
+penalties/``logprobs``/``n``/``user``/``logit_bias`` (none are forwarded),
+prepends the system message only when the input does not already carry one,
+and resolves its endpoint under the ``mistralai`` provider key.
+
+Defects the migration fixes, pinned in
 ``Tests/LLM_Calls/test_groq_openrouter_migration_characterization.py``:
-Stop no longer raises ``RuntimeError`` after ``GeneratorExit`` nor leaks the
-response (no sentinel yield inside ``finally``); ``stream_options`` is
-requested and the trailing usage chunk is forwarded; a completed stream ends
-with exactly one ``[DONE]`` (the old relay emitted the provider's own sentinel
-plus a synthetic one); and the metric series name ``groq``.
+the sentinel-in-``finally`` Stop leak, unrequested/unforwarded streamed
+usage, the duplicated ``[DONE]`` on normal completion, and the wrong
+streaming metric label (the old streaming path logged
+``openrouter_api_response_time`` for Mistral).
 """
 
 from __future__ import annotations
@@ -49,15 +54,13 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     safe_llm_request_payload_summary,
 )
 
-# https://console.groq.com/docs/quickstart
 
+class MistralFinishPolicy:
+    """Validate Mistral finish and reasoning fields.
 
-class GroqFinishPolicy:
-    """Validate Groq finish and reasoning fields.
-
-    Groq emits the standard OpenAI finish reasons; ``content_filter`` is
-    grouped with the terminal-text reasons so a filtered completion is a
-    classified terminal state, not a protocol error.
+    Mistral emits the standard OpenAI-family finish reasons; the engine's
+    stream validator accepts only OpenAI-shaped deltas, which Mistral's
+    Chat-Completions surface provides.
     """
 
     reasoning_disposition = "proprietary"
@@ -70,29 +73,31 @@ class GroqFinishPolicy:
         has_calls: bool,
     ) -> str:
         if finish_reason not in {"stop", "tool_calls", "length", "content_filter"}:
-            raise HostedChatProtocolError("Groq finish state is malformed.")
+            raise HostedChatProtocolError("Mistral finish state is malformed.")
         if finish_reason == "tool_calls":
             if not has_calls:
-                raise HostedChatProtocolError("Groq finish state is inconsistent.")
+                raise HostedChatProtocolError("Mistral finish state is inconsistent.")
         elif has_calls or not has_text:
-            raise HostedChatProtocolError("Groq finish state is inconsistent.")
+            raise HostedChatProtocolError("Mistral finish state is inconsistent.")
         return finish_reason  # type: ignore[return-value]
 
     def validate_reasoning_content(self, value: object) -> str | None:
         if value is None:
             return None
         if not isinstance(value, str):
-            raise HostedChatProtocolError("Groq reasoning content is malformed.")
+            raise HostedChatProtocolError("Mistral reasoning content is malformed.")
         return value
 
 
-_FINISH_POLICY = GroqFinishPolicy()
+_FINISH_POLICY = MistralFinishPolicy()
 
 
-class GroqResponse(dict):
+class MistralResponse(dict):
     """Public legacy response dict with the normalized terminal turn attached."""
 
-    def __init__(self, value: dict[str, Any], *, terminal_turn: HostedChatTurn) -> None:
+    def __init__(
+        self, value: dict[str, Any], *, terminal_turn: HostedChatTurn
+    ) -> None:
         super().__init__(value)
         self._terminal_turn = terminal_turn
 
@@ -101,10 +106,10 @@ class GroqResponse(dict):
         return self._terminal_turn
 
 
-def _groq_turn_response(turn: HostedChatTurn) -> GroqResponse:
+def _mistral_turn_response(turn: HostedChatTurn) -> MistralResponse:
     message = turn.assistant_message
     if message is None:
-        raise HostedChatProtocolError("Groq response message is incomplete.")
+        raise HostedChatProtocolError("Mistral response message is incomplete.")
     response: dict[str, Any] = {
         "choices": [
             {
@@ -116,71 +121,70 @@ def _groq_turn_response(turn: HostedChatTurn) -> GroqResponse:
     }
     if turn.usage is not None:
         response["usage"] = dict(turn.usage)
-    return GroqResponse(response, terminal_turn=turn)
+    return MistralResponse(response, terminal_turn=turn)
 
 
 def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
-    log_histogram("groq_api_input_tokens", usage.get("prompt_tokens", 0),
-                  labels={"model": model})
-    log_histogram("groq_api_output_tokens", usage.get("completion_tokens", 0),
-                  labels={"model": model})
-    log_histogram("groq_api_total_tokens", usage.get("total_tokens", 0),
-                  labels={"model": model})
+    log_histogram(
+        "mistral_api_input_tokens", usage.get("prompt_tokens", 0),
+        labels={"model": model},
+    )
+    log_histogram(
+        "mistral_api_output_tokens", usage.get("completion_tokens", 0),
+        labels={"model": model},
+    )
+    log_histogram(
+        "mistral_api_total_tokens", usage.get("total_tokens", 0),
+        labels={"model": model},
+    )
 
 
 def _log_error_metrics(model: str, duration: float, exc: BaseException) -> None:
     status_code = getattr(exc, "status_code", None)
-    error_type = (
-        "http_error" if status_code is not None else exc.__class__.__name__
-    )
+    error_type = "http_error" if status_code is not None else exc.__class__.__name__
     labels: dict[str, str] = {"model": model, "error_type": error_type}
     if status_code is not None:
         labels["status_code"] = str(status_code)
-    log_counter("groq_api_error", labels=labels)
-    log_histogram("groq_api_error_response_time", duration, labels=labels)
+    log_counter("mistral_api_error", labels=labels)
+    log_histogram("mistral_api_error_response_time", duration, labels=labels)
 
 
 @_provider_recovery.unqualified
-def chat_with_groq(
+def chat_with_mistral(
     input_data: list[dict[str, Any]],
     model: str | None = None,
     api_key: str | None = None,
     system_message: str | None = None,
     temp: float | None = None,
-    maxp: float | None = None,  # top_p
     streaming: bool | None = False,
+    topp: float | None = None,
     max_tokens: int | None = None,
-    seed: int | None = None,
-    stop: str | list[str] | None = None,
-    response_format: dict[str, str] | None = None,
-    n: int | None = None,
-    user: str | None = None,  # user_identifier
+    random_seed: int | None = None,
+    top_k: int | None = None,
+    safe_prompt: bool | None = None,
     tools: list[dict[str, Any]] | None = None,
-    tool_choice: str | dict[str, Any] | None = None,
-    logit_bias: dict[str, float] | None = None,
-    presence_penalty: float | None = None,
-    frequency_penalty: float | None = None,
-    logprobs: bool | None = None,
-    top_logprobs: int | None = None,
-    custom_prompt_arg: str | None = None,  # Legacy
+    tool_choice: str | None = None,
+    response_format: dict[str, str] | None = None,
+    custom_prompt_arg: str | None = None,
     api_base_url: str | None = None,
 ):
-    del custom_prompt_arg
+    del custom_prompt_arg, top_k  # Mistral does not support top_k
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
-    groq_config = cli_api_settings.get("groq", {})
-    final_api_key = api_key or groq_config.get("api_key")
+    mistral_config = cli_api_settings.get("mistral", {})
+    final_api_key = api_key or mistral_config.get("api_key")
     if not final_api_key:
-        raise ChatConfigurationError(provider="groq", message="Groq API Key required.")
+        raise ChatConfigurationError(
+            provider="mistral", message="Mistral API Key required."
+        )
 
-    logger.debug("Groq: API key provided.")
-
-    current_model = model or groq_config.get("model", "llama3-8b-8192")
+    logger.debug("Mistral: API key provided.")
+    current_model = model or mistral_config.get("model", "mistral-large-latest")
     current_temp = (
-        temp if temp is not None else float(groq_config.get("temperature", 0.2))
+        temp if temp is not None else float(mistral_config.get("temperature", 0.1))
     )
-    current_top_p = maxp  # Groq uses top_p
-    current_streaming_cfg = groq_config.get("streaming", False)
+    current_top_p = topp  # Mistral uses top_p
+    current_streaming_cfg = mistral_config.get("streaming", False)
     current_streaming = (
         streaming
         if streaming is not None
@@ -191,26 +195,27 @@ def chat_with_groq(
         )
     )
 
+    current_max_tokens = (
+        max_tokens
+        if max_tokens is not None
+        else _coerce_int(mistral_config.get("max_tokens"))
+    )
+    current_safe_prompt = (
+        safe_prompt
+        if safe_prompt is not None
+        else bool(mistral_config.get("safe_prompt", False))
+    )
+
     log_counter(
-        "groq_api_request",
+        "mistral_api_request",
         labels={"model": current_model, "streaming": str(current_streaming)},
     )
 
-    def _coerce_int(value: Any) -> int | None:
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            logger.warning(f"Could not cast '{value}' to int. Using default.")
-            return None
-
-    current_max_tokens = (
-        max_tokens if max_tokens is not None else _coerce_int(groq_config.get("max_tokens"))
-    )
-
     api_messages = []
-    if system_message:
+    # Mistral expects the system message first; prepend only when the input
+    # does not already carry one (pre-migration dedup, preserved).
+    has_system_in_input = any(msg.get("role") == "system" for msg in input_data)
+    if system_message and not has_system_in_input:
         api_messages.append({"role": "system", "content": system_message})
     api_messages.extend(input_data)
 
@@ -225,55 +230,40 @@ def chat_with_groq(
         data["top_p"] = current_top_p
     if current_max_tokens is not None:
         data["max_tokens"] = current_max_tokens
-    if seed is not None:
-        data["seed"] = seed
-    if stop is not None:
-        data["stop"] = stop
-    if response_format is not None:
-        data["response_format"] = response_format
-    if n is not None:
-        data["n"] = n
-    if user is not None:
-        data["user"] = user
+    if random_seed is not None:
+        data["random_seed"] = random_seed  # Mistral uses random_seed
+    if current_safe_prompt is not None:
+        data["safe_prompt"] = current_safe_prompt  # Mistral specific
     if tools is not None:
         data["tools"] = tools
     if tool_choice is not None:
-        data["tool_choice"] = tool_choice
-    if logit_bias is not None:
-        data["logit_bias"] = logit_bias
-    if presence_penalty is not None:
-        data["presence_penalty"] = presence_penalty
-    if frequency_penalty is not None:
-        data["frequency_penalty"] = frequency_penalty
-    if logprobs is not None:
-        data["logprobs"] = logprobs
-    if top_logprobs is not None and data.get("logprobs") is True:
-        data["top_logprobs"] = top_logprobs
+        data["tool_choice"] = tool_choice  # "auto", "any", "none"
+    if response_format is not None:
+        data["response_format"] = response_format  # {"type": "json_object"}
     if current_streaming:
-        # Groq is OpenAI-compatible: request the trailing usage chunk so the
-        # engine's usage validation (and the Console usage ledger) have it.
         data["stream_options"] = {"include_usage": True}
 
     base_url = (
         api_base_url
-        or groq_config.get("api_base_url")
-        or builtin_provider_endpoint("groq", groq_config)
+        or mistral_config.get("api_base_url")
+        or builtin_provider_endpoint("mistralai", mistral_config)
     )
     if not is_sensitive_llm_request():
         # task-2116: allowlisted summary only; see the OpenAI branch in
         # LLM_API_Calls for why a denylist isn't safe here.
         logger.debug(
-            "Groq Request Payload (safe fields only): "
+            "Mistral Request Payload (safe fields only): "
             f"{safe_llm_request_payload_summary(data)}"
         )
 
     config = HostedHTTPTransportConfig(
-        provider="groq",
+        provider="mistral",
         base_url=base_url,
         api_key=final_api_key,
         timeout=180.0 if current_streaming else 120.0,
-        retries=llm_retry_count(int(groq_config.get("api_retries", 3))),
-        retry_delay=float(groq_config.get("api_retry_delay", 1)),
+        retries=llm_retry_count(int(mistral_config.get("api_retries", 3))),
+        retry_delay=float(mistral_config.get("api_retry_delay", 1)),
+        extra_headers={"Accept": "application/json"},
     )
     try:
         result = hosted_chat_request(
@@ -285,13 +275,13 @@ def chat_with_groq(
     except HostedChatProtocolError:
         duration = time.time() - start_time
         _log_error_metrics(current_model, duration, exc=ChatProviderError(
-            provider="groq",
-            message="Groq returned a malformed successful response.",
+            provider="mistral",
+            message="Mistral returned a malformed successful response.",
             status_code=502,
         ))
         raise ChatProviderError(
-            provider="groq",
-            message="Groq returned a malformed successful response.",
+            provider="mistral",
+            message="Mistral returned a malformed successful response.",
             status_code=502,
         ) from None
     except (
@@ -308,15 +298,12 @@ def chat_with_groq(
 
     duration = time.time() - start_time
     log_histogram(
-        "groq_api_response_time",
+        "mistral_api_response_time",
         duration,
-        labels={
-            "model": current_model,
-            "streaming": str(current_streaming),
-        },
+        labels={"model": current_model, "streaming": str(current_streaming)},
     )
     log_counter(
-        "groq_api_success",
+        "mistral_api_success",
         labels={"model": current_model, "streaming": str(current_streaming)},
     )
 
@@ -324,4 +311,14 @@ def chat_with_groq(
         return LegacyLineStream(result)
     if result.usage is not None:
         _log_usage_metrics(current_model, result.usage)
-    return _groq_turn_response(result)
+    return _mistral_turn_response(result)
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning(f"Could not cast '{value}' to int. Using default.")
+        return None

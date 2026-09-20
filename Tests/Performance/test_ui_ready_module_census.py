@@ -133,7 +133,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: inside LLM_API_Calls at first paint -- the split adds module objects, not
 #: new mount work -- and app.py's provider map imports the names eagerly, so
 #: lazy re-export surgery would buy nothing.
-MAX_TLDW_MODULES_AT_UI_READY = 1023
+#: 1023 -> 1026 (2026-09-19, TASK-32852): deepseek.py + mistral.py provider
+#: profiles and the shared legacy_line_stream.py shim join the same split;
+#: same reasoning as the 1022 -> 1023 bump above.
+MAX_TLDW_MODULES_AT_UI_READY = 1026
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
