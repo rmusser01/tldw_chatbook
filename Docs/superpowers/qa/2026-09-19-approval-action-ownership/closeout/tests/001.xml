@@ -1,0 +1,1303 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="18" skipped="0" tests="229" time="47.216" timestamp="2026-09-20T09:24:38.478420-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_approval_action_ownership" name="test_published_press_keeps_its_generation_after_button_changes" time="0.176" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_mixed_submission_paths_lock_before_publishing_and_decide_once[False]" time="0.038" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_mixed_submission_paths_lock_before_publishing_and_decide_once[True]" time="0.039" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-approve-all]" time="0.256" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-deny-all]" time="0.213" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[round-submit]" time="0.215" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-approve-all]" time="0.217" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-deny-all]" time="0.209" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[calls-submit]" time="0.212" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-approve-all]" time="0.210" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-deny-all]" time="0.213" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[round_trip-submit]" time="0.215" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-approve-all]" time="0.167" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-deny-all]" time="0.176" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[clear-submit]" time="0.167" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-approve-all]" time="0.216" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-deny-all]" time="0.221" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_toolbar_press_cannot_act_on_a_changed_batch[finishing-submit]" time="0.221" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_repeated_submit_decides_the_batch_only_once[submit]" time="0.217" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_repeated_submit_decides_the_batch_only_once[fast-approve]" time="0.210" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_queued_repeated_submit_decides_the_batch_only_once[fast-deny]" time="0.210" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_unchanged_resync_keeps_a_queued_toolbar_action_valid[approve-all]" time="0.172" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_unchanged_resync_keeps_a_queued_toolbar_action_valid[deny-all]" time="0.172" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_unchanged_resync_keeps_a_queued_toolbar_action_valid[submit]" time="0.218" /><testcase classname="Tests.UI.test_approval_action_ownership" name="test_submitted_round_stays_inert_but_a_fresh_round_can_submit" time="0.325" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_summarize_arguments_redacts_secret_looking_values" time="0.056" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_set_batch_redacts_secret_arguments_in_rendered_row" time="0.145" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_legacy_single_approval_api_was_removed" time="0.059" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_card_never_renders_the_retired_single_approval_buttons" time="0.171" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_set_batch_renders_one_row_per_unique_name_with_tooltips" time="0.145" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_raw_shell_row_shows_complete_command_and_danger_context" time="0.149" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does" time="0.147" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit" time="0.275" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_raw_shell_command_view_has_bounded_scrollable_geometry" time="0.063"><failure message="AssertionError: _agentic_terminal.tcss's '.approval-row-full-command' block is missing 'width: 1fr'&#10;assert 'width: 1fr' in '.approval-row-full-command {\n    width: $ds-width-fill;\n    height: $ds-size-6;\n    min-height: $ds-size-3;\n'">def test_raw_shell_command_view_has_bounded_scrollable_geometry():
+&gt;       _assert_rule_pinned_in_bundle_source_and_bundle(
+            ".approval-row-full-command",
+            ("width: 1fr", "height: 6", "min-height: 3"),
+        )
+
+Tests/UI/test_console_mcp_approval.py:373:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '.approval-row-full-command'
+expected_declarations = ('width: 1fr', 'height: 6', 'min-height: 3')
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -&gt; None:
+        """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
+        helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
+        every one of ``expected_declarations`` in BOTH the bundle-source
+        component file (`_agentic_terminal.tcss`) and the generated bundle
+        (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
+        source edit."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+&gt;               assert declaration in block, (
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '.approval-row-full-command' block is missing 'width: 1fr'
+E               assert 'width: 1fr' in '.approval-row-full-command {\n    width: $ds-width-fill;\n    height: $ds-size-6;\n    min-height: $ds-size-3;\n'
+
+Tests/UI/test_console_mcp_approval.py:87: AssertionError</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_reason_badges_carry_a_visible_why_line_not_a_tooltip" time="0.147" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid_default" time="0.146" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_bulk_approve_and_deny_all_are_row_aware_and_never_raise" time="0.228" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_bulk_actions_flag_a_row_they_could_not_apply_to" time="0.220" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_changing_a_flagged_rows_select_clears_needs_decision" time="0.227" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_unrelated_select_changed_does_not_touch_batch_rows" time="0.203" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_approve_all_and_deny_all_bulk_set_every_row" time="0.233" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision" time="0.178" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix" time="0.227" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_prefix" time="0.228" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_submit_posts_approval_decided_with_per_row_decisions" time="0.221" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_submit_echoes_back_the_round_id_stamped_by_set_batch" time="0.226" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_set_batch_with_no_calls_hides_the_card" time="0.174" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_set_batch_remount_does_not_duplicate_rows" time="0.151" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_identical_approval_round_sync_preserves_mounted_controls" time="0.348" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_changed_ordinary_one_row_reuses_only_noncommitting_widgets" time="0.229" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_queued_old_select_event_cannot_change_the_new_round" time="0.228" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_back_to_back_changed_rounds_leave_only_latest_controls" time="0.233" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_single_row_batch_renders_fast_approve_and_deny_buttons" time="0.156" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_multi_row_batch_omits_fast_buttons" time="0.156" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_fast_approve_button_submits_approve_once_immediately" time="0.221" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_fast_deny_button_submits_deny_immediately" time="0.221" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_stale_generation_fast_button_press_is_a_noop" time="0.234" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_fast_approve_button_disables_after_press_to_prevent_double_submit" time="0.242" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_new_batch_reenables_submit_after_a_prior_round_disabled_it" time="0.302" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_descriptor_effects_reach_the_mounted_production_approval_card" time="0.260"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-617/test_descriptor_effects_reach_0')
+
+    @pytest.mark.asyncio
+    async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
+        """A controller-marshaled local descriptor reaches the real card unchanged."""
+        app = _ControllerCardsHarness()
+        assert _BUNDLED_STYLESHEET.resolve() in {
+            path.resolve() for path in app.css_path
+        }
+        async with app.run_test(size=(200, 40)) as pilot:
+            cards = app.query_one(ChatTaskCards)
+&gt;           gate = LocalToolProvider(
+                workspace_root=tmp_path,
+                resolve_state=lambda _hub: EffectiveToolState(
+                    state="ask", origin="global_default"
+                ),
+            ).pending_gate_for("fs_list", {"effects": ["network"], "path": "."})
+
+Tests/UI/test_console_mcp_approval.py:1414:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8485: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6264: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_approved_definitive_tool_stays_mounted_until_real_terminal[success]" time="0.227"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-617/test_approved_definitive_tool_0')
+crash_after_release = False
+
+    @pytest.mark.parametrize("crash_after_release", [False, True], ids=("success", "crash"))
+    @pytest.mark.asyncio
+    async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
+        tmp_path, crash_after_release
+    ):
+        """Approval becomes a disabled finishing card until the keyed terminal.
+
+        This uses the production task-card hierarchy, a real local descriptor,
+        the real review bridge, and ``AgentService._make_invoke_tool``.  The
+        handler is event-blocked so the assertion cannot race a fast mutation;
+        the crash case proves the same terminal cleanup runs for ``BaseException``.
+        """
+        from tldw_chatbook.Agents.agent_models import (
+            AgentConfig,
+            RunBudget,
+            ToolCall,
+            ToolResult,
+        )
+        from tldw_chatbook.Agents.agent_service import AgentService
+        from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+        from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+        from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+            WatchlistBundleService,
+        )
+        from tldw_chatbook.Tools.watchlists_command_service import (
+            WatchlistsCommandService,
+        )
+
+        app = _ControllerCardsHarness()
+        entered = threading.Event()
+        release = threading.Event()
+        result_box: dict[str, ToolResult] = {}
+        subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+        bundles = WatchlistBundleService(subscriptions)
+
+        def blocked_create(**kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test never released definitive handler")
+            if crash_after_release:
+                raise SystemExit("secret definitive crash detail")
+            return bundles.create_with_sources(**kwargs)
+
+        def unavailable(*_args, **_kwargs):
+            return None
+
+        commands = WatchlistsCommandService(
+            runtime_source_loader=lambda: "local",
+            create_sources_batch=unavailable,
+            create_collection=blocked_create,
+            update_collection_sources=unavailable,
+        )
+&gt;       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        )
+
+Tests/UI/test_console_mcp_approval.py:1519:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8485: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6264: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_approved_definitive_tool_stays_mounted_until_real_terminal[crash]" time="0.220"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-617/test_approved_definitive_tool_1')
+crash_after_release = True
+
+    @pytest.mark.parametrize("crash_after_release", [False, True], ids=("success", "crash"))
+    @pytest.mark.asyncio
+    async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
+        tmp_path, crash_after_release
+    ):
+        """Approval becomes a disabled finishing card until the keyed terminal.
+
+        This uses the production task-card hierarchy, a real local descriptor,
+        the real review bridge, and ``AgentService._make_invoke_tool``.  The
+        handler is event-blocked so the assertion cannot race a fast mutation;
+        the crash case proves the same terminal cleanup runs for ``BaseException``.
+        """
+        from tldw_chatbook.Agents.agent_models import (
+            AgentConfig,
+            RunBudget,
+            ToolCall,
+            ToolResult,
+        )
+        from tldw_chatbook.Agents.agent_service import AgentService
+        from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+        from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+        from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+            WatchlistBundleService,
+        )
+        from tldw_chatbook.Tools.watchlists_command_service import (
+            WatchlistsCommandService,
+        )
+
+        app = _ControllerCardsHarness()
+        entered = threading.Event()
+        release = threading.Event()
+        result_box: dict[str, ToolResult] = {}
+        subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+        bundles = WatchlistBundleService(subscriptions)
+
+        def blocked_create(**kwargs):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test never released definitive handler")
+            if crash_after_release:
+                raise SystemExit("secret definitive crash detail")
+            return bundles.create_with_sources(**kwargs)
+
+        def unavailable(*_args, **_kwargs):
+            return None
+
+        commands = WatchlistsCommandService(
+            runtime_source_loader=lambda: "local",
+            create_sources_batch=unavailable,
+            create_collection=blocked_create,
+            update_collection_sources=unavailable,
+        )
+&gt;       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        )
+
+Tests/UI/test_console_mcp_approval.py:1519:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8485: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6264: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_run_terminal_sweeps_approved_undispatched_row_after_base_exception[system-exit]" time="0.272" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_run_terminal_sweeps_approved_undispatched_row_after_base_exception[cancelled-error]" time="0.260" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_local_same_name_finishing_rows_complete_by_call_id_out_of_order" time="0.096"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-617/test_local_same_name_finishing0')
+
+    def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_path):
+        """Two approved local mutations remain independently addressable."""
+        from tldw_chatbook.Agents.agent_models import ToolCall
+        from tldw_chatbook.Chat.console_chat_controller import build_local_review_hook
+
+&gt;       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        )
+
+Tests/UI/test_console_mcp_approval.py:1738:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8485: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6264: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id" time="0.096" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_finishing_card_is_not_counted_and_keyboard_focuses_the_card" time="0.098"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
+        """Finishing is status, not a pending decision or disabled focus target."""
+&gt;       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1840:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_console_binds_alt_a_to_review_pending_approval" time="0.096" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_alt_a_focuses_the_pending_approval_decision_select" time="0.096"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_alt_a_focuses_the_pending_approval_decision_select():
+        """With a batch pending, Alt+A lands focus on the row's decision
+        Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
+        contract)."""
+&gt;       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1896:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_alt_a_notifies_when_nothing_is_pending" time="0.096"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_alt_a_notifies_when_nothing_is_pending():
+        """With nothing pending, Alt+A notifies rather than focusing anything --
+        same fallback message as the inspector's Review approval button
+        (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
+&gt;       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1923:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed" time="0.098"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
+        """AC#3: the route works at 80 columns with the inspector closed."""
+&gt;       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1941:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css" time="0.099"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
+        """Without an explicit width, `_conversations.tcss`'s bare `Select {
+        width: 100%; }` rule would size a row's decision Select to the FULL
+        row width (not just its own share), overlapping/clipping it behind the
+        header and args Statics laid out before it in the row's Horizontal --
+        verified empirically before landing the fix. Asserts all three
+        per-row widgets render with real size AND stay within the row's own
+        bounds in left-to-right order, under the real bundled stylesheet.
+
+        T9 (MCP Hub Phase 5): also asserts HEIGHT bounds: each `.approval-row`
+        stays compact (height &lt;= 6 -- three stacked lines since TASK-1846 split
+        header/args/controls, plus slack for a multi-arg collapsed row; a row
+        that lost `height: auto` balloons to ~15), the `#approval-batch-rows`
+        container doesn't balloon (height &lt;= rows*3 + slack), and the
+        `#approval-batch-actions` bar sits close after the rows (region.y within
+        a few rows of the last row's bottom), matching the audit-mode geometry
+        tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
+&gt;       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:1987:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css" time="0.097"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
+        """task-1234 review round 1: the sibling multi-row geometry test above
+        only ever mounts a 2-row batch, so `.approval-row-fast-approve`/
+        `.approval-row-fast-deny` (single-row-only, see `set_batch`'s
+        `single_row` gate) never actually render under the REAL bundled
+        stylesheet in any existing test. Asserts both fast buttons get real,
+        non-overlapping geometry, sit after the decision Select, and stay
+        inside the row's own bounds -- the same class of `Select { width:
+        100%; }`-style cascade surprise the sibling test guards against, now
+        for the two new buttons.
+
+        The production Console is allowed to mount and settle before the pending
+        approval state is delivered, matching the real worker-to-UI round trip."""
+&gt;       app = _build_ready_production_console_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:2111:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1362: in _build_ready_production_console_app
+    app = _build_test_app(
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle" time="0.097"><failure message="AssertionError: _agentic_terminal.tcss's '.approval-row-decision {' block is missing 'width: 27;'&#10;assert 'width: 27;' in '.approval-row-decision {\n    width: $ds-agentic-prompt-vars-pane;\n'">def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -&gt; (
+        None
+    ):
+        """T9: id-scoped bundle rule directly on `.approval-row-decision`
+        (a class selector -- higher specificity than `_conversations.tcss`'s
+        bare `Select { width: 100%; }` type selector, so it wins regardless of
+        the two files' relative concatenation order in build_css.py) -- same
+        Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
+        / `#mcp-audit-filter-decision` above, applied to the approval card."""
+&gt;       _assert_rule_pinned_in_bundle_source_and_bundle(
+            ".approval-row-decision {", ("width: 27;",)
+        )
+
+Tests/UI/test_console_mcp_approval.py:2160:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '.approval-row-decision {', expected_declarations = ('width: 27;',)
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -&gt; None:
+        """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
+        helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
+        every one of ``expected_declarations`` in BOTH the bundle-source
+        component file (`_agentic_terminal.tcss`) and the generated bundle
+        (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
+        source edit."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+&gt;               assert declaration in block, (
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '.approval-row-decision {' block is missing 'width: 27;'
+E               assert 'width: 27;' in '.approval-row-decision {\n    width: $ds-agentic-prompt-vars-pane;\n'
+
+Tests/UI/test_console_mcp_approval.py:87: AssertionError</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_approval_row_height_rule_pinned_in_bundle_source_and_bundle" time="0.099"><failure message="AssertionError: _agentic_terminal.tcss's '.approval-row {' block is missing 'width: 1fr;'&#10;assert 'width: 1fr;' in '.approval-row {\n    height: auto;\n    min-height: $ds-size-1;\n    width: $ds-width-fill;\n'">def test_approval_row_height_rule_pinned_in_bundle_source_and_bundle() -&gt; None:
+        """T9: `.approval-row` (a Horizontal, which defaults to `height: 1fr`)
+        needs an explicit `height: auto` -- otherwise each row would try to
+        claim a `1fr` share of its `#approval-batch-rows` parent's remaining
+        space instead of hugging its own single-line content, the same
+        fr-inside-auto-parent collapse class documented on
+        `MCPAuditMode.BUNDLED_CSS`'s Findings-view comment."""
+&gt;       _assert_rule_pinned_in_bundle_source_and_bundle(
+            ".approval-row {", ("height: auto;", "width: 1fr;")
+        )
+
+Tests/UI/test_console_mcp_approval.py:2172:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+selector = '.approval-row {'
+expected_declarations = ('height: auto;', 'width: 1fr;')
+
+    def _assert_rule_pinned_in_bundle_source_and_bundle(
+        selector: str, expected_declarations: tuple[str, ...]
+    ) -&gt; None:
+        """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
+        helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
+        every one of ``expected_declarations`` in BOTH the bundle-source
+        component file (`_agentic_terminal.tcss`) and the generated bundle
+        (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
+        source edit."""
+        agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
+        bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+        for text, label in (
+            (agentic_terminal, "_agentic_terminal.tcss"),
+            (bundled_stylesheet, "tldw_cli_modular.tcss"),
+        ):
+            start = text.find(selector)
+            assert start != -1, f"{label} is missing {selector!r}"
+            end = text.find("}", start)
+            block = text[start:end]
+            for declaration in expected_declarations:
+&gt;               assert declaration in block, (
+                    f"{label}'s {selector!r} block is missing {declaration!r}"
+                )
+E               AssertionError: _agentic_terminal.tcss's '.approval-row {' block is missing 'width: 1fr;'
+E               assert 'width: 1fr;' in '.approval-row {\n    height: auto;\n    min-height: $ds-size-1;\n    width: $ds-width-fill;\n'
+
+Tests/UI/test_console_mcp_approval.py:87: AssertionError</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_approval_batch_rows_height_rule_pinned_in_bundle_source_and_bundle" time="0.098" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_round_trip_resolves_from_ui_thread" time="0.147" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_routes_one_decision_to_duplicate_names" time="0.156" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_preserves_native_call_ids_as_verdict_keys" time="0.152" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_run_terminal_clears_approved_definitive_row_never_dispatched" time="0.096" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_close_session_discards_its_approved_definitive_row[approval]" time="0.102" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_close_session_discards_its_approved_definitive_row[finishing]" time="0.096" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided" time="1.104" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_cancellation_denies_undecided" time="1.104" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_active_cancel_event_denies_undecided" time="0.152" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_unrelated_session_stop_does_not_cross_cancel" time="0.302" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log" time="1.289" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_switch_session_parks_rather_than_denies_a_pending_approval_round" time="0.257" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_parks_for_a_non_active_session" time="0.110" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_badge_up" time="0.304" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_round" time="1.102" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_own_session_cancel_event_denies_the_round" time="0.096" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_switch" time="0.309" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_evict_the_newer_ones_payload" time="0.308" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated" time="0.308" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_teardown" time="0.122" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id" time="0.105" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_for_the_same_session" time="0.100" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_resolve_pending_approval_without_active_round_is_a_noop" time="0.099" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_resolve_pending_approval_without_round_id_fails_closed_and_leaves_round_pending" time="0.307" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_with_no_pending_calls_returns_empty_and_never_surfaces_card" time="0.098" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names" time="0.154" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_chat_screen_forwards_approval_decided_to_controller" time="0.185" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_chat_screen_approval_decided_handler_tolerates_no_controller" time="0.172" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_survives_marshal_failure_during_teardown" time="0.156" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_call_id_keyed_decision_still_stamps_the_builtin_gate" time="0.096" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_collapsed_row_discloses_every_target_in_the_rendered_row" time="0.179" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_armed_deadline_is_visible_on_the_mounted_card" time="0.262" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_the_deadline_countdown_ticks_and_stops_on_clear_or_timeout" time="1.474" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_refusing_one_call_does_not_get_overwritten_by_approving_another" time="0.095"><failure message="AssertionError: approving spec.md must still let it run: {'read_file': 'proceed', 'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved')}&#10;assert ToolReviewDecision(verdict='proceed', approval_decision='approved') == 'proceed'&#10; +  where ToolReviewDecision(verdict='proceed', approval_decision='approved') = &lt;built-in method get of dict object at 0x11cc9ae40&gt;('call-2', 'proceed')&#10; +    where &lt;built-in method get of dict object at 0x11cc9ae40&gt; = {'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephras...ision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved'), 'read_file': 'proceed'}.get">@pytest.mark.unit
+    def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
+        """A per-call REFUSAL must reach the runtime, not be flattened away.
+
+        TASK-1861. Verdicts are keyed per `call_id` so the user can allow
+        `spec.md` and refuse `secrets.md` in one batch -- but both enforcement
+        consumers are name-keyed (`builtin_gate.stamp` records a grant against a
+        tool NAME; `apply_batch_decisions` takes llm_names), and the hook
+        returned a flat `{name: "proceed"}`. So two rows of one tool disagreeing
+        resolved LAST-WRITE-WINS on a single name:
+
+            stamped: [("read_file", "deny"), ("read_file", "approve_once")]
+
+        Refuse `secrets.md` first, approve `spec.md` second, and the surviving
+        stamp is `approve_once` -- the file the user explicitly refused is read.
+        This fails OPEN, which is why it is pinned rather than left to the
+        round-trip tests: the card offers a decision the pipeline could not
+        honour.
+
+        The fix enforces refusals PER CALL at the runtime hook (the runtime
+        resolves `call_id` before name, and a non-"proceed" verdict string
+        becomes the call's result without dispatch), leaving the name-keyed
+        stamps to carry only what was APPROVED.
+        """
+        from types import SimpleNamespace
+
+        from tldw_chatbook.Agents.agent_models import ToolCall
+        from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+        stamped: list[tuple[str, str]] = []
+
+        class _Gate:
+            def begin_turn(self, run_id):
+                pass
+
+            def resolve(self, tool):
+                return SimpleNamespace(state="ask", risk_floored=False)
+
+            def stamp(self, run_id, name, decision):
+                stamped.append((name, decision))
+
+            def is_session_approved(self, name):
+                return False
+
+            def options_for(self, tool):
+                return ("approve_once", "approve_session", "deny")
+
+        class _Provider:
+            def tool_for(self, name):
+                return SimpleNamespace(name=name)
+
+        def request_approvals(pending):
+            by_path = {row.call_id: (row.arguments or {}).get("path") for row in pending}
+            # Refuse secrets.md; allow spec.md. Refusal FIRST is the fail-open
+            # ordering -- the later approval used to overwrite it.
+            return {
+                call_id: ("deny" if path == "secrets.md" else "approve_once")
+                for call_id, path in by_path.items()
+            }
+
+        hook = build_tool_review_hook(
+            _Gate(), _Provider(), None, request_approvals, workspace_id=None
+        )
+        verdicts = hook(
+            [
+                ToolCall(name="read_file", args={"path": "secrets.md"}, call_id="call-1"),
+                ToolCall(name="read_file", args={"path": "spec.md"}, call_id="call-2"),
+            ],
+            RUN,
+        )
+
+        refusal = verdicts.get("call-1")
+        assert refusal and refusal != "proceed", (
+            "the refusal of secrets.md never reached the runtime, so the "
+            f"name-keyed approval of spec.md let it through: {verdicts}"
+        )
+&gt;       assert verdicts.get("call-2", "proceed") == "proceed", (
+            f"approving spec.md must still let it run: {verdicts}"
+        )
+E       AssertionError: approving spec.md must still let it run: {'read_file': 'proceed', 'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved')}
+E       assert ToolReviewDecision(verdict='proceed', approval_decision='approved') == 'proceed'
+E        +  where ToolReviewDecision(verdict='proceed', approval_decision='approved') = &lt;built-in method get of dict object at 0x11cc9ae40&gt;('call-2', 'proceed')
+E        +    where &lt;built-in method get of dict object at 0x11cc9ae40&gt; = {'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephras...ision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved'), 'read_file': 'proceed'}.get
+
+Tests/UI/test_console_mcp_approval.py:3873: AssertionError</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_mcp_rows_carry_their_call_id_so_two_targets_are_two_decisions" time="0.095" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last" time="0.098" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_the_broadest_approval_scope_for_a_tool_survives_collapsing" time="0.100" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revoking_a_run_denies_its_rounds_and_leaves_another_runs_untouched" time="0.252" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revoking_a_run_unblocks_its_waiting_thread_and_clears_the_card" time="0.256" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revoking_an_unknown_run_is_a_zero_return_noop" time="0.255" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_a_decision_landing_after_a_revoke_cannot_reopen_the_round" time="0.104" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_a_revoked_childs_card_can_no_longer_execute_its_tool" time="0.322" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_the_next_turns_stop_does_not_deny_an_earlier_turns_survivors_card" time="2.759" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_a_round_armed_between_turns_is_not_deniable_by_a_later_turns_stop" time="2.761" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_the_owning_turns_own_stop_still_denies_its_round" time="1.118" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_shutdown_still_denies_a_survivors_round" time="1.114" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision" time="1.708" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_marks_human_input_wait_while_round_armed" time="0.115" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_request_mcp_approvals_without_ui_fails_closed_immediately" time="0.117" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_mcp_approval_timeout_default_is_no_deadline" time="0.119" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_human_prompt_defaults_pin_no_deadline" time="0.107" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_a_no_app_round_reports_every_key_as_unanswered" time="0.108" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook" time="0.121"><failure message="AssertionError: assert ToolReviewDecision(verdict='tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision=None) == 'tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.'&#10; +  where 'tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.' = &lt;built-in method format of str object at 0x10c015140&gt;(name='mcp__srv__tool')&#10; +    where &lt;built-in method format of str object at 0x10c015140&gt; = 'tool call denied by the user: {name}. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.'.format">def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
+        """The MCP review hook's end of the same bug: an unanswered round must
+        not reach `MCPToolProvider.record_user_denial`."""
+        from tldw_chatbook.Agents.agent_models import ToolCall
+        from tldw_chatbook.Chat.console_chat_controller import (
+            USER_DENIED_REFUSAL,
+            build_tool_review_hook,
+        )
+
+        controller, _ = _build_controller()
+        assert controller.app is None  # the branch under test
+
+        denials: list[str] = []
+
+        class _McpProvider:
+            def apply_batch_decisions(self, run_id, stamps):
+                pass
+
+            def pending_gate_for(self, name, args, call_id="", *, rationale=""):
+                return _pending(llm_name=name, call_id=call_id)
+
+            def record_user_denial(self, llm_name):
+                denials.append(llm_name)
+
+        class _BuiltinGate:
+            def begin_turn(self, run_id):
+                pass
+
+            def stamp(self, run_id, name, decision):
+                pass
+
+        class _BuiltinProvider:
+            def tool_for(self, name):
+                return None
+
+        hook = build_tool_review_hook(
+            _BuiltinGate(),
+            _BuiltinProvider(),
+            _McpProvider(),
+            controller.request_mcp_approvals,
+            workspace_id=None,
+        )
+        verdicts = hook(
+            [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
+        )
+
+&gt;       assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+E       AssertionError: assert ToolReviewDecision(verdict='tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision=None) == 'tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.'
+E        +  where 'tool call denied by the user: mcp__srv__tool. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.' = &lt;built-in method format of str object at 0x10c015140&gt;(name='mcp__srv__tool')
+E        +    where &lt;built-in method format of str object at 0x10c015140&gt; = 'tool call denied by the user: {name}. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.'.format
+
+Tests/UI/test_console_mcp_approval.py:4770: AssertionError</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_the_approval_route_reaches_a_pending_skill_install_card" time="0.111"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_the_approval_route_reaches_a_pending_skill_install_card():
+        """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
+        FIVE interrupt kinds, not just approvals and questions.
+
+        A pending skill-install (or skill-script) confirm registers in the same
+        round registry and marks the tab, but the route knew only approval and
+        question cards -- so clicking that tab, or pressing Alt+A, reached the
+        "No approval is pending." warning while its decision card sat mounted on
+        screen. What this pins is the routing decision: the route finds that card
+        and declines to warn. Where focus lands inside a card is the card's own
+        contract (`test_alt_a_focuses_the_pending_approval_decision_select`).
+
+        Synced WITHOUT an intervening pause on purpose: with no real round armed,
+        the controller's next projection tick clears the pending payload again.
+        """
+&gt;       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:4788:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_a_route_with_nothing_pending_can_decline_to_warn" time="0.109"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">@pytest.mark.asyncio
+    async def test_a_route_with_nothing_pending_can_decline_to_warn():
+        """Qodo #5: a ◆ tab whose card is already gone must fall back to the
+        ordinary tab press, not warn -- so the shared route takes
+        `notify_missing=False` and reports whether it focused anything."""
+&gt;       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_mcp_approval.py:4834:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_post_revoke_arm_denies_without_mounting[approval]" time="0.109" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_post_revoke_arm_denies_without_mounting[skill_script]" time="0.111" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_empty_run_owner_warns_once_without_payload_content[approval]" time="0.117" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_empty_run_owner_warns_once_without_payload_content[skill_script]" time="0.123" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revoke_after_result_snapshot_but_before_unregister_returns_cached_allow" time="0.117" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revoke_before_result_snapshot_returns_deny" time="0.111" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_local_provider_refuses_write_after_revoke_then_arm" time="0.113"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-617/test_local_provider_refuses_wr0')
+
+    def test_local_provider_refuses_write_after_revoke_then_arm(tmp_path):
+        ctrl, sid = _revocation_controller()
+        mounted = _revocation_auto_answer(ctrl, "approval")
+&gt;       provider = LocalToolProvider(
+            workspace_root=tmp_path,
+            allow_write=True,
+            resolve_state=lambda _hub: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+            approval_callback=lambda rows: ctrl.request_mcp_approvals(rows, session_id=sid),
+        )
+
+Tests/UI/test_console_mcp_approval.py:5040:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tldw_chatbook/Agents/local_tool_provider.py:663: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:4283: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:8485: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:6264: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109b83b00&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired</failure></testcase><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revoked_arm_is_refused_before_configuration_read[approval]" time="0.110" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revoked_arm_is_refused_before_configuration_read[skill_script]" time="0.104" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_revocation_cannot_split_a_batch_snapshot" time="0.106" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_sibling_payload_remounts_after_round_ends[revoke-approval]" time="0.108" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_sibling_payload_remounts_after_round_ends[revoke-skill_script]" time="0.117" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_sibling_payload_remounts_after_round_ends[teardown-approval]" time="0.114" /><testcase classname="Tests.UI.test_console_mcp_approval" name="test_sibling_payload_remounts_after_round_ends[teardown-skill_script]" time="0.119" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-approval-actions]" time="0.044" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-recovery-catalog]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-restored-roots]" time="0.044" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-tools-header]" time="0.029" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-modal-selector]" time="0.157" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-catalog-freshness]" time="0.029" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-navigation]" time="0.029" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-revoke]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-rule-actions]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-permission-navigation]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-approval-actions]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-recovery-catalog]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-restored-roots]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-tools-header]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-modal-selector]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-catalog-freshness]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-navigation]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-revoke]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-rule-actions]" time="0.042" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-permission-navigation]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-approval-actions]" time="0.042" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-recovery-catalog]" time="0.042" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-restored-roots]" time="0.043" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-tools-header]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-modal-selector]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-catalog-freshness]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-navigation]" time="0.028" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-revoke]" time="0.042" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-rule-actions]" time="0.042" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-permission-navigation]" time="0.140" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-approval-actions]" time="0.106" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-recovery-catalog]" time="0.107" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-restored-roots]" time="0.110" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-tools-header]" time="0.106" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-modal-selector]" time="0.105" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-catalog-freshness]" time="0.103" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-navigation]" time="0.103" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-revoke]" time="0.105" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-rule-actions]" time="0.103" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-permission-navigation]" time="0.102" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-approval-actions]" time="0.102" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-recovery-catalog]" time="0.106" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-restored-roots]" time="0.106" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-tools-header]" time="0.102" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-modal-selector]" time="0.109" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-catalog-freshness]" time="0.104" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-navigation]" time="0.104" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-revoke]" time="0.108" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-rule-actions]" time="0.108" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-permission-navigation]" time="0.108" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-approval-actions]" time="0.104" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-recovery-catalog]" time="0.107" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-restored-roots]" time="0.106" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-tools-header]" time="0.102" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-modal-selector]" time="0.218" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-catalog-freshness]" time="0.105" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-navigation]" time="0.103" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-revoke]" time="0.108" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-rule-actions]" time="0.103" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-permission-navigation]" time="0.103" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-approval-actions]" time="0.106" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-recovery-catalog]" time="0.104" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-restored-roots]" time="0.103" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-tools-header]" time="0.102" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-modal-selector]" time="0.104" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-catalog-freshness]" time="0.102" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-navigation]" time="0.104" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-revoke]" time="0.101" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-rule-actions]" time="0.106" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-permission-navigation]" time="0.104" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_tmux_names_reject_trailing_newlines[names0]" time="0.004" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_tmux_names_reject_trailing_newlines[names1]" time="0.002" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes" time="0.004" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_unsafe_profile_is_rejected_before_output[outside]" time="0.003" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_unsafe_profile_is_rejected_before_output[alias]" time="0.002" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_unsafe_profile_is_rejected_before_output[traversal]" time="0.002" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_unsafe_profile_is_rejected_before_output[tmp-base]" time="0.002" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_unsafe_profile_is_rejected_before_output[escaped-home]" time="0.002" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_unsafe_profile_is_rejected_before_output[escaped-db]" time="0.003" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_existing_output_is_preserved_and_rejected[native.log]" time="0.117" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_existing_output_is_preserved_and_rejected[launch.json]" time="0.003" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_existing_output_is_preserved_and_rejected[evidence]" time="0.002" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_existing_output_is_preserved_and_rejected[dangling-log]" time="0.003" /><testcase classname="Tests.Utils.test_mcp_native_qa_args" name="test_missing_tmux_is_reported_before_output" time="0.003" /></testsuite></testsuites>

@@ -642,8 +642,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
             compact=True,
         )
         yield Static(
-            "Restored permissions stay inactive until reviewed. Review creates fresh "
-            "Ask/local defaults; connecting and granting tools remain separate actions.",
+            "Review creates fresh Ask/local defaults. Historical rules and grants "
+            "remain inactive. Connecting and granting tools are separate actions.",
             markup=False,
         )
         yield Button(

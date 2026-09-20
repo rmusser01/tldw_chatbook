@@ -1,0 +1,40 @@
+.........................................                                [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5d2e0126-f7e7-4b42-9907-5084fc7fb342/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5d2e0126-f7e7-4b42-9907-5084fc7fb342/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5d2e0126-f7e7-4b42-9907-5084fc7fb342
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5d2e0126-f7e7-4b42-9907-5084fc7fb342'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+8.14s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_actual_mcp_view_state_preserves_selection_validation_and_review_revision
+4.59s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[current]
+4.35s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[failure]
+3.78s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-current]
+3.71s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[empty]
+3.63s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[mode]
+3.60s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[duplicate]
+3.52s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[cancel_accepted]
+3.52s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[approve]
+3.46s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[service]
+3.46s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[target_round_trip]
+3.27s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[finding]
+3.22s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[tool]
+3.21s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[screen_round_trip]
+3.15s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[overview]
+3.14s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-service]
+3.06s call     Tests/Backup_Recovery/test_mcp_recovery_catalog.py::test_reviewed_catalog_publication_is_passive_and_owned[round_trip]
+3.03s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[detail]
+2.99s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[readiness]
+2.95s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-screen_round_trip]
+2.92s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[sync_lock]
+2.91s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-mode]
+2.91s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-screen_round_trip]
+2.90s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-service]
+2.89s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-screen]
+41 passed, 2 warnings in 127.15s (0:02:07)

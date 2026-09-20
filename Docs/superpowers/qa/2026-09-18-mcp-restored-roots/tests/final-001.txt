@@ -1,0 +1,181 @@
+......................................FF                                 [100%]
+=================================== FAILURES ===================================
+_ test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume _
+
+    @pytest.mark.asyncio
+    async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume():
+        """T13: shortcuts clear when another screen suspends the MCP destination
+        (e.g. the mcpServers-import file picker pushed on top) and re-register
+        once that overlay pops back to the MCP screen.
+        """
+        from textual.screen import Screen as TextualScreen
+
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_destination_shells.py:3435:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10cab3710>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+______________ test_mcp_destination_footer_shortcuts_follow_mode _______________
+
+    @pytest.mark.asyncio
+    async def test_mcp_destination_footer_shortcuts_follow_mode():
+        """F-055: the footer only advertises keys that work in the ACTIVE mode
+        -- `t` appears in Tools mode, `space` in Permissions mode, and neither
+        leaks into the other modes where pressing it is dead or hijacking."""
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_destination_shells.py:3399:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/app_factory.py:321: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:112: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:419: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:611: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:269: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10cab3710>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f9d0103b-a836-4d97-ba4f-5a213d0eb4a3/test_fs_read_of_file_in_unread0
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f9d0103b-a836-4d97-ba4f-5a213d0eb4a3/test_fs_read_of_file_in_unread0'
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/component-pattern-library/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:95: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f9d0103b-a836-4d97-ba4f-5a213d0eb4a3
+  <class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f9d0103b-a836-4d97-ba4f-5a213d0eb4a3'
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+8.30s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_actual_mcp_view_state_preserves_selection_validation_and_review_revision
+3.71s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-current]
+3.54s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[sync_lock]
+3.45s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[target_round_trip]
+3.35s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[approve]
+3.25s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[duplicate]
+3.24s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-service]
+3.18s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[empty]
+3.09s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-service]
+3.09s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-screen_round_trip]
+3.07s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-screen_round_trip]
+3.03s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[tool]
+3.00s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[readiness]
+2.99s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[overview]
+2.98s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[detail]
+2.95s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-screen]
+2.95s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-mode]
+2.93s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-screen]
+2.91s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[finding]
+2.91s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-mode]
+2.89s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-current]
+2.85s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[success-round_trip]
+2.82s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_completion_owns_its_view[failure-round_trip]
+2.63s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[cancel_accepted]
+2.54s call     Tests/Backup_Recovery/test_mcp_recovery_controls.py::test_mounted_restored_mcp_root_review[source]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume
+FAILED Tests/UI/test_destination_shells.py::test_mcp_destination_footer_shortcuts_follow_mode
+2 failed, 38 passed, 2 warnings in 111.95s (0:01:51)

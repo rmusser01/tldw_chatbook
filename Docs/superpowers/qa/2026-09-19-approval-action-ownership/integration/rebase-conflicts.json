@@ -1,0 +1,10 @@
+{
+  "saved_head": "10747313ea6ec2c8d40381518ca31708cc94fa68",
+  "base": "de10a62e67124a2b21b78edf1a4887cea03ff139",
+  "product_conflicts": [],
+  "conflicts": {
+    "Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md": "Retained every dev line in order, followed by the complete saved Console checkpoint within the conflict.",
+    "Docs/superpowers/reports/2026-09-18-mcp-review.md": "Retained every dev line in order, followed by the complete saved Console checkpoint within the conflict."
+  },
+  "lessons": "Merged automatically; preserved current dev and the saved native visibility incident."
+}

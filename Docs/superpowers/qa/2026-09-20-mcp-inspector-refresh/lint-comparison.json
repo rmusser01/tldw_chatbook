@@ -1,0 +1,12 @@
+{
+  "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": {
+    "baseline_count": 13,
+    "current_count": 13,
+    "introduced": []
+  },
+  "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+    "baseline_count": 65,
+    "current_count": 65,
+    "introduced": []
+  }
+}

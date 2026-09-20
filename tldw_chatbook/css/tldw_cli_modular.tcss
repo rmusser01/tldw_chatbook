@@ -10557,6 +10557,9 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     min-width: $ds-size-0;
 }
 
+/* ===== MODULE: features/_library_artifacts.tcss ===== */
+
+
 /* ===== MODULE: features/_settings.tcss ===== */
 
 

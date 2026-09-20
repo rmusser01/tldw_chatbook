@@ -27,12 +27,14 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert shell.header_line == "Library | Local"
     assert [s.section_id for s in shell.sections] == [
         "browse",
+        "artifacts",
         "create",
         "study",
         "ingest",
     ]
     assert [s.title for s in shell.sections] == [
         "Browse",
+        "Artifacts",
         "Create",
         "Study",
         "Import / Export",
@@ -86,27 +88,27 @@ def test_shell_sections_rows_and_targets_are_fixed():
         "skills",
         3,
     )
-    create_ids = [r.row_id for r in shell.sections[1].rows]
+    create_ids = [r.row_id for r in shell.sections[2].rows]
     assert create_ids == [
         "create-note",
         LIBRARY_ROW_CREATE_PROMPT,
         LIBRARY_ROW_CREATE_SKILL,
     ]
-    assert [r.title for r in shell.sections[1].rows] == [
+    assert [r.title for r in shell.sections[2].rows] == [
         "New note",
         "New prompt",
         "New skill",
     ]
     assert (
-        shell.sections[1].rows[0].target_kind,
-        shell.sections[1].rows[0].target_id,
+        shell.sections[2].rows[0].target_kind,
+        shell.sections[2].rows[0].target_id,
     ) == (
         "canvas",
         LIBRARY_CANVAS_KIND_NOTES_CREATE,
     )
     # F-017: the Study rows are handoffs ("Continue in Study"), grouped in
     # their own section -- not under Create, which is for making things.
-    study = shell.sections[2]
+    study = shell.sections[3]
     assert [r.row_id for r in study.rows] == [
         "create-study",
         "create-flashcards",
@@ -115,7 +117,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert [r.title for r in study.rows] == ["Study decks", "Flashcards", "Quizzes"]
     assert all(r.target_kind == "handoff" for r in study.rows)
     assert [r.target_id for r in study.rows] == ["study", "flashcards", "quizzes"]
-    ingest = shell.sections[3]
+    ingest = shell.sections[4]
     assert [r.title for r in ingest.rows] == ["Import…", "Export"]
     assert (ingest.rows[0].target_kind, ingest.rows[0].target_id) == (
         "canvas",
@@ -126,7 +128,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
         "export",
     )
     assert ingest.rows[1].disabled is False
-    assert all(r.count is None for r in shell.sections[1].rows)
+    assert all(r.count is None for r in shell.sections[2].rows)
 
 
 def test_empty_selection_yields_landing_canvas():
@@ -284,7 +286,7 @@ def test_handoff_rows_target_handoff_kind_and_carry_their_target_id(
     row_id, expected_target
 ):
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
-    row = next(r for r in shell.sections[2].rows if r.row_id == row_id)
+    row = next(r for r in shell.sections[3].rows if r.row_id == row_id)
     assert row.target_kind == "handoff"
     assert row.target_id == expected_target
     assert (shell.canvas_kind, shell.canvas_target) == ("handoff", expected_target)
@@ -478,9 +480,9 @@ def test_server_header_line():
 
 
 def _study_row(shell, row_id):
-    # F-017: the study handoff rows live in the "study" section (index 2),
+    # F-017: the study handoff rows live in the "study" section (index 3),
     # not under Create.
-    return next(r for r in shell.sections[2].rows if r.row_id == row_id)
+    return next(r for r in shell.sections[3].rows if r.row_id == row_id)
 
 
 def test_flashcards_due_count_renders_bright_when_positive():
@@ -563,3 +565,24 @@ def test_library_selection_count_line_names_the_action_a_zero_blocks():
     assert library_selection_count_line(0, "Export") == "0 selected — Export unavailable"
     assert library_selection_count_line(1, "Export selected") == "1 selected"
     assert library_selection_count_line(12, "Export selected") == "12 selected"
+
+
+@pytest.mark.parametrize("runtime_source", ["local", "server"])
+def test_artifact_routes_remain_local(runtime_source):
+    shell = build_library_shell_state(
+        LibraryShellInput(runtime_source=runtime_source),
+        selected_row_id="artifacts-reports",
+    )
+    section = next(
+        section for section in shell.sections if section.section_id == "artifacts"
+    )
+    assert [
+        (row.row_id, row.title, row.target_kind, row.target_id) for row in section.rows
+    ] == [
+        ("artifacts-all", "All artifacts", "canvas", "artifacts-all"),
+        ("artifacts-chatbooks", "Chatbooks", "canvas", "artifacts-chatbooks"),
+        ("artifacts-reports", "Reports", "canvas", "artifacts-reports"),
+    ]
+    assert not section.rows[0].disabled
+    assert shell.canvas_kind == "artifacts-reports"
+    assert shell.selected_row_id == "artifacts-reports"

@@ -1,0 +1,9 @@
+{
+  "config_fixture_source": "/private/tmp/tldw-32841-native-003/config.toml",
+  "config_paths_rebound_to": "/private/tmp/tldw-32841-closeout-native-001",
+  "canonical_root_validated": true,
+  "no_databases_copied": true,
+  "launch_cwd": "/private/tmp",
+  "startup_home_and_xdg": "runner sets all private roots before app imports",
+  "tmux_path": "/opt/homebrew/bin/tmux"
+}

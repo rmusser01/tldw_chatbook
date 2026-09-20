@@ -2,7 +2,7 @@
 
 task-32349: ``coerce_library_lifecycle(raw=None, is_new_profile=False)`` returns
 EXPANDED so a returning, populated profile does not flash the compact starter
-rail while the six-source evidence read is still in flight. That default is
+rail while the seven-source evidence read is still in flight. That default is
 right; what was wrong is that nothing ever took it back. An empty profile whose
 ``config.toml`` merely pre-dated its first Library visit therefore opened the
 full nine-destination rail and offered "Back to Get started" -- a return to a

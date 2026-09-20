@@ -1,0 +1,284 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names0]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[outside]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[alias]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[traversal]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[tmp-base]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-home]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-db]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[native.log]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[launch.json]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[evidence]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[dangling-log]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_missing_tmux_is_reported_before_output",
+      "status": "passed"
+    }
+  ]
+}

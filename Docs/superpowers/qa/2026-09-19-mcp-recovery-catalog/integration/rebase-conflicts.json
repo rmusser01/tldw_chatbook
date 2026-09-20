@@ -1,0 +1,11 @@
+{
+  "base": "ebee42fab8a7f55def6a03fc7b3301935940eebf",
+  "saved_head": "dcdeb2e295309d46d0775becc27f99da066244dc",
+  "product_conflicts": [],
+  "choices": {
+    "Docs/superpowers/reports/2026-09-18-mcp-review.md": "Keep every dev line in order, then retain full saved catalog checkpoint.",
+    "Docs/security/production-diagnostic-inventory.json": "Start from dev inventory, review sole added redacted warning, regenerate on combined source."
+  },
+  "all_dev_report_lines_retained_in_order": true,
+  "historical_checkpoint_retained": true
+}
