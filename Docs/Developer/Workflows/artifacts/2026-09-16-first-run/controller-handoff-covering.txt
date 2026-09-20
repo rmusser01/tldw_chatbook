@@ -1,0 +1,30 @@
+Final targeted handoff verification at 766e2ca43222703a9b07fe67cbcb9dcf3a75811f (subsequent working changes were acceptance-record documentation only).
+No live endpoint requests. Pre-import disposable profile prepared via the existing standalone test launcher.
+Command:
+env -u TASK6_LIVE_PROFILE -u TASK6_LIVE_PHASE -u TASK6_LIVE_SIZE -u TASK6_ARTIFACTS PYTHONPATH=. TLDW_TEST_CONFIG_ROOT=<worktree>/.superpowers/sdd/2026-09-16-workflows-first-run/controller-handoff-bootstrap <root-venv>/bin/python -m pytest -o addopts= -q --tb=short --show-capture=no --basetemp=.superpowers/sdd/2026-09-16-workflows-first-run/controller-handoff-tests Tests/UI/test_workflows_editor.py Tests/UI/test_workflows_run.py Tests/UI/test_workflows_paging.py Tests/UI/test_workflows_projection_performance.py Tests/Workflows/test_file_to_note_integration.py
+
+Output (concatenated PTY chunks):
+................................................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+........ [ 45%]
+..........................................{'compact': False, 'page_seconds': 0.008760332595556974, 'project_calls': 0, 'projected_bytes': 0}
+.{'compact': True, 'page_seconds': 0.1116543747484684, 'project_calls': 0, 'projected_bytes': 0}
+.......{'raw_edit_seconds': 0.04865370877087116, 'max_heartbeat_gap_seconds': 0.06226570811122656}
+...................... [ 90%]
+.............--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.s                                                         [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+159 passed, 1 skipped, 1 warning in 205.32s (0:03:25)
+
+Exit code: 0

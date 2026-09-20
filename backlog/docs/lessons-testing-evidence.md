@@ -638,6 +638,37 @@ Keep only final distribution artifacts in the checkout after validation.
 
 ---
 
+## A single-Note flow does not exercise opening an earlier result during a write
+
+**TASK-32691, 2026-09-16.** Final branch review found that Open Note acquired
+the existing Notes-owner mutex on the app loop, while a later Note worker could
+hold that mutex and synchronously wait for its pre-write callback on the loop.
+Single-Note UI tests passed because there was no saved Note to open while the
+first write ran. A two-Note barrier test with the real owner intercepted the
+contended blocking app-loop acquisition and reproduced the defect safely;
+it did not leave an actual frozen app process running.
+
+Exercise controls for earlier completed results while later admitted effects
+are active. Draw the cross-thread wait relationships, not just each method's
+local lock usage. A UI control must not block its event loop on a lock whose
+holder can need that loop. Keep destination checks fail-closed when adding a
+nonblocking busy path, and test queued events, cancellation and later retry.
+
+## A Stay result does not prove the remaining app owners are usable
+
+**TASK-32691, 2026-09-16.** The first Workflows quit integration permanently
+disposed Console before a fallible workflow drain, so a failed quit left Console
+unusable. Moving workflow close earlier fixed that case, and 53 targeted tests
+passed, but a renewed Console confirmation could now return Stay with the real
+WorkflowAuthoring, DraftSession and WorkflowSession permanently closed. The
+changed-revision test used a session stub and no authoring owner, so it only
+proved that the app had not exited.
+
+Test an aborted cross-owner shutdown with real owners: perform a new edit/save
+and separately prepared run afterward, while proving the old cancelled run
+does not resume. Reordering irreversible closes alone cannot establish this;
+distinguish fallible preparation/physical settlement from final destruction.
+
 ## Retaining a disclosure does not prove its streaming body stays mounted
 
 **TASK-32522, thinking flicker, 2026-09-12.** The existing same-widget test
@@ -16000,3 +16031,82 @@ RLock and `locked()` for a plain `Lock` are the honest questions; the rewritten
 probe went red against the old shape and green against the new one. A
 concurrency probe that never fails against the defect is worse than no probe:
 it launders the defect as tested.
+## Retaining final HTTP cleanup does not retain interrupted internal close (TASK-32691, 2026-09-16)
+
+The first bounded llama.cpp request passed 440 targeted tests, including a held
+final cleanup test. Independent review then held the actual transport socket
+close during headers/body cancellation and sent a second cancellation. The
+operation returned while its peer remained open: HTTPCore had marked and removed
+the connection, leaving final client cleanup nothing to close. Caller cancellation
+followed by the request deadline reproduced the same loss of ownership.
+
+The correction retains the send/headers/body task itself. Its shielded waiter
+owns the deadline, disarms it when stopping, forwards cancellation once, and
+drains the transport before final cleanup. A twelve-case real-listener matrix
+holds physical close across headers/body, caller/request/attempt stopping, and
+late cancellation; it asserts the operation remains pending, then actual peer
+EOF after release. Test the resource's internal failure cleanup, not only the
+outer finalizer, and include competing deadline/cancel signals. This proves local
+connection settlement, not that a model server stopped generating.
+
+## A workflow-core import can initialize the real profile (TASK-32691, 2026-09-16)
+
+A read-only reviewer tried a standalone `python -` admission probe with
+`PYTHONDONTWRITEBYTECODE=1` and imported `Workflows.session` before test isolation.
+The import traversed Chat, Library, Skills and runtime-policy packages into
+`config.py`; it loaded the real config and attempted the default data-root lock.
+The sandbox refused its append-open before the probe's `main()` ran. Disabling
+bytecode did not isolate profile-owning imports. The successful reproduction
+instead ran under pytest's pre-import isolation and used a stubbed Note effect.
+
+Afterward, read-only metadata checks showed the config, config directory,
+data-root lock and default data-root directory all retained modification/change
+times predating the attempt. That supports no changes to those specific paths,
+not a claim based on a nonexistent full-profile before/after snapshot. No repair
+or cleanup was attempted. Reviewer probes must establish pytest's existing
+config/data/keyring isolation before importing even apparent workflow-core
+modules; checking only that they do not import `app.py` is insufficient.
+
+## Correct screenshot dimensions do not prove faithful SVG rendering (TASK-32691, 2026-09-16)
+
+The first execution UI packet had 21 valid SVG/PNG pairs with matching dimensions,
+but CairoSVG rendered missing-glyph squares and border strokes beyond their
+containers. The same unchanged Textual SVGs rendered correctly in an isolated
+installed Chrome context, with external font requests blocked and local monospace
+fallback. No app CSS or exported text was changed. A dimension-only check would
+have confused capture artifacts with production layout defects.
+
+Keep the raw compositor export, visually inspect the converted result, and use a
+second existing renderer when conversion is suspect. State font-fallback limits;
+do not call a converted image native-terminal typography evidence. This check is
+separate from actual hit-region, focus, content-paint and app-level UAT assertions.
+
+## A shallow mounted-child check does not prove a nested subtree is ready (TASK-32691, 2026-09-16)
+
+The merged Workflow regression run crashed opening a saved Note at 110×36:
+Library presentation rehydration could find authority/title widgets but not the
+nested Edit button. Fresh isolated reruns and three actual llama.cpp walkthroughs
+passed, so passing reruns did not explain the failure. Holding the existing
+mode-controls mount at an event barrier reproduced the identical `NoMatches`
+while both old readiness checks were true.
+
+Test the partial-mount interval directly, then release it and assert the latest
+retained presentation reaches the controls automatically. Checking only that
+the update returns without an exception can conceal a dropped update. Use the
+existing completed-mount hook as the readiness boundary, not arbitrary sleeps,
+longer timeouts, or a growing list of shallow child-existence checks.
+
+## Passing isolated UI tests can hide a stale view-restoration callback (TASK-32691, 2026-09-16)
+
+The targeted merged run found the Workflow max-token repair field at screen
+coordinate `(68, 38)` on a 36-row screen. The same test passed alone, and a
+combined 113-test UI run passed. A held post-layout callback then reproduced the
+exact failure: after the user focused the max-token field, an older section-view
+restoration focused the prompt field and overwrote scroll. Invalidating the
+max-token value left its repair control out of view.
+
+The permanent regression selects and hit-tests the newer field, releases the
+older callback, verifies unchanged focus/scroll, and types invalid input through
+the pilot before hit-testing again. It never re-scrolls after the failure point.
+Guard stale deferred restoration at its existing callback; adding a corrective
+scroll to the test would have hidden the interaction bug.

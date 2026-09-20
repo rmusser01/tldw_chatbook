@@ -16,7 +16,6 @@ WorkflowsScreen #workflow-authoring { height: $ds-height-fill; min-height: $ds-s
     WorkflowEditor .workflow-field { height: auto; margin-bottom: $ds-space-stack; }
     WorkflowEditor .workflow-field Label { height: auto; margin: $ds-space-0; }
     WorkflowEditor TextArea { height: $ds-size-6; min-height: $ds-control-height; }
-    WorkflowEditor Input { height: $ds-control-height; margin: $ds-space-0; }
     WorkflowEditor Collapsible { padding: $ds-space-0; margin: $ds-space-0 $ds-space-0 $ds-space-stack $ds-space-0; border: none; }
     WorkflowEditor Collapsible > Contents { padding: $ds-space-0 $ds-space-inset; }
     WorkflowEditor .workflow-help { height: auto; color: $ds-text-muted; }
@@ -26,14 +25,14 @@ WorkflowsScreen #workflow-authoring { height: $ds-height-fill; min-height: $ds-s
 
 
     ChoiceModal { align: center middle; background: $background $ds-opacity-dim; }
-    ChoiceModal > Vertical { width: $ds-percent-90; max-width: $ds-size-90; height: $ds-percent-80; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
+    ChoiceModal > Vertical.workflow-choice-body { width: $ds-percent-90; max-width: $ds-size-90; height: $ds-percent-80; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
     ChoiceModal OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
     ChoiceModal .workflow-dialog-actions { height: $ds-control-height-compact; }
     ChoiceModal .choice-copy { height: auto; max-height: $ds-size-8; }
     ChoiceModal #workflow-dialog-detail { height: $ds-height-fill; min-height: $ds-size-2; max-height: $ds-size-8; }
     ChoiceModal #workflow-dialog-detail Static { height: auto; }
     ChoiceModal.has-scroll-detail #workflow-dialog-choices { height: $ds-control-height; min-height: $ds-control-height; }
-    StepChooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
+    StepChooser > Vertical.workflow-choice-body { padding: $ds-space-0 $ds-space-inset; }
     StepChooser .choice-copy { max-height: $ds-control-height; }
 
 
@@ -106,3 +105,24 @@ WorkflowEditor .workflow-collapse-title {
 }
 .workflow-step-chooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
 .workflow-step-chooser #workflow-type-detail { max-height: $ds-control-height; }
+
+/* One disposable session panel; the continuous authoring panes retain their flex. */
+WorkflowRunPanel { height: auto; padding: $ds-space-0 $ds-space-inset; }
+WorkflowRunPanel.workflow-session-expanded { height: 45%; min-height: 8; }
+WorkflowRunPanel Collapsible { height: 1fr; padding: $ds-space-0; margin: $ds-space-0; border: none; }
+WorkflowRunPanel Collapsible > Contents { padding: $ds-space-0; height: 1fr; }
+WorkflowRunPanel #workflow-session-content { height: 1fr; min-height: $ds-control-height; }
+WorkflowRunPanel Static.workflow-run-copy { height: auto; }
+/* CollapsibleTitle inherits Static; preserve its compact height explicitly. */
+#workflow-session-collapse > CollapsibleTitle { height: auto; }
+WorkflowRunPanel #workflow-session-status { height: $ds-control-height-compact; color: $ds-status-info; }
+WorkflowRunPanel TextArea { height: 6; min-height: $ds-textarea-min-height; padding: $ds-space-0 $ds-space-inset; }
+.workflow-run-actions { height: $ds-control-height-compact; margin: $ds-space-0; }
+WorkflowRunSetup, WorkflowRunConfirmation { align: center middle; background: $background $ds-opacity-dim; }
+.workflow-run-dialog { width: 90%; max-width: 100; height: 90%; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
+.workflow-run-dialog VerticalScroll.workflow-run-scroll { height: 1fr; min-height: $ds-control-height; }
+.workflow-run-dialog Static.workflow-run-copy { height: auto; }
+.workflow-run-heading { color: $ds-action-focus; text-style: $ds-text-strong; }
+.workflow-run-dialog Input.workflow-run-field, .workflow-run-dialog Select.workflow-run-field { height: $ds-control-height; margin: $ds-space-0; }
+.workflow-run-dialog TextArea { height: 6; padding: $ds-space-0 $ds-space-inset; }
+#workflow-setup-error { color: $ds-status-error-readable; }
