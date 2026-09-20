@@ -11,9 +11,18 @@ def main() -> None:
     """Serve bounded JSON-RPC discovery from isolated test-owned state files.
 
     Raises:
+        ValueError: A state or trace path escapes the caller-owned fixture root.
         TimeoutError: Held initialization is not released within fifteen seconds.
     """
-    state_path, trace_path = map(Path, sys.argv[1:3])
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from tldw_chatbook.Utils.path_validation import (
+        validate_canonical_directory,
+        validate_path,
+    )
+
+    root = validate_canonical_directory(sys.argv[3])
+    state_path = validate_path(sys.argv[1], root, redact_paths=True)
+    trace_path = validate_path(sys.argv[2], root, redact_paths=True)
     for line in sys.stdin:
         request = json.loads(line)
         method = request.get("method")

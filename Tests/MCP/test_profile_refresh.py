@@ -7,6 +7,7 @@ import json
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ async def profile(
                 str(Path(__file__).parent / "fixtures/stdio_catalog_server.py"),
                 str(state),
                 str(trace),
+                str(tmp_path.resolve()),
             ),
         )
     )
@@ -201,3 +203,44 @@ async def test_rejected_refresh_does_not_stop_another_pending_connection(
             outcome = await asyncio.gather(connecting, return_exceptions=True)
         assert_catalog(outcome[0], "original")
         assert "catalog" in client.sessions
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_refresh_cleanup_preserves_a_concurrent_replacement(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connection queued during save survives the refresh's owned teardown."""
+    async with profile(tmp_path) as (service, client, store, _policy, _state, _trace):
+        replacement: asyncio.Task | None = None
+        temporary = None
+        save = store.save_discovery_snapshot
+        # A separate caller must acquire its own activation, not inherit the
+        # in-flight refresh's task-bound storage lease through create_task.
+        caller_context = copy_context()
+
+        def save_and_queue_connection(profile_id: str, snapshot: dict[str, Any]) -> Any:
+            nonlocal replacement, temporary
+            result = save(profile_id, snapshot)
+            if replacement is None:
+                temporary = client.sessions[profile_id]
+                replacement = asyncio.create_task(
+                    service.connect_profile(profile_id), context=caller_context
+                )
+            return result
+
+        monkeypatch.setattr(store, "save_discovery_snapshot", save_and_queue_connection)
+        try:
+            assert_catalog(
+                await service.refresh_external_profile("catalog"), "original"
+            )
+        finally:
+            # Join the second real connection even if refresh itself fails.
+            if replacement is not None:
+                await asyncio.wait_for(replacement, timeout=10)
+        assert temporary is not None
+        assert temporary.process.returncode is not None
+        current = client.sessions["catalog"]
+        assert current is not temporary
+        assert current.process.returncode is None
+        assert_catalog(await client.describe_server("catalog"), "original")

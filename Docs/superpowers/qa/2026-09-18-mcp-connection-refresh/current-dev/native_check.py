@@ -49,6 +49,7 @@ async def _save_fixture_profile(
                 str(repo / "Tests/MCP/fixtures/stdio_catalog_server.py"),
                 str(evidence / "fixture-state.json"),
                 str(evidence / "fixture-trace.jsonl"),
+                str(evidence.resolve()),
             ],
             "env_placeholders": {},
             "env_literals": {},
