@@ -12,7 +12,7 @@ through the workbench.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ from textual.events import Click, DescendantFocus, Resize
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, OptionList, Select, Static
 from textual.widgets._select import SelectCurrent, SelectOverlay
-from textual.widgets.data_table import RowDoesNotExist
+from textual.widgets.data_table import RowDoesNotExist, RowKey
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool, filter_tools
 from tldw_chatbook.MCP.local_config_saves import ConfigSaveState
@@ -163,6 +163,13 @@ class MCPToolsServerSelect(Select):
 
 class MCPToolsTable(DataTable):
     """Report the final catalog viewport, including parent scrollbar changes."""
+
+    def _update_dimensions(self, new_rows: Iterable[RowKey]) -> None:
+        # Textual 8 can paint headers before idle measures new rows. Its cell
+        # and row cache keys omit width, so those headers survive auto-sizing.
+        # Clear before measuring so auto-height rows still populate fresh caches.
+        self._clear_caches()
+        super()._update_dimensions(new_rows)
 
     class Resized(Message, namespace="mcp_tools_table"):
         """The table's geometry changed independently of its outer canvas."""

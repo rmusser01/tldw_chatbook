@@ -1,0 +1,88 @@
+{
+  "module_origins": {
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_recovery_review": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_recovery_review.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.Widgets.confirmation_dialog": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/Widgets/confirmation_dialog.py"
+  },
+  "pid": 85491,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "full_review_painted": true,
+      "actions_visible": true,
+      "cancel_and_reopen": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "full_review_painted": true,
+      "actions_visible": true,
+      "cancel_and_reopen": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "full_review_painted": true,
+      "actions_visible": true,
+      "cancel_and_reopen": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "full_review_painted": true,
+      "actions_visible": true,
+      "cancel_and_reopen": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": "4d13e8897f8ebf00e85205877c991b005eb3d1b68ee5fa1c63331b816c49bd0d",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "d5fb4339ee61d8fed8594c8af2c2b1b839712f2d93bbcb437052f20ad947e557",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "68b7fcffc3f88a854d701caee3d7955d486282656fdd08e3d2c071dd23915f92",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "671f887d71a3f96ecacfd2df5e1b6b62ca5b584dd49b3683f720f67d939dd0df",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a",
+    "tldw_chatbook/UI/Screens/mcp_screen.py": "c3db4e0c4817ee1002f3d6556e0f24f4ea1e4f6451527c4f3765a9bae9a75bb0",
+    "tldw_chatbook/MCP/recovery_activation.py": "5ec6a9fd3898e1da1a34d4513c0981b8aaf493c11f8848a202101fca337f66d1",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/UI/MCP_Modules/mcp_recovery_review.py": "78ad6c82ca120d8cbfcbdb3b86c317656688802e5423e53ca39e4c74ca57cb30",
+    "tldw_chatbook/Widgets/confirmation_dialog.py": "7068ef169c5e9b92ddde551f9ecdd1b37f89ad7fcf984a07816f9343d2bcfb02",
+    "tldw_chatbook/css/components/_dialogs.tcss": "149a459c6393b37213ef3e84c44e57bb3dbe66843b6b7f237e7c7f29b068c3cc"
+  },
+  "runner_sha256": "b95e437ce22b9888f852f43d58eeead4084c20d7c5ce2a06757800f58def75e1",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "fresh defaults",
+  "approvals": 4,
+  "passive_only": true,
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

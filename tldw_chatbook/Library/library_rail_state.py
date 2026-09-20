@@ -7,14 +7,24 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Library.library_content_evidence import (
+    LIBRARY_CONTENT_SOURCES,
+    LibraryContentEvidence,
+)
 
-LIBRARY_RAIL_SECTION_IDS = ("browse", "create", "study", "ingest", "details")
+LIBRARY_RAIL_SECTION_IDS = (
+    "browse",
+    "artifacts",
+    "create",
+    "study",
+    "ingest",
+    "details",
+)
 
 _TRUE_STRINGS = {"true", "yes", "1", "on"}
 _FALSE_STRINGS = {"false", "no", "0", "off"}
 
-_LIBRARY_CONTENT_SOURCE_COUNT = 6
+_LIBRARY_CONTENT_SOURCE_COUNT = len(LIBRARY_CONTENT_SOURCES)
 
 
 class LibraryLifecycle(str, Enum):
@@ -31,6 +41,7 @@ class LibraryRailPreferences:
     """Persisted open/collapsed preferences for Library rail sections."""
 
     browse_open: bool = True
+    artifacts_open: bool = True
     create_open: bool = True
     # F-017: the Study handoff rows live in their own section (they open
     # the Study destination; they create nothing).
@@ -67,6 +78,7 @@ def coerce_library_rail_preferences(raw: Any) -> LibraryRailPreferences:
         return defaults
     return LibraryRailPreferences(
         browse_open=_coerce_bool(raw.get("browse_open"), defaults.browse_open),
+        artifacts_open=_coerce_bool(raw.get("artifacts_open"), defaults.artifacts_open),
         create_open=_coerce_bool(raw.get("create_open"), defaults.create_open),
         study_open=_coerce_bool(raw.get("study_open"), defaults.study_open),
         ingest_open=_coerce_bool(raw.get("ingest_open"), defaults.ingest_open),
@@ -90,7 +102,7 @@ def coerce_library_lifecycle(
 
     An absent value defaults to EXPANDED so a returning profile does not flash
     the starter rail; the screen demotes an unstored EXPANDED once the
-    six-source evidence settles all-EMPTY (task-32349).
+    seven-source evidence settles all-EMPTY (task-32349).
     """
     if raw is None:
         if is_new_profile:
@@ -112,7 +124,7 @@ def _validated_evidence(
 ) -> tuple[LibraryContentEvidence, ...]:
     values = tuple(evidence)
     if len(values) != _LIBRARY_CONTENT_SOURCE_COUNT:
-        raise ValueError("Library lifecycle evidence requires exactly six sources")
+        raise ValueError("Library lifecycle evidence requires exactly seven sources")
     if not all(isinstance(value, LibraryContentEvidence) for value in values):
         raise TypeError("evidence values must be LibraryContentEvidence")
     return values
@@ -122,7 +134,7 @@ def aggregate_library_lifecycle(
     lifecycle: LibraryLifecycle,
     evidence: Sequence[LibraryContentEvidence],
 ) -> LibraryLifecycle:
-    """Apply one authoritative six-source evidence snapshot to a lifecycle."""
+    """Apply one authoritative seven-source evidence snapshot to a lifecycle."""
     values = _validated_evidence(evidence)
     if LibraryContentEvidence.HAS_USER_CONTENT in values:
         return LibraryLifecycle.GRADUATED
@@ -166,6 +178,7 @@ def serialize_library_rail_preferences(
     """
     return {
         "browse_open": bool(preferences.browse_open),
+        "artifacts_open": bool(preferences.artifacts_open),
         "create_open": bool(preferences.create_open),
         "study_open": bool(preferences.study_open),
         "ingest_open": bool(preferences.ingest_open),

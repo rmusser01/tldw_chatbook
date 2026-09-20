@@ -65,6 +65,14 @@ from typing import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.Library.library_artifacts_state import (
+        ArtifactKey,
+        ArtifactOrderKey,
+        ArtifactScope,
+        ArtifactSourceWindow,
+        ArtifactSummary,
+        ReadDirection,
+    )
     from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
         ChatSyncDeleteIntentRecord,
         ChatSyncIntentRecord,
@@ -3521,7 +3529,9 @@ UPDATE db_schema_version
                         1,
                         voice_trace_authorization._sqlite_authorized,
                     )
-                    self._local.voice_trace_import_authorization = voice_trace_authorization
+                    self._local.voice_trace_import_authorization = (
+                        voice_trace_authorization
+                    )
                     _install_canvas_revision_payload_validator(conn)
                     canvas_deletion_authorization = (
                         _CanvasRevisionDeletionAuthorization(conn)
@@ -8642,8 +8652,7 @@ UPDATE db_schema_version
             ).fetchall()
             for row in rows:
                 connection.execute(
-                    f"UPDATE {table} SET sync_id = ? "
-                    "WHERE id = ? AND sync_id IS NULL",
+                    f"UPDATE {table} SET sync_id = ? WHERE id = ? AND sync_id IS NULL",
                     (str(uuid.uuid4()), row[0]),
                 )
 
@@ -12636,10 +12645,13 @@ UPDATE db_schema_version
             InputError: The cursor would leave an unresolved dispatch owner off path.
         """
         with self.transaction(immediate=True) as conn:
-            if conn.execute(
-                "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
-                (conversation_id,),
-            ).fetchone() is None:
+            if (
+                conn.execute(
+                    "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
+                    (conversation_id,),
+                ).fetchone()
+                is None
+            ):
                 return False
             # A view cursor is not dispatch authority. Never let a stale view
             # strand the exact durable send which still owns this conversation.
@@ -12656,7 +12668,12 @@ UPDATE db_schema_version
                     WHERE c.conversation_id = ? AND NOT EXISTS (
                         SELECT 1 FROM target_path p WHERE p.id = c.assistant_message_id
                     ) LIMIT 1""",
-                (active_leaf_message_id, conversation_id, conversation_id, conversation_id),
+                (
+                    active_leaf_message_id,
+                    conversation_id,
+                    conversation_id,
+                    conversation_id,
+                ),
             ).fetchone()
             if stranded is not None:
                 raise InputError(
@@ -16576,7 +16593,11 @@ UPDATE db_schema_version
         )
 
         try:
-            transaction = contextlib.nullcontext(cursor) if cursor is not None else self.transaction()
+            transaction = (
+                contextlib.nullcontext(cursor)
+                if cursor is not None
+                else self.transaction()
+            )
             with transaction as conn:
                 # Check if a soft-deleted item exists and undelete it
                 undelete_cursor = conn.execute(
@@ -16843,7 +16864,11 @@ UPDATE db_schema_version
         query = f"UPDATE {table_name} SET {', '.join(current_fields_to_update_sql)} WHERE {pk_col_name} = ? AND version = ? AND deleted = 0"
 
         try:
-            transaction = contextlib.nullcontext(cursor) if cursor is not None else self.transaction()
+            transaction = (
+                contextlib.nullcontext(cursor)
+                if cursor is not None
+                else self.transaction()
+            )
             with transaction as conn:
                 # Explicit pre-check. _get_current_db_version raises ConflictError if not found or soft-deleted.
                 current_db_version = self._get_current_db_version(
@@ -16952,7 +16977,11 @@ UPDATE db_schema_version
         params = (now, next_version_val, self.client_id, item_id, expected_version)
 
         try:
-            transaction = contextlib.nullcontext(cursor) if cursor is not None else self.transaction()
+            transaction = (
+                contextlib.nullcontext(cursor)
+                if cursor is not None
+                else self.transaction()
+            )
             with transaction as conn:
                 try:
                     current_db_version = self._get_current_db_version(
@@ -17769,14 +17798,11 @@ UPDATE db_schema_version
             note_id: The note whose body was written.
             content: The body as written.
         """
-        cursor.execute(
-            "DELETE FROM note_links WHERE source_note_id = ?", (note_id,)
-        )
+        cursor.execute("DELETE FROM note_links WHERE source_note_id = ?", (note_id,))
         targets = extract_note_link_targets(content, source_note_id=note_id)
         if targets:
             cursor.executemany(
-                "INSERT INTO note_links(source_note_id, target_note_id)"
-                " VALUES (?, ?)",
+                "INSERT INTO note_links(source_note_id, target_note_id) VALUES (?, ?)",
                 [(note_id, target) for target in targets],
             )
 
@@ -18935,16 +18961,20 @@ UPDATE db_schema_version
         """Return durable publishable note intents owned by one exact sync scope."""
 
         predicate = self.normal_note_dispatch_predicate("intent.note_id")
-        rows = self.get_connection().execute(
-            "SELECT intent_id, note_id AS entity_id, operation, entity_version AS "
-            "version, payload_json AS payload, base_version, "
-            "outbox_client_envelope_id, copied_at, acknowledged_at "
-            "FROM note_sync_publication_intents AS intent WHERE "
-            "server_profile_id = ? AND dataset_id = ? "
-            f"AND acknowledged_at IS NULL AND cancelled_at IS NULL AND {predicate} "
-            "ORDER BY note_id, entity_version, intent_id",
-            (server_profile_id, dataset_id),
-        ).fetchall()
+        rows = (
+            self.get_connection()
+            .execute(
+                "SELECT intent_id, note_id AS entity_id, operation, entity_version AS "
+                "version, payload_json AS payload, base_version, "
+                "outbox_client_envelope_id, copied_at, acknowledged_at "
+                "FROM note_sync_publication_intents AS intent WHERE "
+                "server_profile_id = ? AND dataset_id = ? "
+                f"AND acknowledged_at IS NULL AND cancelled_at IS NULL AND {predicate} "
+                "ORDER BY note_id, entity_version, intent_id",
+                (server_profile_id, dataset_id),
+            )
+            .fetchall()
+        )
         return [dict(row) for row in rows]
 
     def _update_note_with_cursor(
@@ -19447,7 +19477,11 @@ UPDATE db_schema_version
         rows_affected = 0
 
         try:
-            transaction = contextlib.nullcontext(cursor) if cursor is not None else self.transaction()
+            transaction = (
+                contextlib.nullcontext(cursor)
+                if cursor is not None
+                else self.transaction()
+            )
             with transaction as conn:
                 if operation == "link":
                     query = f"INSERT OR IGNORE INTO {link_table} ({col1_name}, {col2_name}, created_at) VALUES (?, ?, ?)"
@@ -23698,6 +23732,110 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(
                 f"Failed to create kept briefing: {exc}"
             ) from exc
+
+    def _artifact_metadata_query(self, scope: "ArtifactScope") -> tuple[str, tuple]:
+        """Build this owner's metadata-only projection and shared search predicate."""
+        title = "COALESCE(NULLIF(TRIM(b.watchlist_name), ''), 'Untitled report')"
+        order = (
+            f"LOWER({title})"
+            if scope.sort == "title"
+            else "COALESCE(-CAST(strftime('%s', COALESCE(NULLIF(b.original_created_at, ''), b.kept_at)) AS INTEGER), 9223372036854775807)"
+        )
+        admitted = scope.view in ("reports", "all")
+        query = f"""SELECT b.id, {title} AS title, 'complete' AS status,
+                       b.kept_at AS revision_time, COALESCE(NULLIF(b.original_created_at, ''), b.kept_at) AS created_at,
+                       {order} AS order_value
+                    FROM kept_briefings b
+                    WHERE ? AND instr(LOWER({title}), LOWER(?)) > 0"""
+        return query, (int(admitted), scope.query)
+
+    def read_artifact_window(
+        self,
+        scope: "ArtifactScope",
+        *,
+        boundary: "ArtifactOrderKey | None",
+        direction: "ReadDirection",
+        limit: int,
+        inclusive: bool = False,
+    ) -> "ArtifactSourceWindow":
+        """Read a bounded metadata window and exact ranks in one owner snapshot.
+
+        Args:
+            scope: Metadata filter and sort.
+            boundary: Global namespaced cursor, or the requested end of inventory.
+            direction: Read nearest rows after or before the boundary.
+            limit: Maximum candidates, an integer from 1 through 20.
+            inclusive: Include the boundary candidate without changing rank counts.
+
+        Returns:
+            Body-free candidates, total matches, and strict-before/equal ranks.
+        """
+        from tldw_chatbook.Library.library_artifacts_state import (
+            ArtifactSourceWindow,
+            report_summary,
+            validate_artifact_window,
+        )
+
+        validate_artifact_window(scope, boundary, direction, limit, inclusive)
+        projection, params = self._artifact_metadata_query(scope)
+        key_sql = "(order_value, 'kept_report', id)"
+        with self.transaction() as connection:
+            if boundary is None:
+                total = connection.execute(
+                    f"WITH metadata AS ({projection}) SELECT COUNT(*) FROM metadata",
+                    params,
+                ).fetchone()[0]
+                before, equal = (total if direction == "before" else 0), 0
+            else:
+                total, before, equal = connection.execute(
+                    f"""WITH metadata AS ({projection})
+                        SELECT COUNT(*), COALESCE(SUM({key_sql} < (?, ?, ?)), 0),
+                            COALESCE(SUM({key_sql} = (?, ?, ?)), 0) FROM metadata""",
+                    (*params, *boundary, *boundary),
+                ).fetchone()
+            predicate, candidates = "", params
+            if boundary is not None:
+                operator = ">" if direction == "after" else "<"
+                if inclusive:
+                    operator += "="
+                predicate = f"WHERE {key_sql} {operator} (?, ?, ?)"
+                candidates = (*params, *boundary)
+            ordering = "ASC" if direction == "after" else "DESC"
+            rows = connection.execute(
+                f"""WITH metadata AS ({projection})
+                    SELECT id, title, status, revision_time, created_at, order_value
+                    FROM metadata {predicate}
+                    ORDER BY order_value {ordering}, id {ordering} LIMIT ?""",
+                (*candidates, limit),
+            ).fetchall()
+            summaries = tuple(report_summary(dict(row), "kept_report") for row in rows)
+            if direction == "before":
+                summaries = tuple(reversed(summaries))
+            return ArtifactSourceWindow(summaries, total, before, equal)
+
+    def get_artifact_summary(
+        self,
+        scope: "ArtifactScope",
+        key: "ArtifactKey",
+    ) -> "ArtifactSummary | None":
+        """Read one matching identity without fetching report or script content."""
+        from tldw_chatbook.Library.library_artifacts_state import (
+            report_summary,
+            validate_artifact_window,
+        )
+
+        validate_artifact_window(scope, None, "after", 1)
+        if key.source != "kept_report":
+            return None
+        projection, params = self._artifact_metadata_query(scope)
+        with self.transaction() as connection:
+            row = connection.execute(
+                f"""WITH metadata AS ({projection})
+                    SELECT id, title, status, revision_time, created_at, order_value
+                    FROM metadata WHERE id = ?""",
+                (*params, key.native_id),
+            ).fetchone()
+            return report_summary(dict(row), "kept_report") if row is not None else None
 
     def get_kept_briefing_by_source(
         self, source_briefing_id: int

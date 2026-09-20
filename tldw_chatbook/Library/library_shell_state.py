@@ -30,6 +30,9 @@ LIBRARY_ROW_BROWSE_PROMPTS = "browse-prompts"
 LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
+LIBRARY_ROW_ARTIFACTS_ALL = "artifacts-all"
+LIBRARY_ROW_ARTIFACTS_REPORTS = "artifacts-reports"
+LIBRARY_ROW_ARTIFACTS_CHATBOOKS = "artifacts-chatbooks"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
 LIBRARY_CANVAS_KIND_NOTES_CREATE = "notes-create"
 # The three Study staging (handoff) rows -- consumers that need "is this a
@@ -604,6 +607,30 @@ def build_library_shell_state(
         ),
     )
 
+    artifact_rows = (
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_ARTIFACTS_ALL,
+            section_id="artifacts",
+            title="All artifacts",
+            target_kind="canvas",
+            target_id=LIBRARY_ROW_ARTIFACTS_ALL,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_ARTIFACTS_CHATBOOKS,
+            section_id="artifacts",
+            title="Chatbooks",
+            target_kind="canvas",
+            target_id=LIBRARY_ROW_ARTIFACTS_CHATBOOKS,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_ARTIFACTS_REPORTS,
+            section_id="artifacts",
+            title="Reports",
+            target_kind="canvas",
+            target_id=LIBRARY_ROW_ARTIFACTS_REPORTS,
+        ),
+    )
+
     create_rows = (
         LibraryRailRow(
             row_id=LIBRARY_ROW_CREATE_NOTE,
@@ -727,6 +754,9 @@ def build_library_shell_state(
 
     sections = (
         LibraryRailSectionState(section_id="browse", title="Browse", rows=browse_rows),
+        LibraryRailSectionState(
+            section_id="artifacts", title="Artifacts", rows=artifact_rows
+        ),
         LibraryRailSectionState(section_id="create", title="Create", rows=create_rows),
         LibraryRailSectionState(section_id="study", title="Study", rows=study_rows),
         LibraryRailSectionState(

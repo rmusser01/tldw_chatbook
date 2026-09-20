@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_row]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_row_round_trip]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_profile]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_profile_round_trip]",
+      "status": "failure"
+    }
+  ]
+}

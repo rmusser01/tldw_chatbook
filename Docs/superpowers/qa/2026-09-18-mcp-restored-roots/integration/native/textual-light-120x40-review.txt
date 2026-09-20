@@ -1,0 +1,40 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃  More ▾
+──────────────────────────────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█──────────────────────────────
+ MCP                          █                                                          █
+ MCP (Model Context Protocol) █               Review restored MCP roots                  █ change anything here.
+   Servers    Tools     Permis█                                                          █
+╭─────────────────────────────█                       Workspace:                         █─────────────────────────────╮
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│ Source                      █                        d/config                          █nspector                     │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎█     Generations: eba69205d0064f82b4be5b85e5ebf331        █Pick a server, tool, or      │
+│ ▊  Local                ▼  ▎█                    Files present: 5                      █entry to see what's wrong    │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎█                        config:                           █and what you can do.         │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│ Servers                     █                 d/config/config.toml →                   █                             │
+│    All servers              █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █  Advanced…                  │
+│  No servers yet — Add       █                  d/config/config.toml                    █                             │
+│  server to connect one.     █                       mcp.local:                         █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █          d/data/Local/local_mcp_store.json →             █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █                             │
+│                             █              ebf331/local_mcp_store.json                 █                             │
+│                             █                    mcp.permissions:                      █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █          d/data/Local/mcp_permissions.json →             █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore▅▅  █                             │
+│                             █  d/data/Local/mcp-recovery-eba69205d0064f82b4be5b85e5    █                             │
+│                             █              ebf331/mcp_permissions.json                 █                             │
+│                             █                        history:                          █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █        d/data/Local/mcp_permissions.json.bak →           █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █         d/data/Local/mcp_permissions.json.bak            █                             │
+│                             █                      mcp.targets:                        █                             │
+│                             █  /private/tmp/tldw-32839-native-qodo-001/home/restore    █                             │
+│                             █         d/data/Local/mcp_server_targets.json →           █                             │
+│                             █                                                          █                             │
+│                             █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█                             │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯╰───────────────────────────────╯
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

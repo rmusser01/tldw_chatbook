@@ -32,6 +32,7 @@ def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
         "conversations_reader",
         "prompts_reader",
         "skills_reader",
+        "artifacts_reader",
     ):
         assert settings["library"][section] == {
             "items_open": True,
@@ -458,4 +459,63 @@ items_width = true
         "library_open": True,
         "custom_widths_enabled": False,
         "library_width": LIBRARY_REFERENCE_WIDTH,
+    }
+
+
+def test_artifact_items_preferences_normalize_without_overriding_shared_library(
+    tmp_path, monkeypatch
+):
+    # Config's raw participant binds the selected path at import. Exercise a
+    # fresh process per profile instead of changing that path after import.
+    import json
+    import os
+    import subprocess
+    import sys
+
+    config_path = tmp_path / "artifacts.toml"
+    config_path.write_text(
+        "[library.reader]\nlibrary_open = false\n"
+        '[library.artifacts_reader]\nitems_open = "off"\nitems_width = 500\n'
+        'future_key = "keep"\n',
+        encoding="utf-8",
+    )
+    environment = dict(os.environ, TLDW_CONFIG_PATH=str(config_path))
+    script = """
+import json
+import tomllib
+from tldw_chatbook import config
+print(json.dumps({
+    "library": config.load_settings(force_reload=True)["library"],
+    "template": tomllib.loads(config.CONFIG_TOML_CONTENT)["library"],
+}))
+"""
+
+    def read_profile():
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    actual = read_profile()
+    assert actual["library"]["artifacts_reader"] == {
+        "items_open": False,
+        "items_width": 72,
+        "future_key": "keep",
+    }
+    assert actual["library"]["reader"]["library_open"] is False
+    environment.update(
+        TLDW_LIBRARY_ARTIFACTS_READER_ITEMS_OPEN="true",
+        TLDW_LIBRARY_ARTIFACTS_READER_ITEMS_WIDTH="12",
+    )
+    actual = read_profile()
+    assert actual["library"]["artifacts_reader"]["items_open"] is True
+    assert actual["library"]["artifacts_reader"]["items_width"] == 32
+    assert actual["library"]["reader"]["library_open"] is False
+    assert actual["template"]["artifacts_reader"] == {
+        "items_open": True,
+        "items_width": 50,
     }

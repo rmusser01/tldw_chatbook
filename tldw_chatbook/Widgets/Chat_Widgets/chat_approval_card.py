@@ -575,6 +575,24 @@ def format_context_line(text: object, cap: int = RATIONALE_DISPLAY_CAP) -> str:
     return normalize_rationale(text, cap=cap)
 
 
+class ApprovalActionButton(Button):
+    """Capture the displayed batch when a press is published, before delivery."""
+
+    class Pressed(Button.Pressed, namespace="button"):
+        def __init__(self, button: ApprovalActionButton) -> None:
+            self.batch_generation = button.batch_generation
+            super().__init__(button)
+
+    def __init__(self, *args: Any, generation: int = 0, **kwargs: Any) -> None:
+        self.batch_generation = generation
+        super().__init__(*args, **kwargs)
+
+    def post_message(self, message: Message) -> bool:
+        if type(message) is Button.Pressed and message.button is self:
+            message = self.Pressed(self)
+        return super().post_message(message)
+
+
 class ChatApprovalCard(Container):
     """Inline approval card for privileged agent actions."""
 
@@ -666,6 +684,7 @@ class ChatApprovalCard(Container):
         # Batch approval state (initialized here, not in on_mount, so pre-mount
         # calls like set_batch() or on_button_pressed() don't AttributeError).
         self._batch_generation = 0
+        self._batch_submitted = False
         self._batch_names: list[str] = []
         self._batch_selects: list[Select] = []
         self._batch_legal_values: list[list[str]] = []
@@ -743,18 +762,18 @@ class ChatApprovalCard(Container):
         with batch_body:
             yield Vertical(id="approval-batch-rows")
             with Horizontal(id="approval-batch-actions"):
-                yield Button(
+                yield ApprovalActionButton(
                     "Approve all",
                     id="approval-approve-all",
                     tooltip="Set every pending tool call's decision to Approve once.",
                 )
-                yield Button(
+                yield ApprovalActionButton(
                     "Submit",
                     id="approval-submit",
                     variant="primary",
                     tooltip="Apply each row's selected decision and resume the run.",
                 )
-                yield Button(
+                yield ApprovalActionButton(
                     "Deny all",
                     id="approval-deny-all",
                     variant="error",
@@ -825,6 +844,9 @@ class ChatApprovalCard(Container):
         title = self.query_one("#approval-title", Static)
         batch_body = self.query_one("#approval-batch-body")
         rows_container = self.query_one("#approval-batch-rows", Vertical)
+        self._batch_generation += 1
+        generation = self._batch_generation
+        self._batch_submitted = False
         self._batch_round_id = round_id
         self._batch_phase = normalized_phase
         self._batch_calls_snapshot = deepcopy(calls)
@@ -884,13 +906,13 @@ class ChatApprovalCard(Container):
             "#approval-deny-all",
         ):
             try:
-                self.query_one(button_id, Button).disabled = finishing
+                button = self.query_one(button_id, ApprovalActionButton)
+                button.batch_generation = generation
+                button.disabled = finishing
             except NoMatches:
                 pass
 
         grouped = _collapse_pending_calls(calls)
-        self._batch_generation += 1
-        generation = self._batch_generation
         if (
             len(grouped) == 1
             and not _is_raw_shell_row(grouped[0])
@@ -1051,20 +1073,22 @@ class ChatApprovalCard(Container):
                     )
                 )
             if single_row:
-                fast_approve = Button(
+                fast_approve = ApprovalActionButton(
                     (
                         _RAW_APPROVE_ONCE_LABEL
                         if _is_raw_shell_row(entry)
                         else _APPROVE_ONCE_LABEL
                     ),
+                    generation=generation,
                     id=f"approval-fast-approve-{generation}-{index}",
                     variant="success",
                     compact=True,
                     classes=_FAST_APPROVE_CLASS,
                     tooltip=_FAST_APPROVE_TOOLTIP,
                 )
-                fast_deny = Button(
+                fast_deny = ApprovalActionButton(
                     _DENY_LABEL,
+                    generation=generation,
                     id=f"approval-fast-deny-{generation}-{index}",
                     variant="error",
                     compact=True,
@@ -1246,16 +1270,18 @@ class ChatApprovalCard(Container):
             )
         row.remove_class("needs-decision")
 
-        fast_approve = Button(
+        fast_approve = ApprovalActionButton(
             _APPROVE_ONCE_LABEL,
+            generation=generation,
             id=f"approval-fast-approve-{generation}-0",
             variant="success",
             compact=True,
             classes=_FAST_APPROVE_CLASS,
             tooltip=_FAST_APPROVE_TOOLTIP,
         )
-        fast_deny = Button(
+        fast_deny = ApprovalActionButton(
             _DENY_LABEL,
+            generation=generation,
             id=f"approval-fast-deny-{generation}-0",
             variant="error",
             compact=True,
@@ -1330,6 +1356,16 @@ class ChatApprovalCard(Container):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
+        if not isinstance(event, ApprovalActionButton.Pressed):
+            return
+        event.stop()
+        if (
+            event.batch_generation != self._batch_generation
+            or self._batch_submitted
+            or self._batch_phase == "finishing"
+            or not self._batch_names
+        ):
+            return
         if button_id == "approval-approve-all":
             event.stop()
             self._set_all_batch_decisions(("approve_once", "approve_session"))
@@ -1471,14 +1507,28 @@ class ChatApprovalCard(Container):
         ``self._batch_fast_buttons`` with fresh, enabled buttons) at the
         start of every new round, so this is never a permanent lockout.
         """
+        self._batch_submitted = True
+        for select in self._batch_selects:
+            select.disabled = True
         for button in self._batch_fast_buttons:
             button.disabled = True
-        try:
-            self.query_one("#approval-submit", Button).disabled = True
-        except NoMatches:
-            pass
+        for button_id in (
+            "approval-submit",
+            "approval-approve-all",
+            "approval-deny-all",
+        ):
+            try:
+                self.query_one(f"#{button_id}", Button).disabled = True
+            except NoMatches:
+                pass
 
     def _submit_batch_decisions(self) -> None:
+        if (
+            self._batch_submitted
+            or self._batch_phase == "finishing"
+            or not self._batch_names
+        ):
+            return
         decisions = {
             name: select.value
             for name, select in zip(self._batch_names, self._batch_selects)
@@ -1519,7 +1569,11 @@ class ChatApprovalCard(Container):
                 ``"always_allow"``; those stay reachable only through the
                 row's own Select + Submit.
         """
-        if not self._batch_names:
+        if (
+            self._batch_submitted
+            or self._batch_phase == "finishing"
+            or not self._batch_names
+        ):
             return
         self._disable_batch_submit_controls()
         self.post_message(

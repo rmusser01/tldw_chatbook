@@ -9,7 +9,7 @@ Provides an interface for selecting content and creating chatbooks.
 """
 
 from pathlib import Path
-from typing import Dict, Set, TYPE_CHECKING
+from typing import Dict, Set
 from datetime import datetime
 
 from textual.app import ComposeResult
@@ -27,9 +27,6 @@ from ..Chatbooks.chatbook_models import ContentType
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Prompts_DB import PromptsDatabase
 from ..config import load_console_library_migration_seed
-
-if TYPE_CHECKING:
-    from ..app import TldwCli
 
 
 class ChatbookCreationWindow(ModalScreen):
@@ -108,10 +105,14 @@ class ChatbookCreationWindow(ModalScreen):
     }
     """
 
-    def __init__(self, app_instance: "TldwCli"):
-        """Initialize the chatbook creation window."""
+    def __init__(self):
+        """Initialize the chatbook creation window.
+
+        The running app is reached through the read-only ``Widget.app``
+        property once mounted (config defaults, notifications); it must not
+        be assigned here (TASK-32829).
+        """
         super().__init__()
-        self.app = app_instance
         self.selected_content: Dict[ContentType, Set[str]] = {
             ContentType.CONVERSATION: set(),
             ContentType.NOTE: set(),

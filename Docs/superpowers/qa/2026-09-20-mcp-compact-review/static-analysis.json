@@ -1,0 +1,533 @@
+{
+  "base": {
+    "count": 65,
+    "diagnostics": [
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "RUF046",
+        "Value being cast to `int` is already an integer"
+      ],
+      [
+        "S110",
+        "`try`-`except`-`pass` detected, consider logging the exception"
+      ],
+      [
+        "S110",
+        "`try`-`except`-`pass` detected, consider logging the exception"
+      ],
+      [
+        "S110",
+        "`try`-`except`-`pass` detected, consider logging the exception"
+      ]
+    ]
+  },
+  "current": {
+    "count": 65,
+    "diagnostics": [
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "BLE001",
+        "Do not catch blind exception: `Exception`"
+      ],
+      [
+        "RUF046",
+        "Value being cast to `int` is already an integer"
+      ],
+      [
+        "S110",
+        "`try`-`except`-`pass` detected, consider logging the exception"
+      ],
+      [
+        "S110",
+        "`try`-`except`-`pass` detected, consider logging the exception"
+      ],
+      [
+        "S110",
+        "`try`-`except`-`pass` detected, consider logging the exception"
+      ]
+    ]
+  },
+  "unchanged": true
+}

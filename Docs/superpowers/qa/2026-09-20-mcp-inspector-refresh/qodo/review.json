@@ -1,0 +1,40 @@
+{
+  "reviewed_initial_head": "030f1d519ae1d66ed0c48d90766ff785187d062c",
+  "findings": [
+    {
+      "thread": "PRRT_kwDOOcyyl86kKuZJ",
+      "finding": "Closed test panels can stay on screen",
+      "disposition": "Not reproducible; synchronous Textual 8.2.8 registration contradicts unattached-panel premise. Two real-mount regressions (close/refresh) retire before mounted_event, suppress old preview, and reopen exactly one panel. No mount monkeypatch or speculative product change."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kKuZG",
+      "finding": "Two inspector APIs lack full docs",
+      "disposition": "Added show_tool Args and test_panel_token Returns with ownership/null semantics."
+    },
+    {
+      "thread": "PRRT_kwDOOcyyl86kKuZH",
+      "finding": "Refresh guards lack unit coverage",
+      "disposition": "Three isolated reconciliation tests and three component regressions. Reproduced stale policy facts when equal definition/context hid changed effective state, exact-input rules or session grants. Equality now includes those inputs; changed policy retires old controls/previews. The profile-wide displayed session list intentionally counts as policy input."
+    }
+  ],
+  "independent_review": "No blockers; checked real mount semantics and permission ownership comparisons. Textual 8.2.8.",
+  "visual_review": "Six current captures pixel-identical to owner-approved gallery; two differ only by one blinking input-caret rectangle. XML element deltas and manual inspection confirm no layout/copy changes.",
+  "failed_attempts": [
+    {
+      "attempt": "red-001",
+      "result": "Three UI cases failed before assertions on raw_source_selection_changed; corrected with existing private_profile_test isolation. Not valid red evidence."
+    },
+    {
+      "attempt": "native005",
+      "result": "Validator exited2 before app startup: missing configured private DB parent directories. Owned terminal closed. Fresh006 passed."
+    },
+    {
+      "attempt": "native006 preparation via system python3",
+      "result": "ImportError tomllib before any mutation; reran with project Python3.12."
+    },
+    {
+      "attempt": "lifecycle sandbox",
+      "result": "ps denied by sandbox before receipt; escalated read completed successfully."
+    }
+  ]
+}

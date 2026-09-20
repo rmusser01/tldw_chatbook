@@ -24489,6 +24489,7 @@ class ChatScreen(BaseAppScreen):
         workspace_id: str | None,
         nodes: "list[Any] | None" = None,
         active_leaf_persisted_id: "str | None" = None,
+        settings: "object | None" = None,
         assistant_kind: "str | None" = None,
         assistant_id: "str | None" = None,
         assistant_authority_id: "str | None" = None,
@@ -24555,6 +24556,7 @@ class ChatScreen(BaseAppScreen):
                 persisted_conversation_id=conversation_id,
                 all_nodes=nodes or [],
                 active_leaf_persisted_id=active_leaf_persisted_id,
+                settings=settings,
                 assistant_kind=assistant_kind,
                 assistant_id=assistant_id,
                 assistant_authority_id=assistant_authority_id,
@@ -24563,7 +24565,10 @@ class ChatScreen(BaseAppScreen):
                 character_name=character_name,
                 activate=False,
             )
-            if opening_prompt:
+            # Single write path: the restore rehydrates the draft from
+            # the persisted console_agent_handoff key; this fill only
+            # covers a degraded restore-side read (empty draft).
+            if opening_prompt and not session.draft:
                 store.set_session_draft(session.id, opening_prompt)
             self._workspace._invalidate_console_persisted_rows_cache()
             self.run_worker(

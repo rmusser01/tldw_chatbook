@@ -1,0 +1,529 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_____ test_compact_recovery_review_keyboard_and_paint[entry-textual-dark] ______
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k0')
+route = 'entry', theme = 'textual-dark'
+
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    @pytest.mark.parametrize("route", ["entry", "keyboard"])
+    def test_compact_recovery_review_keyboard_and_paint(tmp_path, route, theme):
+>       _run(tmp_path, route, theme, script=_SETUP + _SCRIPT, timeout=90)
+
+Tests/Backup_Recovery/test_mcp_recovery_compact.py:97:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k0')
+route = 'entry', outcome = 'textual-dark'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w") if expect_restart else nullcontext() as output:
+                result = subprocess.run(
+                    [sys.executable, "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT if expect_restart else None,
+                    capture_output=not expect_restart,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text() if expect_restart else result.stdout
+        stderr = "" if expect_restart else result.stderr
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: 2026-09-20 11:24:24.787 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E         2026-09-20 11:24:24.811 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6136 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k0/home/restored/config/config.toml
+E         2026-09-20 11:24:24.813 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6157 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k0/home/restored/config/config.toml
+E         2026-09-20 11:24:24.814 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6241 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'video_generation']
+E         2026-09-20 11:24:24.814 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6245 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E         2026-09-20 11:24:24.824 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:24.824 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:24.825 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E         2026-09-20 11:24:24.826 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E         2026-09-20 11:24:24.833 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3426 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k0/home/restored/data/Local/chat_dicts
+E         2026-09-20 11:24:24.833 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3438 - load_settings: Configuration cached for future use
+E         2026-09-20 11:24:24.834 | INFO     | tldw_chatbook.config:<module>:9755 - Default API Endpoint (from config.py global scope): openai
+E         2026-09-20 11:24:24.834 | DEBUG    | tldw_chatbook.config:<module>:9778 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E         2026-09-20 11:24:25.112 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E         2026-09-20 11:24:26.042 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+E         Traceback (most recent call last):
+E           File "<string>", line 143, in <module>
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<string>", line 108, in run
+E         AssertionError
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...mplete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "<string>", line 108, in run\nAssertionError\n').returncode
+
+Tests/Backup_Recovery/test_home_citation_retirement.py:334: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 11:24:23.218 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-09-20 11:24:23.283 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6136 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_sd8ednoq/config/config.toml
+2026-09-20 11:24:23.284 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6165 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_sd8ednoq/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-20 11:24:23.285 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6174 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_sd8ednoq/config/config.toml
+2026-09-20 11:24:23.285 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6241 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-20 11:24:23.286 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6245 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-09-20 11:24:23.292 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 11:24:23.293 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+2026-09-20 11:24:23.293 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-09-20 11:24:23.294 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-09-20 11:24:23.320 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3426 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_sd8ednoq/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-09-20 11:24:23.321 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3438 - load_settings: Configuration cached for future use
+2026-09-20 11:24:23.321 | INFO     | tldw_chatbook.config:<module>:9755 - Default API Endpoint (from config.py global scope): openai
+2026-09-20 11:24:23.322 | DEBUG    | tldw_chatbook.config:<module>:9778 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-09-20 11:24:23.480 | DEBUG    | tldw_chatbook.Utils.optional_deps:<module>:1537 - Skipping auto-initialization in test environment
+2026-09-20 11:24:23.640 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 11:24:23.784 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 11:24:23.806 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 11:24:23.813 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_____ test_compact_recovery_review_keyboard_and_paint[entry-textual-light] _____
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k1')
+route = 'entry', theme = 'textual-light'
+
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    @pytest.mark.parametrize("route", ["entry", "keyboard"])
+    def test_compact_recovery_review_keyboard_and_paint(tmp_path, route, theme):
+>       _run(tmp_path, route, theme, script=_SETUP + _SCRIPT, timeout=90)
+
+Tests/Backup_Recovery/test_mcp_recovery_compact.py:97:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k1')
+route = 'entry', outcome = 'textual-light'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w") if expect_restart else nullcontext() as output:
+                result = subprocess.run(
+                    [sys.executable, "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT if expect_restart else None,
+                    capture_output=not expect_restart,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text() if expect_restart else result.stdout
+        stderr = "" if expect_restart else result.stderr
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: 2026-09-20 11:24:28.549 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E         2026-09-20 11:24:28.571 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6136 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k1/home/restored/config/config.toml
+E         2026-09-20 11:24:28.572 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6157 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k1/home/restored/config/config.toml
+E         2026-09-20 11:24:28.573 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6241 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'video_generation']
+E         2026-09-20 11:24:28.573 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6245 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E         2026-09-20 11:24:28.583 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:28.584 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:28.584 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E         2026-09-20 11:24:28.585 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E         2026-09-20 11:24:28.592 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3426 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k1/home/restored/data/Local/chat_dicts
+E         2026-09-20 11:24:28.592 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3438 - load_settings: Configuration cached for future use
+E         2026-09-20 11:24:28.593 | INFO     | tldw_chatbook.config:<module>:9755 - Default API Endpoint (from config.py global scope): openai
+E         2026-09-20 11:24:28.593 | DEBUG    | tldw_chatbook.config:<module>:9778 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E         2026-09-20 11:24:28.876 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E         2026-09-20 11:24:29.949 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+E         Traceback (most recent call last):
+E           File "<string>", line 143, in <module>
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<string>", line 108, in run
+E         AssertionError
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...mplete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "<string>", line 108, in run\nAssertionError\n').returncode
+
+Tests/Backup_Recovery/test_home_citation_retirement.py:334: AssertionError
+____ test_compact_recovery_review_keyboard_and_paint[keyboard-textual-dark] ____
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k2')
+route = 'keyboard', theme = 'textual-dark'
+
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    @pytest.mark.parametrize("route", ["entry", "keyboard"])
+    def test_compact_recovery_review_keyboard_and_paint(tmp_path, route, theme):
+>       _run(tmp_path, route, theme, script=_SETUP + _SCRIPT, timeout=90)
+
+Tests/Backup_Recovery/test_mcp_recovery_compact.py:97:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k2')
+route = 'keyboard', outcome = 'textual-dark'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w") if expect_restart else nullcontext() as output:
+                result = subprocess.run(
+                    [sys.executable, "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT if expect_restart else None,
+                    capture_output=not expect_restart,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text() if expect_restart else result.stdout
+        stderr = "" if expect_restart else result.stderr
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: 2026-09-20 11:24:32.465 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E         2026-09-20 11:24:32.490 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6136 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k2/home/restored/config/config.toml
+E         2026-09-20 11:24:32.492 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6157 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k2/home/restored/config/config.toml
+E         2026-09-20 11:24:32.492 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6241 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'video_generation']
+E         2026-09-20 11:24:32.493 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6245 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E         2026-09-20 11:24:32.502 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:32.503 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:32.504 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E         2026-09-20 11:24:32.505 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E         2026-09-20 11:24:32.512 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3426 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k2/home/restored/data/Local/chat_dicts
+E         2026-09-20 11:24:32.513 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3438 - load_settings: Configuration cached for future use
+E         2026-09-20 11:24:32.513 | INFO     | tldw_chatbook.config:<module>:9755 - Default API Endpoint (from config.py global scope): openai
+E         2026-09-20 11:24:32.514 | DEBUG    | tldw_chatbook.config:<module>:9778 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E         2026-09-20 11:24:32.784 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E         2026-09-20 11:24:33.845 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+E         Traceback (most recent call last):
+E           File "<string>", line 143, in <module>
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<string>", line 108, in run
+E         AssertionError
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...mplete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "<string>", line 108, in run\nAssertionError\n').returncode
+
+Tests/Backup_Recovery/test_home_citation_retirement.py:334: AssertionError
+___ test_compact_recovery_review_keyboard_and_paint[keyboard-textual-light] ____
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k3')
+route = 'keyboard', theme = 'textual-light'
+
+    @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+    @pytest.mark.parametrize("route", ["entry", "keyboard"])
+    def test_compact_recovery_review_keyboard_and_paint(tmp_path, route, theme):
+>       _run(tmp_path, route, theme, script=_SETUP + _SCRIPT, timeout=90)
+
+Tests/Backup_Recovery/test_mcp_recovery_compact.py:97:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k3')
+route = 'keyboard', outcome = 'textual-light'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w") if expect_restart else nullcontext() as output:
+                result = subprocess.run(
+                    [sys.executable, "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT if expect_restart else None,
+                    capture_output=not expect_restart,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text() if expect_restart else result.stdout
+        stderr = "" if expect_restart else result.stderr
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: 2026-09-20 11:24:36.512 | DEBUG    | tldw_chatbook.config:<module>:109 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+E         2026-09-20 11:24:36.535 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6136 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k3/home/restored/config/config.toml
+E         2026-09-20 11:24:36.537 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6157 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k3/home/restored/config/config.toml
+E         2026-09-20 11:24:36.537 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6241 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'video_generation']
+E         2026-09-20 11:24:36.538 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6245 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E         2026-09-20 11:24:36.549 | INFO     | tldw_chatbook.config:_load_settings_uncached:1857 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:36.549 | INFO     | tldw_chatbook.config:_load_settings_uncached:1860 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook
+E         2026-09-20 11:24:36.550 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1883 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E         2026-09-20 11:24:36.551 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2204 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E         2026-09-20 11:24:36.560 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3426 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-691/test_compact_recovery_review_k3/home/restored/data/Local/chat_dicts
+E         2026-09-20 11:24:36.561 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3438 - load_settings: Configuration cached for future use
+E         2026-09-20 11:24:36.561 | INFO     | tldw_chatbook.config:<module>:9755 - Default API Endpoint (from config.py global scope): openai
+E         2026-09-20 11:24:36.563 | DEBUG    | tldw_chatbook.config:<module>:9778 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E         2026-09-20 11:24:36.868 | INFO     | tldw_chatbook.MCP.client:__init__:1135 - MCP Client 'tldw_chatbook_client' initialized
+E         2026-09-20 11:24:38.202 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+E         Traceback (most recent call last):
+E           File "<string>", line 143, in <module>
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<string>", line 108, in run
+E         AssertionError
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.ven...mplete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "<string>", line 108, in run\nAssertionError\n').returncode
+
+Tests/Backup_Recovery/test_home_citation_retirement.py:334: AssertionError
+============================= slowest 25 durations =============================
+4.36s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-light]
+3.96s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-light]
+3.93s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-dark]
+3.64s call     Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-dark]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-dark]
+FAILED Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[entry-textual-light]
+FAILED Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-dark]
+FAILED Tests/Backup_Recovery/test_mcp_recovery_compact.py::test_compact_recovery_review_keyboard_and_paint[keyboard-textual-light]
+4 failed in 16.96s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5a66b901-67b1-4b0a-879b-0bded844134d/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5a66b901-67b1-4b0a-879b-0bded844134d/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5a66b901-67b1-4b0a-879b-0bded844134d
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-5a66b901-67b1-4b0a-879b-0bded844134d'
+  warnings.warn(

@@ -1,0 +1,158 @@
+{
+  "same_failure_names_messages_and_final_lines": true,
+  "count": 19,
+  "failures": [
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_raw_shell_command_view_has_bounded_scrollable_geometry",
+      "status": "failure",
+      "message": "AssertionError: _agentic_terminal.tcss's '.approval-row-full-command' block is missing 'width: 1fr'",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:87: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_descriptor_effects_reach_the_mounted_production_approval_card",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approved_definitive_tool_stays_mounted_until_real_terminal[success]",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approved_definitive_tool_stays_mounted_until_real_terminal[crash]",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_local_same_name_finishing_rows_complete_by_call_id_out_of_order",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_finishing_card_is_not_counted_and_keyboard_focuses_the_card",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_alt_a_focuses_the_pending_approval_decision_select",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_alt_a_notifies_when_nothing_is_pending",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle",
+      "status": "failure",
+      "message": "AssertionError: _agentic_terminal.tcss's '.approval-row-decision {' block is missing 'width: 27;'",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:87: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_approval_row_height_rule_pinned_in_bundle_source_and_bundle",
+      "status": "failure",
+      "message": "AssertionError: _agentic_terminal.tcss's '.approval-row {' block is missing 'width: 1fr;'",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:87: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_refusing_one_call_does_not_get_overwritten_by_approving_another",
+      "status": "failure",
+      "message": "AssertionError: approving spec.md must still let it run: {'read_file': 'proceed', 'call-1': ToolReviewDecision(verdict='tool call denied by the user: read_file. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead.', approval_decision='denied'), 'call-2': ToolReviewDecision(verdict='proceed', approval_decision='approved')}",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:3873: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_request_mcp_approvals_marks_human_input_wait_while_round_armed",
+      "status": "failure",
+      "message": "AssertionError",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:4652: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook",
+      "status": "failure",
+      "message": "AssertionError",
+      "last_line": [
+        "Tests/UI/test_console_mcp_approval.py:4770: AssertionError"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_the_approval_route_reaches_a_pending_skill_install_card",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_a_route_with_nothing_pending_can_decline_to_warn",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    },
+    {
+      "id": "Tests.UI.test_console_mcp_approval::test_local_provider_refuses_write_after_revoke_then_arm",
+      "status": "failure",
+      "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "last_line": [
+        "tldw_chatbook/Backup_Recovery/raw_participants.py:127: RecoveryRequired"
+      ]
+    }
+  ]
+}

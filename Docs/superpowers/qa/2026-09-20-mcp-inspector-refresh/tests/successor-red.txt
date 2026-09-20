@@ -1,0 +1,97 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_failed_profile_reopen_cannot_publish_previous_panel_mint _________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-648/test_failed_profile_reopen_can0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ________ test_failed_profile_reopen_cannot_publish_previous_panel_mint _________
+E
+E   request = <FixtureRequest for <Coroutine test_failed_profile_reopen_cannot_publish_previous_panel_mint>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1153e76b0>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_failed_profile_reopen_cannot_publish_previous_panel_mint(request, monkeypatch):
+E           app = WorkbenchAppWithBundledCSS()
+E           app.unified_mcp_service = ToolTestHubService()
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               workbench, _ = await _open(pilot)
+E               tool = next(t for t in workbench._last_hub_tools if t.name == "search")
+E               inspector = app.query_one(MCPInspector)
+E               await inspector.show_tool(tool, profile_context=workbench._tool_policy_profile_context)
+E               minted, release = asyncio.Event(), asyncio.Event()
+E               original_mint = workbench._mint_test_preview
+E
+E               async def held_mint(*args):
+E                   preview = await original_mint(*args)
+E                   minted.set()
+E                   await release.wait()
+E                   return preview
+E
+E               monkeypatch.setattr(workbench, "_mint_test_preview", held_mint)
+E               await inspector.open_test_panel()
+E               try:
+E                   await asyncio.wait_for(minted.wait(), 3)
+E                   old_panel = inspector.query_one("#mcp-inspector-test-panel")
+E                   await inspector._close_test_tool_panel()
+E                   monkeypatch.setattr(workbench, "_validate_profile_context", lambda *_: None)
+E                   await inspector.open_test_panel()
+E                   await _settle(pilot)
+E                   assert inspector.query_one("#mcp-inspector-test-panel") is not old_panel
+E                   status = inspector.query_one("#mcp-inspector-test-preview", Static)
+E                   assert "profile context" in str(status.renderable)
+E               finally:
+E                   release.set()
+E                   await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+E   >           assert inspector._test_preview is None
+E   E           AssertionError: assert ToolTestAdmissionPreview(nonce='preview-1', server_key='local:docs', tool_name='search', definition_hash='definition',...ault', profile_policy_digest='682eb7b8de0afa216a9d7b73c5f53b1bf11be15fcf5bb14e8ddc18868416e67e', profile_revision=None) is None
+E   E            +  where ToolTestAdmissionPreview(nonce='preview-1', server_key='local:docs', tool_name='search', definition_hash='definition',...ault', profile_policy_digest='682eb7b8de0afa216a9d7b73c5f53b1bf11be15fcf5bb14e8ddc18868416e67e', profile_revision=None) = MCPInspector(id='mcp-hub-inspector', classes='destination-workbench-pane ds-inspector')._test_preview
+E
+E   Tests/UI/test_mcp_inspector_catalog_refresh.py:317: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 09:55:56.584 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 09:55:56.615 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 09:55:56.623 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 09:55:56.626 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 09:55:57.326 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   2026-09-20 09:55:57.597 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1654 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-648/test_failed_profile_reopen_can0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.39s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_failed_profile_reopen_cannot_publish_previous_panel_mint
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_failed_profile_reopen_cannot_publish_previous_panel_mint
+E   1 failed in 3.54s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 09:55:54.427 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 09:55:54.456 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 09:55:54.465 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 09:55:54.468 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------- generated xml file: /private/tmp/32823-successor-red.xml -----------
+============================= slowest 25 durations =============================
+4.85s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_failed_profile_reopen_cannot_publish_previous_panel_mint
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_failed_profile_reopen_cannot_publish_previous_panel_mint
+1 failed, 12 deselected in 6.87s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-fb24cc4f-cede-4e7e-b455-49aeb5be86a9/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-fb24cc4f-cede-4e7e-b455-49aeb5be86a9/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-fb24cc4f-cede-4e7e-b455-49aeb5be86a9
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-fb24cc4f-cede-4e7e-b455-49aeb5be86a9'
+  warnings.warn(
