@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-18 21:46'
-updated_date: '2026-09-20 17:08'
+updated_date: '2026-09-20 17:11'
 labels:
   - mcp
   - ui
@@ -24,7 +24,7 @@ A refreshed Tools catalog must not leave obsolete selected-tool metadata or test
 <!-- AC:BEGIN -->
 - [x] #1 Catalog refresh updates the selected tool details and clears removed tools without selecting a replacement.
 - [x] #2 Unchanged definitions preserve the mounted argument draft and focus; changed definitions retire old test controls and permission previews with visible guidance.
-- [ ] #3 Targeted refresh, selection and prepared-test regressions plus bounded native evidence qualify the behavior; review ledgers and the draft PR record remaining scope.
+- [x] #3 Targeted refresh, selection and prepared-test regressions plus bounded native evidence qualify the behavior; review ledgers and the draft PR record remaining scope.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,5 +36,5 @@ ADR required: no. ADR path: backlog/decisions/161-component-pattern-library.md, 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Selected MCP tool detail now reconciles catalog refresh without replacing unchanged argument forms, cursor, focus or previews. Changed/removed definitions retire prior controls, clear detail or show reopen guidance, and synchronously invalidate preview ownership before awaited teardown. Queued refresh and late completions preserve newer selection/focus; failed-context successors also retire prior workers. Port preserves current permission navigation and recovery guards. 475 targeted passes; one unchanged Workflows dimension-ratchet failure reproduced on merged baseline802809947b. Seven artifact guards, Ruff checks with no introduced diagnostics, independent review, and eight inspected current-source native captures passed. Evidence: Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/README.md. Existing ADR-161/170 and ADR-032 apply, no new ADR. Draft publication, current-head CI/Qodo and final visual approval remain; keep In Progress until closeout. Connected-runtime and compact/long-path work remain outside this task.
+Selected MCP tool detail now reconciles catalog refresh without replacing unchanged argument forms, cursor, focus or previews. Changed/removed definitions retire prior controls, clear detail or show reopen guidance, and synchronously invalidate preview ownership before awaited teardown. Queued refresh and late completions preserve newer selection/focus; failed-context successors also retire prior workers. Port preserves current permission navigation and recovery guards. 475 targeted passes; one unchanged Workflows dimension-ratchet failure reproduced on merged baseline802809947b. Seven artifact guards, Ruff checks with no introduced diagnostics, independent review, and eight inspected current-source native captures passed. Evidence: Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/README.md. Existing ADR-161/170 and ADR-032 apply, no new ADR. Saved as draft PR2757 against dev. Current-head CI/Qodo and final visual approval remain; keep In Progress until closeout. Connected-runtime and compact/long-path work remain outside this task.
 <!-- SECTION:NOTES:END -->

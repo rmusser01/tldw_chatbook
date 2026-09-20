@@ -7,7 +7,8 @@
 current-head CI and resolved Qodo review. Its actual tree matches the verified
 head. [Merge receipt](../qa/2026-09-20-mcp-inspector-refresh/pr2730-closeout.json).
 
-Saved TASK-32823 is resumed on a fresh branch from that merge. Selected MCP
+[Draft PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757) resumes
+saved TASK-32823 on a fresh branch from that merge. Selected MCP
 inspector details now follow catalog changes while equal definitions retain
 argument drafts, cursor, focus and previews. Synchronous form ownership rejects
 late previews during teardown; newer selection and focus win. [475 targeted

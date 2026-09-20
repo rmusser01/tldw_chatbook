@@ -1,5 +1,7 @@
 # Selected MCP inspector catalog refresh — TASK-32823
 
+Saved as [draft PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757).
+
 Resumed saved prototype `135f226888` on the verified PR2730 merge
 `802809947b`. [PR2730 receipt](pr2730-closeout.json) confirms all current-head
 gates, resolved Qodo findings and an actual merge tree equal to the tested tree.
