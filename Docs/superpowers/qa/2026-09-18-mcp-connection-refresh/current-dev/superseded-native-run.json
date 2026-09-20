@@ -1,0 +1,25 @@
+{
+  "qualified": false,
+  "reason": "Stopped owned native run to repair fixture-file ownership; superseded by fresh run. Shutdown during notification wait caused recorded timeout.",
+  "exit_code": 1,
+  "app_and_fixture_pids_absent": [
+    76808,
+    77684,
+    77716,
+    77773,
+    77813,
+    77842,
+    78118,
+    78184,
+    78241,
+    78309,
+    78358,
+    78431,
+    78475,
+    78515,
+    78615,
+    78649,
+    78666,
+    78700
+  ]
+}

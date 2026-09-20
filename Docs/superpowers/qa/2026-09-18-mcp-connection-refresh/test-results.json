@@ -1,0 +1,34 @@
+{
+  "distinct_passed": 15,
+  "runs": [
+    {
+      "source": "/private/tmp/32830-green-ownership/results.xml",
+      "passed": 15,
+      "test_ids": [
+        "Tests.MCP.test_profile_refresh::test_refresh_discovers_changes_and_preserves_connection_state[True]",
+        "Tests.MCP.test_profile_refresh::test_refresh_discovers_changes_and_preserves_connection_state[False]",
+        "Tests.MCP.test_profile_refresh::test_refresh_denial_preserves_live_session_and_catalog[observe]",
+        "Tests.MCP.test_profile_refresh::test_refresh_denial_preserves_live_session_and_catalog[launch]",
+        "Tests.MCP.test_profile_refresh::test_failed_refresh_preserves_saved_catalog_and_can_retry[True]",
+        "Tests.MCP.test_profile_refresh::test_failed_refresh_preserves_saved_catalog_and_can_retry[False]",
+        "Tests.MCP.test_profile_refresh::test_disconnected_refresh_cleans_up_if_saving_catalog_fails",
+        "Tests.MCP.test_profile_refresh::test_rejected_refresh_does_not_stop_another_pending_connection[False]",
+        "Tests.MCP.test_profile_refresh::test_rejected_refresh_does_not_stop_another_pending_connection[True]",
+        "Tests.MCP.test_local_control_service::test_local_control_service_rejects_empty_capability_snapshots",
+        "Tests.MCP.test_local_control_service::test_local_control_service_tests_refreshes_disconnects_and_deletes_external_profiles",
+        "Tests.MCP.test_local_control_service::test_local_control_service_describes_connected_server_from_client_cache",
+        "Tests.MCP.test_local_control_service::test_mcp_client_connect_to_server_uses_stdio_jsonrpc_flow",
+        "Tests.MCP.test_local_control_service::test_mcp_client_connect_to_server_cleans_up_existing_connection_for_same_server_id",
+        "Tests.MCP.test_local_control_service::test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests"
+      ]
+    },
+    {
+      "source": "/private/tmp/32830-green-fixture/results.xml",
+      "passed": 2,
+      "test_ids": [
+        "Tests.MCP.test_profile_refresh::test_rejected_refresh_does_not_stop_another_pending_connection[False]",
+        "Tests.MCP.test_profile_refresh::test_rejected_refresh_does_not_stop_another_pending_connection[True]"
+      ]
+    }
+  ]
+}

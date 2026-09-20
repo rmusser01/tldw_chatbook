@@ -1,0 +1,16 @@
+{
+  "base": "5e0f9f82c3dc5673ddba47415b490e61a0e192cb",
+  "saved_pr": 2714,
+  "saved_head": "970f568c2fab5266ccd6c6ac8b403fff617d136e",
+  "service_patch_applied_without_conflicts": true,
+  "production_files": [
+    "tldw_chatbook/MCP/local_control_service.py"
+  ],
+  "ui_or_css_changes": false,
+  "new_adr_required": false,
+  "existing_adrs": [
+    111,
+    161
+  ],
+  "historical_task_id_collision": false
+}

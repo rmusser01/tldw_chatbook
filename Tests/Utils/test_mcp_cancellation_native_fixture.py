@@ -1,6 +1,7 @@
 """Native cancellation evidence must preserve pre-existing private profile data."""
 
 import runpy
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,16 +18,30 @@ RUNNER = (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["cancellation", "refresh"])
 @pytest.mark.parametrize("existing", ["cleanup-demo", "other", None])
 async def test_fixture_preserves_existing_profile_and_runtime(
-    tmp_path: Path, existing: str | None
+    tmp_path: Path, existing: str | None, kind: str
 ) -> None:
     """Reject an occupied fixture ID without altering its persisted data.
 
     Args:
         tmp_path: Isolated directory for the real MCP store.
         existing: Existing profile ID, or None for an empty store.
+        kind: Native journey whose fixture admission is being checked.
     """
+    fixture_id = "cleanup-demo" if kind == "cancellation" else "wire-review"
+    if existing == "cleanup-demo":
+        existing = fixture_id
+    runner = (
+        RUNNER
+        if kind == "cancellation"
+        else (
+            Path(__file__).resolve().parents[2]
+            / "Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/current-dev/native_check.py"
+        )
+    )
+    arguments = () if kind == "cancellation" else (runner.parents[5], tmp_path)
     store_path = tmp_path / "mcp.json"
     store = LocalMCPStore(store_path)
     if existing is not None:
@@ -48,16 +63,18 @@ async def test_fixture_preserves_existing_profile_and_runtime(
         local_service=SimpleNamespace(store=store),
         save_local_profile=AsyncMock(side_effect=save),
     )
-    create = runpy.run_path(str(RUNNER))["_save_fixture_profile"]
-    if existing == "cleanup-demo":
+    create = runpy.run_path(str(runner))["_save_fixture_profile"]
+    if existing == fixture_id:
         with pytest.raises(ValueError, match="already exists"):
-            await create(service)
+            await create(service, *arguments)
         service.save_local_profile.assert_not_awaited()
         assert store_path.read_bytes() == before
     else:
-        await create(service)
+        await create(service, *arguments)
         service.save_local_profile.assert_awaited_once()
-        assert store.get_profile("cleanup-demo").command == "/usr/bin/false"
+        assert store.get_profile(fixture_id).command == (
+            "/usr/bin/false" if kind == "cancellation" else sys.executable
+        )
         if existing:
             assert store.get_profile(existing) == original
             assert store.get_profile_runtime_state(existing) == original_runtime

@@ -1,0 +1,657 @@
+{
+  "pid": 79925,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        80,
+        24
+      ],
+      "original_pid": 80062,
+      "refreshed_pid": 80131,
+      "fresh_tools_resources_prompts": true,
+      "failure_preserved_catalog": true,
+      "failed_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:17:45.887602+00:00",
+        "last_error": "Failed to connect profile: wire-review",
+        "last_ok_at": "2026-09-20T21:17:39.751968+00:00",
+        "ok": false
+      },
+      "retry_restored_disconnected_state": true,
+      "recovered_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:17:52.060303+00:00",
+        "last_error": null,
+        "last_ok_at": "2026-09-20T21:17:52.060303+00:00",
+        "ok": true
+      },
+      "final_disconnect": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "original_pid": 80288,
+      "refreshed_pid": 80304,
+      "fresh_tools_resources_prompts": true,
+      "failure_preserved_catalog": true,
+      "failed_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:18:15.467515+00:00",
+        "last_error": "Failed to connect profile: wire-review",
+        "last_ok_at": "2026-09-20T21:18:09.398516+00:00",
+        "ok": false
+      },
+      "retry_restored_disconnected_state": true,
+      "recovered_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:18:21.634623+00:00",
+        "last_error": null,
+        "last_ok_at": "2026-09-20T21:18:21.634623+00:00",
+        "ok": true
+      },
+      "final_disconnect": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        80,
+        24
+      ],
+      "original_pid": 80422,
+      "refreshed_pid": 80492,
+      "fresh_tools_resources_prompts": true,
+      "failure_preserved_catalog": true,
+      "failed_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:18:45.411081+00:00",
+        "last_error": "Failed to connect profile: wire-review",
+        "last_ok_at": "2026-09-20T21:18:39.363747+00:00",
+        "ok": false
+      },
+      "retry_restored_disconnected_state": true,
+      "recovered_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:18:51.676043+00:00",
+        "last_error": null,
+        "last_ok_at": "2026-09-20T21:18:51.676043+00:00",
+        "ok": true
+      },
+      "final_disconnect": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "original_pid": 80597,
+      "refreshed_pid": 80635,
+      "fresh_tools_resources_prompts": true,
+      "failure_preserved_catalog": true,
+      "failed_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:19:14.675278+00:00",
+        "last_error": "Failed to connect profile: wire-review",
+        "last_ok_at": "2026-09-20T21:19:08.734492+00:00",
+        "ok": false
+      },
+      "retry_restored_disconnected_state": true,
+      "recovered_attempt": {
+        "last_action": "refresh",
+        "last_attempt_at": "2026-09-20T21:19:20.736313+00:00",
+        "last_error": null,
+        "last_ok_at": "2026-09-20T21:19:20.736313+00:00",
+        "ok": true
+      },
+      "final_disconnect": true
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "2418773e8a5c0baccc86514b90beb76db569ec23a1748f0ba2e2413a119bb107",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "a6a695e13d1ada9ac000ee99075099c837eae7c0400f68ec469143020a574d96",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "3b78c8c96e2a1b30bb599a7928cf21eef53a452cb305ddb08f003ac2e4079da7",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "671f887d71a3f96ecacfd2df5e1b6b62ca5b584dd49b3683f720f67d939dd0df",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
+    "tldw_chatbook/MCP/local_control_service.py": "d68f836afbfbdcd724e09e0fefb1323c2bacbfc3077ae7bb141cfe2333184bc8",
+    "tldw_chatbook/MCP/client.py": "9fce5defe045f633a98244c2d4a0f757765c097305085f2fe04cee373e479d97",
+    "Tests/MCP/fixtures/stdio_catalog_server.py": "8205d59289ee08e6a53ad710a71e19837c981291f31f5e00e3eb9e7e5cacfab6"
+  },
+  "runner_sha256": "50773b9bbd34dc2e46cde18feeb19739666cfaec2c5101b22b78ebaf083ad0cb",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "operation settled",
+  "notifications": {
+    "textual-dark-80x24-connected": [
+      {
+        "message": "wire-review: connected \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-dark-80x24-refreshed": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-dark-80x24-failed-retry-available": [
+      {
+        "message": "wire-review: refresh failed \u2014 Failed to connect profile: wire-review",
+        "severity": "error"
+      }
+    ],
+    "textual-dark-80x24-recovered": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-dark-170x48-connected": [
+      {
+        "message": "wire-review: disconnected.",
+        "severity": "information"
+      },
+      {
+        "message": "wire-review: connected \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-dark-170x48-refreshed": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-dark-170x48-failed-retry-available": [
+      {
+        "message": "wire-review: refresh failed \u2014 Failed to connect profile: wire-review",
+        "severity": "error"
+      }
+    ],
+    "textual-dark-170x48-recovered": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-light-80x24-connected": [
+      {
+        "message": "wire-review: connected \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-light-80x24-refreshed": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-light-80x24-failed-retry-available": [
+      {
+        "message": "wire-review: refresh failed \u2014 Failed to connect profile: wire-review",
+        "severity": "error"
+      }
+    ],
+    "textual-light-80x24-recovered": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-light-170x48-connected": [
+      {
+        "message": "wire-review: disconnected.",
+        "severity": "information"
+      },
+      {
+        "message": "wire-review: connected \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-light-170x48-refreshed": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ],
+    "textual-light-170x48-failed-retry-available": [
+      {
+        "message": "wire-review: refresh failed \u2014 Failed to connect profile: wire-review",
+        "severity": "error"
+      }
+    ],
+    "textual-light-170x48-recovered": [
+      {
+        "message": "wire-review: refreshed \u2014 1 tool.",
+        "severity": "information"
+      }
+    ]
+  },
+  "processes": [
+    {
+      "pid": 80062,
+      "returncode": 0
+    },
+    {
+      "pid": 80131,
+      "returncode": 0
+    },
+    {
+      "pid": 80255,
+      "returncode": -15
+    },
+    {
+      "pid": 80288,
+      "returncode": 0
+    },
+    {
+      "pid": 80304,
+      "returncode": 0
+    },
+    {
+      "pid": 80410,
+      "returncode": -15
+    },
+    {
+      "pid": 80422,
+      "returncode": 0
+    },
+    {
+      "pid": 80492,
+      "returncode": 0
+    },
+    {
+      "pid": 80572,
+      "returncode": -15
+    },
+    {
+      "pid": 80597,
+      "returncode": 0
+    },
+    {
+      "pid": 80635,
+      "returncode": 0
+    },
+    {
+      "pid": 80754,
+      "returncode": -15
+    }
+  ],
+  "fixture_pids": [
+    80062,
+    80131,
+    80171,
+    80227,
+    80255,
+    80288,
+    80304,
+    80339,
+    80377,
+    80410,
+    80422,
+    80492,
+    80508,
+    80528,
+    80572,
+    80597,
+    80635,
+    80657,
+    80707,
+    80754
+  ],
+  "wire_requests": [
+    {
+      "pid": 80062,
+      "method": "initialize"
+    },
+    {
+      "pid": 80062,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80062,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80062,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80062,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80131,
+      "method": "initialize"
+    },
+    {
+      "pid": 80131,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80131,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80131,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80131,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80171,
+      "method": "initialize"
+    },
+    {
+      "pid": 80227,
+      "method": "initialize"
+    },
+    {
+      "pid": 80227,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80227,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80227,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80227,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80255,
+      "method": "initialize"
+    },
+    {
+      "pid": 80255,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80255,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80255,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80255,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80288,
+      "method": "initialize"
+    },
+    {
+      "pid": 80288,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80288,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80288,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80288,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80304,
+      "method": "initialize"
+    },
+    {
+      "pid": 80304,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80304,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80304,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80304,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80339,
+      "method": "initialize"
+    },
+    {
+      "pid": 80377,
+      "method": "initialize"
+    },
+    {
+      "pid": 80377,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80377,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80377,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80377,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80410,
+      "method": "initialize"
+    },
+    {
+      "pid": 80410,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80410,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80410,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80410,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80422,
+      "method": "initialize"
+    },
+    {
+      "pid": 80422,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80422,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80422,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80422,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80492,
+      "method": "initialize"
+    },
+    {
+      "pid": 80492,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80492,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80492,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80492,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80508,
+      "method": "initialize"
+    },
+    {
+      "pid": 80528,
+      "method": "initialize"
+    },
+    {
+      "pid": 80528,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80528,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80528,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80528,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80572,
+      "method": "initialize"
+    },
+    {
+      "pid": 80572,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80572,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80572,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80572,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80597,
+      "method": "initialize"
+    },
+    {
+      "pid": 80597,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80597,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80597,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80597,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80635,
+      "method": "initialize"
+    },
+    {
+      "pid": 80635,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80635,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80635,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80635,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80657,
+      "method": "initialize"
+    },
+    {
+      "pid": 80707,
+      "method": "initialize"
+    },
+    {
+      "pid": 80707,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80707,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80707,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80707,
+      "method": "prompts/list"
+    },
+    {
+      "pid": 80754,
+      "method": "initialize"
+    },
+    {
+      "pid": 80754,
+      "method": "notifications/initialized"
+    },
+    {
+      "pid": 80754,
+      "method": "tools/list"
+    },
+    {
+      "pid": 80754,
+      "method": "resources/list"
+    },
+    {
+      "pid": 80754,
+      "method": "prompts/list"
+    }
+  ],
+  "network_attempts": [],
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

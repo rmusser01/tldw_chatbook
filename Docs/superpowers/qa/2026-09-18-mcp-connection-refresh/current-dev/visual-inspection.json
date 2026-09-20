@@ -1,0 +1,20 @@
+{
+  "cells": 4,
+  "settled_captures_inspected": 16,
+  "feedback_captures_inspected": 16,
+  "renderer": "CairoSVG with system Cairo; original SVGs retained",
+  "reviewed_states": [
+    "connected original catalog",
+    "refreshed updated catalog",
+    "failed refresh retains updated catalog and retry",
+    "recovered catalog returns disconnected"
+  ],
+  "limits": [
+    "Compact notifications temporarily overlap inspector actions; settled captures qualify actions after notification expiry. Existing workbench notification path and all UI/styles unchanged.",
+    "Compact command text places catalog sections below the fold; catalog content confirmed on wire/store and wide captures.",
+    "Compact server toolbar clipping belongs to PR2712.",
+    "Cairo glyph/font fallback artifacts are not asserted as terminal defects; original SVG and paired terminal text retained.",
+    "No remote server or tool execution qualification."
+  ],
+  "owner_approval": "pending"
+}

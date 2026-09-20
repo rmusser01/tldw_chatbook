@@ -12,8 +12,13 @@ The final merge tree exactly matches CI's merge with current dev `c768376092`.
 Existing draft [PR2714](https://github.com/rmusser01/tldw_chatbook/pull/2714)
 resumes from this merged dev on a fresh branch. TASK-32830 covers actual local
 catalog discovery during refresh, original connection state, permission denials,
-failure/retry and owned-process cleanup. Fresh targeted and native qualification,
-current review/CI and owner visual approval remain before its merge. Connected
+failure/retry and owned-process cleanup. Current integration has 49 distinct focused passes, seven artifact guards,
+independent review, and four real native cells with 32 inspected captures.
+[Current QA](../qa/2026-09-18-mcp-connection-refresh/current-dev/README.md).
+Immediate compact notifications temporarily cover inspector actions; feedback
+captures preserve this UI follow-up alongside PR2712 toolbar clipping and
+below-fold catalog scrolling. Current-head review/CI and owner visual approval
+remain before its merge. Connected
 execution (PR2716), compact actions (PR2712) and wider screen reviews remain
 separate. Earlier checkpoints below are historical.
 
