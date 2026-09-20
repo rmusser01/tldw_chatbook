@@ -63,6 +63,8 @@ The [Qodo follow-up](qodo-followup.json) only adds the public return docstring a
 explicit scroll-position assertions: product AST excluding docstrings and all
 styles remain identical to the approved gallery. All four affected cases pass
 again; Ruff check/format passes. Original native source hashes remain preserved.
-Current-head CI, accumulated PR review and current dev/conflict review remain
-before the authorized merge.
+[PR2759 merged](pr2759-closeout.json) at `8d110a06e3` after current-head CI
+(1,152 Fast Lane passes and all required guards), zero open Qodo findings and
+unchanged dev/conflict review. The actual merge tree equals the verified head.
+TASK-32879 is closed; the follow-up branch begins from this merged dev state.
 Connected-runtime journeys and other unqualified MCP screens remain separate.

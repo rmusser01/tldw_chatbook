@@ -1,5 +1,22 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2759 merged; connected runtime next
+
+[PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) merged into dev at
+`8d110a06e384add07a72e4d96f7e1e0aa4b7a144`. Its actual tree equals the verified
+head. Owner visual approval, 116 distinct local targeted passes, 16 inspected
+native captures, current-head CI (1,152 Fast Lane passes and all required guards),
+resolved Qodo findings and unchanged dev/conflict review qualify this bounded
+compact root-review repair. The two reproduced baseline test failures remain
+recorded; no full suite ran. [Merge receipt](../qa/2026-09-20-mcp-compact-review/pr2759-closeout.json).
+TASK-32879 is closed.
+
+The fresh `codex/mcp-connected-runtime-review-20260920` branch begins at the
+merged dev state. Next bounded scope is the MCP connection lifecycle and
+connected inspector journey. Other unqualified controls/screens remain open;
+no additional screen is declared qualified. PR2707’s heartbeat stays paused.
+Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2759 visual approval received
 
 [PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) / TASK-32879
