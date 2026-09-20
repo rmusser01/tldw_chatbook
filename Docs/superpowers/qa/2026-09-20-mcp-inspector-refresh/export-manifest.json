@@ -3,7 +3,7 @@
     "sha256": "2b043ac7841d693fdd3a442e10cc3f8333764513ba41b6969e201e9c0a5cec55"
   },
   "README.md": {
-    "sha256": "d9bdf5dd0326e694f751f2465b6ffa4de25b7491d8d7e3d600dd814987dfcc32"
+    "sha256": "365c78dc43187ea95b184f253969244d5b3f2cafdc6dcbdb4d8f10900aa2d476"
   },
   "baseline-comparison.json": {
     "sha256": "e21637668f00f66d15f0cb03297ed278d7e93b42480f3b319088ebda4cfe869c"
@@ -212,5 +212,8 @@
   },
   "qodo/native/textual-light-170x48-draft-preserved.svg": {
     "sha256": "575a57264e7f2b69ed7524bf98984fc210cff2e68c5f3f703f11cea9deae0416"
+  },
+  "pr2757-closeout.json": {
+    "sha256": "4e63dc0c6d6e769c83985f7bde0cf1017aabd6d40aeed55ba81454de6d46e175"
   }
 }

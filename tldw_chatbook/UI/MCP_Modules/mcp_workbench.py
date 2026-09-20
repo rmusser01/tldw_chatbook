@@ -3286,7 +3286,9 @@ class MCPWorkbench(Container):
 
     async def _prepare_mcp_recovery_review(self, token) -> None:
         from tldw_chatbook.TTS._async_lifecycle import join_retained_task
-        from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+        from tldw_chatbook.UI.MCP_Modules.mcp_recovery_review import (
+            MCPRecoveryReviewDialog,
+        )
 
         try:
             task = asyncio.create_task(
@@ -3332,7 +3334,7 @@ class MCPWorkbench(Container):
             "rules, grants and context remain retained and inactive. No server will "
             "connect and no tool permission will be granted."
         )
-        dialog = ConfirmationDialog(
+        dialog = MCPRecoveryReviewDialog(
             title="Review restored MCP roots",
             message=escape_markup(message),
             confirm_label="Use fresh MCP defaults",
@@ -3341,9 +3343,6 @@ class MCPWorkbench(Container):
             dialog,
             lambda accepted: self._confirm_mcp_recovery_review(token, review, accepted),
         )
-        content = dialog.query_one("#confirmation-dialog")
-        content.styles.max_height = "90%"
-        content.styles.overflow_y = "auto"
 
     def _confirm_mcp_recovery_review(self, token, review, accepted: bool) -> None:
         if (

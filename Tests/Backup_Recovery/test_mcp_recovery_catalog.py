@@ -64,7 +64,9 @@ async def run():
     elif route=='service':host.unified_mcp_service=plane()
     expected=bench.get_view_state();notice_count=len(notices)
    finally:release.set()
-  await wait_for(lambda:not bench._mcp_recovery_busy);await pilot.pause()
+  # The queued Button.Pressed may not have set busy yet. The captured review
+  # token remains owned until admission, native write and publication finish.
+  await wait_for(lambda:bench._mcp_recovery_token is None and not bench._mcp_recovery_busy);await pilot.pause()
   assert activation.allowed(witness['generation'],'mcp.local')
   assert service.permission_store.get_global_default()=='ask'
   assert all((user/name).read_bytes()==data for name,data in history.items())
