@@ -579,7 +579,8 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 
 
 # ADR-172 / TASK-32870–32872: initial exact pins for the new artifact owners.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 776
+# PR #2754 review: include finite-worker dispatch and reader reveal before the initial landing.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 788
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 

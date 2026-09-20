@@ -82,6 +82,48 @@ view switching exposed asynchronous Markdown mount/scroll ordering; the reader
 now waits for body mount before restoring its position. This incident is recorded
 in `backlog/docs/lessons-live-verification.md`.
 
+## PR #2754 independent review follow-up
+
+The requested fresh review of `ebee42fab8` → `4942a4484b` found two issues:
+completed artifact DB workers retained native SQLite caches and prevented backup
+maintenance drain; the artifact reader was absent from Library’s adaptive-shell
+recognition and global F6 pane targets. Controller storage reads/actions now use
+Library’s existing finite worker boundary. Artifact focus cycles through Library,
+Items and reader, with closed-pane grips; focusing a narrow reader reveals its
+stage, and an empty zero-width reader is excluded.
+
+Regression tests first reproduced retained handles, false shell classification,
+and broken forward/collapsed-pane focus. The narrow follow-up additionally caught
+focus at x=51 on a 50-column screen, despite the focus ID being correct. Tests
+assert rendered bounds, not only focus ownership. A 64-column fixture initially
+assumed zero reader width; it was corrected to the actual list-first state.
+
+- 12 controller-driven, private-profile SQLite cases pass: page/locate/detail
+  under success, failure, cancellation and borrowed-handle ownership. Native
+  closure is checked on the same pool thread, cancellation is joined before
+  checking, the UI-thread connection stays usable, and maintenance drains.
+- Seven production-CSS focus cases pass, covering forward/reverse traversal,
+  collapsed grips, adaptive-shell recognition, narrow reader reveal/return and
+  empty results. A held-callback test also proves a newer F6 focus cannot be
+  overwritten by deferred reader reveal; already-focused reveal changes geometry
+  without requesting focus again. The affected Reports/Chatbooks integration run
+  passed 21 cases; six adjacent Enter/Escape/layout/restoration cases passed again
+  after the narrow reveal change.
+- The five focused new-controller governance checks pass. Only the initial pin
+  for this PR’s new controller was revised for finite-worker dispatch and the
+  already-focused reader reveal;
+  existing module/screen ceilings remain unchanged.
+- Native `TldwCli` verification in `/private/tmp/artifact-review-native/run4/`
+  records actual terminal F6/Shift+F6 cycles at 160×50, 64×30 and 50×25,
+  followed by Escape/Enter, with `LinuxDriver`, `isatty=True` and exit 0.
+  The narrow screenshot was inspected. Earlier native attempts were not counted:
+  they raced startup and assumed a search field in the compact starter rail.
+  The final fresh-profile run primed the supported terminal capability helper
+  and exercised the actual starter-rail fallback as well as closed grips.
+- The independent reviewer accepted all corrections with no remaining findings.
+  New/changed focused modules pass Ruff and formatting, and the legacy files
+  have zero diagnostics on added lines. `git diff --check` is clean.
+
 ## Known verification limits
 
 No full suite was requested or run. Existing direct old-screen/casting/demo

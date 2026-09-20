@@ -212,13 +212,15 @@ class LibraryArtifactsController:
         except Exception:  # noqa: BLE001 - preserve the mounted reader on owner failure
             self.notify("Pane preference could not be saved.", "warning")
 
-    def focus_reader(self) -> None:
+    def focus_reader(self, *, request_focus: bool = True) -> None:
         if not self.active() or self.selected is None:
             return
         self.reader_open = True
         # Drop a transient Items priority without changing the user's saved pane choice.
         self.layout = replace(self.layout, priority_pane=None)
         self.resize()
+        if not request_focus:
+            return
         generation, profile = self.presentation, self.profile()
         self.screen.call_after_refresh(
             self._focus, "#library-artifacts-body", generation, profile
@@ -318,22 +320,26 @@ class LibraryArtifactsController:
         missing = False
         try:
             if target:
-                page = await asyncio.to_thread(catalog.locate, scope, target)
+                page = await self.screen._run_library_service_call(
+                    catalog.locate, scope, target
+                )
                 if page is None:
                     if fallback_missing:
                         target = None
-                        page = await asyncio.to_thread(catalog.read_page, scope)
+                        page = await self.screen._run_library_service_call(
+                            catalog.read_page, scope
+                        )
                     else:
                         missing = True
                         raise LookupError(
                             "Requested artifact is missing or outside this filter."
                         )
             else:
-                page = await asyncio.to_thread(
+                page = await self.screen._run_library_service_call(
                     catalog.read_page, scope, boundary=boundary, direction=direction
                 )
                 if not page.items and page.total and boundary is not None:
-                    page = await asyncio.to_thread(
+                    page = await self.screen._run_library_service_call(
                         catalog.read_page,
                         scope,
                         direction="before" if direction == "after" else "after",
@@ -421,7 +427,9 @@ class LibraryArtifactsController:
     async def _load_detail(self, catalog, identity) -> None:
         profile, scope, key, revision, generation = identity
         try:
-            detail = await asyncio.to_thread(catalog.read_detail, key)
+            detail = await self.screen._run_library_service_call(
+                catalog.read_detail, key
+            )
             error = (
                 "This copy is no longer available. Retry to refresh the list."
                 if detail is None
@@ -603,7 +611,9 @@ class LibraryArtifactsController:
         profile, key, revision, presentation = identity
         try:
             catalog = self.catalog()
-            fresh = await asyncio.to_thread(catalog.read_detail, key)
+            fresh = await self.screen._run_library_service_call(
+                catalog.read_detail, key
+            )
             if not self.presentable(presentation, profile) or self.selected != key:
                 return
             if fresh is None or fresh.revision != revision:
@@ -618,7 +628,7 @@ class LibraryArtifactsController:
             if name == "keep" and fresh.can_keep:
                 from ...Subscriptions.briefing_keep import keep_briefing
 
-                result = await asyncio.to_thread(
+                result = await self.screen._run_library_service_call(
                     keep_briefing,
                     catalog.subscriptions_db,
                     catalog.chachanotes_db,
@@ -663,7 +673,7 @@ class LibraryArtifactsController:
                 from ..Screens.artifacts_screen import ArtifactsScreen
 
                 service = self.app_instance.local_chatbook_service
-                record = await asyncio.to_thread(
+                record = await self.screen._run_library_service_call(
                     lambda: service.artifact_read_snapshot().get_record(key.native_id)
                 )
                 if (
@@ -721,7 +731,7 @@ class LibraryArtifactsController:
         getter = (
             db.get_briefing if key.source == "live_report" else db.get_kept_briefing
         )
-        report = await asyncio.to_thread(getter, key.native_id)
+        report = await self.screen._run_library_service_call(getter, key.native_id)
         if (
             not report
             or not self.presentable(presentation, profile)
@@ -766,7 +776,9 @@ class LibraryArtifactsController:
         from ...Utils.path_validation import validate_path_simple
 
         db = getattr(self.app_instance, "subscriptions_db", None)
-        raw = await asyncio.to_thread(db.get_artifact_audio_path, key)
+        raw = await self.screen._run_library_service_call(
+            db.get_artifact_audio_path, key
+        )
         if not self.presentable(presentation, profile) or key != self.selected:
             return
         if not raw or not audio_file_path_is_safe(raw):

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 21:57'
-updated_date: '2026-09-20 07:18'
+updated_date: '2026-09-20 07:52'
 labels:
   - library
   - artifacts
@@ -35,11 +35,13 @@ Make all local report copies discoverable through the existing Library reader la
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes. ADR path: backlog/decisions/172-library-artifacts-browse-and-navigation.md. Reason: Implements the accepted Library browse and navigation contract. 1. Add coherent bounded report metadata reads, namespaced identity and exact target location. 2. Enforce service-owned Keep conflict checks before all writes. 3. Mount Reports and Kept in the shared Library reader with lifecycle and focus guards. 4. Verify targeted SQLite, Library, production CSS and live interaction evidence; record results.
+ADR required: yes. ADR path: backlog/decisions/172-library-artifacts-browse-and-navigation.md. Reason: Implements the accepted Library browse and navigation contract. 1. Add coherent bounded report metadata reads, namespaced identity and exact target location. 2. Enforce service-owned Keep conflict checks before all writes. 3. Mount Reports and Kept in the shared Library reader with lifecycle and focus guards. 4. Verify targeted SQLite, Library, production CSS and live interaction evidence; record results. PR review correction: reproduce F6 pane cycling and adaptive-shell detection, wire the artifact shell into existing global focus/layout seams, route artifact storage calls through the existing finite worker boundary, and verify native handle retirement on success, error, cancellation and borrowed ownership before closing review.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented Reports and Kept in Library’s shared adaptive reader with bounded snapshot pages, exact identities, durable export/scripts/audio/watchlist actions, and service-owned Keep compatibility guards. Real tests cover imported collisions, rollback, borrowed transactions, source deletion, delayed replies, query and focus, and stale-action Retry. Final reader regressions passed, including native Enter/Down/Escape. Behavior lives in focused catalog/controller/widget modules with thin screen wiring. ADR: backlog/decisions/172-library-artifacts-browse-and-navigation.md. Evidence and explicit baseline limits: Docs/superpowers/plans/2026-09-19-library-artifacts-verification.md. User guide updated. No full suite requested; changed/new focused tests pass, added-line Ruff diagnostics are zero, generated CSS checks pass, and native private-profile TldwCli was verified. Existing recovery-initialization and repository-wide screen-size/workflows-style failures remain documented; their limits were not raised.
+
+PR #2754 independent review: fixed finite artifact-worker cache retirement through the existing Library service boundary, adaptive-shell recognition, and F6/Shift+F6 pane/grip navigation. Narrow focus reveals the reader without a deferred callback that can override newer focus. Verification: 12 real SQLite lifecycle cases, seven production-CSS focus cases, 21 affected Reports/Chatbooks integration cases, six adjacent interaction cases, and five artifact-controller governance checks passed (overlapping focused runs). Final private native TldwCli F6/Shift+F6 at160/64/50 columns exited0. Independent reviewer accepted all findings as resolved; no full suite. Updated verification record and worker-lifetime lesson; ADR-172 remains governing.
 <!-- SECTION:NOTES:END -->

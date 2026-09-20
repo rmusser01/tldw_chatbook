@@ -9161,6 +9161,10 @@ class LibraryScreen(BaseAppScreen):
         self,
     ) -> tuple[WorkbenchPaneTarget, ...]:
         """Return the active destination's stable global focus regions."""
+        if self._library_selected_row_id.startswith("artifacts-"):
+            controller = self._artifacts_controller
+            if controller is not None and controller.shell is not None:
+                return controller.shell.workbench_focus_targets()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             return self._MEDIA_WORKBENCH_FOCUS_TARGETS
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
