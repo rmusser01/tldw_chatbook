@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 21:50'
-updated_date: '2026-09-19 22:07'
+updated_date: '2026-09-20 06:11'
 labels:
   - library
   - artifacts
@@ -26,24 +26,25 @@ Turn the approved Library-style Artifacts proposal and review into an explicit d
 - [x] #2 The design preserves kept reports after source deletion and documents catalog, scope, sharing, keyboard, and navigation behavior.
 - [x] #3 A canonical ADR and executable implementation plan identify boundaries, alternatives, targeted verification, and atomic delivery stages.
 - [x] #4 Documentation references and task metadata are verified without changing application code.
+- [x] #5 The four final review findings are resolved in the specification and executable plan: Keep conflicts before writes, coherent read snapshots, suspend-aware dialog publication, and consistent reader/list keyboard behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Record the approved Library Artifacts layout, all-reports default with Kept filter, and linked existing Chatbook manager in a design specification.
-2. Create ADR-172 for navigation and cross-owner browsing while retaining source ownership, retention, sharing, and permission boundaries.
-3. Write an executable staged implementation plan with concrete file boundaries, capability inventory, source contracts, regression fixtures, and targeted checks.
-4. Verify document links, task metadata, and diff scope; record review conclusions and close the design task.
-ADR required: yes
+1. Apply the approved final review corrections to the existing design and staged plan, preserving All reports with Kept filtering and the linked ZIP-pack manager.
+2. Specify service-owned pre-write Keep conflict validation including concurrent-create fallback; add a no-mutation regression requirement and explicit source-owned read snapshot plus concurrent-write verification.
+3. Specify Library suspend/resume presentation guards separately from retained data reads and approved share operations; make the Enter/Back/Escape focus contract and tests agree.
+4. Strengthen the open implementation task acceptance criteria, verify document links and example syntax, check ADR-172 consistency and diff scope, then close the design task.
+ADR required: no
 ADR path: backlog/decisions/172-library-artifacts-browse-and-navigation.md
-Reason: Library navigation and artifact read contracts span long-lived UX and existing service owners.
+Reason: These corrections make the implementation honor the existing accepted no-corruption, coherent-read, ownership, and focus contracts; they do not change the architectural decision.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Recorded the approved Library Artifacts direction in Docs/superpowers/specs/2026-09-19-library-artifacts-design.md and staged execution in Docs/superpowers/plans/2026-09-19-library-artifacts.md. Reports default to All reports with a Kept filter; the existing ZIP-pack manager remains linked. The review now covers source deletion, copy provenance, capability-based actions, sharing lifetime, bounded source reads, keyboard/focus restoration, and compatibility routes.
-Created ADR-172 at backlog/decisions/172-library-artifacts-browse-and-navigation.md and indexed it. Imported source IDs are device-local, so the design keeps live and saved copies distinct instead of unsafe numeric-ID deduplication. No storage migration or new permission authority is proposed.
-Verification: all 18 document links resolve; all 6 Python examples parse; plan placeholder scan, Backlog metadata/AC/dependency checks, and git diff --check pass. A fresh scan found no task or ADR collisions across all refs and 42 worktrees. Application code is unchanged; runtime tests and native TUI verification belong to the open implementation stages and were not claimed or run for this documentation-only task.
+Finalized the Library Artifacts specification and staged implementation plan with all four approved review corrections. Keep compatibility is checked by the service before parent/script mutations, including raced creates; browse opens an explicit deferred read snapshot with borrowed-transaction ownership preserved; pending dialog/focus effects are guarded across suspend and navigation while retained reads and accepted sharing keep their lifetime; Enter/Back/Escape behavior and its tests now agree.
+Updated Docs/superpowers/specs/2026-09-19-library-artifacts-design.md and Docs/superpowers/plans/2026-09-19-library-artifacts.md, plus the relevant open implementation acceptance criteria. All reports with a Kept filter and the linked ZIP-pack manager remain the approved design. ADR-172 at backlog/decisions/172-library-artifacts-browse-and-navigation.md remains unchanged: these corrections implement its existing boundaries, so no new ADR is required.
+Verification passed: 12 links in the revised documents resolve; all 8 Python examples parse; spec/plan global constraints match; all four findings and their regression requirements are present; four Backlog records have the expected states, criteria, and backward-only references; no placeholders or whitespace errors were found. The diff contains only the specification, plan, and three Backlog records. Application code and runtime tests remain for the open implementation stages; no runtime fix is claimed here.
 <!-- SECTION:NOTES:END -->

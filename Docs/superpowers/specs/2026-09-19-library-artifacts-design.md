@@ -86,10 +86,15 @@ copies as distinct rows in this delivery, with clear copy labels. This replaces
 the review's initial suggestion to deduplicate by source ID.
 
 A successful Keep selects the returned kept identity and displays the durable
-body. If an existing kept row conflicts with the selected live content, say that
-a saved copy already exists and differs; do not claim the current body was saved
-or overwrite either copy. Use the existing service's additive script semantics.
-The catalog is not an excuse to change import identity or storage policy.
+body. The Keep service must check a pre-existing parent's content compatibility
+**before any parent or script mutation**, including after a concurrent-create
+conflict. If the snapshot differs, refuse the operation and explain that a saved
+copy already exists and differs; leave its body and entire script set unchanged.
+A UI comparison after calling the current service is too late: the service can
+already have attached scripts to that conflicting parent. Preserve additive
+script keeping for compatible snapshots and the existing saved origin/time.
+Keep this guard with the existing service so every caller receives it; no import
+identity or storage migration is required.
 
 Kept bodies never silently become live bodies. Kept scripts remain readable
 without the source. Keeping a report does not preserve audio files; playback is
@@ -158,6 +163,11 @@ read once. The coordinator merges at most 20 candidates per participating
 source. It reports an exact total for that tuple of source snapshots, never
 claims a globally atomic instant, and releases all reads when the worker ends.
 No snapshot survives user idle time. Cross-store writes may move later pages.
+The Subscriptions owner explicitly starts a deferred read transaction before its
+first target, rank, count, or row query when no transaction is already active.
+Its default `transaction()` context does not itself begin a read snapshot.
+Follow its existing Watchlists reader pattern; borrow an active transaction
+without beginning or committing a nested one, and take no write lock for browse.
 
 The source contracts include count-before-key and bounded rows-before/after-key
 reads. Deep links fetch the target's source key, calculate its rank using each
@@ -177,11 +187,14 @@ empty, no matches, missing item, missing file, and source unavailable.
 
 ## Interaction, restoration, and navigation
 
-Reuse Library's bindings and focus system. Enter opens/focuses the reader; Back
-returns to the selected list row and scroll position. Escape gives the focused
-field, active editor/modal, and route-specific recovery first refusal before a
-pane return. Clearing search updates both its visible field and applied query.
-Selection must not destroy the focused list or lose its keyboard handlers.
+Reuse Library's bindings and focus system. With the list focused, arrows change
+the selected row; Enter opens/focuses the reader. While the reader is focused,
+arrows belong to the reader and do not move the list selection. Back, or Escape
+when no field/modal/route handler consumes it, returns to the selected list row
+and scroll position; arrows then navigate the list again. Escape gives the
+focused field, active editor/modal, and route-specific recovery first refusal
+before a pane return. Clearing search updates both its visible field and applied
+query. Selection must not destroy the focused list or lose its keyboard handlers.
 
 Maintain independent applied query, sort, Kept filter, selected identity, pane
 mode, and list scroll for each artifact view. Store lightweight state, not
@@ -189,6 +202,23 @@ private records or transient worker failures. Requested and applied query state
 remain distinct. Explicit incoming navigation has precedence over restored
 state. Separate selected from loaded identity; fence each load by profile,
 artifact view, scope, item identity, and generation. Unmount invalidates results.
+
+Library is reusable: leaving it normally suspends it, rather than unmounting it.
+Separate retained data reads from presentation effects. Compatible in-flight
+reads may finish into retained state while hidden; do not cancel them all or
+strand the screen in Loading. Stop visit-owned debounce timers on suspend and
+reconcile visible state on resume through Library's existing lifecycle hooks.
+Delayed modal/focus publication requires a still-current presentation request,
+the same profile and visit, and an active Library screen. Invalidate pending
+presentation requests on suspend, canvas navigation, replacement, and teardown;
+check again on the UI thread immediately before presenting. Returning to Library
+must not resurrect a request abandoned on the previous visit.
+
+Opening Library's own share dialog also suspends Library. Once that dialog is
+presented, its explicit result belongs to that exact dialog/profile and is not
+invalidated merely by covering its parent. Keep the pre-publication visit guard
+separate from accepted dialog results and app-owned share operations. An existing
+share and an explicitly approved operation retain their established lifetime.
 
 After Library reaches capability parity, remove Artifacts from the permanent
 top-level destination list. Keep `artifacts` as a compatibility route into
@@ -216,6 +246,11 @@ collision, differing kept/live bodies, script preservation, missing audio/ZIP,
 more than 20 rows per source, ties across sources, late workers, filter switch
 during load, active-share navigation, old routes/shortcuts, artifact-only
 onboarding, no matches, retry, and narrow/wide pane restoration.
+Also verify that a conflicting Keep leaves the parent and scripts unchanged in
+both ordinary and concurrent-create paths; a writer committing between metadata
+and row probes cannot split one browse snapshot; and a delayed dialog cannot
+appear after a Library suspend/resume or canvas change. Exercise the explicit
+Enter → reader → Back/Escape → list sequence, including consumed field Escape.
 
 Use a harness with production `APP_STYLESHEETS` and a real mounted app for live
 checks. Exercise 160×50, 100×40, 64×30, and 50×25 terminals in light/dark themes.

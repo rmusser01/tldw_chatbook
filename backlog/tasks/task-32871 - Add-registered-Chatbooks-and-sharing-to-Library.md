@@ -4,6 +4,7 @@ title: Add registered Chatbooks and sharing to Library
 status: To Do
 assignee: []
 created_date: '2026-09-19 22:00'
+updated_date: '2026-09-20 06:08'
 labels:
   - library
   - artifacts
@@ -24,4 +25,6 @@ Browse registered Chatbooks and Console saved responses in the Library artifact 
 - [ ] #2 Manage Chatbook packs opens the existing manager with its creation, import, template, export, and delete workflows intact.
 - [ ] #3 Multi-item sharing remains available and Library exposes Manage and Stop across types, filters, pane collapse, and navigation.
 - [ ] #4 Targeted registry, manager-link, sharing, production-CSS, and worker-lifecycle checks pass without altering storage or publication authority.
+- [ ] #5 Delayed share dialogs cannot publish after Library suspension, canvas navigation, or leave-and-return; publication is rechecked on the UI thread immediately before push.
+- [ ] #6 Library being covered by its own share modal does not invalidate that exact dialog’s explicit result; accepted sharing and existing shares survive presentation invalidation.
 <!-- AC:END -->

@@ -14,6 +14,10 @@ ADR required: yes
 ADR path: backlog/decisions/172-library-artifacts-browse-and-navigation.md
 Reason: The navigation move and bounded composite read contract cross long-lived UX and service boundaries. [ADR-172](../../../backlog/decisions/172-library-artifacts-browse-and-navigation.md) records the decision before implementation.
 
+Final-review corrections implement ADR-172's existing content integrity, coherent
+read, source ownership, and focus requirements. They require no new ADR and do
+not amend the accepted decision. Application implementation is still pending.
+
 Design baseline: `ad0f76e23b8737904f24eb34760bbee9ac01a04c` (`origin/dev`, 2026-09-19).
 Design task: TASK-32869. Implementation stages: TASK-32870, TASK-32871, TASK-32872.
 Read each Backlog task before starting it; set it In Progress and add its
@@ -40,6 +44,7 @@ before checking its ACs and marking it Done. Each stage is independently reviewa
 | Create `tldw_chatbook/Library/library_artifacts_catalog.py` | Artifact-only orchestration of source reads; merge, exact range, bounded target location, source failure. No mutations or widgets. |
 | Modify `tldw_chatbook/DB/Subscriptions_DB.py` | Live report metadata count/boundary/window and exact-ID reads. |
 | Modify `tldw_chatbook/DB/ChaChaNotes_DB.py` | Kept report metadata count/boundary/window and exact-ID reads independent of live reports. |
+| Modify `tldw_chatbook/Subscriptions/briefing_keep.py` | Refuse incompatible existing kept parents before any script mutation, including the concurrent-create fallback; preserve compatible additive keeps. |
 | Modify `tldw_chatbook/Chatbooks/local_chatbook_service.py` | One-parse registry snapshot, complete metadata filtering/sorting, bounded candidates; no ZIP inventory merge. |
 | Create `tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py` | Workers, scope transitions, selection/detail fences, existing action delegation, return state. |
 | Create `tldw_chatbook/Widgets/Library/library_artifacts_reader_shell.py` | Concrete `LibraryAdaptiveReaderShell` consumer with artifact Items and Preview/Details slots. |
@@ -54,7 +59,7 @@ before checking its ACs and marking it Done. Each stage is independently reviewa
 | Stage 3: modify `tldw_chatbook/UI/Navigation/shell_destinations.py`, `screen_registry.py`, `pending_handoff_store.py`, `tldw_chatbook/app.py`, `Constants.py` | Compatibility routing and direct shortcut without renumbering globals. |
 
 Existing `artifacts_screen.py`, `artifact_share_dialog.py`, `chatbooks_screen.py`,
-`Chatbooks_Window_Improved.py`, `Subscriptions/briefing_keep.py`,
+`Chatbooks_Window_Improved.py`,
 `Subscriptions/briefing_export.py`, and
 `UI/Watchlists_Modules/kept_briefings_modal.py` are
 capability references. Avoid moving their domain logic into Library. Reuse
@@ -172,11 +177,53 @@ SQLite timestamps are UTC. Missing imported creation time falls back to kept
 time; a missing/unparseable final timestamp sorts last. Test Unicode, timestamp
 ties, and missing metadata explicitly. Source kind/ID resolves all final ties.
 
-For every composite request, enter configured source transactions in the order
-Subscriptions then ChaChaNotes, read one registry snapshot, perform all probes,
-then close before publishing. No direct SQL against another owner's tables,
-ATTACH, persistent read cache, or long-lived transaction is needed. Count/row
-coherence describes these snapshots; it does not imply cross-store atomicity.
+For every composite request, enter only the participating sources' snapshots in
+the order Subscriptions then ChaChaNotes, read one registry snapshot if admitted,
+perform all probes, then close before publishing. Kept-only reads never enter
+Subscriptions, even if its handle exists. No direct SQL against another owner's
+tables, ATTACH, persistent read cache, or long-lived transaction is needed.
+Count/row coherence describes these snapshots; it does not imply cross-store
+atomicity.
+
+Add the following source-owned `SubscriptionsDB.artifact_read_snapshot()` context
+manager. `transaction()` alone only tracks Python nesting on its ordinary read
+path; it does not issue SQLite BEGIN. The new boundary must wrap the first
+`get_artifact_summary`/rank/count read through the final page query, not just the
+last row query. Follow the existing `get_reader_items_page` guarded deferred-BEGIN
+pattern, retaining source access/lifecycle guards through `transaction()`.
+
+```python
+@_core_transaction
+@contextmanager
+def artifact_read_snapshot(self) -> Iterator[sqlite3.Connection]:
+    connection = self.conn
+    if connection.in_transaction:
+        depth = getattr(self._local, "transaction_depth", 0)
+        self._local.transaction_depth = depth + 1
+        try:
+            yield connection
+        finally:
+            self._local.transaction_depth = depth
+        return
+    with self.transaction() as connection:
+        if not connection.in_transaction:
+            connection.execute("BEGIN DEFERRED")
+        yield connection
+```
+
+The active-transaction branch borrows without committing or rolling back the
+caller's transaction. Its temporary nesting depth prevents existing source
+methods that enter `transaction()` from committing a borrowed native transaction;
+restore the original depth on success and exceptions. The inactive branch uses
+the existing transaction owner
+to finish its deferred snapshot. Both retain the core access/lifecycle guard;
+the helper never requests a write lock for browse. ChaChaNotes keeps its existing
+explicitly begun transaction boundary.
+Add a coordinated WAL writer test following
+`Tests/DB/test_subscriptions_db_watchlists_reader_snapshot.py` so a commit
+between the first metadata probe and row query cannot change one response's
+counts, ranks, or rows. Also assert nested owner transactions remain active and
+their owner can still roll back.
 
 ## Stage 1 — Reports reader and retention (TASK-32870)
 
@@ -189,6 +236,10 @@ destination remains available. No empty Chatbooks/All placeholders ship yet.
 `Tests/UI/test_library_artifacts_canvas.py`. Modify the two DB owners, rail,
 navigation/controller wiring, preference normalization, CSS, and relevant
 onboarding tests. Existing report action tests remain as regression coverage.
+Also modify `Subscriptions/briefing_keep.py` and extend
+`Tests/Subscriptions/test_briefing_keep.py` for the pre-write conflict guard.
+The new catalog tests cover the explicit read-snapshot boundary using the
+existing Watchlists WAL regression as a fixture pattern.
 
 **Consumes:** Existing `keep_briefing`, live/kept DB reads, report export,
 Watchlists navigation, audio validation, and shared adaptive reader.
@@ -240,6 +291,71 @@ Expected initially: import failure for the new catalog, then PASS after steps 2�
   Full live/kept body reads happen only through `read_detail` on selection.
   Keep all existing DB/service APIs compatible.
 
+- [ ] **2a. Guard Keep conflicts in the service before copying any scripts.**
+  Keep the `keep_briefing` signature/result shape and existing `KeepRefused`
+  error type. Add a private compatibility guard in `briefing_keep.py` and call
+  it for both an initially existing parent and the parent returned after a
+  concurrent-create `ConflictError`. A mismatch raises `KeepRefused` with a
+  conflict reason before `_copy_missing_scripts` or any other mutation. Do not
+  rely on a Library-only precheck or a comparison after the service returns.
+
+  Compare the body and stored content fields: normalized original creation and
+  coverage timestamps, coverage item ID, selection mode, model, and normalized
+  item/featured/overflow counts. Preserve the create path's None/zero handling.
+  Do not compare keep time, saved origin, or the mutable Watchlist display name:
+  a renamed Watchlist or manual-to-scheduled re-keep must remain compatible.
+  Normalize naive SQLite timestamps as UTC and compare instants with the
+  timezone-aware kept values. This compatibility check permits additive keeping
+  of matching content; it does not establish global report identity or authorize
+  browse deduplication. Do not call the importer's private comparator unchanged,
+  since it deliberately compares origin and Watchlist name for import semantics.
+
+  Hold one source read snapshot across the live parent/script reads and one
+  ChaChaNotes write transaction across parent lookup/validation and script copy,
+  in the established Subscriptions → ChaChaNotes order. Use the existing
+  `transaction(immediate=True)` write boundary and preserve nested/borrowed owner
+  semantics. Recheck compatibility after the create-race fallback; any refusal
+  must leave the existing parent and its full script set unchanged. Existing
+  compatible re-keep and script-race behavior stays covered by its current tests.
+
+  Add this real-storage regression to `Tests/Subscriptions/test_briefing_keep.py`,
+  using that module's existing helpers/imports. It must fail against the current
+  service before the guard is implemented.
+
+```python
+def test_keep_conflict_does_not_attach_scripts_to_imported_parent(tmp_path):
+    subs = _subs_db(tmp_path)
+    kept = _chacha_db(tmp_path)
+    try:
+        live = _complete_briefing(subs, _watchlist(subs), body="# Local report")
+        _script(subs, live, preset_name="Local cast")
+        saved_id = kept.create_kept_briefing(
+            source_briefing_id=live,
+            watchlist_name="Imported Watchlist",
+            body_markdown="# Different imported report",
+            origin="manual",
+        )
+        kept.create_kept_script(
+            saved_id, source_script_id=None, preset_name="Imported cast",
+            roster_snapshot_json="[]", turns_json="[]",
+        )
+        before = (kept.get_kept_briefing(saved_id), kept.list_kept_scripts(saved_id))
+        with pytest.raises(KeepRefused, match="conflict"):
+            keep_briefing(subs, kept, live, origin="manual")
+        after = (kept.get_kept_briefing(saved_id), kept.list_kept_scripts(saved_id))
+        assert after == before
+    finally:
+        kept.close_connection()
+        subs.close()
+```
+
+  Run: `python -m pytest Tests/Subscriptions/test_briefing_keep.py -q`.
+  Extend the existing raced-create fixture so its winning parent has different
+  content; assert the same refusal and unchanged parent/scripts on that branch.
+  Add compatibility cases for a renamed Watchlist, manual versus scheduled
+  origin, and equal instants with different timestamp representations. Existing
+  additive-script and complete-script-only tests must still pass.
+
 - [ ] **3. Implement bounded merging and direct location.** Both report owners
   participate in All reports; only ChaChaNotes participates in Kept. For a
   boundary, request up to 20 candidates per source, then merge the first 20
@@ -277,12 +393,22 @@ def merge_candidates(windows, *, direction):
   Test tie timestamps, missing original time, Unicode title order, zero matches,
   and a deleted cursor anchor. Empty/out-of-range pages get one first/last
   recovery; a second moving-boundary failure stays stale with Retry.
+  Coordinate a separate WAL writer to insert/delete after the first metadata
+  read but before the window query. Assert the same response retains its original
+  total/rank/rows, the writer commits without waiting for a browse write lock,
+  and the next request sees the change. Cover the exact-item locator as well as
+  ordinary pages. Verify borrowed native and nested owner transactions remain
+  active after both successful reads and exceptions, including nested calls to
+  existing `get_briefing`/script methods; only their owner may end them. Release
+  coordination events and close each thread's own DB handle in
+  test cleanup so a failing assertion cannot leave a writer waiting.
 
 - [ ] **5. Build the concrete reader and controller.** Construct
   `LibraryArtifactsReaderShell` from `LibraryAdaptiveReaderShell` with concrete
   list/work builders. Add toolbar/reader IDs prefixed `library-artifacts-`.
   Controller methods are `request_scope(scope)`, `select(key)`,
-  `request_page(direction)`, `open_target(key)`, and `dispose()`; all return None
+  `request_page(direction)`, `open_target(key)`, `suspend()`, `resume()`, and
+  `dispose()`; all return None
   and schedule/apply existing Textual worker/navigation mechanisms. `dispose`
   invalidates generations. Store separate applied state by view; never persist
   result bodies. Use the current profile identity in every apply fence.
@@ -294,10 +420,22 @@ request_identity = (profile_id, scope, selected_key, selected_revision, detail_g
 # Commit loaded_key/revision only with that verified detail response.
 ```
 
-  Keep invokes `keep_briefing` in a worker, reads the returned kept record, and
-  selects its durable identity. Compare the returned body's saved semantics
-  before announcing success; conflicting existing content gets an explicit
-  explanation. A successful write followed by a failed refresh remains a
+  Wire `suspend()`/`resume()` to Library's existing `on_screen_suspend` and
+  `on_screen_resume` hooks. Stop owned debounce timers and invalidate pending
+  modal/focus presentation requests on suspend. Do not bump data-read generations
+  merely because Library is covered: matching reads may finish into retained
+  state, consistent with the current reusable-screen contract. Resume reconciles
+  the visible surface without replaying abandoned presentation effects; actual
+  unmount still invalidates reads through `dispose()`. Keep a separate
+  presentation generation and recheck it, the profile, and active screen on the
+  UI thread before moving focus or pushing a delayed dialog. Also invalidate
+  presentation requests on canvas navigation or a replacing user request.
+
+  Keep invokes the guarded `keep_briefing` service from step 2a in a worker.
+  On `KeepRefused` conflict, retain the selected live item and explain the
+  refusal without claiming a save or selecting a different body. On success,
+  read and select the returned durable identity. A successful write followed by
+  a failed refresh remains a
   successful write with stale results and Retry. Live playback stays behind
   the existing path/existence checks. Use the kept-script browser for saved
   scripts; retain report export and Watchlists/demo actions with their owners.
@@ -315,12 +453,19 @@ request_identity = (profile_id, scope, selected_key, selected_revision, detail_g
 - [ ] **7. Verify interaction with production CSS.** In
   `test_library_artifacts_canvas.py`, use the existing
   `_CssTrueDestinationHarness` pattern from `Tests/UI/test_destination_shells.py`.
-  Test Enter then Down still works on the list; search `zzzz` then Escape restores
-  results and clears applied query; returning from reader restores selected row
-  and scroll. Hold a detail worker, change selection/filter/profile, then release
+  Test list arrows change selection; Enter focuses the reader; reader arrows do
+  not change list selection; Back/Escape returns to the same row/scroll; then
+  Down advances the list selection. Separately test a focused field consumes
+  Escape before pane return. Search `zzzz` then clear it with Escape and verify
+  both the field and applied query reset. Hold a detail worker, change
+  selection/filter/profile, then release
   it and assert its body/actions cannot apply. Validate buttons paint at 160×50,
   100×40, 64×30, 50×25. Retention is visible without opening Details. Unknown
   cadence is Report, not Daily report. Input handling precedes pane Escape.
+  Suspend Library during a delayed data read, let it finish, and resume: retained
+  content must settle without stealing focus or staying in Loading. Verify
+  stopped debounce timers and stale focus callbacks cannot run against another
+  foreground screen. The explicit dialog-publication cases are in stage 2.
 
 - [ ] **8. Run targeted checks, review, and commit the releasable stage.**
 
@@ -393,9 +538,26 @@ def test_saved_response_does_not_pretend_to_be_an_exported_bundle():
 
 - [ ] **4. Add a Library share adapter, preserving application ownership.**
   `LibraryArtifactsShareController` exposes `open_dialog(preselected_key=None)`,
-  `refresh_status()`, `stop_share()`, and `dispose()` (all return None). It uses
-  the app's existing controller and share dialog. `dispose()` invalidates dialog
-  publication callbacks but never stops a share. Enumerate the complete eligible
+  `refresh_status()`, `stop_share()`, `suspend()`, `resume()`,
+  `invalidate_pending_presentation()`, and `dispose()` (all return None). It uses
+  the app's existing controller and share dialog. A pending listing captures the
+  profile and presentation generation. Suspend, canvas navigation, a newer open
+  request, or disposal invalidates it. Immediately before `push_screen`, check
+  that token and `screen.app.screen is screen` on the UI thread; a check in the
+  background worker alone leaves a navigation race. A late request must not
+  show a dialog or focus/toast effect on another screen, even if Library later
+  resumes. None of these presentation guards stop an existing share.
+
+  Record ownership of the exact dialog/profile before pushing it. Pushing that
+  modal itself suspends Library; this invalidates pending presentation, not the
+  already-presented dialog's explicit result. Consume an accepted result once
+  using its dialog identity, captured profile, and existing action authority,
+  separately from the now-expired pre-publication visit token. Do not reject an
+  ordinary Share confirmation merely because its modal covered Library. Keep
+  already-approved share work application-owned and reconcile status on resume.
+  The adapter does not replay old dialog opens when returning to Library.
+
+  Enumerate the complete eligible
   registry under the dialog's existing selection contract; eliminate the old
   arbitrary 1,000-record ceiling with owner paging, without changing consent.
   The Library-wide strip is outside the route-owned reader so filters/pane
@@ -411,8 +573,15 @@ def test_saved_response_does_not_pretend_to_be_an_exported_bundle():
   The active-share test selects multiple real exported bundles through
   `ArtifactShareDialog`, navigates Chatbooks → Reports → another Library section,
   collapses panes, and verifies Manage/Stop still act on the same controller.
-  Leave/recreate Library and confirm the staged share is still active. Late
-  dialog listing replies after unmount cannot push a modal onto another screen.
+  Leave/recreate Library and confirm the staged share is still active. Hold the
+  dialog-listing worker, navigate to another screen without unmounting Library,
+  then release it: no modal or focus change may appear. Repeat with a Library
+  canvas change and with leave → return before releasing the old result. Use a
+  fresh request after resume to prove cancellation has not stranded the adapter.
+  Also verify the normal share modal suspends its parent and still accepts one
+  explicit confirmation, while Cancel starts nothing. Late listing replies
+  after real unmount remain rejected. Active/approved sharing survives all the
+  presentation invalidations above.
 
 - [ ] **6. Run targeted checks, live manager/share navigation, and commit.**
 
@@ -507,7 +676,9 @@ git diff --check
   the user's normal config to stage fixtures. Verify Enter/Down, field-first
   Escape, query reset, type switch/restoration, grips, focus on resize, retained
   report after deletion, missing ZIP/audio, retry, manager launch, active-share
-  Stop, Ctrl+6, old route, and exact Console-save handoff. Record images plus
+  Stop, Ctrl+6, old route, and exact Console-save handoff. Include pending-dialog
+  navigation without unmount, resume before a stale reply, and Enter → reader →
+  Back/Escape → list. Record images plus
   observed behavior; browser prototype screenshots cannot substitute.
 
 - [ ] **6. Finish task documentation and commit.** Confirm the capability table
@@ -522,19 +693,25 @@ git diff --check
 | Requirement | Stage and evidence |
 | --- | --- |
 | All reports default; Kept independent of source | 1: real storage deletion/absent-source test and mounted filter check |
-| Copy identity; imported ID collision; different saved body | 1: catalog/source tests and Keep result comparison |
+| Copy identity; imported ID collision; different saved body | 1: service pre-write compatibility guard; ordinary/raced conflict tests assert unchanged parent and scripts |
 | Complete scripts, export, live audio, Watchlists/demo handoff | 1: existing domain regressions plus reader action tests |
 | At most 20 summaries; complete reachability; exact target | 1 source tests; 3 composite test and target-at-end locator |
-| Field Escape, focus after Enter, weekly/generic type | 1: production-CSS canvas tests; 3: native keyboard check |
+| Field Escape, focus after Enter, weekly/generic type | 1: Enter → reader → Back/Escape → list tests; 3: native keyboard check |
 | Adaptive pane geometry and lightweight restoration | 1: preferences/canvas; 3: four terminal widths |
 | Registry vs ZIP manager; excerpts and capability truth | 2: registry fixtures, manager route, missing ZIP |
 | Multi-item share, app lifetime, Manage/Stop reachable | 2: dialog/navigation/late-callback tests and local share check |
 | Generation/profile fences; stale counts/actions; Retry | 1 controller; 3 composite source-failure tests |
+| Coherent DB read snapshots and borrowed ownership | 1: explicit deferred snapshot and coordinated WAL writer/transaction-ownership tests |
+| Suspended Library cannot publish stale dialogs or focus | 1: retained-read lifecycle tests; 2–3: delayed-dialog navigation and ordinary modal-result tests |
 | Artifact-only onboarding and local scope | 1 explicit evidence contract; 3 no remote/service-creation test |
 | Ctrl+6, old route, exact handoff, manager without alias loop | 3 navigation/pending-handoff regressions |
 | No new indexing/tool/publication authority | 1–3 existing owner delegation plus call assertions in integration tests |
 
 Plan self-review: all spec sections map to a stage above. The separate-copy
 policy deliberately supersedes the initial review's unsafe source-ID dedup idea.
+The final four review corrections are incorporated above: service checks before
+mutation, an explicit source-owned read snapshot, presentation guards across
+suspend/resume, and one consistent reader/list keyboard sequence. ADR-172's
+accepted architecture remains unchanged.
 The plan creates no production-code changes by itself. Execute and collect the
 listed evidence before claiming the new TUI is implemented or verified.
