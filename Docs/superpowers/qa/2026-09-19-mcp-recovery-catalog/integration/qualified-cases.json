@@ -1,5 +1,5 @@
 {
-  "distinct_cases": 168,
+  "distinct_cases": 182,
   "cases": [
     {
       "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-current]",
@@ -671,6 +671,62 @@
     },
     {
       "id": "Tests.Utils.test_mcp_native_qa_args::test_missing_tmux_is_reported_before_output",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_current_catalog_is_converted_before_publication[names0]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_current_catalog_is_converted_before_publication[names1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[None]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records2]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records3]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records4]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_catalog_reader_failure_keeps_successful_approval_private",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_late_catalog_does_not_publish_or_clear_successor_token[False]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_late_catalog_does_not_publish_or_clear_successor_token[True]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[bad]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[malformed1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[7]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[None]",
       "status": "passed"
     }
   ]

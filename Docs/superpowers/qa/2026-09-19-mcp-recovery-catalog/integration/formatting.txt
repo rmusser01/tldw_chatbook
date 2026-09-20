@@ -2,3 +2,4 @@ Ruff check: runner and shared-boundary tests pass.
 Ruff format --check: runner, boundary tests, catalog tests and publication tests pass.
 Changed production ranges pass: mcp_workbench.py 3388-3453; mcp_permissions_mode.py 645-652.
 No new diagnostics against exact merged baseline; existing 65 workbench and 3 permissions diagnostics retained.
+Qodo follow-up: new test_mcp_recovery_catalog_unit.py passes Ruff check and format --check. Product and runner unchanged.

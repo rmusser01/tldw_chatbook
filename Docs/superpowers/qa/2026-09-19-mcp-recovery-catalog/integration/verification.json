@@ -1,7 +1,7 @@
 {
   "base": "ebee42fab8a7f55def6a03fc7b3301935940eebf",
   "rebased_product_head": "0489b76d7d30bbadf636a1bfba2563a848c90558",
-  "distinct_targeted_cases": 168,
+  "distinct_targeted_cases": 182,
   "product_parent_adjacent_cases": 91,
   "runner_boundary_cases": 77,
   "preflight_guards": 7,
@@ -25,5 +25,9 @@
   "runner_sha256": "4ea9ad10e6736b1718ae7c9426e0540ba967194466cfee258f4007c50527f7db",
   "final_visual_approval": "pending",
   "current_head_ci_review": "pending",
-  "full_suite_run": false
+  "full_suite_run": false,
+  "qodo_added_unit_and_storage_cases": 14,
+  "qodo_focused_run_cases": 20,
+  "qodo_dispositions": "QODO-REVIEW.md: isolated coverage added; duplicate UI schema unnecessary for reported normalized field",
+  "qodo_unit_source_sha256": "378b72daaae94aa6c1569112f157bc1dcf21d38a166be92378fecb6a8bd1699f"
 }

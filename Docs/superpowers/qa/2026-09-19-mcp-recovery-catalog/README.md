@@ -4,7 +4,7 @@
 
 PR2727 is merged. This saved follow-up is rebased onto the verified merge
 `ebee42fab8`; [current evidence and exact conflict choices](CURRENT-DEV-REVIEW.md)
-cover 168 distinct targeted passes, seven guards and eight fresh native captures.
+cover 182 distinct targeted passes, seven guards and eight fresh native captures.
 The [current gallery](GALLERY.md) is ready for this PR's own visual review.
 Current-head CI/review and owner approval remain merge gates.
 

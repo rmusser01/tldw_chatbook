@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 14:42'
-updated_date: '2026-09-20 06:20'
+updated_date: '2026-09-20 06:32'
 labels: []
 dependencies: []
 ---
@@ -40,6 +40,8 @@ Current-dev integration (after PR2727 merge):
 ADR required: no
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md
 Reason: existing passive publication and QA boundaries; no new product or service contract.
+
+Qodo follow-up: add isolated direct-method coverage for successful catalog conversion, malformed returns, reader exceptions and stale receipt ownership. Trace the existing store/profile validation and add a real store/service regression for malformed nested input and valid siblings before accepting a duplicate UI schema. Preserve the current product boundary and gallery if behavior does not change; document the verified disposition of each finding.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -60,4 +62,6 @@ Current-dev integration: PR2727 merged at ebee42fab8 after owner approval and cu
 The old native runner now reuses shared CLI validation before effects, uses validated arguments/PATH tmux and the app image warm-up. Seven malformed-CLI failures reproduced before the fix; 77 runner cases now pass. Product/parent/adjacent tests pass 91 cases, including all 49 original selected cases (168 distinct current passes overall). Seven guards pass, no new Ruff diagnostics, changed ranges/new files formatted. Two independent read-only reviews found no blockers. Eight final native captures were individually inspected in dark/light at 120x40 and 170x48; real approval/cancellation, fresh defaults, retained history and disconnected catalog detail pass. Normal shutdown, ten healthy DBs, released lock, zero conversations/messages and unchanged defaults verified; one known unrelated Evals enrollment diagnostic retained. No full suite ran.
 
 Current evidence: Docs/superpowers/qa/2026-09-19-mcp-recovery-catalog/CURRENT-DEV-REVIEW.md. Existing ADR-126/150/161 apply; no new ADR needed. PR2728 targets dev after this push and retains its own current-head CI/review and visual approval gate. Remaining scope: long-path presentation, inspector refresh, connected-runtime journeys and saved PR2730.
+
+Qodo e57b3f6dc7: zero bugs and two rule findings. Added 14 isolated completion/storage cases; the focused run passes all 20 cases including the six existing owner journeys, bringing the distinct total to 182. The reported non-mapping env_placeholders field is already normalized through LocalExternalMCPProfile.from_storage_dict before the service emits it; four real store/service regressions retain both profiles and verify passive readiness. Independent review confirms no duplicate UI Pydantic schema is needed for that reported case. QODO-REVIEW.md records the narrow evidence and does not claim strict validation of every nested field. New test lint/format pass. Product and runner bytes are unchanged; current native hashes still match. Final current-head CI/review and owner visual approval remain.
 <!-- SECTION:NOTES:END -->

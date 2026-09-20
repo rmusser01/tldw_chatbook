@@ -27,10 +27,16 @@ historical rules and grants remain inactive.
 [Resolution record](integration/rebase-conflicts.json) and
 [diagnostic delta](integration/diagnostic-review.txt) preserve the exact choices.
 
+[Qodo findings and dispositions](QODO-REVIEW.md): isolated coverage added;
+the reported malformed environment mapping is already normalized by the existing
+storage model. Real store/service regressions verify both profiles survive.
+The app and runner are unchanged.
+
 ## Current qualification
 
-- [168 distinct targeted cases](integration/qualified-cases.json) pass:
-  91 product, parent and adjacent cases plus 77 native-runner boundary cases.
+- [182 distinct targeted cases](integration/qualified-cases.json) pass:
+  91 product, parent and adjacent cases, 77 native-runner boundary cases,
+  and 14 isolated/storage cases added after Qodo review.
   Every one of the original draft's 49 selected cases is covered again.
   [Product selection](integration/selected-cases.txt); no full suite ran.
 - All [seven derived-artifact guards](integration/preflight.txt) pass.

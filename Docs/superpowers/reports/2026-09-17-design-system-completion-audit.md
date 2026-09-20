@@ -12,7 +12,7 @@ the approved head. [Actual merge receipt](../qa/2026-09-19-mcp-recovery-catalog/
 Saved PR2728 / TASK-32840 is integrated onto that verified merged state.
 The report conflict retains both histories; the diagnostic inventory was rebuilt
 after reviewing its sole added redacted warning. No product conflict occurred.
-[168 targeted passes, seven guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/CURRENT-DEV-REVIEW.md)
+[182 targeted passes, seven guards and eight inspected native captures](../qa/2026-09-19-mcp-recovery-catalog/CURRENT-DEV-REVIEW.md)
 qualify passive catalog repopulation and accurate retained-history guidance.
 This PR's own current-head CI/review and final visual approval remain before merge.
 Long-path presentation, inspector refresh, connected-runtime journeys and saved
