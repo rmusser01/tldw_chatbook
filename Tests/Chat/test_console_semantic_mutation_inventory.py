@@ -97,7 +97,6 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Character_Chat/Character_Chat_Lib.py::start_new_chat_session::call:db:add_message",
             "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.create_character_chat_message::call:db:add_message",
             "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.update_character_chat_message::call:db:update_message",
-            "tldw_chatbook/Chat/Chat_Functions.py::save_chat_history_to_db_wrapper::call:persistence:save_history",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.append_message_attachment::call:db:append_message_attachment_with_metadata",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_durable_turn::call:dispatch:insert_with_messages",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.create_message::call:db:add_message_with_semantic_sidecars",
@@ -2813,7 +2812,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         classification: all_classifications.count(classification)
         for classification in CLASSIFICATIONS
     } == {
-        "model-visible": 67,
+        "model-visible": 66,
         "visibility/ownership-only": 12,
         "presentation-only": 26,
     }

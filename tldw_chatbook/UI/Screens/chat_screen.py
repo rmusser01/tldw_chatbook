@@ -14498,7 +14498,7 @@ class ChatScreen(BaseAppScreen):
         Resolves the db lazily. Conversation-only: ``char_data`` is ``None``
         (native sessions carry no character card). Honors the same
         ``[character_chat] enable_world_info`` gate as the legacy send path
-        (`Event_Handlers/Chat_Events/chat_events.py`).
+        (the `[character_chat]` table).
         """
         db = getattr(self.app_instance, "chachanotes_db", None)
         if (
