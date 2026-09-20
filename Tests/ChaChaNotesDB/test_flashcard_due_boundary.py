@@ -126,3 +126,36 @@ def test_mixed_format_same_date_cards_are_served_chronologically(db):
 
     assert len(due) == 1
     assert due[0]["id"] == earlier, "due cards were not ordered chronologically"
+
+
+def test_mixed_shape_rows_on_the_same_date_order_chronologically_with_limit_one(db):
+    """Qodo (PR #2735): a legacy T-separated row and a canonical
+    space-separated row due on the SAME date must order by real time, not raw
+    text. The legacy row's `T` (0x54) sorts lexically AFTER the canonical
+    row's space (0x20), so a raw-text ORDER BY would return the
+    chronologically-later card first; `ORDER BY datetime(next_review)` returns
+    the earliest. Pins the mixed-shape ordering with limit=1.
+    """
+    # Two days ago at noon: safely due, fixed date, away from the midnight edge.
+    base = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
+    earlier = base.replace(hour=8)   # chronologically first
+    later = base.replace(hour=20)    # same date, later in the day, still due
+
+    deck_id = db.create_deck("Mixed shapes", "ordering")
+    early_card = db.create_flashcard(
+        {"deck_id": deck_id, "front": "Qa", "back": "Aa", "type": "basic"}
+    )
+    _set_next_review(db, early_card, earlier.isoformat())  # legacy T-separated
+    late_card = db.create_flashcard(
+        {"deck_id": deck_id, "front": "Qb", "back": "Ab", "type": "basic"}
+    )
+    _set_next_review(
+        db, late_card, later.strftime("%Y-%m-%d %H:%M:%S")  # canonical space
+    )
+
+    # Raw-text ASC would put the space-separated (later) card first; the
+    # normalized ordering must return the chronologically earliest instead.
+    first = db.get_due_flashcards(limit=1)
+    assert [row["id"] for row in first] == [early_card]
