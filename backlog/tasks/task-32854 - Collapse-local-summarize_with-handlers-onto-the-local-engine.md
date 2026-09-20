@@ -1,7 +1,7 @@
 ---
 id: TASK-32854
 title: Collapse the eight local summarize_with handlers onto the local engine
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-19 08:24'
 labels:
@@ -34,3 +34,9 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-19/report.md`.
 - [ ] #4 The diagnostic-privacy ledger is re-keyed coherently with its tests
 - [ ] #5 Local summarization suites pass; error-string contract preserved
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Reconnaissance + first safe step, 2026-09-20 (branch `fix/cascade-summarize-local`, commit `73b7c0af67`): **landed** — General's dead module-level `api_key = get_cli_setting(...)` read deleted (the 2026-09-17 P3: secret into an unused global, one admission handshake per import); this is the prerequisite for 32854 because the local handlers must LAZY-import `_post_with_retry` from General (General imports Local for its dispatch table — module-level would be circular) and a side-effectful General module body made that unsafe. **Attempted and reverted** — the llama migration itself (helper transport + stream close + body-leak redaction) worked code-wise and its own pins passed, but the three local config suites (test_llama_summarizer_config / test_kobold_tabby_config / test_custom_openai_credential_resolution) destabilized well beyond their single pre-existing admission failure each (13+ failures/errors in llama's file): their config-install and post-seam infrastructure needs its own reconciliation pass BEFORE the handler migrations land — including positional-vs-kwarg url expectations, keep-profile/admission interplay, and the kobold KeyError'url' seam assertions. Next session: reconcile those three suites' infrastructure first (the Phase A playbook applies, but they need seam-level review too), then migrate llama->vllm->ollama->ooba->tabby->custom x2 (kobold last: its own wire + the task-17387 generator defect make it the heavy one).
+<!-- SECTION:NOTES:END -->
