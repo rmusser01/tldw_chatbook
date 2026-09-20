@@ -1066,8 +1066,11 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_summarization_model_capabilities.py",
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 4072370e89 (chore(diagnostic): re-pin for the current dev base; re-apply the Phase C capability seam re-key)
+=======
+>>>>>>> 7555b9044d (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
             # TASK-32853/32854: the analyze boundary and the local config
             # suites read provider settings through get_cli_setting on their
             # hot paths (same admission signature as the two above).
@@ -1095,6 +1098,9 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # reads go through the config-participant admission.
             "test_install_skill_runtime_tool.py",
             "test_console_chat_create_integration.py",
+=======
+            "test_summarization_analyze.py",
+>>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
         }
     )
     test_data_dir = (
