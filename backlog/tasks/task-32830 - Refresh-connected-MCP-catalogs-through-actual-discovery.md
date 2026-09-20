@@ -1,11 +1,11 @@
 ---
 id: TASK-32830
 title: Refresh connected MCP catalogs through actual discovery
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 02:02'
-updated_date: '2026-09-20 22:31'
+updated_date: '2026-09-20 23:04'
 labels:
   - mcp
   - ui
@@ -55,4 +55,6 @@ Integrated PR2714 on merged PR2713 dev 5e0f9f82c3 without conflicts. Four real-s
 Owner approved gallery at f8d1731abc. Rebased without conflicts onto dev 7bfd330046; no MCP/UI/CSS overlap. Qodo follow-up validates fixture paths (six red escapes, eight green cases), documents APIs and adds ten isolated service cases plus a real concurrent replacement regression. Independent review finds the reported race unreachable with the current non-yielding descriptor/owned teardown. 139 focused cases and seven preflight guards pass, no introduced lint. Native run 003 passes four cells/32 inspected captures, twenty children and app reaped, unchanged defaults, healthy DBs, lock released and zero network. UI/CSS and executable service code unchanged by follow-up; approved gallery retained. Final docstring-only change has explicit AST equivalence receipt. Keep In Progress pending updated-head remote CI/Qodo and merge.
 
 Second Qodo pass fixed accepted padded-ID ownership and successful refresh despite retained temporary session. Four focused boundary failures plus six malformed/real-cleanup cases reproduced before repair. 41 affected cases and six neighbors pass (47 distinct); updated real control-plane test verifies persisted ok=False and successful later disconnect. Strict test-local Pydantic models plus shared size validation reject malformed fixture requests and continue serving; policy helper documented. Independent review and seven preflight guards clear, no introduced lint. Final native004 passes four cells and 32 captures with exact source hashes, twenty children/app absent, unchanged defaults/sentinels, healthy databases, released lock and zero network. Thirty captures match native003 after fixture-directory normalization; two notification timing differences inspected, approved controls/styles unchanged. Current-head CI/Qodo/final dev review remain merge gates.
+
+Merged as PR2714 into dev at e4096e205906e34dcc7482a225594a83ab6c4b01 on 2026-09-20 after owner visual approval. Final head f810b64a371 rebased conflict-free onto 8dc7d38974; all six patches unchanged. 41 affected cases pass again, all eight current artifact guards pass (network-enabled Mermaid retry), and native004 source/runner hashes match. CI run35542566467 passes 1152 Fast Lane cases and required artifact gate on the exact merged tree. Qodo reports zero open bugs/rules; all nine threads resolved or dismissed. Existing ADR-111/161 apply. Closeout receipt in current-dev/merge-closeout.json. Separate PR2716 resumes tool-result failure handling.
 <!-- SECTION:NOTES:END -->

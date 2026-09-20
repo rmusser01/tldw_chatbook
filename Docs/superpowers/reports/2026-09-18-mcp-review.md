@@ -1,5 +1,16 @@
 # MCP component review
 
+## PR2714 merged; PR2716 resumed — 2026-09-20
+
+PR2714 merged into dev at `e4096e2059` after owner visual approval, zero open Qodo
+findings, all nine review threads resolved, and current-head CI (1,152 Fast Lane
+cases plus artifact gate). The conflict-free final rebase preserves the approved
+MCP implementation and native source hashes. TASK-32830 is Done; its current QA
+merge receipt records the exact tree, tests and review evidence.
+
+PR2716 tool-result errors resumes separately from this merged state. Further
+compact inspector/notification work and remaining screen reviews stay open.
+
 ## Current checkpoint — PR2714 owner approval and review follow-ups
 
 Owner approved the catalog-refresh gallery at `f8d1731abc`. PR2714 is rebased
