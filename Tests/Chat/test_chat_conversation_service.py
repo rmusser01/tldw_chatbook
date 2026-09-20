@@ -2084,3 +2084,25 @@ def test_effective_active_leaf_falls_back_on_dangling_pointer(service_with_db):
     )
     db.set_conversation_active_leaf(src, "not-a-real-message-id")
     assert service.effective_active_leaf(src) == str(second)
+
+
+def test_copy_active_path_preserves_image_payload(service_with_db):
+    """Deferred minor from PR #2643 review: image fields ride the copy."""
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    mid = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "user",
+            "content": "look",
+            "image_data": png,
+            "image_mime_type": "image/png",
+        }
+    )
+    db.set_conversation_active_leaf(src, str(mid))
+    dst = service.create_conversation(title="Dst")
+    service.copy_conversation_active_path(src, dst)
+    copied = db.get_messages_for_conversation(dst)[0]
+    assert copied["image_data"] == png
+    assert copied["image_mime_type"] == "image/png"
