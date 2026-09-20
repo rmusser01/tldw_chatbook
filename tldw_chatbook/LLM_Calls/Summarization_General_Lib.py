@@ -48,12 +48,15 @@ from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
+<<<<<<< HEAD
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
     ChatProviderError,
     ChatRateLimitError,
 )
+=======
+>>>>>>> c96066bcf5 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,
