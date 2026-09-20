@@ -48,6 +48,10 @@ from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
+from tldw_chatbook.LLM_Calls.hosted_chat import (
+    HostedHTTPTransportConfig,
+    owned_json_post,
+)
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.model_capabilities import (
@@ -1598,11 +1602,6 @@ def summarize_with_groq(
                 "You are a helpful AI assistant who does whatever the user requests."
             )
 
-        headers = {
-            "Authorization": f"Bearer {groq_api_key}",
-            "Content-Type": "application/json",
-        }
-
         groq_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         logging.debug(
             "Groq: Prompt prepared; character_count=%s",
@@ -1626,103 +1625,64 @@ def summarize_with_groq(
         }
 
         logging.debug("Groq: Submitting request to API endpoint")
+        # TASK-32853: transport, bounded retries (capped Retry-After), and
+        # exactly-once resource closure moved to the hosted engine; the
+        # config reads below keep their original order and count so the
+        # diagnostic ledger's settings-call pin holds.
+        retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
+        retry_delay = int(get_cli_setting("groq_api", "api_retry_delay", 5))
+        transport_config = HostedHTTPTransportConfig(
+            provider="groq",
+            base_url="https://api.groq.com/openai/v1",
+            api_key=groq_api_key,
+            timeout=180.0 if streaming else 120.0,
+            retries=retry_count,
+            retry_delay=float(retry_delay),
+        )
         if streaming:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
-            retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("groq_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            records = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=data,
+                streaming=True,
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=data,
-                stream=True,  # Enable response streaming
-            )
-            response.raise_for_status()
 
             def stream_generator():
-                collected_messages = ""
-                for line in response.iter_lines():
-                    line = line.decode("utf-8").strip()
-
-                    if line == "":
-                        continue
-
-                    if line.startswith("data: "):
-                        data_str = line[len("data: ") :]
-                        if data_str == "[DONE]":
+                try:
+                    for record in records:
+                        if record.data == "[DONE]":
                             break
                         try:
-                            data_json = json.loads(data_str)
+                            data_json = json.loads(record.data)
                             chunk = data_json["choices"][0]["delta"].get("content", "")
-                            collected_messages += chunk
-                            yield chunk
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, KeyError, IndexError):
                             logging.error("Groq Stream: Response event rejected")
                             continue
-                # Optionally, you can return the full collected message at the end
-                # yield collected_messages
+                        if chunk:
+                            yield chunk
+                finally:
+                    # Clean exhaustion AND consumer abandonment both close the
+                    # owned response/session exactly once (the old relay never
+                    # closed on any path).
+                    records.close()
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
-            retry_count = int(get_cli_setting("groq_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("groq_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response_data = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=data,
+                streaming=False,
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=data,
-            )
-
-            response_data = response.json()
             logging.debug("Groq: API response received")
 
-            if response.status_code == 200:
-                if "choices" in response_data and len(response_data["choices"]) > 0:
-                    summary = response_data["choices"][0]["message"]["content"].strip()
-                    logging.debug("Groq: Summarization successful")
-                    return summary
-                else:
-                    logging.error("Groq: Expected data not found in API response.")
-                    return "Groq: Expected data not found in API response."
+            if "choices" in response_data and len(response_data["choices"]) > 0:
+                summary = response_data["choices"][0]["message"]["content"].strip()
+                logging.debug("Groq: Summarization successful")
+                return summary
             else:
-                logging.error(
-                    "Groq: API request failed; status_code=%s",
-                    response.status_code,
-                )
-                return f"Groq: API request failed: {response.text}"
+                logging.error("Groq: Expected data not found in API response.")
+                return "Groq: Expected data not found in API response."
 
     except Exception as e:
         logging.error(

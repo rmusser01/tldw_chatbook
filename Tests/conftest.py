@@ -1064,6 +1064,12 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_groq_openrouter_migration_characterization.py",
             "test_summarization_diagnostic_privacy.py",
             "test_summarization_model_capabilities.py",
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+            "test_summarization_diagnostic_privacy.py",
+            "test_summarization_model_capabilities.py",
+>>>>>>> c96066bcf5 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the
@@ -1075,6 +1081,9 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # reads go through the config-participant admission.
             "test_install_skill_runtime_tool.py",
             "test_console_chat_create_integration.py",
+=======
+            "test_summarization_analyze.py",
+>>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
         }
     )
     test_data_dir = (

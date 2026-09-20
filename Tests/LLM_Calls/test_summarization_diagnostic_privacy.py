@@ -135,6 +135,7 @@ class _FakeResponse:
         self._lines = lines
         self.text = text
         self.iter_lines_started = False
+        self.iter_content_started = False
         self.closed = False
 
     def json(self) -> object:
@@ -145,6 +146,15 @@ class _FakeResponse:
     def iter_lines(self) -> Iterator[bytes]:
         self.iter_lines_started = True
         yield from self._lines
+
+    def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+        # TASK-32853: the hosted_chat engine owns the response and decodes
+        # SSE from iter_content chunks; the migrated summarize paths read
+        # this seam instead of iter_lines.
+        del chunk_size
+        self.iter_content_started = True
+        if self._lines:
+            yield b"\n\n".join(self._lines) + b"\n\n"
 
     def raise_for_status(self) -> None:
         return None
@@ -2318,7 +2328,9 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     )
     assert deleted_by_module == {
         "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
-        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 10,
+        # TASK-32853 groq migration: the non-200 status log site joined the
+        # deleted ledger (10 -> 11).
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 11,
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (
@@ -4977,11 +4989,14 @@ def test_groq_stream_preserves_raw_flag_and_hides_malformed_line(
             streaming=GROQ_PRIVATE_STREAMING_VALUE,
         )
         assert _is_lazy_provider_stream(stream)
-        assert response.iter_lines_started is False
+        assert response.iter_content_started is False
         chunks = list(stream)
 
     assert chunks == ["fixed groq chunk"]
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
+    # TASK-32853: clean exhaustion closes the owned response exactly once
+    # (the old relay never closed it on any path).
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == GROQ_PRIVATE_STREAMING_VALUE
     assert post_calls[0][1]["stream"] is True
@@ -5012,9 +5027,14 @@ def test_groq_status_failure_hides_response_body_and_preserves_return(
             "fixed prompt",
         )
 
-    assert result == f"Groq: API request failed: {GROQ_RESPONSE_CANARY}"
+    # TASK-32853 re-key: the hosted engine maps the 503 to a typed, redacted
+    # Chat error, so the outer handler's string return now carries the
+    # redacted message -- the response BODY no longer reaches the return
+    # (the old code interpolated response.text) or any log line.
+    assert result.startswith("Groq: Error occurred while processing summary with Groq:")
+    assert GROQ_RESPONSE_CANARY not in result
     assert GROQ_RESPONSE_CANARY not in captured.text
-    assert "Groq: API request failed; status_code=503" in captured.text
+    assert "Groq: Processing failed; exception_type=" in captured.text
 
 
 def test_groq_transport_exception_hides_message_and_traceback(
