@@ -464,3 +464,60 @@ def test_is_git_metadata_write_predicate_is_exact_on_components():
     assert not is_git_metadata_write(Path("/repo/.gitattributes"))
     assert not is_git_metadata_write(Path("/repo/.github/workflows/ci.yml"))
     assert not is_git_metadata_write(Path("/repo/src/git/config"))
+
+
+# -- task-32804.12: bound the recursive ListDirectory walk --------------------
+
+
+def test_list_directory_clamps_max_depth_to_schema_bound(monkeypatch, tmp_path):
+    """A model can ask for max_depth=50; the walk must clamp to the schema max
+    (5), not descend arbitrarily deep (task-32804.12)."""
+    sandbox = tmp_path / "tool_sandbox"
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+    # execute() resolves the sensitive-path context, which trips the ADR-126
+    # storage gate in a clean worktree (as the sibling tests here do); these
+    # cases are about the walk BOUNDS, not the denylist, so neutralise it.
+    monkeypatch.setattr(fot, "resolve_sensitive_context", lambda *a, **k: None)
+    monkeypatch.setattr(fot, "is_sensitive_path", lambda *a, **k: False)
+    monkeypatch.setattr(fot, "is_within", lambda *a, **k: True)
+    deep = sandbox
+    for i in range(8):
+        deep = deep / f"lvl{i}"
+    deep.mkdir(parents=True, exist_ok=True)
+    (deep / "deep.txt").write_text("x")
+
+    result = asyncio.run(
+        fot.ListDirectoryTool().execute(
+            directory_path=".", recursive=True, max_depth=50
+        )
+    )
+
+    depths = [e["depth"] for e in result["entries"]]
+    assert depths, result
+    assert max(depths) <= fot._LIST_DIR_MAX_DEPTH
+
+
+def test_list_directory_caps_the_scan(monkeypatch, tmp_path):
+    """The scan stops at the entry cap DURING the walk, not after, and reports
+    that it was truncated (task-32804.12)."""
+    monkeypatch.setattr(fot, "_LIST_DIR_MAX_SCAN_ENTRIES", 3)
+    sandbox = tmp_path / "tool_sandbox"
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+    # execute() resolves the sensitive-path context, which trips the ADR-126
+    # storage gate in a clean worktree (as the sibling tests here do); these
+    # cases are about the walk BOUNDS, not the denylist, so neutralise it.
+    monkeypatch.setattr(fot, "resolve_sensitive_context", lambda *a, **k: None)
+    monkeypatch.setattr(fot, "is_sensitive_path", lambda *a, **k: False)
+    monkeypatch.setattr(fot, "is_within", lambda *a, **k: True)
+    sandbox.mkdir(parents=True, exist_ok=True)
+    for i in range(10):
+        (sandbox / f"file{i}.txt").write_text("x")
+
+    result = asyncio.run(
+        fot.ListDirectoryTool().execute(
+            directory_path=".", recursive=True, max_depth=5
+        )
+    )
+
+    assert result["scan_truncated"] is True
+    assert result["total_entries"] <= 3

@@ -38,6 +38,14 @@ from .workspace_file_roots import (
 # Files or writes larger than this skip before/after capture entirely and
 # render as plain text results.
 DIFF_CAPTURE_MAX_BYTES = 256 * 1024
+#: task-32804.12: bound ``ListDirectoryTool``'s recursive walk. ``max_depth`` is
+#: clamped to the schema's own advertised maximum, and the scan stops after
+#: ``_LIST_DIR_MAX_SCAN_ENTRIES`` ``stat()``s (mirroring
+#: ``local_tool_impls.py``'s ``MAX_SCAN_ENTRIES``) so a
+#: ``recursive=True, max_depth=50`` request on a node_modules/build tree cannot
+#: ``stat()`` and append every entry in-process before the 100-entry return cap.
+_LIST_DIR_MAX_DEPTH = 5
+_LIST_DIR_MAX_SCAN_ENTRIES = 10_000
 
 # Result keys carrying the raw before/after contents captured for UI diff
 # rendering (TASK-1351). Display-only, live-session state: they must be
@@ -411,6 +419,13 @@ class ListDirectoryTool(Tool):
         include_hidden = kwargs.get("include_hidden", False)
         recursive = kwargs.get("recursive", False)
         max_depth = kwargs.get("max_depth", 2)
+        # task-32804.12: the schema advertises maximum 5, but nothing enforced
+        # it -- a model could pass max_depth=50. Clamp to the schema bound.
+        try:
+            max_depth = int(max_depth)
+        except (TypeError, ValueError):
+            max_depth = 2
+        max_depth = max(1, min(max_depth, _LIST_DIR_MAX_DEPTH))
 
         try:
             # Validate the path against the sandbox plus any read-eligible
@@ -465,14 +480,22 @@ class ListDirectoryTool(Tool):
                 }
 
             entries = []
+            scan_truncated = False
 
             def list_dir_contents(dir_path: Path, current_depth: int = 0):
                 """Recursively list directory contents."""
+                nonlocal scan_truncated
                 if current_depth > max_depth:
                     return
 
                 try:
                     for item in sorted(dir_path.iterdir()):
+                        # task-32804.12: stop the whole walk once the scan cap
+                        # is reached, so the in-process stat()/append work is
+                        # bounded regardless of tree size.
+                        if len(entries) >= _LIST_DIR_MAX_SCAN_ENTRIES:
+                            scan_truncated = True
+                            return
                         # Skip hidden files if not requested
                         if not include_hidden and item.name.startswith("."):
                             continue
@@ -548,6 +571,7 @@ class ListDirectoryTool(Tool):
                 "file_count": file_count,
                 "directory_count": dir_count,
                 "entries": entries[:100],  # Limit to first 100 entries
+                "scan_truncated": scan_truncated,
             }
 
         except PermissionError:
