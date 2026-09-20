@@ -1,0 +1,195 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+________ test_refresh_revokes_preview_minted_while_old_form_is_retiring ________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-637/test_refresh_revokes_preview_m0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ________ test_refresh_revokes_preview_minted_while_old_form_is_retiring ________
+E
+E   request = <FixtureRequest for <Coroutine test_refresh_revokes_preview_minted_while_old_form_is_retiring>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11330a0f0>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_refresh_revokes_preview_minted_while_old_form_is_retiring(
+E           request, monkeypatch
+E       ):
+E           """Same-ID replacement must close publication before awaited child removal."""
+E           app = WorkbenchAppWithBundledCSS()
+E           app.unified_mcp_service = ToolTestHubService()
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               workbench, canvas = await _open(pilot)
+E               original = next(t for t in workbench._last_hub_tools if t.name == "search")
+E               await canvas.select_tool_row(original.tool_id)
+E               canvas.query_one(DataTable).focus()
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               inspector = app.query_one(MCPInspector)
+E               mint_started, mint_release = asyncio.Event(), asyncio.Event()
+E               remove_started, remove_release = asyncio.Event(), asyncio.Event()
+E               original_mint = workbench._mint_test_preview
+E               container = inspector.query_one("#mcp-inspector-tool")
+E               original_remove = container.remove_children
+E
+E               async def delayed_mint(*args):
+E                   mint_started.set()
+E                   await mint_release.wait()
+E                   return await original_mint(*args)
+E
+E               async def delayed_remove(*args, **kwargs):
+E                   remove_started.set()
+E                   await remove_release.wait()
+E                   await original_remove(*args, **kwargs)
+E
+E               monkeypatch.setattr(workbench, "_mint_test_preview", delayed_mint)
+E               inspector.query_one("#mcp-inspector-test-tool", Button).focus()
+E               await pilot.press("enter")
+E               await asyncio.wait_for(mint_started.wait(), 3)
+E               monkeypatch.setattr(container, "remove_children", delayed_remove)
+E               fresh = replace(original, description="Updated while preparing.")
+E               tools = [fresh if t.tool_id == original.tool_id else t for t in workbench._last_hub_tools]
+E               monkeypatch.setattr(workbench, "_collect_hub_tools", lambda: tools)
+E               refresh = asyncio.create_task(workbench._sync_children())
+E               try:
+E                   await asyncio.wait_for(remove_started.wait(), 3)
+E                   assert inspector.query("#mcp-inspector-test-panel")
+E                   mint_release.set()
+E                   await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+E                   # Assert during the teardown interval, not only once the old form is gone.
+E   >               assert inspector._test_preview is None
+E   E               AssertionError: assert ToolTestAdmissionPreview(nonce='preview-1', server_key='local:docs', tool_name='search', definition_hash='definition',...ault', profile_policy_digest='682eb7b8de0afa216a9d7b73c5f53b1bf11be15fcf5bb14e8ddc18868416e67e', profile_revision=None) is None
+E   E                +  where ToolTestAdmissionPreview(nonce='preview-1', server_key='local:docs', tool_name='search', definition_hash='definition',...ault', profile_policy_digest='682eb7b8de0afa216a9d7b73c5f53b1bf11be15fcf5bb14e8ddc18868416e67e', profile_revision=None) = MCPInspector(id='mcp-hub-inspector', classes='destination-workbench-pane ds-inspector')._test_preview
+E
+E   Tests/UI/test_mcp_inspector_catalog_refresh.py:140: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 09:51:21.684 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 09:51:21.713 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 09:51:21.720 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 09:51:21.723 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 09:51:22.334 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1653 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   2026-09-20 09:51:22.563 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1653 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   2026-09-20 09:51:23.269 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1653 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-637/test_refresh_revokes_preview_m0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.56s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_revokes_preview_minted_while_old_form_is_retiring
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_revokes_preview_minted_while_old_form_is_retiring
+E   1 failed in 3.45s
+---------------------------- Captured stderr setup -----------------------------
+2026-09-20 09:51:19.782 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-20 09:51:19.810 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-20 09:51:19.817 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-20 09:51:19.820 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+________ test_refresh_preserves_newer_focus_while_old_form_is_retiring _________
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:84: in wrapped
+    pytest.fail(f"{log}\n{log.read_text()[-16000:]}")
+E   Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-637/test_refresh_preserves_newer_f0/private-profile-process/pytest.log
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   ________ test_refresh_preserves_newer_focus_while_old_form_is_retiring _________
+E
+E   request = <FixtureRequest for <Coroutine test_refresh_preserves_newer_focus_while_old_form_is_retiring>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x115465b50>
+E
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_refresh_preserves_newer_focus_while_old_form_is_retiring(
+E           request, monkeypatch
+E       ):
+E           """Returning focus after refresh must not undo the user's newer navigation."""
+E           app = WorkbenchAppWithBundledCSS()
+E           app.unified_mcp_service = ToolTestHubService()
+E           async with app.run_test(size=(170, 48)) as pilot:
+E               workbench, canvas = await _open(pilot)
+E               original = next(t for t in workbench._last_hub_tools if t.name == "search")
+E               await canvas.select_tool_row(original.tool_id)
+E               table = canvas.query_one(DataTable)
+E               table.focus()
+E               await pilot.press("enter")
+E               await _settle(pilot)
+E               inspector = app.query_one(MCPInspector)
+E               inspector.query_one("#mcp-inspector-test-tool", Button).focus()
+E               await pilot.press("enter")
+E               await app.workers.wait_for_complete()
+E               await _settle(pilot)
+E               assert inspector.query_one("#mcp-schema-field-0", Input).has_focus
+E               container = inspector.query_one("#mcp-inspector-tool")
+E               original_remove = container.remove_children
+E               remove_started, remove_release = asyncio.Event(), asyncio.Event()
+E
+E               async def delayed_remove(*args, **kwargs):
+E                   remove_started.set()
+E                   await remove_release.wait()
+E                   await original_remove(*args, **kwargs)
+E
+E               monkeypatch.setattr(container, "remove_children", delayed_remove)
+E               fresh = replace(original, description="Updated while editing.")
+E               tools = [fresh if t.tool_id == original.tool_id else t for t in workbench._last_hub_tools]
+E               monkeypatch.setattr(workbench, "_collect_hub_tools", lambda: tools)
+E               refresh = asyncio.create_task(workbench._sync_children())
+E               try:
+E                   await asyncio.wait_for(remove_started.wait(), 3)
+E                   table.focus()
+E   >               assert table.has_focus
+E   E               AssertionError: assert False
+E   E                +  where False = MCPToolsTable(id='mcp-tools-table').has_focus
+E
+E   Tests/UI/test_mcp_inspector_catalog_refresh.py:190: AssertionError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-09-20 09:51:26.522 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-09-20 09:51:26.549 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-09-20 09:51:26.556 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-09-20 09:51:26.559 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-09-20 09:51:27.156 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1653 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   2026-09-20 09:51:27.386 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1653 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   2026-09-20 09:51:28.206 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1653 - MCP execution log access failed: 'ToolTestHubService' object has no attribute 'execution_log'
+E   - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-637/test_refresh_preserves_newer_f0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.65s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_preserves_newer_focus_while_old_form_is_retiring
+E
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_preserves_newer_focus_while_old_form_is_retiring
+E   1 failed in 3.58s
+------------- generated xml file: /private/tmp/32823-race-red.xml --------------
+============================= slowest 25 durations =============================
+4.81s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_preserves_newer_focus_while_old_form_is_retiring
+4.60s call     Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_revokes_preview_minted_while_old_form_is_retiring
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_revokes_preview_minted_while_old_form_is_retiring
+FAILED Tests/UI/test_mcp_inspector_catalog_refresh.py::test_refresh_preserves_newer_focus_while_old_form_is_retiring
+2 failed, 4 deselected in 11.35s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-37bc8e52-fc39-49d4-9d1c-43514604dc6f/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-37bc8e52-fc39-49d4-9d1c-43514604dc6f/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-37bc8e52-fc39-49d4-9d1c-43514604dc6f
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-37bc8e52-fc39-49d4-9d1c-43514604dc6f'
+  warnings.warn(

@@ -1,5 +1,23 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2730 merged; inspector refresh resumed
+
+[PR2730](https://github.com/rmusser01/tldw_chatbook/pull/2730) merged at
+`802809947b0161f9d589d73412fb497516a87f27` after owner visual approval,
+current-head CI and resolved Qodo review. Its actual tree matches the verified
+head. [Merge receipt](../qa/2026-09-20-mcp-inspector-refresh/pr2730-closeout.json).
+
+Saved TASK-32823 is resumed on a fresh branch from that merge. Selected MCP
+inspector details now follow catalog changes while equal definitions retain
+argument drafts, cursor, focus and previews. Synchronous form ownership rejects
+late previews during teardown; newer selection and focus win. [475 targeted
+passes, one reproduced Workflows baseline failure, seven guards, independent
+review and eight inspected native captures](../qa/2026-09-20-mcp-inspector-refresh/README.md)
+qualify this bounded follow-up. Its own current-head CI/Qodo and final visual
+approval remain before merge. Compact/long-path presentation, connected-runtime
+journeys and remaining screens stay open. PR2707's heartbeat remains paused.
+Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2730 approved closeout
 
 The owner approved PR2730’s Console gallery and merge. Its rebase onto current

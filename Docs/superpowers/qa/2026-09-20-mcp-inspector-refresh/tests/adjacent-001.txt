@@ -1,0 +1,33 @@
+........................................................................ [ 24%]
+........................................................................ [ 48%]
+........................................................................ [ 73%]
+........................................................................ [ 97%]
+.......                                                                  [100%]
+----------- generated xml file: /private/tmp/32823-adjacent-001.xml ------------
+============================= slowest 25 durations =============================
+3.34s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2.84s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2.73s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+2.11s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_missing_prepared_api_is_unavailable[hub_test_active]
+1.94s call     Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount
+1.90s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_unmount_and_remount_revokes_old_nonce
+1.86s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_missing_prepared_api_is_unavailable[revoke_hub_test_preview]
+1.71s call     Tests/UI/test_mcp_inspector.py::test_profile_scoped_inspector_requests_preserve_captured_context
+1.63s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+1.41s call     Tests/UI/test_mcp_workbench.py::test_test_tool_panel_open_reads_service_active_state
+1.38s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_switch_revokes_old_nonce
+1.36s call     Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update
+1.28s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_stale_refresh_preserves_current_arguments
+1.28s call     Tests/UI/test_mcp_workbench.py::test_test_tool_profile_changed_never_arms_refreshed_stale_authority
+1.28s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_long_error_is_bounded_and_recoverable
+1.27s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_error_with_dict_shaped_args_is_redacted
+1.25s call     Tests/UI/test_mcp_workbench.py::test_test_tool_blocked_change_button_jumps_to_permissions_row
+1.16s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_redacts_secret_in_error_shaped_result_note
+1.15s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure1]
+1.15s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure0]
+1.15s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_permission_error_renders_blocked_not_failed
+1.13s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked
+1.13s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_redacts_secret_shaped_result
+1.12s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_server_source_display_only_value_error_renders_blocked_not_failed
+1.11s call     Tests/UI/test_mcp_workbench.py::test_test_tool_one_click_ask_dispatches_approve_once_from_first_activation
+295 passed, 349 deselected in 195.68s (0:03:15)

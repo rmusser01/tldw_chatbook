@@ -812,6 +812,7 @@ class MCPWorkbench(Container):
         # Presentation generation only. Service preview consumption and its
         # active registry remain the execution authority.
         self._tool_test_generation: int = 0
+        self._tool_test_panel_token: object | None = None
         # Presentation bookkeeping only. The service registry remains the
         # authority; this copy exists because Textual unmounts descendants
         # before the parent's ``on_unmount`` can query the inspector.
@@ -1584,6 +1585,11 @@ class MCPWorkbench(Container):
                 policy_inventory=policy_inventory,
                 refresh_governance=True,
             )
+            if recovery_token is not None and not self._mcp_recovery_current(
+                recovery_token
+            ):
+                return
+            await self._refresh_selected_tool()
             if recovery_token is not None and not self._mcp_recovery_current(
                 recovery_token
             ):
@@ -4528,6 +4534,27 @@ class MCPWorkbench(Container):
             self.set_mode("servers")
             self.app.notify("Select a server below to connect or refresh its tools.")
 
+    async def _refresh_selected_tool(self) -> None:
+        """Reconcile selected detail with the current catalog without selecting a row."""
+        inspector = self.query_one(MCPInspector)
+        current = inspector.current_tool
+        if current is None:
+            return
+        context = self._validate_profile_context(self._tool_policy_profile_context)
+        tool = self._tool_for(current.server_key, current.name) if context else None
+        await inspector.show_tool(
+            tool,
+            effective=self._effective_for_display(tool) if tool is not None else None,
+            profile_context=context,
+            arg_rules=self._arg_rules_for_row(tool, context.profile_id)
+            if tool is not None and context is not None
+            else (),
+            session_approvals=self._session_approvals_for_row(context.profile_id)
+            if context is not None
+            else (),
+            refresh_from=current,
+        )
+
     def _tool_for_row_key(self, tool_id: str) -> HubTool | None:
         """Resolve a Tools-mode DataTable row key (`HubTool.tool_id`, a
         packed `"server_key::name"` display/dedup string -- see
@@ -5483,6 +5510,15 @@ class MCPWorkbench(Container):
         """Prepare a service-owned preview off the UI loop."""
         event.stop()
         inspector = self.query_one(MCPInspector)
+        if (
+            event.panel_token is None
+            or event.panel_token is not inspector.test_panel_token
+        ):
+            return
+        # Even an unavailable successor must retire the preceding worker.
+        self._tool_test_generation += 1
+        generation = self._tool_test_generation
+        self._tool_test_panel_token = event.panel_token
         inspector.show_test_preparing()
         context = self._validate_profile_context(event.profile_context)
         if context is None:
@@ -5491,8 +5527,6 @@ class MCPWorkbench(Container):
             )
             return
         tool = self._tool_for(event.server_key, event.tool_name)
-        self._tool_test_generation += 1
-        generation = self._tool_test_generation
         if tool is None:
             inspector.show_test_unavailable("The selected tool is no longer available.")
             return
@@ -5629,7 +5663,9 @@ class MCPWorkbench(Container):
             return False
         current = inspector.current_tool
         return (
-            current is not None
+            self._tool_test_panel_token is not None
+            and self._tool_test_panel_token is inspector.test_panel_token
+            and current is not None
             and current.server_key == tool.server_key
             and current.name == tool.name
             and bool(inspector.query("#mcp-inspector-test-panel"))
