@@ -19,6 +19,6 @@
 │    All       ││  h-action-review/Test│ wire-review: refreshed — 1 tool.    │ │
 │  servers     ││  dio_catalog_server.p│                                     │ │
 │  ◦ ⌂ t…      ││  /private/tmp/tldw-32╰─────────────────────────────────────╯ │
-│  ● wir…   1  ││  e-002/evidence/fixture-state.json       ││                  │
+│  ● wir…   1  ││  e-003/evidence/fixture-state.json       ││                  │
 ╰──────────────╯╰──────────────────────────────────────────╯╰──────────────────╯
   1-4 mode | a add server | r refresh | F1 · F6 · Ctrl+P · Ctrl+Q

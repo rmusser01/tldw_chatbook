@@ -16,5 +16,12 @@
     "Cairo glyph/font fallback artifacts are not asserted as terminal defects; original SVG and paired terminal text retained.",
     "No remote server or tool execution qualification."
   ],
-  "owner_approval": "pending"
+  "owner_approval": "User approved gallery for f8d1731abcb37cb4f292ac68b34f50e9ee8826b7: approved continue. Retained; no UI/CSS or executable production change in Qodo follow-up.",
+  "qodo_requalification": {
+    "profile": "/private/tmp/tldw-32830-current-native-003",
+    "all_32_captures_rendered_and_inspected": true,
+    "exact_render_matches": 4,
+    "visible_differences": "Private fixture directory changes from 002 to 003; its added trusted-root argument adds command text and moves catalog rows in wide views. Immediate feedback may retain earlier notifications. Actions, status, themes and layout behavior remain unchanged.",
+    "approved_gallery_preserved": true
+  }
 }

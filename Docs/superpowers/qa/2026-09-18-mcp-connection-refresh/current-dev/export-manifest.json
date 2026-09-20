@@ -1,360 +1,360 @@
 {
   "exports": [
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/fixture-state.json",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/fixture-state.json",
       "artifact": "fixture-state.json",
       "source_sha256": "c9481f294ef7098ff474528cc60b10f0e324f73213457b6c89529a19999fa47e",
       "artifact_sha256": "a4d2764bb02e12b33456d6f7d7acdd4ab9e57f25d40522b42b5cb29c63229d16",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/fixture-trace.jsonl",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/fixture-trace.jsonl",
       "artifact": "fixture-trace.jsonl",
-      "source_sha256": "08f4ea5961736be6d1cd2b3fcad89cbf552203bf49d8b34770ace3d415abbf12",
-      "artifact_sha256": "08f4ea5961736be6d1cd2b3fcad89cbf552203bf49d8b34770ace3d415abbf12",
+      "source_sha256": "1a24e332bf98f2bb2a263f96b411820f785e523ed0992db0b8287dd13436459c",
+      "artifact_sha256": "1a24e332bf98f2bb2a263f96b411820f785e523ed0992db0b8287dd13436459c",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/result.json",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/result.json",
       "artifact": "native-result.json",
-      "source_sha256": "45c575da47035873c2458e4e95a588bb49617ab067a92b34b561d4ece6cfb0ac",
-      "artifact_sha256": "45c575da47035873c2458e4e95a588bb49617ab067a92b34b561d4ece6cfb0ac",
+      "source_sha256": "0dde2c56bcd48d8de25373b3ff2f7df80a415cdb2daff93e0e1955db8dad4bd7",
+      "artifact_sha256": "0dde2c56bcd48d8de25373b3ff2f7df80a415cdb2daff93e0e1955db8dad4bd7",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-connected-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-connected-feedback.svg",
       "artifact": "textual-dark-170x48-connected-feedback.svg",
-      "source_sha256": "2e19342fee748489aad6efe929fc9b22f1083007d60f272b2b2a2b1d902c9162",
-      "artifact_sha256": "48e456eead439d81935111ce114efd0277c90803d871c801b259d48f88de88eb",
+      "source_sha256": "f1901d59fffb2d37d08951bc2779036a4ff0d79b68895e894e78f00a0c209537",
+      "artifact_sha256": "bad7a54e04a0875bd0b0cb7fb20f50abe4a5ab170abdc72993015ad15db3b296",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-connected.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-connected.svg",
       "artifact": "textual-dark-170x48-connected.svg",
-      "source_sha256": "8d43cb984f2211432cc7065778d86ce97ff832e6b2d3d92546b3d2ad2d6d5441",
-      "artifact_sha256": "eb68b9c08fbe2aad7804c446fa15ff415d82ca4215351e6bc3423c587dd565b4",
+      "source_sha256": "5c6e352725aa0921a2b6043928970038d37571d01d153c761218a3eb7ec6128b",
+      "artifact_sha256": "6f07da3af0f17dfb669fc120a18384243ea18d21bc7b94f318057fdda7b2fc1d",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-connected.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-connected.txt",
       "artifact": "textual-dark-170x48-connected.txt",
-      "source_sha256": "c082af276335e611f6559ec1db41fcd965fc4079586b654b60d59f44668327f2",
-      "artifact_sha256": "c082af276335e611f6559ec1db41fcd965fc4079586b654b60d59f44668327f2",
+      "source_sha256": "9d25063278204d7a7a13a6861f0782bbf41d04bba62f652ead15fa8836c78d26",
+      "artifact_sha256": "9d25063278204d7a7a13a6861f0782bbf41d04bba62f652ead15fa8836c78d26",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-failed-retry-available-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-failed-retry-available-feedback.svg",
       "artifact": "textual-dark-170x48-failed-retry-available-feedback.svg",
-      "source_sha256": "bf427a067804317854d7e3e7ac95999bbd8fdf45693eddb597baa037e77cd0d0",
-      "artifact_sha256": "3465e6af57cfb10ddcde12a873c278ab682cf356df266888b960e46561b3747f",
+      "source_sha256": "a2848ed2a08bc34651b4bb4a1c73611498d98660cc2f57c6d40a44852ba50ce3",
+      "artifact_sha256": "f9cd6911a0a47ec1d1b36407180a2461d0194c15205eeb84c9563ab6ddd7d02e",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-failed-retry-available.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-failed-retry-available.svg",
       "artifact": "textual-dark-170x48-failed-retry-available.svg",
-      "source_sha256": "e5d06161065f75d311b9d8defaf1bae5b1ea8ce0aacbbd31a84330d68722ef8f",
-      "artifact_sha256": "7c7f6b7c3a89c2b82dee16c98557ec78f6ef34b247faff1f9a98a9d7fa48ab04",
+      "source_sha256": "6d460ab3df4c7021588d07963e23f63ee42ec7d34ff887e6071edb4d9f062829",
+      "artifact_sha256": "fb1914678299fdd861da8c9f17213f0cb755a1110b56b775b1e42a9577ff4164",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-failed-retry-available.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-failed-retry-available.txt",
       "artifact": "textual-dark-170x48-failed-retry-available.txt",
-      "source_sha256": "950ae020a1d16526989b6a69838e502da42d356fa49a8b05532170077ab18bdc",
-      "artifact_sha256": "950ae020a1d16526989b6a69838e502da42d356fa49a8b05532170077ab18bdc",
+      "source_sha256": "fee33cd1a1bfe7b2e7f528aa6c35a3696a7d508d3dd08d67709156fb7b4c84b8",
+      "artifact_sha256": "fee33cd1a1bfe7b2e7f528aa6c35a3696a7d508d3dd08d67709156fb7b4c84b8",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-recovered-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-recovered-feedback.svg",
       "artifact": "textual-dark-170x48-recovered-feedback.svg",
-      "source_sha256": "cfb6774d916ace3c601df252c8f32b3ed0a538c689b59d3c9cc23b28d01fa6a4",
-      "artifact_sha256": "d9fc6ac35d0a297fac978ef293f53be2becd78247f48fde8c74efe7b596e2924",
+      "source_sha256": "0dc903f87af9b7eca2bf934d1c46718983c705fb1bbbeaa348720a62fc4927f0",
+      "artifact_sha256": "fee4e59fc35439df3d557078e32c9c98e535dcadd8eeef6630f66bb82a2c87f4",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-recovered.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-recovered.svg",
       "artifact": "textual-dark-170x48-recovered.svg",
-      "source_sha256": "7ad9f2910079d6c9b4953973c34a603244b77ddc4762a1aca857bd65842a1c3e",
-      "artifact_sha256": "555d79b70e29e06b8007cc340b1ad9dbf946aab539c83300fb610ebe96b652da",
+      "source_sha256": "ba8476203369a660978e581b8584314d07e967fc683611519fb2fe9d7b45d3e1",
+      "artifact_sha256": "197d641653f87f9a994efb98f9cb3324fdf25c3d34ccae87500b11681beb653c",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-recovered.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-recovered.txt",
       "artifact": "textual-dark-170x48-recovered.txt",
-      "source_sha256": "46fd43de001e6ad52332afb3bbe1d2d576e115c8eb4541d3cda435bf503ea3ff",
-      "artifact_sha256": "46fd43de001e6ad52332afb3bbe1d2d576e115c8eb4541d3cda435bf503ea3ff",
+      "source_sha256": "e054f71b97d46f93c35ab438d62612ff601bc60aac1e93cc65617bbdd4974298",
+      "artifact_sha256": "e054f71b97d46f93c35ab438d62612ff601bc60aac1e93cc65617bbdd4974298",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-refreshed-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-refreshed-feedback.svg",
       "artifact": "textual-dark-170x48-refreshed-feedback.svg",
-      "source_sha256": "62daa563b3389a4324601e704f476f31309295d9c6c4a6db0876ac2259e8007a",
-      "artifact_sha256": "d579b9d31a43c6426bf492f2e3aaa2a3b6d09070a146ee2898ac1f55d053d1aa",
+      "source_sha256": "a91400d607774f74d2c3e02d3f8b41c076fc4f38624a63179113a1e0a066e6cc",
+      "artifact_sha256": "01a205c8b40378c0831316a498e474eb873efc909a0859cdc9dfcc9c6f6702ee",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-refreshed.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-refreshed.svg",
       "artifact": "textual-dark-170x48-refreshed.svg",
-      "source_sha256": "8e4599a54d6d17a5c1c7de08c3a5aa3d4fb527b5255335305caea30e73d2a33d",
-      "artifact_sha256": "bc4913f19a57a8e44af60322eb5398badf4a5e5e20e7466f7a69f52b4f9b0ba7",
+      "source_sha256": "43ca7fbd290d711d7590df4a1a0bc73bd9d80666824546b940a80bb2ac9700be",
+      "artifact_sha256": "559dfae1d02fa9b43f7329dfa17f7315c7c54bb694aa4d12b914608c8c593c76",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-170x48-refreshed.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-170x48-refreshed.txt",
       "artifact": "textual-dark-170x48-refreshed.txt",
-      "source_sha256": "d8605954643f026ff6df9afc224b5b24588777bbb8d7b6cbdf22b12341d4d1d5",
-      "artifact_sha256": "d8605954643f026ff6df9afc224b5b24588777bbb8d7b6cbdf22b12341d4d1d5",
+      "source_sha256": "3fa829c6167fa76ac353ce7deaa0db56e4e502f4538988974c7e1426d2a07c5b",
+      "artifact_sha256": "3fa829c6167fa76ac353ce7deaa0db56e4e502f4538988974c7e1426d2a07c5b",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-connected-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-connected-feedback.svg",
       "artifact": "textual-dark-80x24-connected-feedback.svg",
-      "source_sha256": "10688dee1f638d1741523c1ae0822b27e11f78af5797f9e5a765b455ed1ee76a",
-      "artifact_sha256": "e7d31baa2224dc341391ccc5c7f9fefe7ba276e4187591f64b81f38d46f141a9",
+      "source_sha256": "0f44c02fd07dde9f597e9d642b637795762025410629a324b9edf8d3c3e81689",
+      "artifact_sha256": "fd2ece39ad3623f8fa5e3c4d5de2924c6688ac2df5251e935bf9315f100c569b",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-connected.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-connected.svg",
       "artifact": "textual-dark-80x24-connected.svg",
-      "source_sha256": "c691d854c97a7b5f287cf7e48279a4db22ed2882ab0caf6c3559686abb6ef911",
-      "artifact_sha256": "e8a163c6a23b94fa0283563c37e1092459e9599e8c832fe6d18361b6f8ce2055",
+      "source_sha256": "d2180c60840aaf105d120e01330f2217775a870f8299055c15ea96d35c907a4e",
+      "artifact_sha256": "3303cb4c473a0f978cd9a28f8638ae73ce142fae7729a7a57251441e4ebab28d",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-connected.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-connected.txt",
       "artifact": "textual-dark-80x24-connected.txt",
-      "source_sha256": "03fe2909e9887ebd8f6ec890c44776fc54236e1315550b8d719218826f98d168",
-      "artifact_sha256": "03fe2909e9887ebd8f6ec890c44776fc54236e1315550b8d719218826f98d168",
+      "source_sha256": "34da2bf73556c2f440b0c04332ac96c168338b2f3dd1f7eabeb2cc37d68313fb",
+      "artifact_sha256": "34da2bf73556c2f440b0c04332ac96c168338b2f3dd1f7eabeb2cc37d68313fb",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-failed-retry-available-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-failed-retry-available-feedback.svg",
       "artifact": "textual-dark-80x24-failed-retry-available-feedback.svg",
       "source_sha256": "c85dc06051c2e24b6dbe89e5eb1a1745776476782df70e0263ccc29b1fb9187e",
       "artifact_sha256": "40f632bbd3a3790d277ff03bebc6b71f91fd6d709959837d37791eb4ceb42807",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-failed-retry-available.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-failed-retry-available.svg",
       "artifact": "textual-dark-80x24-failed-retry-available.svg",
-      "source_sha256": "50a6bbf4f2ffdb0085101ba888076b2e2deb08c66a2629fb32f5e10d1416f117",
-      "artifact_sha256": "794e5d5d85fa1cbdef88a236e2181c44200d14f6b598e8eb97cfdbe80be3c998",
+      "source_sha256": "6f03a9eac80cda439f0a3944884a2c0b08ad45e6b9627e37e4dadb930bc0e04c",
+      "artifact_sha256": "3e0a0c6a8a7f0c00cf592674f94e95bef80fb47f48574a6c228212045cdd96b9",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-failed-retry-available.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-failed-retry-available.txt",
       "artifact": "textual-dark-80x24-failed-retry-available.txt",
       "source_sha256": "f1935e154d6e3d0693f0efc3b8e1d024e3f8089426a4595322bc0c51abca8bfe",
       "artifact_sha256": "f1935e154d6e3d0693f0efc3b8e1d024e3f8089426a4595322bc0c51abca8bfe",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-recovered-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-recovered-feedback.svg",
       "artifact": "textual-dark-80x24-recovered-feedback.svg",
       "source_sha256": "6d6da570c0ae4c697b79c962e8c73c819315f292c0e35f549bf8942f64c8a0a5",
       "artifact_sha256": "55572ddbd5e82275ad9970d2e6016a03f2dfe5dc605710d7d1716902af771390",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-recovered.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-recovered.svg",
       "artifact": "textual-dark-80x24-recovered.svg",
-      "source_sha256": "5537fd3f6e0ab6ee149f35becc102103b6a3cafd014fb06fb80e77dbfe6038b8",
-      "artifact_sha256": "23a41a7bc13328082cba3c653aa0522d8a428470448de7e4e45ef2801a49de2b",
+      "source_sha256": "5a8ec62f289168089c797ff6b0217505e0c48aaaa9af9a42afb7930b5bd4bf92",
+      "artifact_sha256": "97747e4162aa7945569dba3ff02e0a52957640501199ea0d483a428ba063e30d",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-recovered.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-recovered.txt",
       "artifact": "textual-dark-80x24-recovered.txt",
       "source_sha256": "0662f4d96e865774db34a740edcc79cc7c6252c2d49d353fc7c969900a69f846",
       "artifact_sha256": "0662f4d96e865774db34a740edcc79cc7c6252c2d49d353fc7c969900a69f846",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-refreshed-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-refreshed-feedback.svg",
       "artifact": "textual-dark-80x24-refreshed-feedback.svg",
-      "source_sha256": "0d36ed573a379e0cce1c284fb583b06e8a426ed745cd47ec48eb231e7847f07d",
-      "artifact_sha256": "6ec3c06f4036265dc51d0280e87d653a9c5cc26917bcafc95504ac9d633cc5f8",
+      "source_sha256": "c859c9dfbef46f3c37e7e8c4eb16db3f7b85367377f3509d72222ea44c4dade1",
+      "artifact_sha256": "ea45a41e64ead2eec5c9c0b6c5adff4ab50658dbe19cbe9cce4edc748e64b8ce",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-refreshed.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-refreshed.svg",
       "artifact": "textual-dark-80x24-refreshed.svg",
-      "source_sha256": "c691d854c97a7b5f287cf7e48279a4db22ed2882ab0caf6c3559686abb6ef911",
-      "artifact_sha256": "e8a163c6a23b94fa0283563c37e1092459e9599e8c832fe6d18361b6f8ce2055",
+      "source_sha256": "d2180c60840aaf105d120e01330f2217775a870f8299055c15ea96d35c907a4e",
+      "artifact_sha256": "3303cb4c473a0f978cd9a28f8638ae73ce142fae7729a7a57251441e4ebab28d",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-dark-80x24-refreshed.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-dark-80x24-refreshed.txt",
       "artifact": "textual-dark-80x24-refreshed.txt",
-      "source_sha256": "69ab5c967e449d0cd08cdd57a7a0cd17e5e8169978662ac205662c5e82afc675",
-      "artifact_sha256": "69ab5c967e449d0cd08cdd57a7a0cd17e5e8169978662ac205662c5e82afc675",
+      "source_sha256": "1475c8a31518055236b0bd61f360cc30301300dbcfee716b4b546db3ddd406b5",
+      "artifact_sha256": "1475c8a31518055236b0bd61f360cc30301300dbcfee716b4b546db3ddd406b5",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-connected-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-connected-feedback.svg",
       "artifact": "textual-light-170x48-connected-feedback.svg",
-      "source_sha256": "135f196c0085df72f7c0f56890f3624eeaae98819eef33f779a9109d48b5ac16",
-      "artifact_sha256": "bdc30f0b0ba00e6e0a6f23639ae83d21f5475b23614f46d3c7000c4f11f01401",
+      "source_sha256": "424f6ab238db5ef3c0c9a5db4e2143f46845ebd3764ef2e874791632f4d0e99e",
+      "artifact_sha256": "572ff03cd777c61d626e03100380182d514762607a916935a11d4889e2816fca",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-connected.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-connected.svg",
       "artifact": "textual-light-170x48-connected.svg",
-      "source_sha256": "9454af94973d82971fb4fbf1b2f6a6a72086ae92eeb8230f4d5910446af0cb40",
-      "artifact_sha256": "718f02fd624112e4f65becc3233cf2bf533b18e6c8a9ecbb51cd03d41f4b90b8",
+      "source_sha256": "e7261cb68112f073d6fafd06c434db569a0aa373a0dac4b10cb1e8d9918a64b2",
+      "artifact_sha256": "8aa461b61163054a7df7beff852ee69e3a429c0ebead317aded61a2936b7bbbc",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-connected.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-connected.txt",
       "artifact": "textual-light-170x48-connected.txt",
-      "source_sha256": "c082af276335e611f6559ec1db41fcd965fc4079586b654b60d59f44668327f2",
-      "artifact_sha256": "c082af276335e611f6559ec1db41fcd965fc4079586b654b60d59f44668327f2",
+      "source_sha256": "c0f7f8c08a41ff102ba9c21fcdff15e998a5d395c15c71d462e5e6d12ccf04dc",
+      "artifact_sha256": "c0f7f8c08a41ff102ba9c21fcdff15e998a5d395c15c71d462e5e6d12ccf04dc",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-failed-retry-available-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-failed-retry-available-feedback.svg",
       "artifact": "textual-light-170x48-failed-retry-available-feedback.svg",
-      "source_sha256": "d3c02afd6b37f48fb1aad1654b4490528f0c02fa1613dc94fbcae80583d774ce",
-      "artifact_sha256": "0de63a8a96f0f7bec617bac9edac4144abdf2ef07234c4f413a9d0f6e27faf7f",
+      "source_sha256": "25aac0c03ec02fef05c552af28572baa44bcf0a3cdab08b389a0ca6823f30084",
+      "artifact_sha256": "59eb2e610e0337ffcaeefd75f196b9b29d4f008db3f95f0e2dcb0e3f0254edfa",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-failed-retry-available.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-failed-retry-available.svg",
       "artifact": "textual-light-170x48-failed-retry-available.svg",
-      "source_sha256": "c9f7d3727716e468ac60b1a8cd671188fbdb6fd07ff71adf3621990cba6dd960",
-      "artifact_sha256": "d7a95a8db197c7074d5be4a01b3a6d23b1c8203893b2e19b11fde8e620c73b48",
+      "source_sha256": "e7dee09bac26fac9837721440b1a275ea8bcb7062908e754d787d05ba93644f9",
+      "artifact_sha256": "2869bc54b32f1aac87c502baeb7208ab5d3eaffc9776ba57fdfdc6c5920d7480",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-failed-retry-available.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-failed-retry-available.txt",
       "artifact": "textual-light-170x48-failed-retry-available.txt",
-      "source_sha256": "950ae020a1d16526989b6a69838e502da42d356fa49a8b05532170077ab18bdc",
-      "artifact_sha256": "950ae020a1d16526989b6a69838e502da42d356fa49a8b05532170077ab18bdc",
+      "source_sha256": "fee33cd1a1bfe7b2e7f528aa6c35a3696a7d508d3dd08d67709156fb7b4c84b8",
+      "artifact_sha256": "fee33cd1a1bfe7b2e7f528aa6c35a3696a7d508d3dd08d67709156fb7b4c84b8",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-recovered-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-recovered-feedback.svg",
       "artifact": "textual-light-170x48-recovered-feedback.svg",
-      "source_sha256": "826ce1e67ec6f51cc3ff3b2dd618e2c2bd06392bd1d0679c222dc59c74312aa4",
-      "artifact_sha256": "f2c5d2cb2b3ce6c4a321c4560fccdf05990bdea4c7979fe9388dc6c56b12ddf6",
+      "source_sha256": "8ebe4178d0d91ee715a75c23c062d5b14adfbad381bfe527052dce81877c7ee5",
+      "artifact_sha256": "63dd3c39e7a540fa52102f34bf388721a9818801b8393357dde2dcd2b252727c",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-recovered.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-recovered.svg",
       "artifact": "textual-light-170x48-recovered.svg",
-      "source_sha256": "fa432698c93f358af42222a5be0e10a43dcead4c7453d4c931984cfbee11b2a0",
-      "artifact_sha256": "1da52283863b1a7aa13153a9df1a356fdc7cac9fc0e137147bd6c0f4adb6c33c",
+      "source_sha256": "4f0606c8a930b2909efc19ab92342b09d181d6139b860d9c2f581f3c14deb100",
+      "artifact_sha256": "f522e4ed4ada791bf65c7dad8d3ded6c1b4d30c5ea31fc610fbfb953dac83064",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-recovered.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-recovered.txt",
       "artifact": "textual-light-170x48-recovered.txt",
-      "source_sha256": "46fd43de001e6ad52332afb3bbe1d2d576e115c8eb4541d3cda435bf503ea3ff",
-      "artifact_sha256": "46fd43de001e6ad52332afb3bbe1d2d576e115c8eb4541d3cda435bf503ea3ff",
+      "source_sha256": "e054f71b97d46f93c35ab438d62612ff601bc60aac1e93cc65617bbdd4974298",
+      "artifact_sha256": "e054f71b97d46f93c35ab438d62612ff601bc60aac1e93cc65617bbdd4974298",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-refreshed-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-refreshed-feedback.svg",
       "artifact": "textual-light-170x48-refreshed-feedback.svg",
-      "source_sha256": "615eda572b6b74310fe0a9a0a9eafe4bb7ed859387300efe90a18095e7ca8df9",
-      "artifact_sha256": "7a02d6d72bb11c81b6cd40242cefce7a5104030ec035de085a8981cda30daf8b",
+      "source_sha256": "30f38b260efb8bd56f8ffad1761b03d3935b00b014ce8f8225728978f8c8a02a",
+      "artifact_sha256": "bc3ea47a054076528d81c6a4f6c4752359fe5be9fcf1c40c8c43853b58ccea72",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-refreshed.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-refreshed.svg",
       "artifact": "textual-light-170x48-refreshed.svg",
-      "source_sha256": "687b25d81a6f8eac45954b8d4a99cc4ee6936b7e84cd6500f71cdfb6cbaca07b",
-      "artifact_sha256": "0cb76088d36a2215fb75529fc8333b03d51ca141c453ac77406ca828cbbadade",
+      "source_sha256": "7f9e0a61f634b8aa4486039e552827f4541646ca1e9fc2a2ddf56a9d7ef3424f",
+      "artifact_sha256": "cda8c73f2144162ef093a45cd785fd311c619e36d3ea6e0c317d13185aed2c1e",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-170x48-refreshed.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-170x48-refreshed.txt",
       "artifact": "textual-light-170x48-refreshed.txt",
-      "source_sha256": "d8605954643f026ff6df9afc224b5b24588777bbb8d7b6cbdf22b12341d4d1d5",
-      "artifact_sha256": "d8605954643f026ff6df9afc224b5b24588777bbb8d7b6cbdf22b12341d4d1d5",
+      "source_sha256": "3fa829c6167fa76ac353ce7deaa0db56e4e502f4538988974c7e1426d2a07c5b",
+      "artifact_sha256": "3fa829c6167fa76ac353ce7deaa0db56e4e502f4538988974c7e1426d2a07c5b",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-connected-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-connected-feedback.svg",
       "artifact": "textual-light-80x24-connected-feedback.svg",
-      "source_sha256": "857b25443ad182ab17fb34fa27164698fdc7218ec71c1aa84e257637aa26e79b",
-      "artifact_sha256": "2d8bc54dee094649a22e2cdc6d315455c460bb6e6cf856bc03a392d8d811aad6",
+      "source_sha256": "6ae64408437d65a55653b6bc7a0309ca4c90b40145f82a9e72103ab2d2cfa258",
+      "artifact_sha256": "b1cb027f496bf4d1e1185c2bc80658b6da7168929d45ce0cf5143281744132ea",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-connected.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-connected.svg",
       "artifact": "textual-light-80x24-connected.svg",
-      "source_sha256": "87ee045816ad2c1afd5c604b5e1b39689a11069598a15bde9ef78eb1a23732a4",
-      "artifact_sha256": "866add26ab3c0029a64095651605fd404170a31f38ae0219aac7cc8047321f32",
+      "source_sha256": "377dca2ede31bc0511a9e0b643eee273a0b1a84b847fced02a107fa7dc11ac84",
+      "artifact_sha256": "b697dd60e53023a59276c46943f0660e40f4bf4ec73ceac0fcb0f8a7cb099c1e",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-connected.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-connected.txt",
       "artifact": "textual-light-80x24-connected.txt",
-      "source_sha256": "b9990da69d8bb09787fad66aa907b50ffc35a9ac75038be2e269bc0282ba066b",
-      "artifact_sha256": "b9990da69d8bb09787fad66aa907b50ffc35a9ac75038be2e269bc0282ba066b",
+      "source_sha256": "832ed8359c95e99ef0b1cfd2d11409954499ac6164c8405421bf2ef29d61a5df",
+      "artifact_sha256": "832ed8359c95e99ef0b1cfd2d11409954499ac6164c8405421bf2ef29d61a5df",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-failed-retry-available-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-failed-retry-available-feedback.svg",
       "artifact": "textual-light-80x24-failed-retry-available-feedback.svg",
       "source_sha256": "7e7cb7741f7c2825f9a277ddf742d06319ba07862bd08f0c4acc90a6bccdf020",
       "artifact_sha256": "c287aa377f45f7a50ad36f3d2b41778648befae5f167b25e63755450c2eee4d1",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-failed-retry-available.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-failed-retry-available.svg",
       "artifact": "textual-light-80x24-failed-retry-available.svg",
-      "source_sha256": "3a9915fc21fb7e7a3128e35082879c423f33b6968c632f29c3c038c607a6821a",
-      "artifact_sha256": "ad59527276a57604a968f11549ffe015614a6476c86dd6248e963c56c5a2875b",
+      "source_sha256": "54c60829242f02e79fc255ded6ca7f79ed1e5921ce1aa46b12c7df32f05f1533",
+      "artifact_sha256": "6f044cf0f92aa872aa72a9bb97d5b33da394471ed7572f908804fade83dd20f2",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-failed-retry-available.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-failed-retry-available.txt",
       "artifact": "textual-light-80x24-failed-retry-available.txt",
       "source_sha256": "8d6d354349b3e5c16f9520cb9ed64db8dba0c38211958e95923efb8dfd3c5cc4",
       "artifact_sha256": "8d6d354349b3e5c16f9520cb9ed64db8dba0c38211958e95923efb8dfd3c5cc4",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-recovered-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-recovered-feedback.svg",
       "artifact": "textual-light-80x24-recovered-feedback.svg",
       "source_sha256": "fc086d1e1ad76af5eaa7fa527494761da4666f5501f9753af8a32013c8cc2e4a",
       "artifact_sha256": "8024275d9e1197f5614c125fbbe721bc73ae03c18a2d05a8746176d46f36a400",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-recovered.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-recovered.svg",
       "artifact": "textual-light-80x24-recovered.svg",
-      "source_sha256": "66d8c89515c821a4e158277e2c71cb2d0bbc3ccb189722998491902f16adb6f8",
-      "artifact_sha256": "f3499980ddcefa39ac9fafcd7a155d7fb7a77c2c6c52f6dba4e84a0c74a2e522",
+      "source_sha256": "016d1c5c88929a962bb0f34a01d02e74b66502372e213f470c374bdf455e98d5",
+      "artifact_sha256": "3a9e6e10a065f179806e2533bb5653de493c6c6730d305ae071989ec8858d0a3",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-recovered.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-recovered.txt",
       "artifact": "textual-light-80x24-recovered.txt",
       "source_sha256": "829fd816a550283ce82e47e2bf94b1540a3c8a7a92867448668ccc91b772cdae",
       "artifact_sha256": "829fd816a550283ce82e47e2bf94b1540a3c8a7a92867448668ccc91b772cdae",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-refreshed-feedback.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-refreshed-feedback.svg",
       "artifact": "textual-light-80x24-refreshed-feedback.svg",
-      "source_sha256": "499686370e5a54fefe6e13d6391dc0fe90a70f57f6636a03a0c28530f19c69fd",
-      "artifact_sha256": "853ee716bb4a4a83a4e4cb75fdbb8fd20d4c4bd16eb04cbc6edd3f8730ef5de0",
+      "source_sha256": "441c26aaada14e8ccd9dc8f91739c5987eb2d2e38de4faf8f8a2caa1ffbcd788",
+      "artifact_sha256": "c6735ca7dcb8e419bb989d8d0016ad049b0520c55b48f308e1b760a979751e9f",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-refreshed.svg",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-refreshed.svg",
       "artifact": "textual-light-80x24-refreshed.svg",
-      "source_sha256": "87ee045816ad2c1afd5c604b5e1b39689a11069598a15bde9ef78eb1a23732a4",
-      "artifact_sha256": "866add26ab3c0029a64095651605fd404170a31f38ae0219aac7cc8047321f32",
+      "source_sha256": "377dca2ede31bc0511a9e0b643eee273a0b1a84b847fced02a107fa7dc11ac84",
+      "artifact_sha256": "b697dd60e53023a59276c46943f0660e40f4bf4ec73ceac0fcb0f8a7cb099c1e",
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/evidence/textual-light-80x24-refreshed.txt",
+      "source": "/private/tmp/tldw-32830-current-native-003/evidence/textual-light-80x24-refreshed.txt",
       "artifact": "textual-light-80x24-refreshed.txt",
-      "source_sha256": "240263ade427204b675ea282f8960b7dcb95e3a00e4a541c07b0811e2a20cb77",
-      "artifact_sha256": "240263ade427204b675ea282f8960b7dcb95e3a00e4a541c07b0811e2a20cb77",
+      "source_sha256": "6c58978a409c1efb8a06572ec44f721358e19901549b927f76539e70b3d3a41e",
+      "artifact_sha256": "6c58978a409c1efb8a06572ec44f721358e19901549b927f76539e70b3d3a41e",
       "normalization": "trailing whitespace and final newline"
     },
     {
@@ -414,10 +414,10 @@
       "normalization": "trailing whitespace and final newline"
     },
     {
-      "source": "/private/tmp/tldw-32830-current-native-002/lifecycle.json",
+      "source": "/private/tmp/tldw-32830-current-native-003/lifecycle.json",
       "artifact": "native-lifecycle.json",
-      "source_sha256": "c3f56fbf7f85bb7b682e3de654bd81d5fe9f3fcb43dd6afb93acbb952f651a81",
-      "artifact_sha256": "c3f56fbf7f85bb7b682e3de654bd81d5fe9f3fcb43dd6afb93acbb952f651a81",
+      "source_sha256": "00e62bebc727e6c7b6dc9ac1f49824e73acb50eb4d91fc9874776040f1472be0",
+      "artifact_sha256": "00e62bebc727e6c7b6dc9ac1f49824e73acb50eb4d91fc9874776040f1472be0",
       "normalization": "trailing whitespace and final newline"
     },
     {
@@ -425,6 +425,62 @@
       "artifact": "superseded-native-run.json",
       "source_sha256": "338666e382595a715cf742f0882a9f87098024b9781828a760adaf4a55077c9f",
       "artifact_sha256": "338666e382595a715cf742f0882a9f87098024b9781828a760adaf4a55077c9f",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-qodo-final.txt",
+      "artifact": "qodo-targeted.txt",
+      "source_sha256": "8acc56491e4a34356499caa3026019238346033d3b47649c7932cb52a27f0e1d",
+      "artifact_sha256": "8acc56491e4a34356499caa3026019238346033d3b47649c7932cb52a27f0e1d",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-qodo-final.xml",
+      "artifact": "qodo-targeted.xml",
+      "source_sha256": "cae3ccb62c5effae981fd7765ceaefb87047fe6f0414c1d696eb4a6fda2e2dfd",
+      "artifact_sha256": "d6df8bc45a5d76f86e19dd13befadeb1e4a09d240cbae3e72f558cc5d4930c33",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-path-red.txt",
+      "artifact": "qodo-path-red.txt",
+      "source_sha256": "8f872bd21695519deaef56b357b27abd1d6fb674d84015c6e34ffc4c927dc5c7",
+      "artifact_sha256": "02b84c8a835f54e48546dd2e892bce2f535570ece2f2ac392bb3a7c9f7c9eeec",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-qodo-preflight.txt",
+      "artifact": "qodo-preflight.txt",
+      "source_sha256": "26986d8c339f41f34ed857764f3bdb09e92b89bd17e128cc7e598c134003bbd7",
+      "artifact_sha256": "26986d8c339f41f34ed857764f3bdb09e92b89bd17e128cc7e598c134003bbd7",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-qodo-static.json",
+      "artifact": "qodo-static.json",
+      "source_sha256": "1923627d113a2205cd918126625367bb68b61a505d1ad9dba49ae5af893b5eda",
+      "artifact_sha256": "1923627d113a2205cd918126625367bb68b61a505d1ad9dba49ae5af893b5eda",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-owner-approval.json",
+      "artifact": "owner-approval.json",
+      "source_sha256": "8a6e880193256b252eef3dd50f23573f17a3eb5b235239210f52d2cff4e5fc59",
+      "artifact_sha256": "8a6e880193256b252eef3dd50f23573f17a3eb5b235239210f52d2cff4e5fc59",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-native-doc-only-change.json",
+      "artifact": "native-doc-only-change.json",
+      "source_sha256": "312bf07a33fdd7f7f4c8ef6ad1d08bc4635be259bf99edef1dce12b5138b5869",
+      "artifact_sha256": "312bf07a33fdd7f7f4c8ef6ad1d08bc4635be259bf99edef1dce12b5138b5869",
+      "normalization": "trailing whitespace and final newline"
+    },
+    {
+      "source": "/private/tmp/32830-qodo-renders/comparison.json",
+      "artifact": "qodo-render-comparison.json",
+      "source_sha256": "a599a4cc47b0f82a52e69813186d6012ea9ac6c7b64d9f798d7e001094175dd0",
+      "artifact_sha256": "a599a4cc47b0f82a52e69813186d6012ea9ac6c7b64d9f798d7e001094175dd0",
       "normalization": "trailing whitespace and final newline"
     }
   ]

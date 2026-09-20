@@ -284,9 +284,10 @@ class LocalMCPControlService:
         """Connect or replace a profile session and persist fresh discovery.
 
         Discovery and persistence failures clean up the session established by
-        this call only if its identity still owns the profile. Transport and
-        persistence exceptions propagate; the last saved catalog is retained
-        when discovery fails before saving.
+        this call only if its identity still owns the profile. Connection
+        failures are reported as RuntimeError; discovery and persistence
+        exceptions propagate. The last saved catalog is retained when discovery
+        fails before saving.
 
         Args:
             profile_id: ID of the stored local stdio profile.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 02:02'
-updated_date: '2026-09-20 22:00'
+updated_date: '2026-09-20 22:10'
 labels:
   - mcp
   - ui
@@ -49,4 +49,6 @@ Evidence: Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/README.md. Scope
 ADR required: no. Existing ADR-161 and ADR-111 apply; service/transport/policy/storage boundaries unchanged. Files: local_control_service.py, real stdio fixture/tests, QA evidence and review ledgers. Owner visual approval and current-head remote checks remain merge gates.
 
 Integrated PR2714 on merged PR2713 dev 5e0f9f82c3 without conflicts. Four real-stdio regressions failed on unchanged dev; all 15 service cases pass after repair. Current qualification totals 49 distinct focused cases, seven artifact guards, no introduced lint diagnostics and independent review clear. Fixed reviewer finding in the native harness by moving fixture files into its exclusive evidence directory; live sentinel symlinks remain unchanged. Four real native cells and 32 inspected SVGs verify fresh catalog, failure/retry, original connection state and final disconnect. All twenty fixture processes and app exited, private databases healthy, lock released, defaults unchanged, zero network attempts. Immediate compact toasts overlap inspector actions; recorded with feedback captures as remaining UI follow-up, alongside separate PR2712 toolbar clipping and compact catalog scrolling. Current QA: Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/current-dev/README.md. Existing ADR-111 and ADR-161, no new ADR. Keep In Progress pending current-head CI/review and fresh owner visual approval.
+
+Owner approved gallery at f8d1731abc. Rebased without conflicts onto dev 7bfd330046; no MCP/UI/CSS overlap. Qodo follow-up validates fixture paths (six red escapes, eight green cases), documents APIs and adds ten isolated service cases plus a real concurrent replacement regression. Independent review finds the reported race unreachable with the current non-yielding descriptor/owned teardown. 139 focused cases and seven preflight guards pass, no introduced lint. Native run 003 passes four cells/32 inspected captures, twenty children and app reaped, unchanged defaults, healthy DBs, lock released and zero network. UI/CSS and executable service code unchanged by follow-up; approved gallery retained. Final docstring-only change has explicit AST equivalence receipt. Keep In Progress pending updated-head remote CI/Qodo and merge.
 <!-- SECTION:NOTES:END -->

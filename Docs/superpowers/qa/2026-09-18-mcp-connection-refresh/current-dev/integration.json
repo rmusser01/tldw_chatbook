@@ -12,5 +12,12 @@
     111,
     161
   ],
-  "historical_task_id_collision": false
+  "historical_task_id_collision": false,
+  "qodo_rebase": {
+    "base": "7bfd3300465c67e28580dda710a35b6746e3ef69",
+    "conflicts": false,
+    "mcp_ui_css_overlap": false,
+    "native_tested_head": "1ad83a1dbe25bd0e5cce465db7720cf3a4e0aec4",
+    "later_source_change": "Only corrected public docstring; executable AST identical, see native-doc-only-change.json."
+  }
 }
