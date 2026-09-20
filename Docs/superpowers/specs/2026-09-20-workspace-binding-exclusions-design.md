@@ -2,7 +2,7 @@
 
 Date: 2026-09-20
 Status: Draft (pending review)
-Related ADR: ADR-172 (to be created with this design), amends the enforcement seam shared by ADR-101/102; interacts with ADR-028, ADR-069, ADR-079
+Related ADR: ADR-173 (to be created with this design), amends the enforcement seam shared by ADR-101/102; interacts with ADR-028, ADR-069, ADR-079
 
 ## Problem
 
@@ -248,7 +248,7 @@ Targeted runs only (repo policy; no full sweep unless requested):
 ## ADR plan
 
 ADR required: yes.
-ADR path: `backlog/decisions/172-workspace-binding-exclusions.md`
+ADR path: `backlog/decisions/173-workspace-binding-exclusions.md`
 Reason: security/permission boundary decision (agent file-access restriction)
 plus a storage decision (metadata_json vs. new table), interacting with
 ADR-028, ADR-069, ADR-079, ADR-101, and ADR-102. Created before
