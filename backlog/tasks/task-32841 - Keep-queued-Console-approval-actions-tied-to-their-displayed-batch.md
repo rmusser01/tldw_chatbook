@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 15:02'
-updated_date: '2026-09-20 08:04'
+updated_date: '2026-09-20 16:29'
 labels: []
 dependencies: []
 ---
@@ -45,6 +45,8 @@ ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md; backlog
 Reason: integration and qualification of the existing approved-scope event-ownership repair, preserving policy, layout, storage and service boundaries.
 
 Qodo follow-up: apply the local ApprovalActionButton casing cleanup and one shared WORKER_TIMEOUT_SECONDS value in the native runner. These are mechanical naming changes with no behavior, layout or policy change. Re-run affected targeted checks and current-source native evidence before republishing; existing ADR-032/150 still apply, no new ADR.
+
+Approved closeout, 2026-09-20: preserve approved fd382754, rebase onto dev d1a0649 (Library/Artifacts navigation integration), verify unchanged approval source/controller/runner and no conflicts, rerun targeted cases and baseline attribution plus native matrix and guards, then publish and complete current-head CI/Qodo before the authorized merge. Record actual merged-tree provenance. No new ADR; existing ADR-032/150 govern the approval repair, upstream ADR-172 governs the navigation change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -63,4 +65,6 @@ ADR required: no new ADR. Existing backlog/decisions/032-local-agent-tool-permis
 Current-dev integration (2026-09-20): replayed only the saved approval fix onto merged dev de10a62e67 after PR2728 closeout. Both report conflicts retain all histories; no product conflict. Production code is unchanged from saved 10747313. Added three isolated publication/submission checks and moved the native runner to the shared CLI validator and application image warmup. Independent review caught editable-package import ordering; final runner pins the worktree before any project import and asserts six loaded module origins. Integrated native run 001 is unqualified, 002 superseded, and final 003 supplies all eight inspected dark/light captures and healthy lifecycle receipts. No tool dispatch or network attempt. Targeted union: 210 distinct passes (126 product, 84 runner); all 19 failures reproduce on unchanged current dev after normalizing process-specific object addresses in two assertions. No full sweep. Seven guards pass; no new static diagnostics and changed formatting passes. Current evidence and conflict choices: Docs/superpowers/qa/2026-09-19-approval-action-ownership/CURRENT-DEV-REVIEW.md. Existing ADR-032/150 apply; no new ADR. Local implementation/review complete; PR2730 current-head CI/Qodo and its own visual approval remain merge gates.
 
 Qodo reported zero bugs and two maintainability findings on f1af5ee17c. Both addressed: helper class renamed ApprovalActionButton and the two native worker waits share WORKER_TIMEOUT_SECONDS=8. Production AST is identical after normalizing only the helper name. All 109 affected tests and seven fresh guards pass, with no new Ruff diagnostics. Final native integration run 006 passes all four controller journeys and lifecycle checks; all eight captures are pixel-identical to inspected run 003. Launches 004/005 were refused before app imports because required private directories were missing; neither is qualified. Current source and runner hashes match the new receipts. Own visual approval and current-head CI/Qodo remain merge gates.
+
+Owner approved the fd382754 Console gallery and merge. Rebased onto current dev d1a0649 (PR2754 Library/Artifacts) without conflicts. Approval source/controller/Console/runner/tests remain byte-identical to the approved head. Fresh targeted run: 211 passed, 18 failed; all 18 failures reproduce unchanged on current dev after object-address normalization. Previously failing human-input-wait case passes on both current trees; no fix is attributed to this PR. All seven guards and native lifecycle pass. Across all eight images, only upstream navigation pixels differ; approved controls remain pixel-identical. Four current submit views inspected across themes/sizes. Evidence: Docs/superpowers/qa/2026-09-19-approval-action-ownership/CLOSEOUT.md. Existing ADR-032/150; upstream ADR-172. Rebased-head CI/Qodo and actual merge verification remain before authorized closeout.
 <!-- SECTION:NOTES:END -->

@@ -1,5 +1,16 @@
 # MCP component review
 
+## Current checkpoint — PR2730 approved closeout
+
+The owner approved PR2730’s Console gallery and merge. Its rebase onto current
+dev `d1a0649cd2` (PR2754 Library/Artifacts integration) had no conflicts and keeps
+the approved approval logic and Console controls unchanged. [211 targeted passes,
+18 reproduced baseline failures, seven guards and fresh native comparison](../qa/2026-09-19-approval-action-ownership/CLOSEOUT.md)
+qualify the combined state. Only upstream main-navigation pixels changed.
+Current-head CI/review and actual merge-tree verification remain before the
+authorized closeout. Saved MCP inspector work resumes after confirmed merge.
+PR2707’s heartbeat stays paused; earlier checkpoints are historical.
+
 ## Current checkpoint — PR2728 merged; PR2730 integrated
 
 [PR2728](https://github.com/rmusser01/tldw_chatbook/pull/2728) merged at

@@ -1,5 +1,8 @@
 # Console approval action ownership — TASK-32841
 
+**Approved closeout:** [latest dev qualification and gallery](CLOSEOUT.md).
+Earlier integration checkpoints below are historical.
+
 **Current integration:** see [current-dev review](CURRENT-DEV-REVIEW.md) and
 [current gallery](GALLERY.md). The original-base evidence below is historical.
 

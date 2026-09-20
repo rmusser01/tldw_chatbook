@@ -1,5 +1,8 @@
 # Console approval ownership — current-dev integration
 
+**Approved closeout:** [latest dev qualification and gallery](CLOSEOUT.md).
+Earlier integration checkpoints below are historical.
+
 PR2730 prevents queued approval actions from affecting a replacement batch and
 prevents duplicate submissions. The production behavior matches saved head
 `10747313ea6ec2c8d40381518ca31708cc94fa68`; Qodo requested a mechanical helper
