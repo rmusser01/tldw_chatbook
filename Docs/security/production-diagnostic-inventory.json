@@ -1230,7 +1230,11 @@
     },
     {
       "call_count": 229,
+<<<<<<< HEAD
       "diagnostic_digest": "cf2e987db505f355124e",
+=======
+      "diagnostic_digest": "bd192e7929859a99b430",
+>>>>>>> c0776ffe8e (feat(llm): local suites reconciled; llama summarizer onto the shared transport (TASK-32854 1/8))
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
