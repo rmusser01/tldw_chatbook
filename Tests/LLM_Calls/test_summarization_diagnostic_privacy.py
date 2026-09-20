@@ -2347,6 +2347,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
@@ -2421,10 +2422,17 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 >>>>>>> 095c0e5553 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 =======
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
 >>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> 4f39bc2919 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
         # TASK-32853 groq migration: the non-200 status log site joined
         # the deleted ledger (10 -> 11). deepseek/mistral keep their frozen
         # status logs verbatim (bound to the typed error) per the freeze.
@@ -2483,6 +2491,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 >>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> db6bed7a94 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 <<<<<<< HEAD
 >>>>>>> 15cd2febea (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2491,9 +2500,14 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> 4f39bc2919 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 =======
+=======
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
         # TASK-32853 groq migration: the non-200 status log site joined the
         # deleted ledger (10 -> 11).
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 11,
+<<<<<<< HEAD
 >>>>>>> b463addfd6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 <<<<<<< HEAD
 >>>>>>> 6d3ca1e585 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
@@ -2503,8 +2517,17 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> 4f39bc2919 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> d3f102bb11 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+=======
+>>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (

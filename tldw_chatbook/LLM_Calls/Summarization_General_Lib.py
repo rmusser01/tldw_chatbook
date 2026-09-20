@@ -51,8 +51,11 @@ from tldw_chatbook.Utils.egress import create_default_session, default_session_t
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -136,6 +139,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 =======
 >>>>>>> f18f5f639e (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> adf9bb0617 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 <<<<<<< HEAD
 >>>>>>> 9f1f732a7a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
@@ -183,8 +187,18 @@ from tldw_chatbook.Chat.Chat_Deps import (
 >>>>>>> f18f5f639e (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> adf9bb0617 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 9d7375714d (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> c741d10d43 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+=======
+=======
+>>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,

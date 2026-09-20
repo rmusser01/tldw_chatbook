@@ -1230,6 +1230,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
       "call_count": 269,
       "diagnostic_digest": "e8225e3610bdbf11071a",
 <<<<<<< HEAD
@@ -1243,6 +1244,12 @@
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 >>>>>>> 4f39bc2919 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+>>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
       "call_count": 270,
 <<<<<<< HEAD
       "diagnostic_digest": "ab24d7b53a0c59345be3",
@@ -1331,6 +1338,7 @@
       "diagnostic_digest": "e8225e3610bdbf11071a",
 >>>>>>> 8bd7e24de6 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
 >>>>>>> 9fea723ed8 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+<<<<<<< HEAD
 >>>>>>> 1012426811 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
 <<<<<<< HEAD
 >>>>>>> 4dbb3bed6c (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
@@ -1501,8 +1509,20 @@
 >>>>>>> 8bd7e24de6 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
 >>>>>>> 9fea723ed8 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
 >>>>>>> 1012426811 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+<<<<<<< HEAD
 >>>>>>> c63a17218f (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+<<<<<<< HEAD
 >>>>>>> 37ee9327a4 (feat(llm): huggingface summarizer onto _post_with_retry — TASK-32853 phase C complete)
+=======
+=======
+=======
+=======
+      "call_count": 270,
+      "diagnostic_digest": "ab24d7b53a0c59345be3",
+>>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -11855,6 +11875,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -11872,6 +11893,8 @@
 >>>>>>> c741d10d43 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> d3f102bb11 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+>>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_492_calls": 1355,
 =======
     "task_492_calls": 1356,
@@ -11921,7 +11944,12 @@
 =======
 =======
 >>>>>>> 4f39bc2919 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> d3f102bb11 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+>>>>>>> 7850c49928 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_492_calls": 1356,
 =======
 =======
@@ -11957,7 +11985,12 @@
 =======
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> d3f102bb11 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+>>>>>>> dd3419134a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_492_calls": 1409,
 >>>>>>> b463addfd6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 <<<<<<< HEAD
@@ -11983,7 +12016,13 @@
 =======
     "task_492_calls": 1408,
 >>>>>>> 7a108e2d37 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
+<<<<<<< HEAD
 >>>>>>> f7bc766f18 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+    "task_492_calls": 1407,
+>>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 497e477e82 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     "task_494_calls": 7765
 >>>>>>> 9ec40bc168 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
