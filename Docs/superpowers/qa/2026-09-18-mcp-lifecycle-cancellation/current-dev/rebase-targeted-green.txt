@@ -1,0 +1,16 @@
+...................................                                      [100%]
+============================= slowest 25 durations =============================
+4.51s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-button]
+4.48s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[other-message]
+4.35s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_render_keeps_original_operation_across_detail_await
+4.29s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_before_start_does_not_create_service_coroutine
+3.98s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-message]
+3.79s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_retired_cancel_cannot_stop_a_replacement_operation[docs-button]
+3.72s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_reserves_server_until_cleanup_then_permits_retry
+3.69s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_immediate_native_worker_completion_releases_admission
+3.58s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_success_keeps_admission_until_final_projection_is_collected
+3.45s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[error]
+3.34s call     Tests/UI/test_mcp_lifecycle_cancellation.py::test_cancel_request_does_not_hide_the_actual_terminal_outcome[success]
+
+(14 durations < 1s hidden.)
+35 passed, 77 deselected in 45.73s

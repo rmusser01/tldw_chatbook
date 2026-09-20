@@ -1,0 +1,145 @@
+{
+  "files": [
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+      "baseline_count": 13,
+      "current_count": 13,
+      "introduced": [],
+      "format_ranges": [
+        {
+          "range": "1117-1117",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1119-1119",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1122-1122",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1309-1309",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1779-1785",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1804-1805",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1869-1869",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1873-1878",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1881-1885",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "3621-3636",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        }
+      ]
+    },
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+      "baseline_count": 65,
+      "current_count": 65,
+      "introduced": [],
+      "format_ranges": [
+        {
+          "range": "25-25",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1476-1480",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1554-1555",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "1557-1561",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6444-6452",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6455-6455",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6457-6457",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6492-6492",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6498-6502",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6508-6508",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6512-6512",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6514-6514",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6516-6516",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6529-6535",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        },
+        {
+          "range": "6537-6543",
+          "passed": true,
+          "output": "1 file already formatted\n"
+        }
+      ]
+    }
+  ]
+}

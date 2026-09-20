@@ -1,0 +1,17 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+3.43s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[finding]
+3.30s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[tool]
+3.23s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[sync_lock]
+3.18s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[detail]
+3.08s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[overview]
+2.84s call     Tests/Backup_Recovery/test_mcp_recovery_publication.py::test_restored_review_stops_rendering_after_navigation[readiness]
+
+(12 durations < 1s hidden.)
+6 passed in 19.77s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4791adbe-9f5d-4369-a1db-0fb3384db063/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4791adbe-9f5d-4369-a1db-0fb3384db063/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4791adbe-9f5d-4369-a1db-0fb3384db063
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4791adbe-9f5d-4369-a1db-0fb3384db063'
+  warnings.warn(
