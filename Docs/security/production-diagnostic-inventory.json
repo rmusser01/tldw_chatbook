@@ -1558,12 +1558,28 @@
 =======
 =======
       "call_count": 269,
+<<<<<<< HEAD
       "diagnostic_digest": "dbcc0db127c17dafee53",
 >>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> 4aa3599028 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> ad3aff65ff (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> 8e389e1b7d (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> c6df651c9c (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+=======
+=======
+=======
+      "diagnostic_digest": "571ec035007350308f10",
+>>>>>>> 13a9c28d21 (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+>>>>>>> 60af575933 (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+>>>>>>> 993e80d149 (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+>>>>>>> ea3ae535b5 (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
+>>>>>>> efc28325db (feat(llm): cohere and google summarizers onto _post_with_retry; privacy suite fully green (TASK-32853 phase C 3/4))
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
