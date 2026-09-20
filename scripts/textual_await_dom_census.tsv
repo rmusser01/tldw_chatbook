@@ -20,6 +20,7 @@ tldw_chatbook/UI/ChatbookCreationWindow.py::on_mount	1
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::on_mount	3
 tldw_chatbook/UI/Chunking_Lab_Modules/results_region.py::update	1
 tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py::_dispatch	2
+tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py::_prepare_dialog	1
 tldw_chatbook/UI/Library_Modules/library_browse_route_swap.py::_apply_library_notes_source_strip	1
 tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py::_apply_owned	3
 tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py::_refresh_owned	4
@@ -28,14 +29,13 @@ tldw_chatbook/UI/Library_Modules/library_prompts_controller.py::handle_library_p
 tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::_hide_advanced	1
 tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::_mount_test_tool_panel	1
 tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::_reveal_advanced	1
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::show_tool	1
 tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py::_rebuild_detail_toolbar	1
 tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py::show_detail	3
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_clear_tool_view	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_open_audit_permission	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_open_audit_tool	1
-tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_prepare_mcp_recovery_review	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_prepare_tool_test_preview	1
-tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_record_mcp_recovery_review	2
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_run_prepared_tool_test	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_switch_source	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_audit_mode	1
