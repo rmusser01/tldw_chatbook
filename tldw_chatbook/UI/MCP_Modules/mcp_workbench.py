@@ -2209,6 +2209,22 @@ class MCPWorkbench(Container):
             return method(*args, **kwargs)
         return method(*args, **scoped)
 
+    async def _call_profile_scoped_off_loop(
+        self, method: Any, *args: Any, context: PermissionProfileContext, **kwargs: Any
+    ) -> Any:
+        """Run a profile-scoped permission-store write off the event loop.
+
+        task-32804.7: the permission setters (`set_tool_state`,
+        `set_server_default`, `set_global_default`) write JSON to disk under a
+        lock -- ~13 ms per keypress, and Space-cycling is the Permissions
+        matrix's primary gesture. Offload it like `_save_builtin_flag` /
+        `_save_tool_gate` already offload their writes; the ``await`` completes
+        before the caller resyncs the matrix, so the resync-after shape holds.
+        """
+        return await asyncio.to_thread(
+            self._call_profile_scoped, method, *args, context=context, **kwargs
+        )
+
     async def select_tool_policy_profile(
         self,
         profile_id: str,
@@ -3412,11 +3428,11 @@ class MCPWorkbench(Container):
         try:
             if event.row_kind == "global":
                 if event.new_state is not None:
-                    self._call_profile_scoped(
+                    await self._call_profile_scoped_off_loop(
                         service.set_global_default, event.new_state, context=context
                     )
             elif event.row_kind == "server":
-                self._call_profile_scoped(
+                await self._call_profile_scoped_off_loop(
                     service.set_server_default,
                     event.server_key,
                     event.new_state,
@@ -3445,7 +3461,7 @@ class MCPWorkbench(Container):
                     # Inherit), neither of which is valid raw-shell policy.
                     next_state = "ask" if current == "deny" else "deny"
                     raw_cycled_state = next_state
-                    self._call_profile_scoped(
+                    await self._call_profile_scoped_off_loop(
                         service.set_tool_state,
                         event.server_key,
                         event.tool_name or "",
@@ -3461,7 +3477,7 @@ class MCPWorkbench(Container):
                     # `agent:builtin` is in `HASH_FREE_SERVER_KEYS`
                     # (Task 1), so `set_tool_state()` doesn't need a
                     # `HubTool` to fingerprint an "allow".
-                    self._call_profile_scoped(
+                    await self._call_profile_scoped_off_loop(
                         service.set_tool_state,
                         event.server_key,
                         event.tool_name or "",
@@ -3480,7 +3496,7 @@ class MCPWorkbench(Container):
                             severity="warning",
                         )
                         return
-                    self._call_profile_scoped(
+                    await self._call_profile_scoped_off_loop(
                         service.set_tool_state,
                         event.server_key,
                         event.tool_name or "",
@@ -3565,7 +3581,7 @@ class MCPWorkbench(Container):
         if not callable(set_kill_switch):
             return
         try:
-            set_kill_switch(event.value)
+            await asyncio.to_thread(set_kill_switch, event.value)
         except Exception as exc:
             # task-545/T6: global switch (MCP + built-in tools) -- see the
             # matching read-path comment in `_sync_permissions_mode` above.
@@ -5081,7 +5097,7 @@ class MCPWorkbench(Container):
         if not callable(set_tool_state):
             return
         try:
-            self._call_profile_scoped(
+            await self._call_profile_scoped_off_loop(
                 set_tool_state,
                 event.server_key,
                 event.tool_name,
