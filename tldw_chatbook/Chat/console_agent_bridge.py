@@ -10538,13 +10538,11 @@ def build_chat_create_tool_closures(
     """Build the fork_chat/new_chat runtime-tool closures for one run.
 
     Both share one per-run denial counter (terminal after two denials --
-    the model is told, once, that chat creation is off for the run) and
-    one per-run remember memo. The memo is the RUN-local half of the
-    remember contract: a remembered tool skips the confirm card for the
-    rest of this run, while the controller's session-scoped grants
-    (``_chat_create_session_grants``) cover cross-run remembers inside
-    the same session -- the confirm callback itself short-circuits those
-    before a card is ever armed.
+    the model is told, once, that chat creation is off for the run). The
+    remember contract lives ENTIRELY in the controller's session-scoped
+    grants (``_chat_create_session_grants``), which the confirm callback
+    consults before arming a card -- and which refuse to ride for
+    sub-agent requesters, so there is deliberately no run-local memo.
 
     Args:
         confirm: Worker-thread blocking confirm callable (the controller's
@@ -10562,7 +10560,6 @@ def build_chat_create_tool_closures(
         ``(fork_chat_tool, new_chat_tool)`` -- each ``args -> ToolResult``.
     """
     denials = {"fork_chat": 0, "new_chat": 0}
-    remembered: set[str] = set()
 
     def _run(tool: str, args: dict) -> ToolResult:
         if denials[tool] >= _CHAT_CREATE_DENIAL_LIMIT:
@@ -10624,21 +10621,23 @@ def build_chat_create_tool_closures(
             "model": model,
             "preset": preset,
         }
-        if tool not in remembered:
-            try:
-                decision = confirm(dict(payload))
-            except Exception:  # noqa: BLE001 — a UI error fails closed
-                decision = {"allow": False, "remember": False}
-            if not isinstance(decision, Mapping) or not decision.get(
-                "allow", False
-            ):
-                denials[tool] += 1
-                return ToolResult(
-                    ok=False,
-                    error="The user declined. Do not retry this turn.",
-                )
-            if decision.get("remember", False):
-                remembered.add(tool)
+        # Qodo 2761 round, finding 1: NO closure-local remember memo. The
+        # controller's session grants are the single remember authority,
+        # and they REFUSE to ride for sub-agent requesters -- caching a
+        # remember here would let a later child-run call on this turn skip
+        # consent entirely.
+        try:
+            decision = confirm(dict(payload))
+        except Exception:  # noqa: BLE001 — a UI error fails closed
+            decision = {"allow": False, "remember": False}
+        if not isinstance(decision, Mapping) or not decision.get(
+            "allow", False
+        ):
+            denials[tool] += 1
+            return ToolResult(
+                ok=False,
+                error="The user declined. Do not retry this turn.",
+            )
         # Broad-catch the EXECUTE phase exactly like the sibling
         # run_skill_script_tool does: a raising executor must surface as
         # the outcome contract (ok=False, execution_failed), never as an
