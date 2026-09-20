@@ -241,3 +241,12 @@ def test_home_relative_bundle_remains_shareable(tmp_path, monkeypatch):
     with zipfile.ZipFile(tmp_path / "registered-pack.zip", "w") as bundle:
         bundle.writestr("manifest.json", "{}")
     assert usable_chatbook_bundle("~/registered-pack.zip")[0]
+
+
+@pytest.mark.parametrize("invalid", [123, ["pack.zip"], {"path": "pack.zip"}])
+def test_malformed_bundle_path_type_is_unavailable(invalid):
+    from tldw_chatbook.Chatbooks.artifact_registry_snapshot import (
+        usable_chatbook_bundle,
+    )
+
+    assert not usable_chatbook_bundle(invalid)[0]

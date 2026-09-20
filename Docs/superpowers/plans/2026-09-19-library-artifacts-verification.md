@@ -155,6 +155,9 @@ All seven Qodo findings were addressed before merge:
 Eight behavior regressions passed after reproducing the failures. Independent
 review caught a lost home-relative bundle path during validation; its positive
 regression was observed failing before the compatibility fix and passing after.
+Three truthy non-string registry path values also reproduced a TypeError; they
+now become unavailable without breaking the share chooser (19 registry cases
+passed after this final correction).
 Final focused evidence (overlapping runs, not a full suite):
 
 - 83 registry, catalog/state, share-owner and Chatbooks integration cases passed.

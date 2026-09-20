@@ -211,6 +211,6 @@ def usable_chatbook_bundle(raw_path: Any) -> tuple[bool, str]:
             return False, "Exported bundle is missing; manage Chatbook packs."
         if not zipfile.is_zipfile(path):
             return False, "Export is not a readable ZIP; manage Chatbook packs."
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, TypeError, ValueError, RuntimeError):
         return False, "Exported bundle is unavailable; manage Chatbook packs."
     return True, "Shares the existing exported ZIP snapshot."
