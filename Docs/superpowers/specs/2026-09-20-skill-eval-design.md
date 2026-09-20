@@ -42,7 +42,9 @@ score with provenance.
 - Three depth tiers with explicit cost: quick (0 LLM calls), standard (~16), deep (~66).
 - Every report attributable to an exact skill version: content digest, source path,
   trust tier, and methodology version stored as provenance.
-- Reproducible: seeded synthetic-prompt generation; decoy context recorded.
+- Re-runnable and attributable: seeded synthetic-prompt generation and recorded
+  decoy context make inputs identical across re-runs (model responses are inherently
+  non-deterministic; the claim is input fidelity, not bit-reproducibility).
 - Compare two skills via existing run-group comparison.
 
 **Non-goals (v1)**
@@ -113,8 +115,15 @@ executed.
 - derived stats used by static checks: line counts, section headings, code blocks,
   imperative-directive counts, referenced files
 
-Skill packages (body + `references/`/`assets/` directories, scripts) are read for
-*structure only*. Nothing is ever executed.
+Skills are package *directories* (`store_dir/skills/<name>/SKILL.md` plus supporting
+files); the bundle manifest (per-file path/size/executable inventory) feeds the
+reference checks. Subject sources in v1: (a) the local store via
+`LocalSkillsService.list_skills()` (serialized `SkillSummary`, including trust
+fields), and (b) an arbitrary skill directory by path — the same snapshot builder,
+which covers project-dir skills and pre-install evaluation without waiting on
+workspace-binding integration. Auto-enumeration of project skills from Console
+bindings is future work. Packages are read for *structure only*; nothing is ever
+executed.
 
 ## 6. Layers
 
@@ -251,13 +260,24 @@ them where missing (bench_editor "+ New target" precedent); `update_run` /
 precedent); `get_run_results` is paginated and must be drained.
 Follow the `character_probe` storage pattern against `EvalsDB`:
 
-- one run row per evaluation (run-grouped), status managed like existing runs
-- per-artifact result rows: each judge rating and each sim batch (raw judge JSON kept
-  for audit)
-- aggregate metrics row: per-dimension scores, composite, grade, confidence,
-  anti-pattern findings
-- run metadata JSON: subject provenance (digest, path, trust tier, discovery source),
-  decoy-set digests, seed, methodology version, depth, model refs
+- bench task row: `eval_tasks` with `task_type="generation"`,
+  `config_format="custom"`, `config_data["bench_type"]="skill_eval"` (the
+  discriminator convention; satisfies the `task_type` CHECK constraint)
+- one `eval_runs` row per evaluation sharing a `run_group_id`, with the full report
+  snapshot — per-dimension scores, composite, grade, confidence, anti-pattern
+  findings, and provenance (digest, path, trust tier, subject source, decoy-set
+  digests, seed, methodology version, depth, model refs) — in
+  `config_overrides["snapshot"]`
+- per-artifact `eval_results` rows: each judge rating and each simulation cell, with
+  distinct `sample_id`s (`judge-<name>`, `sim-<p>-<k>`; the table enforces
+  `UNIQUE(run_id, sample_id)`) and raw judge JSON in metadata for audit
+
+Storage gotchas the implementation must honor: `create_run` validates both FKs, so
+judge/generator targets must be live `eval_models` rows — the model pickers mint
+them where missing (bench_editor "+ New target" precedent); `update_run` /
+`update_task` return `False` on missing rows rather than raising (check returns);
+`store_result` is one-row-per-transaction (accepted non-atomicity, character-probe
+precedent); `get_run_results` is paginated and must be drained.
 
 Comparing two skills = comparing two runs; existing run comparison surfaces apply.
 
