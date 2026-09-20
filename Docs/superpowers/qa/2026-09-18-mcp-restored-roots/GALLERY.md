@@ -1,107 +1,109 @@
 # Restored MCP review native gallery
 
-All 16 captures were rendered and inspected. See [qualification and limits](README.md).
+Current PR2727 integration on merged dev `65d79cc2b7`. All 16 native captures were rendered and inspected. Both action labels are keyboard-reachable; the existing long-path wrapping and post-review guidance remain follow-up UX work. See [conflict choices, qualification and limits](CURRENT-DEV-REVIEW.md). Final visual approval is pending.
+
+[Original historical gallery](HISTORICAL-GALLERY.md).
 
 ## Dark · 120x40
 
 ### Review beginning
 
-![dark 120x40 Review beginning](native/textual-dark-120x40-review.svg)
+![dark 120x40 Review beginning](integration/native/textual-dark-120x40-review.svg)
 
-[Terminal text](native/textual-dark-120x40-review.txt)
+[Terminal text](integration/native/textual-dark-120x40-review.txt)
 
 ### Cancel reachable
 
-![dark 120x40 Cancel reachable](native/textual-dark-120x40-cancel-control.svg)
+![dark 120x40 Cancel reachable](integration/native/textual-dark-120x40-cancel-control.svg)
 
-[Terminal text](native/textual-dark-120x40-cancel-control.txt)
+[Terminal text](integration/native/textual-dark-120x40-cancel-control.txt)
 
 ### Confirm reachable
 
-![dark 120x40 Confirm reachable](native/textual-dark-120x40-confirm-control.svg)
+![dark 120x40 Confirm reachable](integration/native/textual-dark-120x40-confirm-control.svg)
 
-[Terminal text](native/textual-dark-120x40-confirm-control.txt)
+[Terminal text](integration/native/textual-dark-120x40-confirm-control.txt)
 
 ### Fresh Ask/local defaults
 
-![dark 120x40 Fresh Ask/local defaults](native/textual-dark-120x40-fresh-defaults.svg)
+![dark 120x40 Fresh Ask/local defaults](integration/native/textual-dark-120x40-fresh-defaults.svg)
 
-[Terminal text](native/textual-dark-120x40-fresh-defaults.txt)
+[Terminal text](integration/native/textual-dark-120x40-fresh-defaults.txt)
 
 ## Dark · 170x48
 
 ### Review beginning
 
-![dark 170x48 Review beginning](native/textual-dark-170x48-review.svg)
+![dark 170x48 Review beginning](integration/native/textual-dark-170x48-review.svg)
 
-[Terminal text](native/textual-dark-170x48-review.txt)
+[Terminal text](integration/native/textual-dark-170x48-review.txt)
 
 ### Cancel reachable
 
-![dark 170x48 Cancel reachable](native/textual-dark-170x48-cancel-control.svg)
+![dark 170x48 Cancel reachable](integration/native/textual-dark-170x48-cancel-control.svg)
 
-[Terminal text](native/textual-dark-170x48-cancel-control.txt)
+[Terminal text](integration/native/textual-dark-170x48-cancel-control.txt)
 
 ### Confirm reachable
 
-![dark 170x48 Confirm reachable](native/textual-dark-170x48-confirm-control.svg)
+![dark 170x48 Confirm reachable](integration/native/textual-dark-170x48-confirm-control.svg)
 
-[Terminal text](native/textual-dark-170x48-confirm-control.txt)
+[Terminal text](integration/native/textual-dark-170x48-confirm-control.txt)
 
 ### Fresh Ask/local defaults
 
-![dark 170x48 Fresh Ask/local defaults](native/textual-dark-170x48-fresh-defaults.svg)
+![dark 170x48 Fresh Ask/local defaults](integration/native/textual-dark-170x48-fresh-defaults.svg)
 
-[Terminal text](native/textual-dark-170x48-fresh-defaults.txt)
+[Terminal text](integration/native/textual-dark-170x48-fresh-defaults.txt)
 
 ## Light · 120x40
 
 ### Review beginning
 
-![light 120x40 Review beginning](native/textual-light-120x40-review.svg)
+![light 120x40 Review beginning](integration/native/textual-light-120x40-review.svg)
 
-[Terminal text](native/textual-light-120x40-review.txt)
+[Terminal text](integration/native/textual-light-120x40-review.txt)
 
 ### Cancel reachable
 
-![light 120x40 Cancel reachable](native/textual-light-120x40-cancel-control.svg)
+![light 120x40 Cancel reachable](integration/native/textual-light-120x40-cancel-control.svg)
 
-[Terminal text](native/textual-light-120x40-cancel-control.txt)
+[Terminal text](integration/native/textual-light-120x40-cancel-control.txt)
 
 ### Confirm reachable
 
-![light 120x40 Confirm reachable](native/textual-light-120x40-confirm-control.svg)
+![light 120x40 Confirm reachable](integration/native/textual-light-120x40-confirm-control.svg)
 
-[Terminal text](native/textual-light-120x40-confirm-control.txt)
+[Terminal text](integration/native/textual-light-120x40-confirm-control.txt)
 
 ### Fresh Ask/local defaults
 
-![light 120x40 Fresh Ask/local defaults](native/textual-light-120x40-fresh-defaults.svg)
+![light 120x40 Fresh Ask/local defaults](integration/native/textual-light-120x40-fresh-defaults.svg)
 
-[Terminal text](native/textual-light-120x40-fresh-defaults.txt)
+[Terminal text](integration/native/textual-light-120x40-fresh-defaults.txt)
 
 ## Light · 170x48
 
 ### Review beginning
 
-![light 170x48 Review beginning](native/textual-light-170x48-review.svg)
+![light 170x48 Review beginning](integration/native/textual-light-170x48-review.svg)
 
-[Terminal text](native/textual-light-170x48-review.txt)
+[Terminal text](integration/native/textual-light-170x48-review.txt)
 
 ### Cancel reachable
 
-![light 170x48 Cancel reachable](native/textual-light-170x48-cancel-control.svg)
+![light 170x48 Cancel reachable](integration/native/textual-light-170x48-cancel-control.svg)
 
-[Terminal text](native/textual-light-170x48-cancel-control.txt)
+[Terminal text](integration/native/textual-light-170x48-cancel-control.txt)
 
 ### Confirm reachable
 
-![light 170x48 Confirm reachable](native/textual-light-170x48-confirm-control.svg)
+![light 170x48 Confirm reachable](integration/native/textual-light-170x48-confirm-control.svg)
 
-[Terminal text](native/textual-light-170x48-confirm-control.txt)
+[Terminal text](integration/native/textual-light-170x48-confirm-control.txt)
 
 ### Fresh Ask/local defaults
 
-![light 170x48 Fresh Ask/local defaults](native/textual-light-170x48-fresh-defaults.svg)
+![light 170x48 Fresh Ask/local defaults](integration/native/textual-light-170x48-fresh-defaults.svg)
 
-[Terminal text](native/textual-light-170x48-fresh-defaults.txt)
+[Terminal text](integration/native/textual-light-170x48-fresh-defaults.txt)

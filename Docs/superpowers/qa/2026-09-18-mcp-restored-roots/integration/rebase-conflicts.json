@@ -1,0 +1,16 @@
+{
+  "base": "65d79cc2b7bd8b7b1d86ee87cc31f1823475ab3a",
+  "saved_head": "d6c0312bedff15d8c2e8e9589a70c5be7c60379b",
+  "conflicts": [
+    {
+      "path": "Docs/superpowers/reports/2026-09-17-design-system-completion-audit.md",
+      "choice": "Retain current dev report history and the entire saved restored-roots checkpoint. No product conflicts.",
+      "resolved_sha256": "0f2121774b7b887d426adc0653f39e24e1a5c8a50d4deacb30ccf77eda280565"
+    },
+    {
+      "path": "Docs/superpowers/reports/2026-09-18-mcp-review.md",
+      "choice": "Retain current dev report history and the entire saved restored-roots checkpoint. No product conflicts.",
+      "resolved_sha256": "40146eb29e46e758394ff9c5cc612453b0d55d4d589cfff4a627047165b5158f"
+    }
+  ]
+}

@@ -1,5 +1,23 @@
 # MCP component review
 
+## Current checkpoint — PR2749 merged; PR2727 integrated
+
+[PR2749](https://github.com/rmusser01/tldw_chatbook/pull/2749) merged at
+`65d79cc2b7bd8b7b1d86ee87cc31f1823475ab3a` after owner approval, current-head
+CI and accumulated review. The actual merge tree equals the verified head.
+[Merge receipt](../qa/2026-09-18-mcp-restored-roots/integration/pr2749-closeout.json).
+
+Existing PR2727 / TASK-32839 is rebased onto that merged state. Both report
+histories are retained; no product conflict occurred. Four new real-owner
+keyboard regressions reproduce and fix late completion overwriting a newer
+Permissions row/profile selection, including round trips, while the native
+write still completes. [85 targeted passes, seven guards, conflict choices and
+16 fresh native captures](../qa/2026-09-18-mcp-restored-roots/CURRENT-DEV-REVIEW.md)
+qualify the integrated repair. Current-head CI/review and this PR's own final
+visual approval remain before merge. Catalog repopulation/status guidance,
+long-path presentation, inspector refresh and connected-runtime journeys remain
+follow-ups. PR2707's heartbeat stays paused. Earlier checkpoints are historical.
+
 ## Current checkpoint — PR2749 approved closeout
 
 The owner approved the Tools header gallery. The final dev rebase onto

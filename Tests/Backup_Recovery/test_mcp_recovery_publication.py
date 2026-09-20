@@ -9,8 +9,10 @@ _JOURNEY = r"""
 from textual.app import App
 from textual.screen import Screen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
-from textual.widgets import Button,DataTable
+from textual.widgets import Button,DataTable,Select
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.MCP.readiness import local_profile_readiness
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 service=plane();host=SimpleNamespace(unified_mcp_service=service)
@@ -52,7 +54,8 @@ async def run():
   bench=app.screen.query_one(Bench);await bench._mount_deferred_canvases()
   # A previously published catalog is UI input only, never launched.
   record={'profile_id':'demo','command':'disposable-sentinel','is_connected':False,
-          'discovery_snapshot':{'tools':[{'name':'historical_tool','description':'Old catalog'}]}}
+          'discovery_snapshot':{'tools':[{'name':name,'description':'Old catalog'}
+                                        for name in ('historical_tool','later_tool')]}}
   bench._catalog_records={'demo':record};bench._snapshots=[local_profile_readiness(record)]
   bench._selected_server_key='local:demo';bench.set_mode('permissions')
   await bench._sync_children();await pilot.pause()
@@ -73,7 +76,29 @@ async def run():
     await app.push_screen(Screen());await pilot.pause()
     if route=='screen_round_trip':await app.pop_screen();await pilot.pause()
    elif route=='service':host.unified_mcp_service=plane()
-   if route not in {'current','screen_round_trip'}:
+   elif route.startswith('permission_'):
+    if 'profile' in route:service.permission_store.ensure_profile('later')
+    # An ordinary passive refresh can publish the now-current owner context
+    # while the accepted review's worker still holds its completion receipt.
+    await bench._sync_children();await pilot.pause()
+    canvas=bench.query_one(MCPPermissionsMode)
+    if 'profile' in route:
+     field=canvas.query_one('#mcp-perm-tool-profile',Select);field.focus()
+     await pilot.press('enter','end','enter');await pilot.pause()
+     assert bench._tool_policy_profile_id=='later'
+     if route.endswith('round_trip'):
+      field.focus();await pilot.press('enter','home','enter');await pilot.pause()
+      assert bench._tool_policy_profile_id=='default'
+    else:
+     names=['later_tool','historical_tool'] if route.endswith('round_trip') else ['later_tool']
+     table=canvas.query_one('#mcp-perm-table',DataTable)
+     for name in names:
+      assert canvas.select_tool_row('local:demo',name)
+      table.focus();await pilot.press('enter');await pilot.pause()
+      detail=bench.query_one(MCPInspector).current_permission_tool
+      assert detail is not None and detail.name==name,'new selection did not reach inspector'
+     expected_tool=detail
+   if route not in {'current','screen_round_trip'} and not route.startswith('permission_'):
     # A later selection must not be reset to All servers by the old receipt.
     bench._selected_server_key='local:later'
    expected=bench.get_view_state();notice_count=len(notices)
@@ -84,6 +109,8 @@ async def run():
   assert activation.allowed(witness['generation'],'mcp.local')==(outcome=='success')
   assert all((user/name).read_bytes()==data for name,data in history.items())
   assert not effects and not blocked_attempts()
+  if route.startswith('permission_row'):
+   assert bench.query_one(MCPInspector).current_permission_tool==expected_tool,'late review cleared newer Permissions detail'
   if route!='current':
    assert bench.get_view_state()==expected,'late review overwrote the newer view'
    assert len(notices)==notice_count,'late review notified a different view'
@@ -109,6 +136,19 @@ asyncio.run(run());print('retired and reopened')
 @pytest.mark.parametrize("outcome", ["success", "failure"])
 def test_restored_review_completion_owns_its_view(tmp_path, route, outcome):
     _run(tmp_path, route, outcome, script=_SETUP + _JOURNEY)
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "permission_row",
+        "permission_row_round_trip",
+        "permission_profile",
+        "permission_profile_round_trip",
+    ],
+)
+def test_restored_review_preserves_later_permission_selection(tmp_path, route):
+    _run(tmp_path, route, "success", script=_SETUP + _JOURNEY)
 
 
 @pytest.mark.parametrize(

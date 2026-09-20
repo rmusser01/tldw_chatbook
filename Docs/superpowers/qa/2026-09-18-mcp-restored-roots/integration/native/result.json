@@ -1,0 +1,78 @@
+{
+  "pid": 47869,
+  "cells": [
+    {
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "cancellation_preserved_activation": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true,
+      "only_mcp_owners_approved": true,
+      "servers_and_audit_empty": true
+    },
+    {
+      "theme": "textual-dark",
+      "size": [
+        170,
+        48
+      ],
+      "cancellation_preserved_activation": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true,
+      "only_mcp_owners_approved": true,
+      "servers_and_audit_empty": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        120,
+        40
+      ],
+      "cancellation_preserved_activation": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true,
+      "only_mcp_owners_approved": true,
+      "servers_and_audit_empty": true
+    },
+    {
+      "theme": "textual-light",
+      "size": [
+        170,
+        48
+      ],
+      "cancellation_preserved_activation": true,
+      "fresh_ask_local_defaults": true,
+      "historical_bytes_retained": true,
+      "only_mcp_owners_approved": true,
+      "servers_and_audit_empty": true
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": "bb16957eb6a1190659acf2bee0d9264cc6e38edd0df00e37cc5f727627a95ba1",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "e8b2d38158cd09ae976f83aeac25cf7831b06d2b861d40024345380bffb0624e",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "c5b7e6787c489adde244144f5c8c924998208a3b0db4bc3e1c94c4e722fac4c1",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "f862601ea8ad2abdccaf9393ccf145dcc0024bcd4fe93ad085deecbc99151b33",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
+    "tldw_chatbook/UI/Screens/mcp_screen.py": "c3db4e0c4817ee1002f3d6556e0f24f4ea1e4f6451527c4f3765a9bae9a75bb0",
+    "tldw_chatbook/MCP/recovery_activation.py": "5ec6a9fd3898e1da1a34d4513c0981b8aaf493c11f8848a202101fca337f66d1",
+    "tldw_chatbook/MCP/local_control_service.py": "a7634231c259e296af6774400080c973e4e800c846fd9ef627bd1a6c20d599bf",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86"
+  },
+  "runner_sha256": "2b8649e3fc98363b38812a4da18b1d9fa44befc544aace7db28ea658333c79b3",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "approvals": 4,
+  "passive_only": true,
+  "passed": true,
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

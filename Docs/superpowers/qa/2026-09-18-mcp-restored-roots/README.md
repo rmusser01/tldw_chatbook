@@ -1,5 +1,20 @@
 # Restored MCP review completion — TASK-32839
 
+## Current integration — PR2727
+
+PR2749 has merged. PR2727 is rebased onto its verified merged dev state, with a
+further selection-ownership repair: later Permissions row/profile selections
+retire an older completion receipt while retaining the native write.
+[Current integration and conflict choices](CURRENT-DEV-REVIEW.md) record 85
+targeted passes, seven guards and 16 fresh native captures.
+[Current gallery](GALLERY.md) awaits this PR's own visual approval.
+
+## Historical original qualification
+
+The following receipts and source hashes belong to the original pre-integration
+branch. The current runner uses the app's supported image-protocol warm-up; its
+original version is preserved in the integration evidence.
+
 An accepted review cleared its view token before the native write finished.
 Its later receipt could reset a newer selection or notify another screen.
 A current success refreshed only Permissions, leaving historical catalog rows

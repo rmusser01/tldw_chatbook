@@ -1,0 +1,48 @@
+                                                                                                  ╭────────╮
+ ‹ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows │ ⌃9 MCP │ ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research    More ▾
+───────────────────────────────────────────────────────█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█───────────────────────────────────────────────────────
+ MCP                                                   █                                                          █
+ MCP (Model Context Protocol) lets chatbook use externa█              estored/config/config.toml →                █
+   Servers    Tools     Permissions    Audit           █  /private/tmp/tldw-32839-native-integrated-002/home/r    █
+╭────────────────────────────────────────────╮╭────────█               estored/config/config.toml                 █───────╮╭─────────────────────────────────────────────╮
+│                                            ││  Review█                       mcp.local:                         █       ││                                             │
+│ Source                                     ││ Restore█  /private/tmp/tldw-32839-native-integrated-002/home/r    █resh   ││ Inspector                                   │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Ask/loc█       estored/data/Local/local_mcp_store.json →          █       ││  Pick a server, tool, or entry to see       │
+│ ▊  Local                              ▼  ▎ ││ actions█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││  what's wrong and what you can do.          │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││  Block █  estored/data/Local/mcp-recovery-742237b5141b403ea717▆▆  █     ▆ ││                                             │
+│                                            ││  Also b█           182bb09d7008/local_mcp_store.json              █ile    ││                                             │
+│ Servers                                    ││  and no█                    mcp.permissions:                      █       ││    Advanced…                                │
+│    All servers                             ││ ▊▔▔▔▔▔▔█  /private/tmp/tldw-32839-native-integrated-002/home/r    █▔▔▔▔▎  ││                                             │
+│  No servers yet — Add server to connect    ││ ▊  Filt█       estored/data/Local/mcp_permissions.json →          █    ▎  ││                                             │
+│  one.                                      ││ ▊▁▁▁▁▁▁█  /private/tmp/tldw-32839-native-integrated-002/home/r    █▁▁▁▁▎  ││                                             │
+│                                            ││  Tool  █  estored/data/Local/mcp-recovery-742237b5141b403ea717    █       ││                                             │
+│                                            ││  Global█           182bb09d7008/mcp_permissions.json              █       ││                                             │
+│                                            ││  Server█                        history:                          █       ││                                             │
+│                                            ││    fs_e█  /private/tmp/tldw-32839-native-integrated-002/home/r    █tes    ││                                             │
+│                                            ││    fs_g█     estored/data/Local/mcp_permissions.json.bak →        █       ││                                             │
+│                                            ││    fs_g█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
+│                                            ││    fs_l█      estored/data/Local/mcp_permissions.json.bak         █       ││                                             │
+│                                            ││    fs_p█                      mcp.targets:                        █tes    ││                                             │
+│                                            ││    fs_r█  /private/tmp/tldw-32839-native-integrated-002/home/r    █   ▂▂  ││                                             │
+│                                            ││    fs_w█      estored/data/Local/mcp_server_targets.json →        █tes    ││                                             │
+│                                            ││    git_█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
+│                                            ││    git_█       estored/data/Local/mcp_server_targets.json         █       ││                                             │
+│                                            ││    git_█                      mcp.context:                        █       ││                                             │
+│                                            ││    git_█  /private/tmp/tldw-32839-native-integrated-002/home/r    █       ││                                             │
+│                                            ││    git_█     estored/data/Local/unified_mcp_context.json →        █       ││                                             │
+│                                            ││    shel█  /private/tmp/tldw-32839-native-integrated-002/home/r    █ess    ││                                             │
+│                                            ││    watc█  estored/data/Local/mcp-recovery-742237b5141b403ea717    █tes    ││                                             │
+│                                            ││    watc█         182bb09d7008/unified_mcp_context.json            █tes    ││                                             │
+│                                            ││    watc█                                                          █tes    ││                                             │
+│                                            ││    watc█   Create fresh Ask/local permission state for these      █tes    ││                                             │
+│                                            ││    watc█    MCP roots? Historical rules, grants and context       █       ││                                             │
+│                                            ││    watc█  remain retained and inactive. No server will connect    █       ││                                             │
+│                                            ││    watc█        and no tool permission will be granted.           █       ││                                             │
+│                                            ││    watc█                                                          █       ││                                             │
+│                                            ││    watc█                                                          █       ││                                             │
+│                                            ││    watc█            Cancel     Use fresh MCP defaults             █     ▅ ││                                             │
+│                                            ││        █                                                          █  ▏    ││                                             │
+│                                            ││ global █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█       ││                                             │
+│                                            ││ • override · ⚠ definition changed · ⚑ high-risk floor · ≡ exact-input     ││                                             │
+╰────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────────╯
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

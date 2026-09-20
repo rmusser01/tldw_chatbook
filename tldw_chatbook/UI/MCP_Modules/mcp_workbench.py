@@ -2271,6 +2271,7 @@ class MCPWorkbench(Container):
             return False
         if profile_id == self._tool_policy_profile_id:
             return True
+        self._mcp_recovery_token = None
         self._tool_policy_profile_id = profile_id
         self._tool_policy_selector_generation += 1
         self._tool_policy_profile_context = None
@@ -4702,6 +4703,8 @@ class MCPWorkbench(Container):
         context = self._validate_profile_context(event.profile_context)
         if context is None:
             return
+        # The accepted native review may finish, but this selection owns the UI.
+        self._mcp_recovery_token = None
         inspector = self.query_one(MCPInspector)
         if event.row_kind == "tool" and event.server_key == BUILTIN_TOOL_SERVER_KEY:
             effective = self._last_builtin_effective.get(

@@ -33,6 +33,14 @@ an explicitly primed terminal probe; it does not qualify the app's ordinary
 lazy image-probe startup ordering. Both failed-run exit receipts were checked
 before starting a fresh profile.
 
+**TASK-32839 integration, 2026-09-19.** The restored-roots runner reused that
+dependency's private `probe_terminal` import, but the current worktree's installed
+version has no such function. It exited before app construction or restore setup.
+Using the application's `warm_up_image_protocol()` entry-point helper before
+`app.run()` completed the fresh native journey. Reuse the application's supported
+startup helper instead of assuming a private dependency API is portable across
+worktrees; preserve early launch failures separately from native qualification.
+
 
 ## Clear exit receipts before reusing a native probe session
 
