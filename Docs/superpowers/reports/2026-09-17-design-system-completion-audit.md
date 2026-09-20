@@ -1,5 +1,15 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2757 approved closeout
+
+The owner approved [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757)
+and its eight-capture gallery. Conflict-free rebases include current dev
+`6e9e94c794`; MCP product code, styles and native source hashes remain unchanged.
+[All 13 catalog-refresh regressions pass again](../qa/2026-09-20-mcp-inspector-refresh/approved-integration.json).
+Qodo review, current-head CI and final live-dev/merge-tree verification remain
+before the authorized merge. Remaining component scope is unchanged.
+Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2730 merged; inspector refresh resumed
 
 [PR2730](https://github.com/rmusser01/tldw_chatbook/pull/2730) merged at

@@ -1,6 +1,6 @@
 # Selected MCP inspector catalog refresh — TASK-32823
 
-Saved as [draft PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757).
+Saved as [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757).
 
 Resumed saved prototype `135f226888` on the verified PR2730 merge
 `802809947b`. [PR2730 receipt](pr2730-closeout.json) confirms all current-head
@@ -42,8 +42,10 @@ catalog and exited normally; 003 passed before formatter-only line wrapping.
 logs are historical and do not qualify the completed repair.
 
 Existing ADR-161/170 and ADR-032 local tool permission boundaries apply; no new
-ADR, service admission policy, stylesheet or token change. Current-head CI/Qodo
-and this follow-up's own final visual approval remain before merge. Remaining
+ADR, service admission policy, stylesheet or token change. The owner approved
+the eight-capture gallery and merge. [Conflict-free current-dev integration](approved-integration.json)
+preserves all approved MCP sources/styles; all 13 refresh regressions pass again.
+Current-head CI/Qodo and final live-dev verification remain before merge. Remaining
 work includes compact/long-path presentation, connected-runtime journeys and
 other destination reviews. The unrelated Workflows dimension floor stays visible
 as a follow-up; this PR does not expand into that screen.
