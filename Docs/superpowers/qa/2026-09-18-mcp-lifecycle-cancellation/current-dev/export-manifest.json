@@ -240,6 +240,30 @@
       "export": "qodo-native-preparation-rejected.json",
       "raw_sha256": "6c0eec31240e5c2691e0f94fcb217177ab26cb38d1fd00a741dbabef4b88718a",
       "export_sha256": "6c0eec31240e5c2691e0f94fcb217177ab26cb38d1fd00a741dbabef4b88718a"
+    },
+    {
+      "source": "/private/tmp/tldw-32880-native-003/evidence/result.json",
+      "export": "rebase-native-result.json",
+      "raw_sha256": "f06622dbb61a93cefdac20effe52c54161507d4760308ddac07ca5a5664499bb",
+      "export_sha256": "f06622dbb61a93cefdac20effe52c54161507d4760308ddac07ca5a5664499bb"
+    },
+    {
+      "source": "/private/tmp/tldw-32880-native-003/lifecycle.json",
+      "export": "rebase-native-lifecycle.json",
+      "raw_sha256": "43140fd4fd304245304a930c5a019b88fdf09c3a8fcc403f61971cbb4e1863d9",
+      "export_sha256": "43140fd4fd304245304a930c5a019b88fdf09c3a8fcc403f61971cbb4e1863d9"
+    },
+    {
+      "source": "/private/tmp/32880-rebase-green.txt",
+      "export": "rebase-targeted-green.txt",
+      "raw_sha256": "ecdff9f2f9398e6831091b45415a013760875160bc42e6cfdd35ca53722295de",
+      "export_sha256": "ecdff9f2f9398e6831091b45415a013760875160bc42e6cfdd35ca53722295de"
+    },
+    {
+      "source": "/private/tmp/32880-rebase-preflight.txt",
+      "export": "rebase-preflight.txt",
+      "raw_sha256": "dccebc812cf494fcbec7479f1524c48fe4070132e197f46b11f0e454b36b60de",
+      "export_sha256": "dccebc812cf494fcbec7479f1524c48fe4070132e197f46b11f0e454b36b60de"
     }
   ],
   "superseded_native_run": {

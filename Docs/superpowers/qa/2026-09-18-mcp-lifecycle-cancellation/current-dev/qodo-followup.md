@@ -28,4 +28,4 @@ A native profile-preparation attempt omitted a required database directory and
 was rejected before app imports; that failure is preserved separately and does
 not count as successful qualification.
 
-Current-head remote review/CI and fresh owner visual approval remain merge gates.
+Owner visual approval is recorded. Current-head remote review/CI remain merge gates.

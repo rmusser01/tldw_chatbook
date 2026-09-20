@@ -5,7 +5,7 @@
 PR2713 resumes on current dev with the later recovery and inspector changes
 preserved. [Current evidence, conflict choices and twelve-capture gallery](current-dev/README.md)
 record 96 targeted passes and fresh native qualification. TASK-32880 remains
-In Progress pending current-head CI/review and final owner visual approval.
+In Progress pending rebased-head CI/review; owner visual approval is recorded.
 The original task number below is historical; the landed task keeps that number.
 
 ## Historical saved evidence

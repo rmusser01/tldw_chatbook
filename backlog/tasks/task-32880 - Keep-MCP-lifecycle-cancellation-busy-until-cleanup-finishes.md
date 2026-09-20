@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 01:17'
-updated_date: '2026-09-20 20:10'
+updated_date: '2026-09-20 20:47'
 labels:
   - mcp
   - ui
@@ -50,4 +50,6 @@ Real stdio follow-up reproduced native eager-worker completion leaving a SUCCESS
 Resumed PR2713 on ab57681864. Old TASK-32829 collided with an unrelated landed task and is renumbered to TASK-32880; the landed file is unchanged. Integrated cancellation behavior while keeping current recovery-token checks and selected-tool refresh. 72 distinct targeted cases, seven guards, independent review and twelve fresh native captures pass. Bounded the saved held-render regression and verified red on unchanged dev / green on integrated source. Native exit, lock, ten DBs, defaults and exact hashes pass; no network attempts. Current evidence: Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/README.md. Existing ADR-161; no new ADR or CSS changes. Keep In Progress until current-head CI/review and fresh owner visual approval.
 
 Addressed all five Qodo findings: retired the obsolete executable runner while preserving its pinned historical source; added explicit lifecycle test contracts; rejected an occupied cleanup-demo profile before saving, and limited cleanup to the created fixture. Real-store collision baseline failed as expected and passes after the guard. 35 selected follow-up cases pass (eleven repeats, 24 additional runner/input cases), bringing the distinct local total to 96. Seven preflight guards and independent review pass. Repeated four-cell native qualification and all twelve captures match final runner and unchanged production hashes; exit/lock/databases/defaults remain clean. Current-head remote CI/review and fresh owner visual approval remain before merge.
+
+Owner approved the gallery at a3fd318d94. Rebased without conflicts onto dev 45d67a6704 after unrelated PR2746 landed during CI. MCP production, styles, tests and runner are byte-identical; all twelve fresh native SVGs match the approved captures after normalization. 35 repeated targeted cases, seven guards and fresh native shutdown/lock/DB/defaults verification pass. Prior approved head CI passed 1152 cases and all guards; current rebased-head CI/review remains the only merge gate. Evidence: current-dev/latest-dev-rebase.json.
 <!-- SECTION:NOTES:END -->

@@ -1,8 +1,9 @@
 # PR2713 current-dev integration — TASK-32880
 
-Resumes saved TASK-32829 on dev `ab57681864`. The old number conflicts with an
+Resumes saved TASK-32829, now rebased on dev `45d67a6704`. The old number conflicts with an
 unrelated landed task, which remains byte-identical to dev. This task is now
-TASK-32880 and stays In Progress until review/CI and owner visual approval.
+TASK-32880 and stays In Progress until the new-head review/CI gate completes.
+The owner approved the twelve-capture gallery.
 
 Cancellation retains the original worker through cleanup and final readiness
 collection; repeated or retired Cancel cannot stop a retry. Service work starts
@@ -54,11 +55,22 @@ records whitespace-only normalization. A first runner attempt inspected the
 lazy workbench module before navigation and exited before App.run; its failure
 is preserved separately and contributes no visual qualification.
 
-Current-head CI, accumulated remote review, current dev/conflict review and owner
-approval of this fresh gallery remain before merge. Older evidence one directory
+Owner visual approval is recorded; current-head CI and remote review remain
+before merge. The latest-dev review and unchanged visuals are documented below. Older evidence one directory
 up is historical, at the saved PR head rather than this integrated source.
 
 The repeated native journey matches the final runner hash and all unchanged
 production hashes. A preparation attempt omitted a required private database
 directory and was rejected by the shared parser before app imports; its receipt
 is preserved. The twelve fresh captures were inspected again.
+
+## Approved gallery and latest dev
+
+The owner approved the gallery at `a3fd318d94`. While CI completed (1,152 Fast
+Lane passes and all guards), dev advanced through the unrelated provider PR2746.
+The [conflict-free rebase receipt](latest-dev-rebase.json) records the new base,
+35 repeated targeted passes, all seven artifact guards, and a fresh four-cell
+native run with clean shutdown. All twelve SVGs exactly match the approved
+captures after the recorded whitespace normalization; MCP code, styles, tests
+and the runner are unchanged. Visual approval therefore carries forward.
+Fresh current-head CI and review still gate merge.

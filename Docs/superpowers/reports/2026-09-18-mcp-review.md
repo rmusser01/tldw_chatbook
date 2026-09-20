@@ -3,7 +3,7 @@
 ## Current checkpoint — PR2713 cancellation integration ready for review
 
 Saved [PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) resumes on
-current dev `ab57681864`. Its old TASK-32829 number collided with an unrelated
+current dev `45d67a6704`. Its old TASK-32829 number collided with an unrelated
 landed task; this work is now TASK-32880. Cancellation retains per-server
 ownership until cleanup and final readiness collection finish, rejects retired
 Cancel controls, and supports immediate native worker completion.
@@ -12,7 +12,9 @@ Cancel controls, and supports immediate native worker completion.
 native captures](../qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/README.md)
 qualify the bounded integration. The one conflict retains both the current
 recovery-token checks and the saved displayed-operation identity. No CSS changes.
-Current-head CI/review and fresh owner visual approval remain before merge.
+Owner visual approval is recorded. The conflict-free latest-dev rebase leaves
+MCP source and all twelve captures unchanged; 35 targeted reruns and native
+verification pass. Current-head CI/review remain before merge.
 Connected catalog refresh (PR2714), execution (PR2716), compact server actions
 (PR2712), and the other saved MCP slices remain separate. Earlier checkpoints
 below are historical; PR2707's heartbeat stays paused.
