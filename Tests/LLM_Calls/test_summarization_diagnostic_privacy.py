@@ -2351,6 +2351,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
@@ -2433,6 +2434,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> 07f7c13ba9 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
+>>>>>>> 1ec57fadcd (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
 >>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2455,6 +2458,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> e336bf5dc2 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
+>>>>>>> a48279fe4d (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 4aa3599028 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2468,8 +2473,20 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> e5d67b55d1 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> f8582b957d (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> e336bf5dc2 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 07f7c13ba9 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+=======
+=======
+>>>>>>> e5d67b55d1 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+>>>>>>> 70ccc20e9e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> 465b0c3903 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> a48279fe4d (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+>>>>>>> 1ec57fadcd (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
         # TASK-32853 groq migration: the non-200 status log site joined
         # the deleted ledger (10 -> 11). deepseek/mistral keep their frozen
         # status logs verbatim (bound to the typed error) per the freeze.
