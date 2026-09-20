@@ -1,5 +1,41 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2713 cancellation integration ready for review
+
+Saved [PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) resumes on
+current dev `45d67a6704`. Its old TASK-32829 number collided with an unrelated
+landed task; this work is now TASK-32880. Cancellation retains per-server
+ownership until cleanup and final readiness collection finish, rejects retired
+Cancel controls, and supports immediate native worker completion.
+
+[96 targeted passes, seven guards, independent review and twelve inspected
+native captures](../qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/README.md)
+qualify the bounded integration. The one conflict retains both the current
+recovery-token checks and the saved displayed-operation identity. No CSS changes.
+Owner visual approval is recorded. The conflict-free latest-dev rebase leaves
+MCP source and all twelve captures unchanged; 35 targeted reruns and native
+verification pass. Current-head CI/review remain before merge.
+Connected catalog refresh (PR2714), execution (PR2716), compact server actions
+(PR2712), and the other saved MCP slices remain separate. Earlier checkpoints
+below are historical; PR2707's heartbeat stays paused.
+
+## Current checkpoint — PR2759 merged; connected runtime next
+
+[PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) merged into dev at
+`8d110a06e384add07a72e4d96f7e1e0aa4b7a144`. Its actual tree equals the verified
+head. Owner visual approval, 116 distinct local targeted passes, 16 inspected
+native captures, current-head CI (1,152 Fast Lane passes and all required guards),
+resolved Qodo findings and unchanged dev/conflict review qualify this bounded
+compact root-review repair. The two reproduced baseline test failures remain
+recorded; no full suite ran. [Merge receipt](../qa/2026-09-20-mcp-compact-review/pr2759-closeout.json).
+TASK-32879 is closed.
+
+The fresh `codex/mcp-connected-runtime-review-20260920` branch begins at the
+merged dev state. Next bounded scope is the MCP connection lifecycle and
+connected inspector journey. Other unqualified controls/screens remain open;
+no additional screen is declared qualified. PR2707’s heartbeat stays paused.
+Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2759 visual approval received
 
 [PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) / TASK-32879

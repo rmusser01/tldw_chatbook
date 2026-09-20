@@ -114,3 +114,46 @@ def test_chat_create_schema_builder_override_args_when_enabled():
     assert {"provider", "model"} <= set(props)
     assert "llama_cpp" in props["provider"]["description"]
     assert "preset" not in props
+
+
+# ---------------------------------------------------------------------------
+# TASK-32531: sub-agent disclosure + dispatch + population.
+# ---------------------------------------------------------------------------
+
+
+def test_chat_create_runtime_schemas_now_include_subagents():
+    from tldw_chatbook.Agents.agent_service import _chat_create_runtime_schemas
+    from tldw_chatbook.Agents.agent_models import (
+        AGENT_KIND_PRIMARY,
+        AGENT_KIND_SUBAGENT,
+    )
+
+    tool = lambda args: ToolResult(ok=True, content="{}")
+    assert [s.name for s in _chat_create_runtime_schemas(AGENT_KIND_SUBAGENT, tool, tool)] == [
+        "fork_chat",
+        "new_chat",
+    ]
+    assert _chat_create_runtime_schemas("other-kind", tool, tool) == []
+
+
+def test_first_request_plan_discloses_chat_create_for_subagent_kind():
+    from tldw_chatbook.Agents.agent_service import build_first_request_schema_plan
+    from tldw_chatbook.Agents.agent_models import AGENT_KIND_SUBAGENT, AgentConfig
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    plan = build_first_request_schema_plan(
+        ToolCatalogRegistry(),
+        (),
+        AgentConfig(model="m", system_prompt="s", allowed_tools=()),
+        "llama_cpp",
+        [],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        agent_kind=AGENT_KIND_SUBAGENT,
+        fork_chat_enabled=True,
+        new_chat_enabled=True,
+    )
+    names = {s.name for s in plan.runtime_schemas}
+    assert "fork_chat" in names and "new_chat" in names
