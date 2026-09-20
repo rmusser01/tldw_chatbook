@@ -1,5 +1,14 @@
 # Lessons: verifying against the real thing
 
+## CSS overflow alone does not provide keyboard scrolling
+
+**TASK-32879, 2026-09-20.** The restored MCP review made a plain Container
+scrollable after mounting. At 80×24 Cancel started offscreen; Page Down did
+nothing because that container has no scrolling key bindings. A focusable
+VerticalScroll for the body, with actions outside it, passed real keyboard and
+compositor checks for every wrapped path row. Check actual key-driven scrolling
+and initial focus visibility, not just max-scroll geometry or mouse scrolling.
+
 ## Pin the checkout before a shared validator imports the application
 
 **TASK-32841 integration, 2026-09-20.** The native runner called the shared CLI

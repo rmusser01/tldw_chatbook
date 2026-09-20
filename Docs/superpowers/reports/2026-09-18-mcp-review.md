@@ -1,5 +1,35 @@
 # MCP component review
 
+## Current checkpoint — PR2759 visual approval received
+
+[PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) / TASK-32879
+repairs the restored MCP root review at 80×24: keyboard-scrollable,
+left-aligned complete paths and persistent Cancel/Use fresh MCP defaults actions.
+[116 targeted passes, two reproduced dev failures, seven preflight guards and
+16 inspected native captures](../qa/2026-09-20-mcp-compact-review/README.md)
+qualify this bounded slice. The catalog test now waits for actual review completion.
+Existing approval ownership and native recovery writes remain unchanged.
+The owner approved the [visual gallery](../qa/2026-09-20-mcp-compact-review/GALLERY.md).
+The Qodo follow-up adds a return docstring and clearer scroll-progress assertions;
+product behavior and styles remain identical to the approved native capture.
+All four affected tests pass again. Current-head CI, accumulated review and
+current dev/conflict review remain before merge. Connected-runtime journeys and
+other unqualified MCP controls remain separate; PR2707’s heartbeat stays paused.
+
+## Current checkpoint — PR2757 merged; compact review next
+
+[PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757) merged into dev at
+`62d43190ce3ca21bda0f0ff03e5148971eedc7ca`. Its actual tree equals the verified
+head. Current-head CI passed, including 1,152 Fast Lane tests; 316 local targeted
+checks, native lifecycle, owner visual approval and accumulated review qualify
+the change. [Merge receipt](../qa/2026-09-20-mcp-inspector-refresh/pr2757-closeout.json).
+TASK-32823 and the matching legacy TASK-235 are closed.
+
+A fresh follow-up branch starts from that merge. Next bounded scope is compact
+MCP action reachability and long-path readability; connected-runtime journeys
+remain separate. No additional screen is declared qualified. PR2707’s heartbeat
+remains paused. Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2757 approved closeout
 
 The owner approved [PR2757](https://github.com/rmusser01/tldw_chatbook/pull/2757)

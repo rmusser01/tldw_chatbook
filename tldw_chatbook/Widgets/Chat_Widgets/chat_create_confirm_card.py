@@ -128,6 +128,18 @@ class ChatCreateConfirmCard(Container):
         run_id = self._payload.get("run_id")
         if run_id:
             lines.append(f"Requested by agent run {run_id}.")
+        target_bits = []
+        if self._payload.get("preset"):
+            target_bits.append(f"preset '{self._payload['preset']}'")
+        if self._payload.get("provider"):
+            target_bits.append(
+                f"provider {self._payload['provider']}"
+                + (f" / {self._payload['model']}" if self._payload.get("model") else "")
+            )
+        elif self._payload.get("model"):
+            target_bits.append(f"model {self._payload['model']}")
+        if target_bits:
+            lines.append("Runs on: " + ", ".join(target_bits))
         if self._payload.get("opening_prompt"):
             lines.append(
                 "Opening prompt (draft for the input box):\n"
