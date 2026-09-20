@@ -1,0 +1,149 @@
+{
+  "scope": "Retained ordinary app log copies, not intentional synthetic UAT captures/test-failure assertions. Full model-response canaries were additionally checked in each live process before manifest write.",
+  "shutdown_classification": "Restart copies can include earlier process stops; each process manifest classifies its own appended segment, no premature stop and one intentional quit. Initial attempt failed an overly broad marker assertion, not unhandled exception.",
+  "live_walks": 6,
+  "actual_post_count": 18,
+  "approved_notes": 6,
+  "logs": [
+    {
+      "file": "attempt-1/live-160x48-walk-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "attempt-1/live-160x48-walk-app-1.log",
+      "sha256": "72cff15143e38a90d5be4b3dbd2140de4c070fa91e917220b2a757778c5cafad",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 1
+    },
+    {
+      "file": "live-110x36-restart-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "live-110x36-restart-app-1.log",
+      "sha256": "b44e5f23a8c754a292c8b29bfcec668b5e4aa04650a90c8f84ef0f7bd1a85d67",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 4
+    },
+    {
+      "file": "live-110x36-walk-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "live-110x36-walk-app-1.log",
+      "sha256": "039d4b425193385714499cd8f6e1f0c40659948e738f4271b430fa43c19e770f",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 3
+    },
+    {
+      "file": "live-160x48-restart-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "live-160x48-restart-app-1.log",
+      "sha256": "35c078d79795db2d4b319e5537652c52af173f057feee78c861a91cb8e6be768",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 2
+    },
+    {
+      "file": "live-160x48-walk-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "live-160x48-walk-app-1.log",
+      "sha256": "2b314a72bc48117e3575b9a950d173a98cab99ee9b0dd4048641d7d623c14453",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 1
+    },
+    {
+      "file": "live-60x20-restart-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "live-60x20-restart-app-1.log",
+      "sha256": "5107ad61eedfa6ce603fcbd24238b7fc1ba6e2e4ad2a193726dfe6134455d865",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 6
+    },
+    {
+      "file": "live-60x20-walk-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "live-60x20-walk-app-1.log",
+      "sha256": "7984e35a2702477ba8f0644a9c031df96f0821acf9f8acfd5182267ba14f1ba4",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 5
+    },
+    {
+      "file": "postfix/live-110x36-walk-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "postfix/live-110x36-walk-app-1.log",
+      "sha256": "1660a2bc82a134cddccf9eb6db0912f2e8174049cd7bab0d831a5e0ab034d23b",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 1
+    },
+    {
+      "file": "postfix-qualified/live-110x36-restart-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "postfix-qualified/live-110x36-restart-app-1.log",
+      "sha256": "60a099d3a37cc87fb87ac1298067f8ae365477f9bcff8bce3daa456da8a35e0f",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 2
+    },
+    {
+      "file": "postfix-qualified/live-110x36-walk-app-0.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 0
+    },
+    {
+      "file": "postfix-qualified/live-110x36-walk-app-1.log",
+      "sha256": "38d3c85aec2e12137b4154088cf93bea9a08f384047843eb1fd115ba188b33d4",
+      "payload_canary_count": 0,
+      "unhandled_exception_count": 0,
+      "app_stopping_count_in_full_copy": 1
+    }
+  ]
+}

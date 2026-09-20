@@ -5,18 +5,26 @@ from __future__ import annotations
 
 # Imports
 import hashlib
+import json
 import logging
 import re
-import threading
 import sqlite3  # For exception handling in _get_db
+import threading
 import time
-import json
 import unicodedata
 import uuid
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, List, Dict, Optional, Any, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+
+from tldw_chatbook.config import (
+    chachanotes_db as global_db_from_config,
+)
+from tldw_chatbook.config import (
+    load_console_library_migration_seed,
+)
 
 #
 # Third-Party Imports
@@ -28,20 +36,17 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     ConflictError,
     SchemaError,
 )
-from tldw_chatbook.config import (
-    chachanotes_db as global_db_from_config,
-    load_console_library_migration_seed,
-)
-from tldw_chatbook.Utils.private_paths import (
-    lexical_path,
-    verify_trusted_directory,
-)
 from tldw_chatbook.Notes.note_folder_models import (
     NotesOrganizationRepositoryError,
     portable_collision_key,
     portable_relative_path,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Utils.private_paths import (
+    lexical_path,
+    verify_trusted_directory,
+)
+
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 if TYPE_CHECKING:
@@ -212,6 +217,26 @@ class NotesInteropService:
 
         return self._get_db(user_id)
 
+    @contextmanager
+    def bound_notes_db(
+        self, user_id: str, expected_db: CharactersRAGDB, *, blocking: bool = True
+    ) -> Iterator[CharactersRAGDB]:
+        """Retain an existing cached route for one local Notes operation.
+
+        Refuse changed/missing ownership without creating a replacement. Local
+        operations inside this context use ``_get_db``'s cached fast path, since
+        the existing lock is nonreentrant. With ``blocking=False``, contention
+        raises ``BlockingIOError`` without entering or changing the cached route.
+        """
+        if not self._db_lock.acquire(blocking=blocking):
+            raise BlockingIOError("note_destination_busy")
+        try:
+            if self._db_instances.get(user_id) is not expected_db:
+                raise ValueError("note_destination_changed")
+            yield expected_db
+        finally:
+            self._db_lock.release()
+
     def add_internal_research_quick_note_owner_proof(
         self, user_id: str, note_id: str, owner_proof: str
     ) -> bool:
@@ -255,8 +280,22 @@ class NotesInteropService:
             db = self._get_db(user_id)
             created_note_id = db.add_note(title=title, content=content, note_id=note_id)
             if created_note_id is None:
+                # Keep correlation without persisting caller-supplied identifiers
+                # or resolved Note payloads. A missing ID was DB-generated.
+                user_ref = hashlib.sha256(
+                    user_id.encode("utf-8", errors="surrogatepass")
+                ).hexdigest()[:12]
+                note_ref = (
+                    hashlib.sha256(
+                        note_id.encode("utf-8", errors="surrogatepass")
+                    ).hexdigest()[:12]
+                    if note_id is not None
+                    else "generated"
+                )
                 logger.error(
-                    f"add_note for user_id '{user_id}' (as client_id) returned None unexpectedly for title '{title}'."
+                    "add_note returned None unexpectedly (user_ref=%s, note_ref=%s).",
+                    user_ref,
+                    note_ref,
                 )
                 log_counter(
                     "notes_library_add_note_error",

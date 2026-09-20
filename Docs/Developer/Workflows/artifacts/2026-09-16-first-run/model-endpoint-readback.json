@@ -1,0 +1,13 @@
+{
+  "checked_at_utc": "2026-09-16 14:48:57 UTC",
+  "method": "GET",
+  "endpoint": "http://127.0.0.1:9099/v1/models",
+  "models": [
+    {
+      "id": "../../../Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+      "owned_by": "llamacpp",
+      "context_size": 64000
+    }
+  ],
+  "purpose": "Read-only model identity evidence; not a completion or workflow pass."
+}

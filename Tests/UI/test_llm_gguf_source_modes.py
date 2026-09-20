@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from textual.widgets import Button, Input, Select, Static
-from textual.widgets._select import SelectOverlay
+from textual.widgets._select import SelectCurrent, SelectOverlay
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
@@ -440,8 +440,10 @@ async def test_managed_selector_uses_exact_refs_and_path_free_labels(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_configure_managed_gguf_opens_runtime_and_preselects_exact_ref(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Remote adoption configures source state without starting or activating."""
     choices = (
@@ -471,8 +473,10 @@ async def test_configure_managed_gguf_opens_runtime_and_preselects_exact_ref(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_configure_managed_gguf_waits_for_first_runtime_mount(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """An exact handoff survives the target runtime's first lazy mount."""
 
@@ -509,8 +513,120 @@ async def test_configure_managed_gguf_waits_for_first_runtime_mount(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("handoff", [False, True])
+@private_profile_test
+async def test_inventory_during_lazy_selector_mount_is_replayed_after_leaving_pane(
+    monkeypatch: pytest.MonkeyPatch,
+    handoff: bool,
+    request: pytest.FixtureRequest,
+) -> None:
+    """A selectable parent is not ready until its nested label has mounted."""
+    app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch, mount_llamafile=False
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_mount = SelectCurrent.mount_composed_widgets
+
+    async def hold_label_mount(current, widgets):
+        if current.parent.id == "llamafile-gguf-managed-select":
+            started.set()
+            await release.wait()
+        await original_mount(current, widgets)
+
+    monkeypatch.setattr(SelectCurrent, "mount_composed_widgets", hold_label_mount)
+    try:
+        window.active_view = "llamafile"
+        await asyncio.wait_for(started.wait(), timeout=10)
+        managed = window.query_one("#llamafile-gguf-managed-select", Select)
+        assert not managed.is_mounted
+        assert not list(managed.query("#label"))
+
+        choices = (
+            ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed"),
+            ManagedGGUFChoice(REF_B, "Model B · Q8_0 · 8 MiB · Managed"),
+        )
+        window._apply_managed_gguf_inventory(
+            window._managed_gguf_inventory_generation, choices, None
+        )
+        if handoff:
+            assert window.configure_managed_gguf("llamafile", REF_B)
+        # The inactive pane must still hydrate, without requiring another visit.
+        window.active_view = "llama-cpp"
+        release.set()
+        expected = REF_B if handoff else REF_A
+        await _settle_pilot_until(
+            pilot,
+            lambda: managed.is_mounted and managed.value == expected,
+            message="late inventory was not replayed after selector mount",
+        )
+        assert _select_values(managed) == (REF_A, REF_B)
+        assert window.gguf_source_snapshot("llamafile").managed_ref == expected
+        assert ("Model B" if handoff else "Model A") in str(
+            managed.query_one("#label", Static).render()
+        )
+        assert window._pending_managed_gguf_handoff is None
+        assert current_server_claim(app, "llamafile") is None
+        assert window.active_view == "llama-cpp"
+    finally:
+        release.set()
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_lazy_mount_cached_inventory_preserves_handoff_awaiting_fresh_read(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    choice_a = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
+    choice_b = ManagedGGUFChoice(REF_B, "Model B · Q8_0 · 8 MiB · Managed")
+    app, pilot, context, _screen, window, service = await _mount_models(
+        monkeypatch, choices=(choice_a,), mount_llamafile=False
+    )
+    release = threading.Event()
+
+    def wait_for_fresh_inventory():
+        assert release.wait(timeout=10), "fresh inventory was never released"
+        return ()
+
+    monkeypatch.setattr(service, "list_installed", wait_for_fresh_inventory)
+    monkeypatch.setattr(
+        window_module, "managed_gguf_choices", lambda _installed: (choice_a, choice_b)
+    )
+    try:
+        assert window.configure_managed_gguf("llamafile", REF_B)
+        window.active_view = "remote"
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                len(window.query("#llamafile-gguf-managed-select")) == 1
+                and window.query_one("#llamafile-gguf-managed-select").is_mounted
+                and "llamafile" not in window._populating_views
+            ),
+            message="inactive llamafile controls did not finish mounting",
+        )
+        assert window._pending_managed_gguf_handoff == ("llamafile", REF_B)
+        release.set()
+        managed = window.query_one("#llamafile-gguf-managed-select", Select)
+        await _settle_pilot_until(
+            pilot,
+            lambda: managed.value == REF_B,
+            message="fresh exact model handoff was lost during cached hydration",
+        )
+        assert window.gguf_source_snapshot("llamafile").managed_ref == REF_B
+        assert window._pending_managed_gguf_handoff is None
+        assert current_server_claim(app, "llamafile") is None
+    finally:
+        release.set()
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_configure_managed_gguf_waits_for_fresh_exact_inventory(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """A just-downloaded ref is selected only after inventory proves it exists."""
     choice_a = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
@@ -546,8 +662,10 @@ async def test_configure_managed_gguf_waits_for_fresh_exact_inventory(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_configure_managed_gguf_rejects_if_server_starts_before_refresh(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """A refresh guard race cannot strand an accepted runtime handoff."""
     choice_a = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
@@ -568,8 +686,10 @@ async def test_configure_managed_gguf_rejects_if_server_starts_before_refresh(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_inventory_runs_off_loop_and_stale_results_are_ignored(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     service = _InventoryService((SimpleNamespace(path=PRIVATE_MANAGED_PATH),))
     choices = (ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed"),)
@@ -599,8 +719,10 @@ async def test_inventory_runs_off_loop_and_stale_results_are_ignored(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_inventory_completion_cannot_write_through_replaced_window(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     initial = (ManagedGGUFChoice(REF_A, "Current · Q4_K_M · 4 MiB · Managed"),)
     app, pilot, context, screen, window, _service = await _mount_models(
@@ -630,8 +752,10 @@ async def test_inventory_completion_cannot_write_through_replaced_window(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_inventory_started_before_launch_cannot_overwrite_fenced_state(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     service = _BlockingInventoryService((SimpleNamespace(path=PRIVATE_MANAGED_PATH),))
     choices = (ManagedGGUFChoice(REF_A, "Late · Q4_K_M · 4 MiB · Managed"),)
@@ -668,8 +792,10 @@ async def test_inventory_started_before_launch_cannot_overwrite_fenced_state(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_refresh_removing_selected_ref_blocks_stale_managed_launch(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
     choice_a = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
@@ -744,8 +870,10 @@ async def test_refresh_removing_selected_ref_blocks_stale_managed_launch(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_inventory_failure_disables_only_managed_selection(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     service = _InventoryService()
     service.error = RuntimeError(PRIVATE_MANAGED_PATH)
@@ -770,8 +898,10 @@ async def test_inventory_failure_disables_only_managed_selection(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_inventory_failure_after_selection_blocks_stale_managed_launch(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     choice = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
     service = _InventoryService()

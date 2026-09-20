@@ -255,6 +255,25 @@ class TemplateListWidget(Container):
 class TemplateSelectorDialog(ModalScreen):
     """Modal dialog for selecting evaluation templates."""
 
+    # Base geometry picked up by the modal wide tier (task: wave 2 of the
+    # repo-wide tier, 2026-09-19). Numeric literals (not $ds-* tokens) on
+    # purpose: BUNDLED_CSS must also resolve in bare-App test harnesses that
+    # never load the token file (same constraint documented in
+    # detail_value_row.py / personas_character_editor_widget.py).
+    BUNDLED_CSS = """
+    TemplateSelectorDialog {
+        align: center middle;
+    }
+    TemplateSelectorDialog .template-selector-dialog {
+        width: 76;
+        max-width: 95%;
+        height: 80%;
+        border: round $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    """
+
     def __init__(
         self,
         callback: Optional[Callable[[Optional[Dict[str, Any]]], None]] = None,
