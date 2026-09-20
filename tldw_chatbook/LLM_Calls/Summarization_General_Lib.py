@@ -64,7 +64,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
 <<<<<<< HEAD
 >>>>>>> c96066bcf5 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
+<<<<<<< HEAD
 >>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> 7555b9044d (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 =======
@@ -105,6 +107,11 @@ from tldw_chatbook.Chat.Chat_Deps import (
 =======
 >>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 44660c8c72 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+>>>>>>> b463addfd6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 88aaedea4b (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> a6bdba33c1 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,

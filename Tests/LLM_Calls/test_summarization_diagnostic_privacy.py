@@ -2342,6 +2342,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     assert deleted_by_module == {
         "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
 <<<<<<< HEAD
+<<<<<<< HEAD
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
@@ -2405,6 +2406,15 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
         # TASK-32853 groq migration: the non-200 status log site joined the
         # deleted ledger (10 -> 11).
+=======
+        # TASK-32853 groq migration: the non-200 status log site joined
+        # the deleted ledger (10 -> 11). deepseek/mistral keep their frozen
+        # status logs verbatim (bound to the typed error) per the freeze.
+=======
+        # TASK-32853 groq migration: the non-200 status log site joined the
+        # deleted ledger (10 -> 11).
+>>>>>>> b463addfd6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 88aaedea4b (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 11,
 >>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 44660c8c72 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
