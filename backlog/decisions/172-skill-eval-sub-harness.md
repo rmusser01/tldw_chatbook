@@ -1,6 +1,8 @@
 # ADR-172: Skill evaluation sub-harness
 
 Status: Accepted (2026-09-20) — implemented (task-32832).
+Status: Proposed (2026-09-20) — design spec reviewed and verified against code;
+implementation pending.
 Date: 2026-09-20
 Related Task: [TASK-32832](../tasks/task-32832%20-%20Add-skill-eval-sub-harness-layered-skill-scoring.md)
 Companion spec: [2026-09-20 skill-eval design](../../Docs/superpowers/specs/2026-09-20-skill-eval-design.md)
