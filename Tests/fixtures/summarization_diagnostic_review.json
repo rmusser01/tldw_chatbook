@@ -1,8 +1,8 @@
 {
     "schema_version": 1,
     "manifest_boundary": {
-        "checked_normalized_inventory_sha256": "a7a879854918c3513de693c26eb1c6d31fea41b8125703bc803978a88b5ef045",
-        "origin_dev_generated_normalized_inventory_sha256": "a7a879854918c3513de693c26eb1c6d31fea41b8125703bc803978a88b5ef045",
+        "checked_normalized_inventory_sha256": "d6c4b3b39062bab5585873ac53ade5321dd4ed169f1339a72fe5986f3e0c47a1",
+        "origin_dev_generated_normalized_inventory_sha256": "d6c4b3b39062bab5585873ac53ade5321dd4ed169f1339a72fe5986f3e0c47a1",
         "owned_entries": [
             {
                 "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
@@ -9846,10 +9846,20 @@
                 ],
                 "captures_exception": false
             },
-            "outcome": "deleted",
-            "current": null,
-            "navigation_line": 1171,
-            "deletion_reason": "TASK-32853 Phase C anthropic migration onto the shared _post_with_retry transport: the per-attempt network log moved into the shared helper (whose generic statement serves all providers), so the provider-labelled variant is superseded; the caller-visible exhaustion error string is preserved unchanged."
+            "outcome": "metadata",
+            "current": {
+                "method": "error",
+                "event": "Anthropic: Network error during attempt; attempt=%s retry_count=%s exception_type=%s",
+                "occurrence": 1,
+                "message_shape": "Constant(value='Anthropic: Network error during attempt; attempt=%s retry_count=%s exception_type=%s')",
+                "expressions": [
+                    "attempt + 1",
+                    "max_retries",
+                    "safe_metadata_token(type(e).__name__)"
+                ],
+                "captures_exception": false
+            },
+            "navigation_line": 1171
         },
         {
             "site_id": "general-dd184c22fec5f90f",
@@ -11020,10 +11030,18 @@
                 ],
                 "captures_exception": false
             },
-            "outcome": "deleted",
-            "current": null,
-            "navigation_line": 1625,
-            "deletion_reason": "TASK-32853 groq summarizer migration onto the hosted engine: the non-200 branch (and its status_code log) is gone; failures now raise typed, redacted Chat errors handled by the existing broad except."
+            "outcome": "metadata",
+            "current": {
+                "method": "error",
+                "event": "Groq: API request failed; status_code=%s",
+                "occurrence": 1,
+                "message_shape": "Constant(value='Groq: API request failed; status_code=%s')",
+                "expressions": [
+                    "response.status_code"
+                ],
+                "captures_exception": false
+            },
+            "navigation_line": 1625
         },
         {
             "site_id": "general-5fe157d9e3962c0c",
