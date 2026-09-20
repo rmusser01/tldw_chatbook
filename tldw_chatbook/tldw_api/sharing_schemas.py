@@ -215,6 +215,17 @@ class SharedWorkspaceSourceResponse(BaseModel):
         return self.origin_url
 
 
+class SharedWorkspaceSourceQuery(BaseModel):
+    """Validate page filters using the recipient source endpoint's bounds."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=200)
+    q: str | None = Field(default=None, min_length=1, max_length=512)
+    state: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class SharedWorkspaceSourcePagination(BaseModel):
     """Server-owned offset pagination metadata."""
 

@@ -242,6 +242,25 @@ class ServerSharingService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        """Admit or replay a logical clone using its caller-retained key.
+
+        Args:
+            share_id: Recipient share identifier.
+            new_name: Legacy Python alias for the optional new workspace name.
+            name: Canonical optional new workspace name.
+            idempotency_key: Caller-retained key reused for retries of the same logical
+                operation.
+
+        Returns:
+            The durable operation receipt or a compatible legacy job response.
+
+        Raises:
+            ValueError: The clone request or returned receipt fails validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         from ..tldw_api import CloneWorkspaceRequest
 
         self._enforce("sharing.links.launch.server")
@@ -258,7 +277,22 @@ class ServerSharingService:
         share_id: int,
         operation_id: str,
     ) -> dict[str, Any]:
-        """Read an admitted operation without requiring the original share anew."""
+        """Read a recipient-owned clone receipt, including after share revocation.
+
+        Args:
+            share_id: Recipient share identifier.
+            operation_id: UUID of the recipient-owned durable clone receipt.
+
+        Returns:
+            The receipt with operation identity, progress, result, and error details.
+
+        Raises:
+            ValueError: The operation UUID or returned receipt is invalid.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         self._enforce("sharing.links.inspect.server")
         return self._dump(
             await self._require_client().get_shared_workspace_clone_operation(
@@ -275,7 +309,25 @@ class ServerSharingService:
         q: str | None = None,
         state: str | None = None,
     ) -> dict[str, Any]:
-        """Return source items and the server's completeness metadata."""
+        """Read one validated source page with completeness metadata.
+
+        Args:
+            share_id: Recipient share identifier.
+            offset: Nonnegative source offset, defaulting to zero.
+            limit: Page size from 1 through 200, defaulting to 50.
+            q: Optional search text, 1 through 512 characters; sent unchanged.
+            state: Optional free-text status filter, 1 through 64 characters.
+
+        Returns:
+            Source items, pagination, summary, and partial errors without truncation.
+
+        Raises:
+            ValueError: Page filters or the returned page fail validation.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         self._enforce("sharing.links.inspect.server")
         return self._dump(
             await self._require_client().list_shared_workspace_source_page(
@@ -286,6 +338,21 @@ class ServerSharingService:
     async def list_shared_workspace_sources(
         self, share_id: int
     ) -> list[dict[str, Any]]:
+        """Collect sources across advancing pages, including empty pages.
+
+        Args:
+            share_id: Recipient share identifier.
+
+        Returns:
+            All source rows in server page order.
+
+        Raises:
+            ValueError: A returned page is invalid or its cursor does not advance.
+                A service wrapper also requires an available server backend.
+            TLDWAPIError: Authentication, transport, or server rejection prevents
+                completion.
+            PolicyDeniedError: The configured runtime policy denies this action.
+        """
         self._enforce("sharing.links.inspect.server")
         return self._dump_list(
             await self._require_client().list_shared_workspace_sources(share_id)

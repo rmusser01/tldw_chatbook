@@ -7,7 +7,8 @@ from textual.app import App
 from textual.widgets import Button, Input
 
 from Tests.tldw_api.test_sharing_release_contracts import http_client, operation
-from tldw_chatbook.Sharing import ServerSharingScopeService, ServerSharingService
+from tldw_chatbook.Sharing_Interop.server_sharing_service import ServerSharingService
+from tldw_chatbook.Sharing_Interop.sharing_scope_service import SharingScopeService
 from tldw_chatbook.UI.Sharing_Panel import SharingPanel
 
 
@@ -27,8 +28,8 @@ async def test_panel_retry_and_remount_replay_same_clone_until_explicit_new_requ
         owner = SimpleNamespace(
             current_runtime_backend="server",
             server_context_provider=AuthorityProvider(),
-            server_sharing_scope_service=ServerSharingScopeService(
-                ServerSharingService(client)
+            sharing_scope_service=SharingScopeService(
+                server_service=ServerSharingService(client)
             ),
         )
 
@@ -111,8 +112,8 @@ async def test_panel_clone_keys_isolate_authority_normalize_names_and_keep_quota
         owner = SimpleNamespace(
             current_runtime_backend="server",
             server_context_provider=provider,
-            server_sharing_scope_service=ServerSharingScopeService(
-                ServerSharingService(client)
+            sharing_scope_service=SharingScopeService(
+                server_service=ServerSharingService(client)
             ),
         )
 

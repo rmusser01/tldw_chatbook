@@ -358,3 +358,82 @@ async def test_notes_missing_sync_version_remains_a_precondition_error():
     assert error.value.status_code == 428
     assert len(requests) == 1
     assert not requests[0].url.query
+
+
+@pytest.mark.asyncio
+async def test_legacy_clone_keeps_its_job_identity_through_production_interop_scope():
+    from tldw_chatbook.Sharing_Interop.server_sharing_service import (
+        ServerSharingService,
+    )
+    from tldw_chatbook.Sharing_Interop.sharing_scope_service import SharingScopeService
+
+    async with http_client(
+        lambda request: httpx.Response(
+            202, json={"job_id": "legacy-job", "status": "pending"}
+        )
+    ) as client:
+        scope = SharingScopeService(server_service=ServerSharingService(client))
+        result = await scope.clone_shared_workspace(
+            7, new_name="Copy", idempotency_key=KEY
+        )
+    assert result["record_id"] == "server:sharing_clone_job:legacy-job"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"offset": -1},
+        {"offset": True},
+        {"limit": 0},
+        {"limit": 201},
+        {"q": ""},
+        {"q": "q" * 513},
+        {"state": ""},
+        {"state": "s" * 65},
+    ],
+)
+async def test_invalid_source_page_parameters_fail_before_http(values):
+    from pydantic import ValidationError
+
+    requests = []
+    async with http_client(
+        lambda request: (
+            requests.append(request) or httpx.Response(200, json=source_page())
+        )
+    ) as client:
+        with pytest.raises(ValidationError):
+            await client.list_shared_workspace_source_page(7, **values)
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_source_list_continues_after_empty_advancing_page():
+    offsets = []
+
+    def handler(request):
+        offset = int(request.url.params["offset"])
+        offsets.append(offset)
+        page = source_page(offset)
+        if offset == 0:
+            page["items"] = []
+        return httpx.Response(200, json=page)
+
+    async with http_client(handler) as client:
+        rows = await client.list_shared_workspace_sources(7)
+    assert offsets == [0, 1]
+    assert [row.source_id for row in rows] == ["source-1"]
+
+
+@pytest.mark.asyncio
+async def test_source_filter_keeps_server_supported_free_text_state():
+    requests = []
+    async with http_client(
+        lambda request: (
+            requests.append(request) or httpx.Response(200, json=source_page())
+        )
+    ) as client:
+        await client.list_shared_workspace_source_page(
+            7, offset=0, limit=200, q=" " * 512, state="future-server-state"
+        )
+    assert requests[0].url.params["state"] == "future-server-state"
