@@ -75,6 +75,7 @@ class StartupInstructionCandidate:
     dispatch_started_wall_ns: int = field(repr=False)
     source: InstructionSource | None
     outcomes: tuple[InstructionOutcome, ...]
+    excluded_dirs: frozenset[Path] = field(default=frozenset(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +99,7 @@ class InstructionSnapshot:
     primary_delivery: InstructionChainDelivery
     warning_codes: tuple[str, ...]
     startup_source_metadata: InstructionSourceMetadata | None = None
+    excluded_dirs: frozenset[Path] = field(default=frozenset(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +162,24 @@ class _UnsafeMetadata(Exception):
     pass
 
 
+def path_is_excluded(path: Path, excluded: frozenset[Path]) -> bool:
+    """True when ``path`` is or lies under a workspace-excluded directory."""
+    if not excluded:
+        return False
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        return True  # unresolvable candidate paths fail closed
+    for entry in excluded:
+        try:
+            candidate = entry.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved == candidate or candidate in resolved.parents:
+            return True
+    return False
+
+
 class ProjectInstructionResolver:
     """Resolve only the selected binding root's effective instruction file."""
 
@@ -172,6 +192,7 @@ class ProjectInstructionResolver:
         target_path: Path,
         activation_revision: int,
         max_bytes: int = 1024 * 1024,
+        excluded_dirs: frozenset[Path] = frozenset(),
     ) -> InstructionPromotionSnapshot:
         """Capture one eligible target and its currently applicable chain.
 
@@ -194,6 +215,8 @@ class ProjectInstructionResolver:
             raise InstructionPromotionSnapshotError("ineligible_target")
         relative = target.relative_to(root)
         if not relative.parts or ".." in relative.parts:
+            raise InstructionPromotionSnapshotError("ineligible_target")
+        if path_is_excluded(target, excluded_dirs):
             raise InstructionPromotionSnapshotError("ineligible_target")
         try:
             from tldw_chatbook.Utils.path_validation import validate_path
@@ -263,6 +286,7 @@ class ProjectInstructionResolver:
         locator_fingerprint: str,
         max_bytes: int,
         dispatch_started_wall_ns: int,
+        excluded_dirs: frozenset[Path] = frozenset(),
     ) -> StartupInstructionCandidate:
         """Resolve and securely pin the effective binding-root instructions.
 
@@ -291,34 +315,28 @@ class ProjectInstructionResolver:
                 dispatch_started_wall_ns=dispatch_started_wall_ns,
                 source=None,
                 outcomes=(InstructionOutcome(".", ".", "resolution_failed"),),
+                excluded_dirs=excluded_dirs,
             )
 
-        override = _read_candidate(
-            root=root,
-            filename="AGENTS.override.md",
-            kind="override",
-            max_bytes=max_bytes,
-            dispatch_started_wall_ns=dispatch_started_wall_ns,
-            expected_ancestors=expected_ancestors,
-        )
+        def read(filename: str, kind: InstructionKind) -> _ReadResult:
+            # Workspace-excluded candidates are skipped exactly like missing
+            # files: never lstat'ed, opened, or admitted.
+            if path_is_excluded(root / filename, excluded_dirs):
+                return _ReadResult(fallback_condition=_FallbackCondition("absent"))
+            return _read_candidate(
+                root=root,
+                filename=filename,
+                kind=kind,
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=dispatch_started_wall_ns,
+                expected_ancestors=expected_ancestors,
+            )
+
+        override = read("AGENTS.override.md", "override")
         result = override
         if override.fallback_condition is not None:
-            result = _read_candidate(
-                root=root,
-                filename="AGENTS.md",
-                kind="standard",
-                max_bytes=max_bytes,
-                dispatch_started_wall_ns=dispatch_started_wall_ns,
-                expected_ancestors=expected_ancestors,
-            )
-            rechecked_override = _read_candidate(
-                root=root,
-                filename="AGENTS.override.md",
-                kind="override",
-                max_bytes=max_bytes,
-                dispatch_started_wall_ns=dispatch_started_wall_ns,
-                expected_ancestors=expected_ancestors,
-            )
+            result = read("AGENTS.md", "standard")
+            rechecked_override = read("AGENTS.override.md", "override")
             if rechecked_override.fallback_condition != override.fallback_condition:
                 result = _fallback_changed_result(rechecked_override)
 
@@ -329,6 +347,7 @@ class ProjectInstructionResolver:
             dispatch_started_wall_ns=dispatch_started_wall_ns,
             source=result.source,
             outcomes=(result.outcome,) if result.outcome else (),
+            excluded_dirs=excluded_dirs,
         )
 
     def resolve_targets(
@@ -342,6 +361,7 @@ class ProjectInstructionResolver:
         terminal_scopes: frozenset[str] = frozenset(),
         admission_bytes: int | None = None,
         expected_binding_identity: BindingRootIdentity | None = None,
+        excluded_dirs: frozenset[Path] = frozenset(),
     ) -> NestedResolutionBatch:
         """Resolve effective files on the union of root-to-target chains.
 
@@ -395,6 +415,11 @@ class ProjectInstructionResolver:
             current = root
             for part in lexical.relative_to(root).parts:
                 current /= part
+                if path_is_excluded(current, excluded_dirs):
+                    # Excluded directories and everything under them are
+                    # treated exactly like nonexistent scopes: no lstat, no
+                    # AGENTS.md read, no outcome.
+                    break
                 try:
                     value = os.lstat(current)
                     if (

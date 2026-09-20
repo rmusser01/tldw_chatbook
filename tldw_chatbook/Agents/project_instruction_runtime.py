@@ -23,7 +23,19 @@ from .project_instruction_resolver import (
     InstructionSource,
     ProjectInstructionResolver,
     capture_binding_root_identity,
+    path_is_excluded,
 )
+
+__all__ = [
+    "PROJECT_INSTRUCTION_ROW_KEY",
+    "InstructionActivationLedger",
+    "InstructionChainPayloadState",
+    "InstructionDeliveryReceipt",
+    "InstructionPreparation",
+    "PromotionSnapshotRevalidation",
+    "build_project_instruction_deferral_rows",
+    "path_is_excluded",
+]
 from .tool_catalog import PathAwareToolProvider, ToolCatalogRegistry
 
 PROJECT_INSTRUCTION_ROW_KEY = "_chatbook_project_instruction_row_key"
@@ -275,6 +287,9 @@ class InstructionActivationLedger:
         )
         self._nested_max_bytes = nested_max_bytes
         self._remaining_nested_bytes = nested_max_bytes
+        self._excluded_dirs = _frozen_excluded_dirs(
+            getattr(snapshot, "excluded_dirs", frozenset())
+        )
         self._activation_revision = 0
         self._receipt_sequence = 0
         self._sources: dict[Path, InstructionSource] = {}
@@ -338,6 +353,8 @@ class InstructionActivationLedger:
         except (OSError, RuntimeError, ValueError):
             raise InstructionPromotionSnapshotError("ineligible_target") from None
         target = validated_parent / relative.name
+        if path_is_excluded(target, self._excluded_dirs):
+            raise InstructionPromotionSnapshotError("ineligible_target")
         with self._lock:
             revision = self._activation_revision
         return self._resolver.snapshot_promotion_target(
@@ -346,6 +363,7 @@ class InstructionActivationLedger:
             locator_fingerprint=self._snapshot.locator_fingerprint,
             target_path=target,
             activation_revision=revision,
+            excluded_dirs=self._excluded_dirs,
         )
 
     def revalidate_promotion_target(
@@ -362,6 +380,11 @@ class InstructionActivationLedger:
             revision = self._activation_revision
         if prepared.activation_revision != revision:
             return PromotionSnapshotRevalidation(False, "activation_changed")
+        if path_is_excluded(
+            self._snapshot.binding_root / prepared.target_relative_path,
+            self._excluded_dirs,
+        ):
+            return PromotionSnapshotRevalidation(False, "ineligible_target")
         try:
             current = self._resolver.snapshot_promotion_target(
                 binding_id=self._snapshot.binding_id,
@@ -369,6 +392,7 @@ class InstructionActivationLedger:
                 locator_fingerprint=self._snapshot.locator_fingerprint,
                 target_path=self._snapshot.binding_root / prepared.target_relative_path,
                 activation_revision=revision,
+                excluded_dirs=self._excluded_dirs,
             )
         except InstructionPromotionSnapshotError as error:
             return PromotionSnapshotRevalidation(False, error.code)
@@ -476,6 +500,7 @@ class InstructionActivationLedger:
                     terminal_scopes=frozenset(self._terminal_scopes),
                     admission_bytes=self._remaining_nested_bytes,
                     expected_binding_identity=self._binding_root_identity,
+                    excluded_dirs=self._excluded_dirs,
                 )
                 changed = False
                 for source in batch.sources:
@@ -783,6 +808,13 @@ def _warning_key(code: str) -> str:
 
 def _safe_identifier(value: object) -> bool:
     return isinstance(value, str) and _IDENTIFIER_PATTERN.fullmatch(value) is not None
+
+
+def _frozen_excluded_dirs(value: object) -> frozenset[Path]:
+    """Coerce untrusted snapshot exclusions into a frozen set of paths."""
+    if not isinstance(value, (frozenset, set, tuple, list)):
+        return frozenset()
+    return frozenset(item for item in value if isinstance(item, Path))
 
 
 def _row_hash(row: Mapping[str, Any]) -> str:

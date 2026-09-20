@@ -1378,6 +1378,25 @@ def _workspace_binding_authority_is_current(
     )
 
 
+def _project_instruction_excluded_dirs(selection: Any) -> frozenset[Path]:
+    """Frozen absolute workspace-excluded paths for one selected binding.
+
+    Project-instruction activation skips every AGENTS.md/AGENTS.override.md
+    candidate at or under these binding-relative exclusions (spec 2026-09-20
+    section 2): excluded guidance is never read or activated.
+    """
+    from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
+    root = Path(selection.root)
+    try:
+        return frozenset(
+            (root / entry.path).resolve(strict=False)
+            for entry in binding_exclusion_entries(selection.binding)
+        )
+    except (OSError, RuntimeError, ValueError, AttributeError, TypeError):
+        return frozenset()
+
+
 def _exclusion_paths_provider(
     registry: Any,
     binding_id: str,
@@ -20895,6 +20914,7 @@ class ConsoleChatController:
                     maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                 ),
                 dispatch_started_wall_ns=time.time_ns(),
+                excluded_dirs=_project_instruction_excluded_dirs(selection),
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
@@ -26838,6 +26858,9 @@ class ConsoleChatController:
                         maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
                     ),
                     dispatch_started_wall_ns=time.time_ns(),
+                    excluded_dirs=_project_instruction_excluded_dirs(
+                        project_selection
+                    ),
                 )
                 destination_provider = str(
                     getattr(resolution, "execution_key", "")
