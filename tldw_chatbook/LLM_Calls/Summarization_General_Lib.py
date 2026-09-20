@@ -84,8 +84,11 @@ def load_and_log_configs():
 #
 #######################################################################################################################
 # Function Definitions
-#
-api_key = get_cli_setting("openai_api", "api_key", "")
+# (TASK-32854: the module-level `api_key = get_cli_setting(...)` read here
+# was dead -- no importer of that name exists -- and its import-time config
+# read (a secret into a module global, plus one admission handshake per
+# import) broke the local summarizers' lazy import of this module's shared
+# transport. Deleted per the 2026-09-17 review's finding.)
 #
 #######################################################################################################################
 # Helper Function Definitions
@@ -593,6 +596,15 @@ def analyze(
 
         # --- Define helper to consume potential generators ---
         def consume_generator(gen):
+            # TASK-32628's recovery admission retains every generator a
+            # decorated provider call returns behind recovery_review's
+            # _OpenAIStream wrapper, so the isgenerator-only check handed
+            # the wrapper through unconsumed -- the generator body never
+            # ran, no request was made, and kobold/tabby callers got an
+            # opaque object instead of the (task-17387-pinned) empty join.
+            # Unwrap and iterate the wrapper like a plain generator.
+            if isinstance(gen, _provider_recovery._OpenAIStream):
+                gen = gen.iterator
             if inspect.isgenerator(gen):
                 logging.debug("Consuming generator stream...")
                 result_list = []
@@ -997,6 +1009,66 @@ def summarize_with_openai(
         return f"Error: OpenAI unexpected error: {str(e)}"
 
 
+def _post_with_retry(
+    *,
+    url,
+    headers,
+    payload,
+    streaming,
+    max_attempts,
+    retry_delay,
+    timeout,
+    retry_status_codes,
+):
+    """One shared transport post for the wire-specific summarizer shapes.
+
+    TASK-32853 Phase C: the anthropic/cohere/google/huggingface handlers
+    keep their own wire shapes and status semantics, but share this
+    transport -- one reused session per call, per-attempt response closure,
+    the hosted engine's bounded Retry-After policy (60s cap), credential-safe
+    redirect refusal, and the TLS trust policy. Only the status codes the
+    provider names retry; everything else returns the response for the
+    caller's own handling. Raises the final ``requests.RequestException``
+    when network attempts are exhausted.
+    """
+    session = create_default_session()
+    for attempt in range(max_attempts):
+        try:
+            response = session.post(
+                url,
+                headers=headers,
+                json=payload,
+                stream=streaming,
+                timeout=timeout,
+                allow_redirects=False,
+                verify=requests_verify(),
+            )
+        except requests.RequestException as exc:
+            del exc
+            if attempt >= max_attempts - 1:
+                raise
+            delay = min(
+                float(retry_delay) * (2**attempt),
+                60.0,
+            )
+            if delay > 0:
+                time.sleep(delay)
+            continue
+        if (
+            response.status_code in retry_status_codes
+            and attempt < max_attempts - 1
+        ):
+            delay = _retry_delay(
+                response, attempt=attempt, retry_delay=float(retry_delay)
+            )
+            response.close()
+            if delay > 0:
+                time.sleep(delay)
+            continue
+        return response
+    raise RuntimeError("unreachable retry exhaustion")
+
+
 @_provider_recovery.unqualified
 def summarize_with_anthropic(
     api_key,
@@ -1105,172 +1177,128 @@ def summarize_with_anthropic(
             if not anthropic_model_rejects_temperature_top_p_combination(model):
                 data["top_p"] = 1.0
 
-        for attempt in range(max_retries):
-            try:
-                # Create a session
-                session = create_default_session()
+        # TASK-32853 Phase C: the shared transport owns session reuse,
+        # bounded backoff (the engine's capped Retry-After policy), redirect
+        # refusal, and the TLS trust policy. Anthropic's own semantics are
+        # preserved: only 500 and network errors retry (the urllib3 adapter
+        # the old loop built was dead code -- it posted via bare
+        # requests.post and never mounted it), and the per-attempt network
+        # log keeps its provider-labelled shape.
+        logging.debug("Anthropic: Posting request to API")
+        try:
+            response = _post_with_retry(
+                url="https://api.anthropic.com/v1/messages",
+                headers=headers,
+                payload=data,
+                streaming=streaming,
+                max_attempts=max_retries,
+                retry_delay=retry_delay,
+                timeout=int(
+                    get_cli_setting("anthropic_api", "api_timeout", 120)
+                ),
+                retry_status_codes={500},
+            )
+        except requests.RequestException as e:
+            return f"Anthropic: Network error: {str(e)}"
 
-                # Load config values
-                retry_count = int(get_cli_setting("anthropic_api", "api_retries", 3))
-                retry_delay = int(
-                    get_cli_setting("anthropic_api", "api_retry_delay", 5)
-                )
+        if 300 <= response.status_code < 400:
+            # No new logging call here, deliberately: this module's
+            # diagnostic call sites are frozen and individually reviewed by
+            # test_summarization_diagnostic_privacy.py's ledger. The
+            # returned string is the caller-visible signal; it mirrors this
+            # function's own "API Key Not Provided"/"Network error"
+            # convention of reporting failure via a returned string rather
+            # than a log line or a raised exception. The helper already
+            # refused the redirect with credentials; release the body.
+            response.close()
+            return (
+                "Anthropic: API endpoint redirected unexpectedly -- "
+                "refusing to follow with credentials."
+            )
 
-                # Configure the retry strategy
-                retry_strategy = Retry(
-                    total=retry_count,  # Total number of retries
-                    backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                    status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-                )
-
-                # Create the adapter
-                adapter = HTTPAdapter(max_retries=retry_strategy)
-
-                # Mount adapters for both HTTP and HTTPS
-                session.mount("http://", adapter)
-                session.mount("https://", adapter)
-                logging.debug("Anthropic: Posting request to API")
-                response = requests.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers=headers,
-                    json=data,
-                    stream=streaming,
-                    # task-19830: this bare module-level `requests.post`
-                    # had no timeout at all -- a stalled connection hung
-                    # forever with no way to cancel. task-19560 then gave it
-                    # this provider-specific value, which is kept in
-                    # preference to the session-wide default because
-                    # `anthropic_api.api_timeout` is a knob users can already
-                    # set. `requests` re-arms the read timeout per chunk, so
-                    # a slow-but-progressing stream (see `stream=streaming`
-                    # above) is only killed by a stall on one chunk, never by
-                    # total elapsed duration.
-                    timeout=int(
-                        get_cli_setting("anthropic_api", "api_timeout", 120)
-                    ),
-                    # task-19557: the API key travels in the custom
-                    # `x-api-key` header. `requests` strips `Authorization`
-                    # across a redirect host change but NOT custom headers,
-                    # so a 3xx here would re-send the key wherever
-                    # `Location` points. Refuse to follow rather than
-                    # silently forward credentials -- mirrors the
-                    # `x-goog-api-key` fix in LLM_API_Calls.py's
-                    # chat_with_google (task-686).
-                    allow_redirects=False,
-                    verify=requests_verify(),
-                )
-
-                if 300 <= response.status_code < 400:
-                    # No new logging call here, deliberately: this module's
-                    # diagnostic call sites are frozen and individually
-                    # reviewed by test_summarization_diagnostic_privacy.py's
-                    # ledger (see the sampling-params precedent a few lines
-                    # up in this same function). The returned string is the
-                    # caller-visible signal; it mirrors this function's own
-                    # "API Key Not Provided"/"Network error" convention of
-                    # reporting failure via a returned string rather than a
-                    # log line or a raised exception.
-                    #
-                    # task-19557 Qodo round 2: this branch returns without
-                    # consuming the body, so -- same as the chat_with_google
-                    # and chat_with_anthropic refusal sites -- the
-                    # connection must be explicitly released via close()
-                    # rather than left for GC to reclaim on an unconsumed
-                    # requests.Response.
-                    response.close()
-                    return (
-                        "Anthropic: API endpoint redirected unexpectedly -- "
-                        "refusing to follow with credentials."
-                    )
-
-                # Check if the status code indicates success
-                if response.status_code == 200:
-                    if streaming:
-                        # Handle streaming response
-                        def stream_generator():
-                            collected_text = ""
-                            event_type = None
-                            for line in response.iter_lines():
-                                line = line.decode("utf-8").strip()
-                                if line == "":
+        # Check if the status code indicates success
+        if response.status_code == 200:
+            if streaming:
+                # Handle streaming response
+                def stream_generator():
+                    try:
+                        collected_text = ""
+                        event_type = None
+                        for line in response.iter_lines():
+                            line = line.decode("utf-8").strip()
+                            if line == "":
+                                continue
+                            if line.startswith("event:"):
+                                event_type = line[len("event:") :].strip()
+                            elif line.startswith("data:"):
+                                data_str = line[len("data:") :].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    data_json = json.loads(data_str)
+                                    if (
+                                        event_type == "content_block_delta"
+                                        and data_json.get("type")
+                                        == "content_block_delta"
+                                    ):
+                                        delta = data_json.get("delta", {})
+                                        text_delta = delta.get("text", "")
+                                        collected_text += text_delta
+                                        yield text_delta
+                                except json.JSONDecodeError:
+                                    logging.error(
+                                        "Anthropic: Stream JSON decode failed"
+                                    )
                                     continue
-                                if line.startswith("event:"):
-                                    event_type = line[len("event:") :].strip()
-                                elif line.startswith("data:"):
-                                    data_str = line[len("data:") :].strip()
-                                    if data_str == "[DONE]":
-                                        break
-                                    try:
-                                        data_json = json.loads(data_str)
-                                        if (
-                                            event_type == "content_block_delta"
-                                            and data_json.get("type")
-                                            == "content_block_delta"
-                                        ):
-                                            delta = data_json.get("delta", {})
-                                            text_delta = delta.get("text", "")
-                                            collected_text += text_delta
-                                            yield text_delta
-                                    except json.JSONDecodeError:
-                                        logging.error(
-                                            "Anthropic: Stream JSON decode failed"
-                                        )
-                                        continue
-                            # Optionally, return the full collected text at the end
-                            # yield collected_text
+                        # Optionally, return the full collected text at the end
+                        # yield collected_text
+                    finally:
+                        # TASK-32853: clean exhaustion AND consumer
+                        # abandonment both release the response (the old
+                        # generator never closed it on any path).
+                        response.close()
 
-                        return stream_generator()
-                    else:
-                        # Non-streaming response
-                        logging.debug("Anthropic: Post submittal successful")
-                        response_data = response.json()
-                        try:
-                            # Extract the assistant's reply from the 'content' field
-                            content_blocks = response_data.get("content", [])
-                            summary = ""
-                            for block in content_blocks:
-                                if block.get("type") == "text":
-                                    summary += block.get("text", "")
-                            summary = summary.strip()
-                            logging.debug("Anthropic: Summarization successful")
-                            logging.debug(
-                                "Anthropic: Summary prepared; character_count=%s",
-                                len(summary),
-                            )
-                            return summary
-                        except Exception:
-                            logging.debug("Anthropic: Unexpected data in response")
-                            logging.error(
-                                "Unexpected response format from Anthropic API"
-                            )
-                            return None
-                elif (
-                    response.status_code == 500
-                ):  # Handle internal server error specifically
-                    logging.debug("Anthropic: Internal server error")
-                    logging.error(
-                        "Internal server error from API. Retrying may be necessary."
+                return stream_generator()
+            else:
+                # Non-streaming response
+                logging.debug("Anthropic: Post submittal successful")
+                response_data = response.json()
+                response.close()
+                try:
+                    # Extract the assistant's reply from the 'content' field
+                    content_blocks = response_data.get("content", [])
+                    summary = ""
+                    for block in content_blocks:
+                        if block.get("type") == "text":
+                            summary += block.get("text", "")
+                    summary = summary.strip()
+                    logging.debug("Anthropic: Summarization successful")
+                    logging.debug(
+                        "Anthropic: Summary prepared; character_count=%s",
+                        len(summary),
                     )
-                    time.sleep(retry_delay)
-                else:
+                    return summary
+                except Exception:
+                    logging.debug("Anthropic: Unexpected data in response")
                     logging.error(
-                        "Failed to process summary; status_code=%s",
-                        response.status_code,
+                        "Unexpected response format from Anthropic API"
                     )
                     return None
+        elif response.status_code == 500:
+            # The helper exhausted 500 retries (or single attempt).
+            logging.debug("Anthropic: Internal server error")
+            logging.error(
+                "Internal server error from API. Retrying may be necessary."
+            )
+            return None
+        else:
+            logging.error(
+                "Failed to process summary; status_code=%s",
+                response.status_code,
+            )
+            response.close()
+            return None
 
-            except requests.RequestException as e:
-                logging.error(
-                    "Anthropic: Network error during attempt; attempt=%s "
-                    "retry_count=%s exception_type=%s",
-                    attempt + 1,
-                    max_retries,
-                    safe_metadata_token(type(e).__name__),
-                )
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                else:
-                    return f"Anthropic: Network error: {str(e)}"
     except FileNotFoundError:
         logging.error("Anthropic: File not found")
         return f"Anthropic: File not found: {input_data}"
@@ -1379,42 +1407,32 @@ def summarize_with_cohere(
         }
 
         if streaming:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
+            # TASK-32853 Phase C: shared transport (session reuse, bounded
+            # Retry-After, per-attempt closure); the adapter's real retry
+            # set {429, 502, 503, 504} is preserved via retry_status_codes.
             retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
             retry_delay = int(get_cli_setting("cohere_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("Cohere: Submitting streaming request to API endpoint")
-            response = session.post(
-                "https://api.cohere.com/v2/chat",
+            response = _post_with_retry(
+                url="https://api.cohere.com/v2/chat",
                 headers=headers,
-                json=data,
-                stream=True,  # Enable response streaming
+                payload=data,
+                streaming=True,
+                max_attempts=retry_count + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
             if response.status_code != 200:
-                # Same pinned format as the non-streaming path -- the old
-                # raise_for_status() surfaced a bodyless HTTPError through
-                # the outer except with a different string (task-297 review).
+                # Same pinned format as the non-streaming path; the engine
+                # precedent applies -- the response BODY no longer reaches
+                # the returned error string, only the status code.
                 logging.error(
                     "Cohere: API request failed; status_code=%s",
                     response.status_code,
                 )
-                return f"Cohere: API request failed: {response.text}"
+                response.close()
+                return f"Cohere: API request failed: {response.status_code}"
 
             def stream_generator():
                 # v2 streams SSE "data: {...}" events discriminated by
@@ -1475,29 +1493,18 @@ def summarize_with_cohere(
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
             retry_count = int(get_cli_setting("cohere_api", "api_retries", 3))
             retry_delay = int(get_cli_setting("cohere_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("Cohere: Submitting request to API endpoint")
-            response = session.post(
-                "https://api.cohere.com/v2/chat", headers=headers, json=data
+            response = _post_with_retry(
+                url="https://api.cohere.com/v2/chat",
+                headers=headers,
+                payload=data,
+                streaming=False,
+                max_attempts=retry_count + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
 
             if response.status_code == 200:
@@ -1526,7 +1533,8 @@ def summarize_with_cohere(
                     "Cohere: API request failed; status_code=%s",
                     response.status_code,
                 )
-                return f"Cohere: API request failed: {response.text}"
+                response.close()
+                return f"Cohere: API request failed: {response.status_code}"
 
     except Exception as e:
         logging.error(
@@ -1984,81 +1992,73 @@ def summarize_with_huggingface(
 
         logging.debug("HuggingFace: Submitting request...")
         if streaming:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
+            # TASK-32853 Phase C: shared transport (session reuse, bounded
+            # Retry-After, per-attempt closure); the adapter's real retry
+            # set {429, 502, 503, 504} preserved. The legacy inputs API
+            # endpoint is kept as-is: modernizing to the router is a
+            # live-verification decision recorded in the task notes, not a
+            # transport migration.
             retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
             retry_delay = int(get_cli_setting("huggingface_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(
-                API_URL, headers=headers, json=data_payload, stream=True
+            response = _post_with_retry(
+                url=API_URL,
+                headers=headers,
+                payload=data_payload,
+                streaming=True,
+                max_attempts=retry_count + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
             response.raise_for_status()
 
             def stream_generator():
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8").strip()
-                        if decoded_line.startswith("data:"):
-                            data_str = decoded_line[len("data:") :].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                data_json = json.loads(data_str)
-                                if "token" in data_json:
-                                    token_text = data_json["token"].get("text", "")
-                                    yield token_text
-                                elif "generated_text" in data_json:
-                                    # Some models may send the full generated text
-                                    generated_text = data_json["generated_text"]
-                                    yield generated_text
-                                else:
-                                    logging.debug(
-                                        "HuggingFace Stream: Response event rejected"
+                try:
+                    for line in response.iter_lines():
+                        if line:
+                            decoded_line = line.decode("utf-8").strip()
+                            if decoded_line.startswith("data:"):
+                                data_str = decoded_line[len("data:") :].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    data_json = json.loads(data_str)
+                                    if "token" in data_json:
+                                        token_text = data_json["token"].get("text", "")
+                                        yield token_text
+                                    elif "generated_text" in data_json:
+                                        # Some models may send the full generated text
+                                        generated_text = data_json["generated_text"]
+                                        yield generated_text
+                                    else:
+                                        logging.debug(
+                                            "HuggingFace Stream: Response event rejected"
+                                        )
+                                except json.JSONDecodeError:
+                                    logging.error(
+                                        "HuggingFace Stream: JSON decode failed"
                                     )
-                            except json.JSONDecodeError:
-                                logging.error("HuggingFace Stream: JSON decode failed")
-                                continue
-                # Optionally, yield the final collected text
-                # yield collected_text
+                                    continue
+                finally:
+                    # TASK-32853: clean exhaustion AND consumer abandonment
+                    # both release the response (the old generator never
+                    # closed it on any path).
+                    response.close()
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
             retry_count = int(get_cli_setting("huggingface_api", "api_retries", 3))
             retry_delay = int(get_cli_setting("huggingface_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
+            response = _post_with_retry(
+                url=API_URL,
+                headers=headers,
+                payload=data_payload,
+                streaming=False,
+                max_attempts=retry_count + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            response = session.post(API_URL, headers=headers, json=data_payload)
 
             if response.status_code == 200:
                 response_json = response.json()
@@ -2547,87 +2547,83 @@ def summarize_with_google(
         }
 
         if streaming:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
+            # TASK-32853 Phase C: shared transport (session reuse, bounded
+            # Retry-After, per-attempt closure) with the adapter's real
+            # retry set. The URL fix is the 2026-09-17 review's AC: the old
+            # hardcoded base path had NO /chat/completions route (the
+            # suspected live 404); the endpoint now matches the chat path.
             retry_count = int(get_cli_setting("google_api", "api_retries", 3))
             retry_delay = int(get_cli_setting("google_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("Google: Posting streaming request")
-            response = session.post(
-                "https://generativelanguage.googleapis.com/v1beta/openai/",
+            response = _post_with_retry(
+                url=(
+                    "https://generativelanguage.googleapis.com/v1beta/openai/"
+                    "chat/completions"
+                ),
                 headers=headers,
-                json=data,
-                stream=True,
+                payload=data,
+                streaming=True,
+                max_attempts=retry_count + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
-            response.raise_for_status()
+            if response.status_code != 200:
+                # Same failure surface as the old raise_for_status: the
+                # outer RequestException handler logs the pinned statement
+                # and returns the caller-visible error string.
+                response.close()
+                response.raise_for_status()
 
             def stream_generator():
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8").strip()
-                        if decoded_line == "":
-                            continue
-                        if decoded_line.startswith("data: "):
-                            data_str = decoded_line[len("data: ") :]
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                data_json = json.loads(data_str)
-                                chunk = data_json["choices"][0]["delta"].get(
-                                    "content", ""
-                                )
-                                yield chunk
-                            except json.JSONDecodeError:
-                                logging.error("Google Stream: JSON decode failed")
+                try:
+                    for line in response.iter_lines():
+                        if line:
+                            decoded_line = line.decode("utf-8").strip()
+                            if decoded_line == "":
                                 continue
-                            except KeyError:
-                                logging.error(
-                                    "Google Stream: Response event missing required field"
-                                )
-                                continue
+                            if decoded_line.startswith("data: "):
+                                data_str = decoded_line[len("data: ") :]
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    data_json = json.loads(data_str)
+                                    chunk = data_json["choices"][0]["delta"].get(
+                                        "content", ""
+                                    )
+                                    yield chunk
+                                except json.JSONDecodeError:
+                                    logging.error("Google Stream: JSON decode failed")
+                                    continue
+                                except KeyError:
+                                    logging.error(
+                                        "Google Stream: Response event missing"
+                                        " required field"
+                                    )
+                                    continue
+                finally:
+                    # TASK-32853: clean exhaustion AND consumer abandonment
+                    # both release the response (the old generator never
+                    # closed it on any path).
+                    response.close()
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
             retry_count = int(get_cli_setting("google_api", "api_retries", 3))
             retry_delay = int(get_cli_setting("google_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("Google: Posting request")
-            response = session.post(
-                "https://generativelanguage.googleapis.com/v1beta/openai/",
+            response = _post_with_retry(
+                url=(
+                    "https://generativelanguage.googleapis.com/v1beta/openai/"
+                    "chat/completions"
+                ),
                 headers=headers,
-                json=data,
+                payload=data,
+                streaming=False,
+                max_attempts=retry_count + 1,
+                retry_delay=float(retry_delay),
+                timeout=120.0,
+                retry_status_codes=frozenset({429, 502, 503, 504}),
             )
 
             if response.status_code == 200:

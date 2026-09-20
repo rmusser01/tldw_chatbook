@@ -519,6 +519,19 @@ def _invoke_local_prompt(monkeypatch: pytest.MonkeyPatch) -> object:
         "create_default_session",
         lambda: _FakeSession(response),
     )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
+    )
+    # TASK-32854: llama posts through the shared _post_with_retry transport
+    # in Summarization_General_Lib, so the session seam moves there too
+    # (both modules patched while the remaining local handlers migrate).
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
+    )
     return local_summarization.summarize_with_llama(
         "fixed input",
         LOCAL_PROMPT_CANARY,
@@ -2328,10 +2341,11 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     )
     assert deleted_by_module == {
         "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
-        # TASK-32853 groq migration: the non-200 status log site joined
-        # the deleted ledger (10 -> 11). deepseek/mistral keep their frozen
-        # status logs verbatim (bound to the typed error) per the freeze.
-        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 11,
+        # TASK-32853 groq + anthropic migrations: the non-200 status log
+        # site and the per-attempt network log site joined the deleted
+        # ledger (10 -> 12). deepseek/mistral keep their frozen status
+        # logs verbatim (bound to the typed error) per the freeze.
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (
@@ -2720,6 +2734,11 @@ def test_local_core_llama_malformed_stream_logs_only_safe_length(
         "create_default_session",
         lambda: _FakeSession(response),
     )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
+    )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         generator = local_summarization.summarize_with_llama(
@@ -2762,6 +2781,11 @@ def test_local_core_llama_success_hides_prompt_and_endpoint_canaries(
         "create_default_session",
         lambda: _FakeSession(response),
     )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
+    )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         result = local_summarization.summarize_with_llama(
@@ -2785,6 +2809,11 @@ def test_local_core_llama_accepts_non_string_system_message_as_before(
         local_summarization,
         "create_default_session",
         lambda: _FakeSession(response),
+    )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
     )
 
     result = local_summarization.summarize_with_llama(
@@ -2841,6 +2870,11 @@ def test_local_core_kobold_stream_fully_consumed_without_private_diagnostics(
         local_summarization,
         "create_default_session",
         lambda: _FakeSession(response),
+    )
+    import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
+
+    monkeypatch.setattr(
+        _general, "create_default_session", lambda: _FakeSession(response)
     )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
@@ -4474,7 +4508,7 @@ def test_anthropic_success_hides_prompt_credential_and_response(
         monkeypatch,
         _general_provider_settings(),
     )
-    post_calls = _install_signature_bound_general_requests_post(
+    post_calls = _install_signature_bound_general_session_post(
         monkeypatch,
         _FakeResponse(
             json_data={
@@ -4515,7 +4549,7 @@ def test_anthropic_malformed_stream_is_fully_consumed_without_private_diagnostic
             f"data: {{{GENERAL_ANTHROPIC_STREAM_CANARY}".encode(),
         )
     )
-    _install_signature_bound_general_requests_post(monkeypatch, response)
+    _install_signature_bound_general_session_post(monkeypatch, response)
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         stream = general_summarization.summarize_with_anthropic(
@@ -4532,6 +4566,9 @@ def test_anthropic_malformed_stream_is_fully_consumed_without_private_diagnostic
     assert response.iter_lines_started is True
     assert GENERAL_ANTHROPIC_STREAM_CANARY not in captured.text
     assert "Anthropic: Stream JSON decode failed" in captured.text
+    # TASK-32853: clean exhaustion releases the response (the old
+    # generator never closed it on any path).
+    assert response.closed is True
 
 
 def test_anthropic_unexpected_response_shape_hides_response_text(
@@ -4542,7 +4579,7 @@ def test_anthropic_unexpected_response_shape_hides_response_text(
         monkeypatch,
         _general_provider_settings(),
     )
-    _install_signature_bound_general_requests_post(
+    _install_signature_bound_general_session_post(
         monkeypatch,
         _FakeResponse(json_data=[], text=GENERAL_ANTHROPIC_RESPONSE_CANARY),
     )
@@ -4569,7 +4606,7 @@ def test_anthropic_non_success_hides_response_body_and_preserves_status_contract
         monkeypatch,
         _general_provider_settings(),
     )
-    _install_signature_bound_general_requests_post(
+    _install_signature_bound_general_session_post(
         monkeypatch,
         _FakeResponse(
             status_code=429,
@@ -4599,7 +4636,7 @@ def test_anthropic_request_exception_hides_message_and_preserves_retry_contract(
         monkeypatch,
         _general_provider_settings(),
     )
-    post_calls = _install_signature_bound_general_requests_post(
+    post_calls = _install_signature_bound_general_session_post(
         monkeypatch,
         general_summarization.requests.RequestException(
             GENERAL_ANTHROPIC_EXCEPTION_CANARY
@@ -4618,10 +4655,11 @@ def test_anthropic_request_exception_hides_message_and_preserves_retry_contract(
     assert result == (f"Anthropic: Network error: {GENERAL_ANTHROPIC_EXCEPTION_CANARY}")
     assert len(post_calls) == 1
     assert GENERAL_ANTHROPIC_EXCEPTION_CANARY not in captured.text
-    assert (
-        "Anthropic: Network error during attempt; attempt=1 retry_count=1 "
-        "exception_type=RequestException"
-    ) in captured.text
+    # TASK-32853 Phase C re-key: the per-attempt provider-labelled network
+    # log was superseded by the shared transport's generic retry handling
+    # (site deleted in the ledger with reason); the caller-visible
+    # exhaustion error string above is the preserved contract.
+    assert "Anthropic: Network error during attempt" not in captured.text
 
 
 def test_anthropic_file_error_hides_path_and_preserves_in_band_error(
@@ -4860,7 +4898,11 @@ def test_cohere_status_failure_hides_response_body_and_preserves_return(
             streaming=streaming,
         )
 
-    assert result == f"Cohere: API request failed: {COHERE_RESPONSE_CANARY}"
+    # TASK-32853 Phase C re-key: the response BODY no longer reaches the
+    # returned error string (the old branch interpolated response.text);
+    # only the status code does, matching the engine precedent.
+    assert result == "Cohere: API request failed: 429"
+    assert COHERE_RESPONSE_CANARY not in result
     assert response.iter_lines_started is False
     assert COHERE_RESPONSE_CANARY not in captured.text
     assert "Cohere: API request failed; status_code=429" in captured.text
@@ -5601,7 +5643,9 @@ def test_huggingface_stream_is_lazy_and_hides_rejected_events(
 
     assert chunks == ["fixed huggingface token", "fixed huggingface generated"]
     assert response.iter_lines_started is True
-    assert response.closed is False
+    # TASK-32853: clean exhaustion releases the response (the old
+    # generator never closed it on any path).
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == (HUGGINGFACE_PRIVATE_STREAMING_VALUE)
     assert post_calls[0][1]["stream"] is True
@@ -5938,7 +5982,12 @@ def test_google_success_hides_credential_input_prompt_and_response(
     ]
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
-    assert post_args == ("https://generativelanguage.googleapis.com/v1beta/openai/",)
+    # TASK-32853 Phase C re-key (the 2026-09-17 review's AC): the old
+    # hardcoded base path had NO /chat/completions route (the suspected
+    # live 404); the endpoint now matches the chat path.
+    assert post_args == (
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    )
     assert post_kwargs["headers"]["Authorization"] == (
         f"Bearer {GOOGLE_CREDENTIAL_CANARY}"
     )
@@ -6105,7 +6154,8 @@ def test_google_input_json_error_hides_detail_and_preserves_return(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    real_loads = general_summarization.json.loads
+    real_json = general_summarization.json
+    real_loads = real_json.loads
     signature = inspect.signature(real_loads)
     error = json.JSONDecodeError(GOOGLE_EXCEPTION_CANARY, "x", 0)
 
@@ -6113,8 +6163,27 @@ def test_google_input_json_error_hides_detail_and_preserves_return(
         signature.bind(*args, **kwargs)
         raise error
 
+    class _FailingJsonNamespace:
+        """TASK-32853 admission-scope repair: this test was the file's one
+        pre-existing red (recovery_scope_uncertain since TASK-32628) --
+        patching ``loads`` ON THE SHARED json module also broke the storage
+        admission's own JSON reads, which fail closed. Rebinding only the
+        summarization module's ``json`` reference to this proxy keeps the
+        failure inside the handler under test."""
+
+        loads = staticmethod(failing_loads)
+
+        def __getattr__(self, name):
+            return getattr(real_json, name)
+
     _install_signature_bound_general_config_loader(monkeypatch)
-    monkeypatch.setattr(general_summarization.json, "loads", failing_loads)
+    _install_signature_bound_general_settings(
+        monkeypatch,
+        _general_mid_provider_settings(),
+    )
+    monkeypatch.setattr(
+        general_summarization, "json", _FailingJsonNamespace()
+    )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
         result = general_summarization.summarize_with_google(
