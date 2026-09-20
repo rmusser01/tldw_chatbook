@@ -169,3 +169,5 @@ Use numeric filenames:
 - `002-short-title.md`
 
 Do not reuse numbers.
+
+| [ADR-174](174-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |

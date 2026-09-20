@@ -5,11 +5,11 @@ import pytest
 from tldw_chatbook.tldw_api import (
     CloneWorkspaceRequest,
     CreateTokenRequest,
-    ShareWorkspaceRequest,
     SharedChatRequest,
+    ShareWorkspaceRequest,
+    TLDWAPIClient,
     UpdateShareRequest,
     VerifyPasswordRequest,
-    TLDWAPIClient,
 )
 
 
@@ -189,7 +189,7 @@ async def test_sharing_client_routes_shared_with_me_proxy_calls(monkeypatch):
         "POST",
         "/api/v1/sharing/shared-with-me/7/clone",
     )
-    assert mocked.await_args_list[2].kwargs["json_data"] == {"new_name": "Clone"}
+    assert mocked.await_args_list[2].kwargs["json_data"] == {"name": "Clone"}
     assert mocked.await_args_list[3].args[:2] == (
         "GET",
         "/api/v1/sharing/shared-with-me/7/sources",

@@ -1033,6 +1033,7 @@ from .sharing_schemas import (
     SharedWithMeResponse,
     SharedWorkspaceResponse,
     SharedWorkspaceSourceResponse,
+    SharedWorkspaceSourcePage,
     TokenListResponse,
     TokenResponse,
     UpdateShareRequest,
@@ -2538,8 +2539,29 @@ class TLDWAPIClient:
             json_data=payload,
         )
 
-    async def delete_note_link(self, edge_id: str) -> Dict[str, Any]:
-        return await self._request("DELETE", f"/api/v1/notes/links/{edge_id}")
+    async def delete_note_link(
+        self,
+        edge_id: str,
+        *,
+        dataset_id: str | None = None,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
+        reason: str | None = None,
+    ) -> Dict[str, Any]:
+        """Delete the selected link version; never substitute a newer server version."""
+        params = {
+            key: value
+            for key, value in {
+                "dataset_id": dataset_id,
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+                "reason": reason,
+            }.items()
+            if value is not None
+        }
+        return await self._request(
+            "DELETE", f"/api/v1/notes/links/{edge_id}", params=params or None
+        )
 
     async def list_workspaces(self) -> Dict[str, Any]:
         return await self._request("GET", "/api/v1/workspaces/")
@@ -8951,20 +8973,73 @@ class TLDWAPIClient:
         share_id: int,
         request_data: CloneWorkspaceRequest,
     ) -> CloneWorkspaceResponse:
+        """Admit/replay one request-owned key; retain the request after a lost reply."""
         response = await self._request(
             "POST",
             f"/api/v1/sharing/shared-with-me/{share_id}/clone",
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            headers={"Idempotency-Key": request_data.idempotency_key},
         )
         return CloneWorkspaceResponse.model_validate(response)
 
-    async def list_shared_workspace_sources(
-        self, share_id: int
-    ) -> list[SharedWorkspaceSourceResponse]:
+    async def get_shared_workspace_clone_operation(
+        self,
+        share_id: int,
+        operation_id: str,
+    ) -> CloneWorkspaceResponse:
+        """Read an existing recipient receipt, including after share revocation."""
+        from uuid import UUID
+
+        normalized_id = str(UUID(operation_id))
         response = await self._request(
-            "GET", f"/api/v1/sharing/shared-with-me/{share_id}/sources"
+            "GET",
+            f"/api/v1/sharing/shared-with-me/{share_id}/clone/{normalized_id}",
         )
-        return [SharedWorkspaceSourceResponse.model_validate(item) for item in response]
+        return CloneWorkspaceResponse.model_validate(response)
+
+    async def list_shared_workspace_source_page(
+        self,
+        share_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> SharedWorkspaceSourcePage:
+        """Read one source page without dropping pagination or partial errors."""
+        params = {
+            key: value
+            for key, value in {
+                "offset": offset,
+                "limit": limit,
+                "q": q,
+                "state": state,
+            }.items()
+            if value is not None
+        }
+        response = await self._request(
+            "GET",
+            f"/api/v1/sharing/shared-with-me/{share_id}/sources",
+            params=params,
+        )
+        return SharedWorkspaceSourcePage.model_validate(response)
+
+    async def list_shared_workspace_sources(
+        self,
+        share_id: int,
+    ) -> list[SharedWorkspaceSourceResponse]:
+        """Compatibility list convenience; use page API for status/partial errors."""
+        items: list[SharedWorkspaceSourceResponse] = []
+        offset = 0
+        while True:
+            page = await self.list_shared_workspace_source_page(share_id, offset=offset)
+            items.extend(page.items)
+            if not page.pagination.has_more:
+                return items
+            next_offset = page.pagination.offset + page.pagination.limit
+            if not page.items or next_offset <= offset:
+                raise ValueError("Shared source pagination did not advance")
+            offset = next_offset
 
     async def get_shared_workspace_media(
         self, share_id: int, media_id: int

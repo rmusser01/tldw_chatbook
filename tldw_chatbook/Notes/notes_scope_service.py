@@ -2421,7 +2421,27 @@ class NotesScopeService:
         self._enforce_policy(self._graph_action_id("create"))
         return await self.server_service.create_note_link(note_id, **kwargs)
 
-    async def delete_note_link(self, *, scope: ScopeType | str, edge_id: str) -> Any:
+    async def delete_note_link(
+        self,
+        *,
+        scope: ScopeType | str,
+        edge_id: str,
+        dataset_id: str | None = None,
+        expected_version: int | None = None,
+        idempotency_key: str | None = None,
+        reason: str | None = None,
+    ) -> Any:
+        """Delete the selected server link without refreshing its version."""
         self._require_server_graph_scope(scope)
         self._enforce_policy(self._graph_action_id("delete"))
-        return await self.server_service.delete_note_link(edge_id)
+        preconditions = {
+            key: value
+            for key, value in {
+                "dataset_id": dataset_id,
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+                "reason": reason,
+            }.items()
+            if value is not None
+        }
+        return await self.server_service.delete_note_link(edge_id, **preconditions)

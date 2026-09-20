@@ -16134,3 +16134,15 @@ only in the header row. For cache/rendering defects, assert the composed screen,
 then compare it with terminal capture; a new render can skip the stale layer
 that the user still sees. The receipts and initial fixture correction are in
 `Docs/superpowers/qa/2026-09-19-mcp-tools-header/README.md`.
+
+## 2026-09-20 — Admission retries need the caller's real lifecycle (TASK-32881)
+
+The connected clone HTTP test reused one request object and proved a stable
+Idempotency-Key, while the actual Sharing panel recreated a request on every
+click. Review caught that a lost accepted response followed by a user retry could
+still create a second workspace. A mounted panel → real scope/service → httpx
+transport regression exposed the gap and now covers timeout, remount, and explicit
+new-copy intent. The retained identity also needs stable server/account scope,
+server-normalized inputs, and quota behavior that never evicts uncertain requests.
+Exercise the UI or workflow that owns the logical request, not just a transport
+helper whose test already assumes the required ownership.

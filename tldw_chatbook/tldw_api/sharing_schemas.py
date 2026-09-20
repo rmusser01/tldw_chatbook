@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any
+from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+)
 
 
 class ShareScopeType(str, Enum):
@@ -122,24 +130,123 @@ class VerifyPasswordResponse(BaseModel):
 
 
 class CloneWorkspaceRequest(BaseModel):
-    new_name: str | None = Field(default=None, max_length=255)
+    """One logical clone admission; retain this request/key after uncertain responses."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        validation_alias=AliasChoices("name", "new_name"),
+    )
+    idempotency_key: str = Field(
+        default_factory=lambda: str(uuid4()),
+        exclude=True,
+        min_length=16,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+
+    @model_validator(mode="after")
+    def validate_name(self) -> CloneWorkspaceRequest:
+        """Reject names that the canonical server request refuses."""
+        if self.name is not None and not self.name.strip():
+            raise ValueError("name must not be blank")
+        return self
 
 
 class CloneWorkspaceResponse(BaseModel):
-    job_id: str
+    """Durable operation receipt, with legacy ephemeral job responses accepted."""
+
+    job_id: str | None = None
+    operation_id: str | None = None
+    workspace_id: str | None = None
+    command: str | None = None
+    schema_version: int | None = None
+    share_id: int | None = None
     status: str = "pending"
-    message: str = "Clone job created"
+    started_at: str | None = None
+    updated_at: str | None = None
+    retryable: bool = False
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    poll_href: str | None = None
+    progress: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    message: str | None = None
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> CloneWorkspaceResponse:
+        """Require a usable receipt identity in both protocol generations."""
+        if not self.operation_id and not self.job_id:
+            raise ValueError("clone response requires an operation_id or legacy job_id")
+        return self
 
 
 class SharedWorkspaceSourceResponse(BaseModel):
-    id: str
-    workspace_id: str
+    """Current recipient source projection with legacy field aliases."""
+
+    source_id: str = Field(validation_alias=AliasChoices("source_id", "id"))
+    workspace_id: str | None = None
     media_id: int | None = None
     title: str = ""
     source_type: str = "media"
-    url: str | None = None
+    origin_url: str | None = Field(
+        default=None, validation_alias=AliasChoices("origin_url", "url")
+    )
+    origin_host: str | None = None
+    state: str | None = None
+    reason_code: str | None = None
+    citation_ready: bool | None = None
+    retrieval_ready: bool | None = None
     position: int = 0
     added_at: str | None = None
+
+    @computed_field
+    @property
+    def id(self) -> str:
+        """Compatibility accessor for pre-page source consumers."""
+        return self.source_id
+
+    @computed_field
+    @property
+    def url(self) -> str | None:
+        """Compatibility accessor for pre-page source consumers."""
+        return self.origin_url
+
+
+class SharedWorkspaceSourcePagination(BaseModel):
+    """Server-owned offset pagination metadata."""
+
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    total: int = Field(ge=0)
+    has_more: bool
+
+
+class SharedWorkspaceSourcePage(BaseModel):
+    """Recipient source rows with completeness and partial-failure metadata."""
+
+    items: list[SharedWorkspaceSourceResponse]
+    pagination: SharedWorkspaceSourcePagination
+    summary: dict[str, Any] = Field(default_factory=dict)
+    partial_errors: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_list(cls, value: Any) -> Any:
+        """Wrap an older unpaginated list without inventing another page."""
+        if isinstance(value, list):
+            return {
+                "items": value,
+                "pagination": {
+                    "offset": 0,
+                    "limit": max(1, len(value)),
+                    "total": len(value),
+                    "has_more": False,
+                },
+            }
+        return value
 
 
 class SharedMediaResponse(BaseModel):

@@ -128,8 +128,12 @@ class ServerSharingScopeService:
 
     def _normalize_clone(self, payload: Any) -> dict[str, Any]:
         normalized = self._normalize_simple(payload, entity_kind="share_clone_job")
+        operation_id = normalized.get("operation_id")
         job_id = normalized.get("job_id")
-        if job_id is not None:
+        if operation_id is not None:
+            normalized["entity_kind"] = "share_clone_operation"
+            normalized["id"] = self._server_id("share_clone_operation", operation_id)
+        elif job_id is not None:
             normalized["id"] = self._server_id("share_clone_job", job_id)
         return normalized
 
@@ -231,6 +235,51 @@ class ServerSharingScopeService:
         normalized = self._normalize_clone(result)
         normalized["share_id"] = share_id
         return normalized
+
+    async def get_shared_workspace_clone_operation(
+        self,
+        *,
+        mode: SharingBackend | str | None = None,
+        share_id: int,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Read a receipt through the existing inspection policy boundary."""
+        self._require_server_mode(mode)
+        self._enforce_policy("sharing.links.inspect.server")
+        result = await self._maybe_await(
+            self._require_service().get_shared_workspace_clone_operation(
+                share_id, operation_id
+            )
+        )
+        return self._normalize_clone(result)
+
+    async def list_shared_workspace_source_page(
+        self,
+        *,
+        mode: SharingBackend | str | None = None,
+        share_id: int,
+        offset: int = 0,
+        limit: int = 50,
+        q: str | None = None,
+        state: str | None = None,
+    ) -> dict[str, Any]:
+        """Normalize source identities without dropping page metadata."""
+        self._require_server_mode(mode)
+        self._enforce_policy("sharing.links.list.server")
+        result = self._as_dict(
+            await self._maybe_await(
+                self._require_service().list_shared_workspace_source_page(
+                    share_id, offset=offset, limit=limit, q=q, state=state
+                )
+            )
+        )
+        result["items"] = [
+            self._normalize_simple(item, entity_kind="shared_workspace_source")
+            for item in result.get("items", [])
+        ]
+        result["backend"] = "server"
+        result["entity_kind"] = "shared_workspace_source_page"
+        return result
 
     async def list_shared_workspace_sources(
         self,
