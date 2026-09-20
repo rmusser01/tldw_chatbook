@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from loguru import logger
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 # Optional imports
 try:
@@ -172,8 +173,8 @@ class HiggsVoiceProfileManager:
                 "language": language,
                 "description": description or "",
                 "tags": tags or [],
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": utc_now_iso(),
+                "updated_at": utc_now_iso(),
                 "metadata": metadata or {},
                 "audio_info": audio_info,
             }
@@ -225,7 +226,7 @@ class HiggsVoiceProfileManager:
             if metadata_update:
                 profile["metadata"].update(metadata_update)
 
-            profile["updated_at"] = datetime.now().isoformat()
+            profile["updated_at"] = utc_now_iso()
 
             # Save updated profiles
             if self.save_profiles(profiles):
@@ -450,10 +451,10 @@ class HiggsVoiceProfileManager:
                     import_profile.pop("reference_audio", None)
 
             # Update timestamps
-            import_profile["imported_at"] = datetime.now().isoformat()
+            import_profile["imported_at"] = utc_now_iso()
             if "updated_at" not in import_profile:
                 import_profile["updated_at"] = import_profile.get(
-                    "created_at", datetime.now().isoformat()
+                    "created_at", utc_now_iso()
                 )
 
             # Save profile

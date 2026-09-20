@@ -15,7 +15,6 @@ from weakref import WeakSet
 from typing import Dict, Any, Optional, List, Literal, Tuple
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from datetime import datetime
 import hashlib
 from loguru import logger
 
@@ -31,6 +30,7 @@ from ..Backup_Recovery.rag_definition_participant import (
 )
 from ..config import get_user_data_dir
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 _definition_writes = threading.local()
@@ -1236,7 +1236,7 @@ class ConfigProfileManager:
                         {
                             "summary": summary,
                             "detailed_results": results,
-                            "completed_at": datetime.now().isoformat(),
+                            "completed_at": utc_now_iso(),
                         },
                         f,
                         indent=2,

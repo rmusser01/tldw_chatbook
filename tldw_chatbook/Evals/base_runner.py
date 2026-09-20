@@ -17,6 +17,7 @@ from datetime import datetime
 from loguru import logger
 
 from .eval_errors import get_error_handler
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 class EvalError(Exception):
@@ -200,7 +201,7 @@ class BaseEvalRunner(ABC):
             metrics=aggregate_metrics,
             samples_evaluated=len(self.sample_results),
             duration_seconds=duration,
-            timestamp=datetime.now().isoformat(),
+            timestamp=utc_now_iso(),
             errors=self.errors,
         )
 

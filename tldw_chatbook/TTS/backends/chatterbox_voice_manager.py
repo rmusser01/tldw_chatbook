@@ -11,6 +11,7 @@ from loguru import logger
 
 # Local imports
 from .voice_manager_base import VoiceManagerBase
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
 #
@@ -127,8 +128,8 @@ class ChatterboxVoiceManager(VoiceManagerBase):
                 "language": language,
                 "description": description or "",
                 "tags": tags or [],
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": utc_now_iso(),
+                "updated_at": utc_now_iso(),
                 "backend": "chatterbox",
                 "metadata": metadata or {},
                 "audio_info": audio_info,
@@ -249,7 +250,7 @@ class ChatterboxVoiceManager(VoiceManagerBase):
             if metadata_update:
                 profile["metadata"].update(metadata_update)
 
-            profile["updated_at"] = datetime.now().isoformat()
+            profile["updated_at"] = utc_now_iso()
 
             # Save updated profiles
             if self.save_profiles(profiles):
@@ -397,11 +398,11 @@ class ChatterboxVoiceManager(VoiceManagerBase):
                     import_profile.pop("reference_audio", None)
 
             # Update metadata
-            import_profile["imported_at"] = datetime.now().isoformat()
+            import_profile["imported_at"] = utc_now_iso()
             import_profile["backend"] = "chatterbox"
             if "updated_at" not in import_profile:
                 import_profile["updated_at"] = import_profile.get(
-                    "created_at", datetime.now().isoformat()
+                    "created_at", utc_now_iso()
                 )
 
             # Save profile

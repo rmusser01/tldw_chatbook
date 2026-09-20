@@ -11,6 +11,7 @@ Handles conflict resolution when importing content that may already exist.
 from enum import Enum
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 class ConflictResolution(Enum):
@@ -205,7 +206,7 @@ class ConflictResolver:
         merged["content"] = (
             existing.get("content", "") + separator + incoming.get("content", "")
         )
-        merged["updated_at"] = datetime.now().isoformat()
+        merged["updated_at"] = utc_now_iso()
 
         # Merge tags
         existing_tags = (

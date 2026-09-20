@@ -14,7 +14,6 @@ import json
 import math
 import re
 import subprocess  # nosec B404
-from datetime import datetime
 from itertools import count
 from time import monotonic as _monotonic
 from types import SimpleNamespace
@@ -29,6 +28,7 @@ from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
 )
 
 from .activation import client_guard, guarded
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the spawn-time check.)
 
@@ -1250,7 +1250,7 @@ class MCPClient:
             pending.server = {
                 "command": command,
                 "args": list(args or []),
-                "connected_at": datetime.now().isoformat(),
+                "connected_at": utc_now_iso(),
                 "tools": [],
                 "resources": [],
                 "prompts": [],

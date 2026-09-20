@@ -19,7 +19,6 @@ import time
 import wave
 from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
@@ -66,6 +65,7 @@ from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
 )
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 #######################################################################################################################
 #
@@ -1830,7 +1830,7 @@ class KokoroTTSBackend(LocalTTSBackend):
             blend_data = {
                 "voices": normalized_voices,
                 "description": description,
-                "created_at": datetime.now().isoformat(),
+                "created_at": utc_now_iso(),
                 "metadata": metadata or {},
             }
 
