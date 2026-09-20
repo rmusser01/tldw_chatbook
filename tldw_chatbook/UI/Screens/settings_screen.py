@@ -24566,13 +24566,16 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         auth_token = str(result.get("auth_token") or "").strip()
-        saved = save_settings_to_cli_config(
+        # task-32804.12: off the loop -- the atomic write + cache reload is
+        # ~64 ms, and this method runs on the event loop via run_worker(coroutine).
+        saved = await asyncio.to_thread(
+            save_settings_to_cli_config,
             {
                 "tldw_api": {
                     "base_url": base_url,
                     "auth_token": auth_token,
                 }
-            }
+            },
         )
         if not saved:
             self.app.notify(
@@ -24583,7 +24586,9 @@ class SettingsScreen(BaseAppScreen):
             return
 
         try:
-            refreshed_config = load_settings(force_reload=True)
+            refreshed_config = await asyncio.to_thread(
+                load_settings, force_reload=True
+            )
         except Exception as exc:
             logger.warning(
                 "Saved server settings could not be loaded (exception_category=%s).",
