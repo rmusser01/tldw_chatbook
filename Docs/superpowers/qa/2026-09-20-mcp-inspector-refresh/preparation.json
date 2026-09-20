@@ -1,0 +1,6 @@
+{
+  "fixture": "fresh owned directories with synthetic config; no user DB copied",
+  "config_sha256": "7fae84455cdb109e8bfe2e263ade3c4180735914d290831822ea05ad28f9d3fc",
+  "runner": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/native_check.py",
+  "root": "/private/tmp/tldw-32823-current-native-004"
+}

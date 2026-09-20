@@ -10,6 +10,8 @@
 # Imports
 import time
 
+from Tests.private_profile import private_profile_test
+
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from typing import List
@@ -415,8 +417,9 @@ class TestTabNavigationProvider:
             assert not screen.query(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}")
 
     @pytest.mark.asyncio
+    @private_profile_test
     async def test_search_uses_destination_labels_without_duplicates(
-        self, tab_provider
+        self, tab_provider, request
     ):
         """Command palette labels match shell destinations exactly once each."""
         hits = []
@@ -428,7 +431,6 @@ class TestTabNavigationProvider:
         for label in (
             "Console",
             "Library",
-            "Artifacts",
             # F-034: one public name everywhere - the palette command uses
             # the same "Roleplay" label as the nav rail and screen header.
             "Roleplay",
@@ -444,6 +446,7 @@ class TestTabNavigationProvider:
             expected_text = f"Tab Navigation: Switch to {label}"
             assert texts.count(expected_text) == 1, expected_text
 
+        assert texts.count("Tab Navigation: Library — Artifacts") == 1
         joined_text = "\n".join(texts)
         assert "Tab Navigation: Switch to Chat" not in joined_text
         assert "Tab Navigation: Switch to Skills" not in joined_text

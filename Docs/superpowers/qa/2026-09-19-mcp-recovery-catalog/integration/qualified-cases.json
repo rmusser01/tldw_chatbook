@@ -1,0 +1,733 @@
+{
+  "distinct_cases": 182,
+  "cases": [
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-screen]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-screen_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[success-service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-screen]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-screen_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_completion_owns_its_view[failure-service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_row]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_row_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_profile]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_preserves_later_permission_selection[permission_profile_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[finding]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[sync_lock]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[overview]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[detail]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_publication::test_restored_review_stops_rendering_after_navigation[readiness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[approve]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[cancel]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[source]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[target]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[target_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[scope]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[unmount]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[definition]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[workspace]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[generation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[duplicate]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[cancel_accepted]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_restored_mcp_root_review[empty]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_mounted_ordinary_mcp_review_preserves_existing_permission_controls",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_controls::test_actual_mcp_view_state_preserves_selection_validation_and_review_revision",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_review::test_actual_review_creates_fresh_existing_format_policy_and_only_mcp_approval",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_review::test_actual_review_retains_accepted_native_lifetime[nested]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_review::test_actual_review_retains_accepted_native_lifetime[worker_cancel]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_destination_shells::test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_destination_shells::test_mcp_destination_footer_shortcuts_follow_mode",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_sync_children_resolves_effective_states_exactly_once",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_cleared_selection_is_not_re_hijacked_by_later_resync",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_execution_log_entries_into_canvas",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_audit_mode_syncs_server_findings_into_findings_subview",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_inspector::test_concurrent_refreshes_serialize_and_last_writer_wins",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_named_profile_global_edit_uses_exact_captured_context",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_profile_scoped_edit_rejects_missing_or_stale_context[missing]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_profile_scoped_edit_rejects_missing_or_stale_context[generation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_profile_scoped_edit_rejects_missing_or_stale_context[digest]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_selected_profile_disappearance_falls_back_and_invalidates_context",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_tool_row_selection_shows_permission_block",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_pinned_row_selection_clears_inspector_without_crash",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_tool_row_selection_shows_permission_block",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_permissions_mode_builtin_pinned_row_selection_clears_inspector",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_navigation_rejects_profile_switch_during_await[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[tool]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_workbench::test_queued_audit_action_rejects_profile_switch_before_handler[permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[replace-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[profile-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[clear-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[same-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_retired_permission_jump_cannot_target_a_new_view[roundtrip-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_is_invalid_before_tool_pruning_yields[mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_current_permission_jump_preserves_identity_and_is_retryable[mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[hidden]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[disabled]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_unavailable_test_jump_is_ignored_but_tool_details_jump_still_works[closed]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_hidden-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[ancestor_disabled-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.UI.test_mcp_permission_navigation::test_permission_jump_ignores_an_unavailable_owning_view[covered-mcp-inspector-goto-permission-test]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[current]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[failure]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[mode]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[screen_round_trip]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog::test_reviewed_catalog_publication_is_passive_and_owned[service]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-recovery-catalog]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-recovery-catalog]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-recovery-catalog]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-recovery-catalog]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-recovery-catalog]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-recovery-catalog]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-recovery-catalog]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-restored-roots]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-tools-header]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-modal-selector]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-catalog-freshness]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-audit-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-revoke]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-rule-actions]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-permission-navigation]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names0]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_tmux_names_reject_trailing_newlines[names1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_prepared_profile_and_path_discovered_tmux_are_returned_without_writes",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[outside]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[alias]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[traversal]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[tmp-base]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-home]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_unsafe_profile_is_rejected_before_output[escaped-db]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[native.log]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[launch.json]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[evidence]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_existing_output_is_preserved_and_rejected[dangling-log]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_missing_tmux_is_reported_before_output",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_current_catalog_is_converted_before_publication[names0]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_current_catalog_is_converted_before_publication[names1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[None]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records2]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records3]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_invalid_service_result_preserves_approval_and_offers_retry[records4]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_catalog_reader_failure_keeps_successful_approval_private",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_late_catalog_does_not_publish_or_clear_successor_token[False]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_late_catalog_does_not_publish_or_clear_successor_token[True]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[bad]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[malformed1]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[7]",
+      "status": "passed"
+    },
+    {
+      "id": "Tests.Backup_Recovery.test_mcp_recovery_catalog_unit::test_store_normalizes_non_mapping_environment_before_passive_catalog[None]",
+      "status": "passed"
+    }
+  ]
+}

@@ -1,0 +1,287 @@
+{
+  "normalization": "UTF-8 exports strip trailing line whitespace and end with one newline. Originals remain in private temporary directories. Historical evidence is not current qualification.",
+  "files": [
+    {
+      "source": "/private/tmp/mcp-roots-selection-red-001.log",
+      "export": "tests/selection-red-001.txt",
+      "source_sha256": "84765d51d310f9a6dc521fd76bab669cb411a00505edc0326f977dcce887d125",
+      "export_sha256": "7bdd4e5cb3b5d132343ad20835ab4f5daa2284f4594aa2068062068c991cac1e"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-selection-green-001.log",
+      "export": "tests/selection-green-001.txt",
+      "source_sha256": "2ce48c2524b6a187199e3e634aff0d2623ddf31f8bb54ecc1e1adae57203e708",
+      "export_sha256": "2ce48c2524b6a187199e3e634aff0d2623ddf31f8bb54ecc1e1adae57203e708"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-integrated-001.log",
+      "export": "tests/integrated-001.txt",
+      "source_sha256": "d8088ef293031301526ff457403ea67cfd237104f672a72e2fbd5de4d44fa578",
+      "export_sha256": "d8088ef293031301526ff457403ea67cfd237104f672a72e2fbd5de4d44fa578"
+    },
+    {
+      "source": "/private/tmp/2749-closeout-receipt.json",
+      "export": "pr2749-closeout.json",
+      "source_sha256": "d4a17e4b3bb847ed244f3aef0861c4e4ce3dcd357ceb57fc337bea77d767c518",
+      "export_sha256": "d4a17e4b3bb847ed244f3aef0861c4e4ce3dcd357ceb57fc337bea77d767c518"
+    },
+    {
+      "source": "/private/tmp/2727-rebase-conflicts.json",
+      "export": "rebase-conflicts.json",
+      "source_sha256": "e440a558c24475c0cedf34144faffc8a943c158b9bbe6ae1c439f6301382d603",
+      "export_sha256": "e440a558c24475c0cedf34144faffc8a943c158b9bbe6ae1c439f6301382d603"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-integrated-formatting.txt",
+      "export": "formatting.txt",
+      "source_sha256": "6595930dc8eb4ba2c374497881de87336a9f90831bcc3c685370a6928bfa49ac",
+      "export_sha256": "6595930dc8eb4ba2c374497881de87336a9f90831bcc3c685370a6928bfa49ac"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-integrated-cases.txt",
+      "export": "selected-cases.txt",
+      "source_sha256": "6fd040afc0e7af0fb0630faf2aaa940365640979f0930c5cebd88e20916149af",
+      "export_sha256": "6fd040afc0e7af0fb0630faf2aaa940365640979f0930c5cebd88e20916149af"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-integrated-preflight-001.txt",
+      "export": "preflight.txt",
+      "source_sha256": "80a8180cb3fb3e51d9a9fc11d29e18b92a6573fb120a915b6a8d4f1e80a2ca2b",
+      "export_sha256": "80a8180cb3fb3e51d9a9fc11d29e18b92a6573fb120a915b6a8d4f1e80a2ca2b"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-native-startup-failure.txt",
+      "export": "unqualified-startup.txt",
+      "source_sha256": "15ed6cdefa3ec0996bd779619bfca4a13770e9739dc217dc846b9e3e0168d892",
+      "export_sha256": "15ed6cdefa3ec0996bd779619bfca4a13770e9739dc217dc846b9e3e0168d892"
+    },
+    {
+      "source": "/private/tmp/2727-saved-native-check.py",
+      "export": "historical-native-check.py.txt",
+      "source_sha256": "f0fe118d931e2170a6b1e8058aaa814c977d54bd84bbaec934225ff916cfef28",
+      "export_sha256": "f0fe118d931e2170a6b1e8058aaa814c977d54bd84bbaec934225ff916cfef28"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-runner-red-001.log",
+      "export": "tests/runner-red-001.txt",
+      "source_sha256": "1f7d368bc77f00161dc5d7eeb8d3adbda5bf5384b83124f3095700b92d86d666",
+      "export_sha256": "8d8a5916199ed953a09e0c04ffeb1469d786eebb566e1fff40b2fd8760facc27"
+    },
+    {
+      "source": "/private/tmp/mcp-roots-runner-green-001.log",
+      "export": "tests/runner-green-001.txt",
+      "source_sha256": "33f13d0db376b4350ff35cb54a30661216d96c1f8490a8be648a23089b31fc5c",
+      "export_sha256": "33f13d0db376b4350ff35cb54a30661216d96c1f8490a8be648a23089b31fc5c"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/result.json",
+      "export": "native/result.json",
+      "source_sha256": "8c70f33eb8223752a288559a130d73b58e8c68704e470513bae61c6f3cf4130a",
+      "export_sha256": "8c70f33eb8223752a288559a130d73b58e8c68704e470513bae61c6f3cf4130a"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-cancel-control.svg",
+      "export": "native/textual-dark-120x40-cancel-control.svg",
+      "source_sha256": "c465168cab7425770f2298c5a48ba738e35ee7f987253b6f70ca7dcc5e1509e2",
+      "export_sha256": "615bdd168b203f5f77a4099d53653b8aca1c64105bc805040340069860a95c27"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-cancel-control.txt",
+      "export": "native/textual-dark-120x40-cancel-control.txt",
+      "source_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50",
+      "export_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-confirm-control.svg",
+      "export": "native/textual-dark-120x40-confirm-control.svg",
+      "source_sha256": "0412fb350f1ab226081daf9319933d3c4431b99546feb428eb8e0cc6ccead872",
+      "export_sha256": "16514ab696480151a1ce94a592a874e37b72310469cf902f580f0198ff626c79"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-confirm-control.txt",
+      "export": "native/textual-dark-120x40-confirm-control.txt",
+      "source_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50",
+      "export_sha256": "9a6d89880c03a09a782804f7ec7ec64ef86dcf38b180882efe005903b9462a50"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-fresh-defaults.svg",
+      "export": "native/textual-dark-120x40-fresh-defaults.svg",
+      "source_sha256": "1952418c7929cd56df25e2b555d229ab42fef1e3fbc9db7c3db1adc08c8bf90e",
+      "export_sha256": "993a51d98f1544362483129dfc43e17724af4ddf570073f95ba9d276b9228efb"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-fresh-defaults.txt",
+      "export": "native/textual-dark-120x40-fresh-defaults.txt",
+      "source_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb",
+      "export_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-review.svg",
+      "export": "native/textual-dark-120x40-review.svg",
+      "source_sha256": "83b4f213e0fecdd3e6fd513db7bcecc532c0d5c7f020d76642ae15b63414ebee",
+      "export_sha256": "9551df2e7aeafe36c7c0b3c51c9d403744df532cd39b4639a7e240874dcf93d1"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-120x40-review.txt",
+      "export": "native/textual-dark-120x40-review.txt",
+      "source_sha256": "0996373d7033b5dfa28185a93a223ac8bf6e945f2580e435a59741261e7f5b95",
+      "export_sha256": "0996373d7033b5dfa28185a93a223ac8bf6e945f2580e435a59741261e7f5b95"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-cancel-control.svg",
+      "export": "native/textual-dark-170x48-cancel-control.svg",
+      "source_sha256": "c16d07a21c9df5dc32a79b475cbc22d92db28c7a3ba80bdeae9a33e682176f90",
+      "export_sha256": "a2749e51035cfe17e44b2bf04b2c13d6eccbd76984c333384821b4b71840c4e2"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-cancel-control.txt",
+      "export": "native/textual-dark-170x48-cancel-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-confirm-control.svg",
+      "export": "native/textual-dark-170x48-confirm-control.svg",
+      "source_sha256": "8ef7252f034c475d274188f80547e64106c73252324f2cb17b00cf5d0e42ac4e",
+      "export_sha256": "c26846204a3d64a272b9ab75e634b1e0fb7d407ebaff798f884c238bbda8f3e2"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-confirm-control.txt",
+      "export": "native/textual-dark-170x48-confirm-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-fresh-defaults.svg",
+      "export": "native/textual-dark-170x48-fresh-defaults.svg",
+      "source_sha256": "b204f60688cc1f328f714b5c735e358c21d9fc5abd0c22b368e116cdd9e1a0e3",
+      "export_sha256": "368b0d04c4df844241df1977e53567a546454f9f1663aef544f970d5f3775580"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-fresh-defaults.txt",
+      "export": "native/textual-dark-170x48-fresh-defaults.txt",
+      "source_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01",
+      "export_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-review.svg",
+      "export": "native/textual-dark-170x48-review.svg",
+      "source_sha256": "22c4541071927a4299017c51c2bb2aac0bfd985153b7e472bfe5aa321c29f539",
+      "export_sha256": "2fbfab1110c3d65f217af81e0c447a7291629d96feeb00a7f572865b72e4da57"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-dark-170x48-review.txt",
+      "export": "native/textual-dark-170x48-review.txt",
+      "source_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe",
+      "export_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-cancel-control.svg",
+      "export": "native/textual-light-120x40-cancel-control.svg",
+      "source_sha256": "a2ac5f8196ef75b471b98028bd63c63899e157d1b4622829fbe261093a62a959",
+      "export_sha256": "1dc927f8e5bdaf653e99a0ad1bac3252244ab00ab7bb919c0a28eb367264c5e4"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-cancel-control.txt",
+      "export": "native/textual-light-120x40-cancel-control.txt",
+      "source_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5",
+      "export_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-confirm-control.svg",
+      "export": "native/textual-light-120x40-confirm-control.svg",
+      "source_sha256": "46c81b62c82f267abf5560ca00ca55287e8d169c5087c25c05347f4b34a911eb",
+      "export_sha256": "09269e6355c8a9d09aca4e6c539f00996a3628edc5a0d1bcf657c9f5a9f7277f"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-confirm-control.txt",
+      "export": "native/textual-light-120x40-confirm-control.txt",
+      "source_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5",
+      "export_sha256": "077c2e1871ec1451d5343795be964540ce08ffcb90f3cee999b0189af022eab5"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-fresh-defaults.svg",
+      "export": "native/textual-light-120x40-fresh-defaults.svg",
+      "source_sha256": "e4c913c2c0dc0162e0fa44646ce8a36da6e1d075eabedf9a5e3a49826361547a",
+      "export_sha256": "8ed23de49492d7bf8f83288a38acbcbb10c6da3267796e5062707ec86148d9a8"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-fresh-defaults.txt",
+      "export": "native/textual-light-120x40-fresh-defaults.txt",
+      "source_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb",
+      "export_sha256": "3c2c0b6b3f18aaf8d641ef99d179ae5fce8a1200b69eb4233684899ab5585cbb"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-review.svg",
+      "export": "native/textual-light-120x40-review.svg",
+      "source_sha256": "991a73481272ea3dc84fdaab86ccb63b2a58dce2510897aa5d3adf0fa0eebef3",
+      "export_sha256": "11aa9abdbaa215aef59e83dd6cd927182cf561a695e6db88b85d3759e8041398"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-120x40-review.txt",
+      "export": "native/textual-light-120x40-review.txt",
+      "source_sha256": "42119a85ac3182bf687a7c6171fb06274b75868c02c57fc7c83c2a7ce85fba39",
+      "export_sha256": "42119a85ac3182bf687a7c6171fb06274b75868c02c57fc7c83c2a7ce85fba39"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-cancel-control.svg",
+      "export": "native/textual-light-170x48-cancel-control.svg",
+      "source_sha256": "d5b775084c675ad1bae87c812ec30b236f1dbf027d1a737f24143534bccb9cf8",
+      "export_sha256": "03b15f43a3ee5b01f6f0437b4f74f2ad7cd692e8b922d89eafe873ced7bcef0b"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-cancel-control.txt",
+      "export": "native/textual-light-170x48-cancel-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-confirm-control.svg",
+      "export": "native/textual-light-170x48-confirm-control.svg",
+      "source_sha256": "8de4483e77cd0de00d60c991ffdf633e5419a4c1d2f125674b5c6674fc2ef9da",
+      "export_sha256": "9bd0bfb93da9cf5fa84d897801c6704fef8c40ce8664183c7bf7bfcd582250f9"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-confirm-control.txt",
+      "export": "native/textual-light-170x48-confirm-control.txt",
+      "source_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238",
+      "export_sha256": "c922600cecd1a8f743d37185be1db011810d6a2a3d00a2cc9567f232b25c5238"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-fresh-defaults.svg",
+      "export": "native/textual-light-170x48-fresh-defaults.svg",
+      "source_sha256": "1e06e5fb62b402db636b9dd596634a44c0f6974bafa4e391b2b18623d06aaa7c",
+      "export_sha256": "22a09ba19e1c1fa082ef02148c69999eef012509e24b3c76c21f48aa2d96a92e"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-fresh-defaults.txt",
+      "export": "native/textual-light-170x48-fresh-defaults.txt",
+      "source_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01",
+      "export_sha256": "f30db9f05aa582f0bc7c7d0331888f4929bf17c3b25b9217f571ff9a8ce75f01"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-review.svg",
+      "export": "native/textual-light-170x48-review.svg",
+      "source_sha256": "baa8fdf34720ddf28a4ce2180a6f6fdf79bc1879082a9c889b9d1e9ce39bb1c5",
+      "export_sha256": "a243c31ddf29a028480f9c286b2b01316fb52462c6b09df9fedf2d55d15de6d0"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/evidence/textual-light-170x48-review.txt",
+      "export": "native/textual-light-170x48-review.txt",
+      "source_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe",
+      "export_sha256": "278a38b50f6a78d2c96cf26ae81cadddf8e80c0a2e93092b89d3d1271f0c78fe"
+    },
+    {
+      "source": "/private/tmp/tldw-32839-native-qodo-001/lifecycle.json",
+      "export": "lifecycle.json",
+      "source_sha256": "9711e8a6bdec3f4365f6a9ff505b253106361f6f00d7b41252e76d36790dde9a",
+      "export_sha256": "9711e8a6bdec3f4365f6a9ff505b253106361f6f00d7b41252e76d36790dde9a"
+    },
+    {
+      "source": "/private/tmp/32839-static.json",
+      "export": "static-analysis.json",
+      "source_sha256": "7e3a3d53608e8e249106a7d261c7f2dbf86b605eb8eaab9aefc81025b0da14ef",
+      "export_sha256": "7e3a3d53608e8e249106a7d261c7f2dbf86b605eb8eaab9aefc81025b0da14ef"
+    }
+  ]
+}

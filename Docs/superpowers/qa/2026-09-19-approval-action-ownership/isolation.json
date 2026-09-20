@@ -1,0 +1,8 @@
+{
+  "base": "d6e2a46384c9ed504d4a29bf10a4af8936ea3114",
+  "branch": "codex/approval-batch-action-review",
+  "original_checkout_preserved": true,
+  "reason": "Concurrent branch switching and unrelated Console/CSS changes in component-pattern-library. Copied only owned approval source, tests, task and runner into this branch. Earlier native002 used those unrelated CSS edits; native003 and isolated test/preflight runs qualify the exact saved sources.",
+  "native_source_hashes_match": true,
+  "runner_hash_matches": true
+}

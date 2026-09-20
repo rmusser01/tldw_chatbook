@@ -1,0 +1,32 @@
+{
+  "approved_head": "2e117e1c96580732b327613af8199b32bd9a4515",
+  "integrated_dev": "6e9e94c79483bbb641501516076ac52faad96239",
+  "conflicts": [],
+  "approved_product_and_css_unchanged": true,
+  "native_sources_and_runner_match": true,
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "d4e0a0bf7cf2a38a312e7d5032a23f4556fa0c2f0664e41391703264d1eeaf70",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "e31fad676f32389fd66cfcfacb6305d809c7e63aaa42694eae10269c3ec71dee",
+    "tldw_chatbook/UI/Screens/mcp_screen.py": "c3db4e0c4817ee1002f3d6556e0f24f4ea1e4f6451527c4f3765a9bae9a75bb0",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "3ce0e4f05ba7997a9e0bbf9d7ef5993fbbe5ef263c30c5f6a878c088a113ad13",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "Docs/superpowers/qa/native_runner_args.py": "946dbf3fbca36cb71bfc481c23ef7b9a2c49f1a6a24df5c7e99d1d0540c48d1a"
+  },
+  "upstream_changes": "PR2755 Chat draft single-write guard and payload-copy regression; PR2756 Backlog-only task32874. No MCP, style, service, permission or dependency changes.",
+  "targeted_rerun": {
+    "passed": 13,
+    "failed": 0,
+    "log": "tests/rebase-001.txt",
+    "xml": "/private/tmp/32823-rebase-001.xml",
+    "tested_base": "7e7f25a5c20780a8ec3905c4eb2b5222d2228740",
+    "later_base_delta": "Backlog-only task; tested product unchanged"
+  },
+  "visual_approval": "User approved the eight-capture gallery and merge on 2026-09-20. No visual changes during rebase.",
+  "remaining_gates": [
+    "Current-head CI",
+    "Current-head Qodo and accumulated review",
+    "Fresh dev check and exact merge-tree receipt"
+  ]
+}

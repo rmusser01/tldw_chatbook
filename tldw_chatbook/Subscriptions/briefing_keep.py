@@ -23,7 +23,12 @@ fires on every scheduled-generation completion) from mirroring ``empty``
 scheduled rows -- a scheduled run only auto-keeps when it actually produced
 something.
 
-**2. Keep is additive-idempotent.** Re-keeping an already-kept briefing
+**2. Keep is additive-idempotent for matching snapshots.** Numeric source IDs
+can collide with imported reports. An existing kept parent must match the
+body and immutable content metadata before any script is added, including
+a parent found after a create conflict. A mismatch raises ``KeepRefused``
+and leaves the saved copy unchanged; Watchlist names and keep provenance
+are deliberately excluded. Re-keeping an already-kept briefing
 never creates a second ``kept_briefings`` row (the idempotency key is
 ``kept_briefings.source_briefing_id UNIQUE``) and never rewrites the
 existing row's fields -- ``origin`` in particular passes through to a
@@ -47,6 +52,11 @@ fold above), and the loser's ``create_kept_script`` call raises
 ``ConflictError`` against ``kept_scripts``' own ``source_script_id``
 UNIQUE constraint -- caught in :func:`_copy_missing_scripts` and folded
 into "already kept" rather than failing that caller's entire keep.
+
+The source parent and script reads share one Subscriptions read snapshot.
+Parent lookup, compatibility validation, creation and script copy share one
+ChaChaNotes immediate write transaction, in Subscriptions → ChaChaNotes order.
+Nested or caller-owned transactions retain their existing ownership semantics.
 
 Cross-DB datetime boundary (load-bearing, see Task 1's report): every
 ``CharactersRAGDB`` connection opens with ``sqlite3.PARSE_DECLTYPES`` plus
@@ -87,7 +97,7 @@ Nothing here logs briefing/script content -- only ids, statuses and counts
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -117,13 +127,13 @@ class KeepRefused(RuntimeError):
     """Raised when a briefing must not be kept; no `kept_briefings` row is written.
 
     Every raise site names both the briefing id and the specific reason
-    (missing, not `complete`, or an empty body) -- never a generic "keep
-    failed" -- mirroring `ScriptCastError`'s naming discipline in
-    `briefing_cast`.
+    (missing, not `complete`, an empty body, or conflicting saved content),
+    never a generic "keep failed" -- mirroring `ScriptCastError`'s naming
+    discipline in `briefing_cast`.
     """
 
 
-def _to_chacha_datetime(value: str | None) -> str | None:
+def _to_chacha_datetime(value: str | datetime | None) -> str | None:
     """Normalize a Subscriptions_DB DATETIME string for a ChaChaNotes column.
 
     See the module docstring's "Cross-DB datetime boundary" section for the
@@ -133,7 +143,7 @@ def _to_chacha_datetime(value: str | None) -> str | None:
     attached explicitly before being re-serialized.
 
     Args:
-        value: A Subscriptions_DB DATETIME column's string value, or None.
+        value: A source DATETIME string, a kept datetime, or None.
 
     Returns:
         An ISO-8601 string with an explicit UTC offset, ready to be written
@@ -143,13 +153,51 @@ def _to_chacha_datetime(value: str | None) -> str | None:
     """
     if value is None:
         return None
-    parsed = datetime.fromisoformat(value)
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.isoformat()
 
 
-def _watchlist_name(subs_db: "SubscriptionsDB", watchlist_id: int) -> str:
+def _ensure_compatible_kept_briefing(
+    briefing: dict[str, Any], existing: dict[str, Any]
+) -> None:
+    """Refuse a source-ID collision before changing a saved snapshot.
+
+    Naive timestamps represent UTC; aware timestamps compare by instant.
+    Counts use the creation path's None/zero normalization. Watchlist names,
+    origin, and keep time describe mutable labels or keep provenance, not
+    the original content, and must not prevent an additive re-keep.
+    """
+    fields = ("body_markdown", "covers_through_item_id", "selection_mode", "model_used")
+    compatible = all(briefing.get(field) == existing.get(field) for field in fields)
+    compatible = compatible and all(
+        (briefing.get(field) or 0) == (existing.get(field) or 0)
+        for field in ("item_count", "featured_count", "overflow_count")
+    )
+    for source_field, kept_field in (
+        ("created_at", "original_created_at"),
+        ("covers_from_ts", "covers_from_ts"),
+    ):
+        source_value = briefing.get(source_field)
+        kept_value = existing.get(kept_field)
+        try:
+            source_instant = _to_chacha_datetime(source_value)
+            kept_instant = _to_chacha_datetime(kept_value)
+            compatible = compatible and (
+                (datetime.fromisoformat(source_instant) if source_instant else None)
+                == (datetime.fromisoformat(kept_instant) if kept_instant else None)
+            )
+        except (TypeError, ValueError):
+            compatible = False
+    if not compatible:
+        raise KeepRefused(
+            f"briefing {briefing['id']} conflicts with saved content "
+            f"in kept briefing {existing['id']}; refusing to keep it"
+        )
+
+
+def _watchlist_name(subs_db: SubscriptionsDB, watchlist_id: int) -> str:
     """Resolve a watchlist's display name at keep time, tolerating deletion.
 
     Args:
@@ -173,7 +221,7 @@ def _watchlist_name(subs_db: "SubscriptionsDB", watchlist_id: int) -> str:
 
 
 def _all_briefing_scripts(
-    subs_db: "SubscriptionsDB", briefing_id: int
+    subs_db: SubscriptionsDB, briefing_id: int
 ) -> list[dict[str, Any]]:
     """Every `briefing_scripts` row for `briefing_id`, walking all pages.
 
@@ -199,8 +247,8 @@ def _all_briefing_scripts(
 
 
 def _copy_missing_scripts(
-    subs_db: "SubscriptionsDB",
-    chacha_db: "CharactersRAGDB",
+    subs_db: SubscriptionsDB,
+    chacha_db: CharactersRAGDB,
     briefing_id: int,
     kept_briefing_id: int,
 ) -> int:
@@ -274,8 +322,8 @@ def _copy_missing_scripts(
 
 
 def keep_briefing(
-    subs_db: "SubscriptionsDB",
-    chacha_db: "CharactersRAGDB",
+    subs_db: SubscriptionsDB,
+    chacha_db: CharactersRAGDB,
     briefing_id: int,
     *,
     origin: str,
@@ -289,8 +337,8 @@ def keep_briefing(
     safe.
 
     Additive-idempotent: calling this again for a briefing that is already
-    kept never creates a second `kept_briefings` row and never rewrites
-    its fields (including `origin` -- it is set only when this call is the
+    kept with matching content never creates a second `kept_briefings` row
+    or rewrites its fields (including `origin` -- it is set only when this call is the
     one that creates the row). It only ever *adds* `kept_scripts` rows for
     scripts that were not kept yet, keyed by `source_script_id`. This also
     covers a genuine race between two concurrent callers keeping the same
@@ -327,68 +375,76 @@ def keep_briefing(
     Raises:
         KeepRefused: If `briefing_id` does not exist in `subs_db`, is not
             `status == "complete"`, or its `body_markdown` is empty or
-            whitespace-only. No `kept_briefings` row is written in any of
-            these cases.
+            whitespace-only, or an existing saved snapshot conflicts with its
+            content. No parent or script row is changed in these cases.
         ConflictError: Only in the vanishingly rare case where a
             concurrent caller's row is deleted again between this
             function losing the create race and re-querying for it --
             not a state this function can recover from silently.
     """
-    briefing = subs_db.get_briefing(briefing_id)
-    if briefing is None:
-        raise KeepRefused(f"briefing {briefing_id} does not exist; refusing to keep it")
-    if briefing["status"] != _BRIEFING_COMPLETE:
-        raise KeepRefused(
-            f"briefing {briefing_id} is {briefing['status']!r}, not "
-            f"{_BRIEFING_COMPLETE!r}; refusing to keep it"
-        )
-    if not (briefing.get("body_markdown") or "").strip():
-        raise KeepRefused(
-            f"briefing {briefing_id} has an empty body; refusing to keep it"
-        )
-
-    existing = chacha_db.get_kept_briefing_by_source(briefing_id)
-    if existing is None:
-        try:
-            kept_id = chacha_db.create_kept_briefing(
-                source_briefing_id=briefing_id,
-                watchlist_name=_watchlist_name(subs_db, briefing["watchlist_id"]),
-                body_markdown=briefing["body_markdown"],
-                covers_through_item_id=briefing.get("covers_through_item_id"),
-                covers_from_ts=_to_chacha_datetime(briefing.get("covers_from_ts")),
-                selection_mode=briefing.get("selection_mode"),
-                model_used=briefing.get("model_used"),
-                item_count=briefing.get("item_count") or 0,
-                featured_count=briefing.get("featured_count") or 0,
-                overflow_count=briefing.get("overflow_count") or 0,
-                origin=origin,
-                original_created_at=_to_chacha_datetime(briefing.get("created_at")),
+    with subs_db.artifact_read_snapshot():
+        briefing = subs_db.get_briefing(briefing_id)
+        if briefing is None:
+            raise KeepRefused(
+                f"briefing {briefing_id} does not exist; refusing to keep it"
             )
-            created = True
-        except ConflictError:
-            # Lost a race: another caller kept this same briefing between
-            # our existence check above and this insert.
-            # `create_kept_briefing`'s only UNIQUE constraint is
-            # `source_briefing_id`, so a `ConflictError` here unambiguously
-            # means "already kept" -- fall into the same additive re-keep
-            # branch a normal re-keep takes, rather than surfacing the race
-            # as an error to the caller (Task 3's auto-keep and a manual
-            # Keep button (Task 5) can plausibly fire for the same
-            # briefing at nearly the same moment).
+        if briefing["status"] != _BRIEFING_COMPLETE:
+            raise KeepRefused(
+                f"briefing {briefing_id} is {briefing['status']!r}, not "
+                f"{_BRIEFING_COMPLETE!r}; refusing to keep it"
+            )
+        if not (briefing.get("body_markdown") or "").strip():
+            raise KeepRefused(
+                f"briefing {briefing_id} has an empty body; refusing to keep it"
+            )
+
+        with chacha_db.transaction(immediate=True):
             existing = chacha_db.get_kept_briefing_by_source(briefing_id)
             if existing is None:
-                # The row that won the race must have been deleted again
-                # between the conflict and this re-query -- vanishingly
-                # rare, and not a state this function can recover from
-                # silently, so the original conflict propagates.
-                raise
-            kept_id = existing["id"]
-            created = False
-    else:
-        kept_id = existing["id"]
-        created = False
+                try:
+                    kept_id = chacha_db.create_kept_briefing(
+                        source_briefing_id=briefing_id,
+                        watchlist_name=_watchlist_name(
+                            subs_db, briefing["watchlist_id"]
+                        ),
+                        body_markdown=briefing["body_markdown"],
+                        covers_through_item_id=briefing.get("covers_through_item_id"),
+                        covers_from_ts=_to_chacha_datetime(
+                            briefing.get("covers_from_ts")
+                        ),
+                        selection_mode=briefing.get("selection_mode"),
+                        model_used=briefing.get("model_used"),
+                        item_count=briefing.get("item_count") or 0,
+                        featured_count=briefing.get("featured_count") or 0,
+                        overflow_count=briefing.get("overflow_count") or 0,
+                        origin=origin,
+                        original_created_at=_to_chacha_datetime(
+                            briefing.get("created_at")
+                        ),
+                    )
+                    created = True
+                except ConflictError:
+                    # A caller or importer already claimed this device-local ID.
+                    # Treat a matching snapshot as an additive re-keep, but
+                    # never attach scripts to a different imported report.
+                    existing = chacha_db.get_kept_briefing_by_source(briefing_id)
+                    if existing is None:
+                        # The row that won the race must have been deleted again
+                        # between the conflict and this re-query -- vanishingly
+                        # rare, and not a state this function can recover from
+                        # silently, so the original conflict propagates.
+                        raise
+                    _ensure_compatible_kept_briefing(briefing, existing)
+                    kept_id = existing["id"]
+                    created = False
+            else:
+                _ensure_compatible_kept_briefing(briefing, existing)
+                kept_id = existing["id"]
+                created = False
 
-    scripts_added = _copy_missing_scripts(subs_db, chacha_db, briefing_id, kept_id)
+            scripts_added = _copy_missing_scripts(
+                subs_db, chacha_db, briefing_id, kept_id
+            )
 
     logger.info(
         f"kept briefing {briefing_id} as kept_briefings.id={kept_id} "

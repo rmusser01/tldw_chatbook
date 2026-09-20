@@ -1,0 +1,7 @@
+Final independent read-only review: no blockers or required fixes.
+
+The cache reset precedes Textual width measurement and auto-height cache construction, affects deferred dimension updates rather than ordinary painting, and does not mutate focus, cursor or selection. The tests compare composed-screen cell metadata and require nonempty/complete wide columns. Native QA stays within synthetic display metadata, real catalog/selection, private profiles and no execution or permission change.
+
+The reviewer independently verified all 11 baseline source hashes against ad0f76e23, all 11 fixed hashes against current files, both final runner/journey hashes, 152 passing XML cases with no errors/failures/skips, matching saved test receipts/log, all four baseline alignment failures and four fixed passes, both lifecycle receipts, exactly one changed header line in each terminal pair, all four fixed PNGs identical to the inspected first run, all 12 PNG hashes/difference bounds and the seven passing preflight guards. Scope/docs accurately retain final visual approval and PR CI/review gates.
+
+No apps/tests were run or files edited by the reviewer. Optional wide-column assertion and input-order comment clarifications were incorporated before final validation.

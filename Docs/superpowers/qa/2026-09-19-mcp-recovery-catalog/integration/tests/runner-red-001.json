@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments0-recovery-catalog]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments1-recovery-catalog]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments2-recovery-catalog]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments3-recovery-catalog]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments4-recovery-catalog]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments5-recovery-catalog]",
+      "status": "failure"
+    },
+    {
+      "id": "Tests.Utils.test_mcp_native_qa_args::test_invalid_cli_exits_with_usage_without_touching_profile[arguments6-recovery-catalog]",
+      "status": "failure"
+    }
+  ]
+}

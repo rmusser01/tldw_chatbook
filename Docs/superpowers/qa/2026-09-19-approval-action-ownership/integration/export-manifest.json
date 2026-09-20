@@ -1,0 +1,324 @@
+[
+  {
+    "source": "/private/tmp/2730-integrated-001.log",
+    "target": "tests/integrated-001.txt",
+    "original_sha256": "5b3c3c6bf44312bbf3c65b6a7f6eb11f40aca2f3ada9f88a4ddf8daeca4f1b7d",
+    "export_sha256": "5b3c3c6bf44312bbf3c65b6a7f6eb11f40aca2f3ada9f88a4ddf8daeca4f1b7d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-integrated-001.xml",
+    "target": "tests/integrated-001.xml",
+    "original_sha256": "6e82e3bda0a46e1e30b3d99335cabe38c9471151512ec452ce8f16e49163d784",
+    "export_sha256": "7c033f4eaf27cdd5fa06867220b3d2bc7bd819e629838e061aff508090a44610",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-baseline-001.log",
+    "target": "tests/baseline-001.txt",
+    "original_sha256": "3388a4f66e5fd565caaa4427fbd334084a13dde0372984bc2c44c9d0bd5101eb",
+    "export_sha256": "3388a4f66e5fd565caaa4427fbd334084a13dde0372984bc2c44c9d0bd5101eb",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-baseline-001.xml",
+    "target": "tests/baseline-001.xml",
+    "original_sha256": "9986710c6cbde3c398fdf5833fa66e82f5933c1d86e097b0e853258d49dd693f",
+    "export_sha256": "b02421cabfac52eadf82f99dd192ea160d9daa79c3b70d0e030a38282655ffae",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-followup-003.log",
+    "target": "tests/followup-003.txt",
+    "original_sha256": "ce3555efb0f33859acadc5f55f899479230af6e8367dfc1feb779180ad320dcf",
+    "export_sha256": "ce3555efb0f33859acadc5f55f899479230af6e8367dfc1feb779180ad320dcf",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-followup-003.xml",
+    "target": "tests/followup-003.xml",
+    "original_sha256": "f7c5707b4fc8260923682facc88a9184bb667f9e4b137cba44b6b705c5a5d201",
+    "export_sha256": "b714942ca64c83b25be78c385cfe9460f16ba1564656811c2485da6bcdd809e6",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-runner-red-001.log",
+    "target": "tests/runner-red-001.txt",
+    "original_sha256": "f31fde40c50973681d4f7fdf763ece515f522ee8b3b07abc7444f4055c8c397c",
+    "export_sha256": "944f1d52fa84f48397aba8773bfa70c45afbb40737bcb9c033b7656a918d4ecb",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-runner-red-001.xml",
+    "target": "tests/runner-red-001.xml",
+    "original_sha256": "670e965330fbf6c6e41e0fcb0ccb5bb91ca15a1d91e71a052b54dd746d0ceb41",
+    "export_sha256": "98958512548f5c41cfdb5b2ad1a55d4995f706b1847ff350f9adbf76012725a9",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-runner-final-004.log",
+    "target": "tests/runner-final-004.txt",
+    "original_sha256": "e3146fccbdec99078d827e57104881cafac8f73dba054f56910046eb05ebf758",
+    "export_sha256": "e3146fccbdec99078d827e57104881cafac8f73dba054f56910046eb05ebf758",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-runner-final-004.xml",
+    "target": "tests/runner-final-004.xml",
+    "original_sha256": "79253de8df01b975161de016ae55e02d7295ca76ec75e31368828bb2c73efddf",
+    "export_sha256": "50b057ab76e6e41ce7d7d07e324e8885c38f550b707ae57e9e62b45cd7dc48d2",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-baseline-comparison.json",
+    "target": "baseline-comparison.json",
+    "original_sha256": "8e5e02f8ba5980dc9e6290182be509c96ccdb2902777ab5500c68c11a4df166d",
+    "export_sha256": "8e5e02f8ba5980dc9e6290182be509c96ccdb2902777ab5500c68c11a4df166d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qualified-cases.json",
+    "target": "qualified-cases.json",
+    "original_sha256": "9171b664f9b47940801f91a7d46407cdee00eee4077c0f96a7ed92cda1a3f5e3",
+    "export_sha256": "9171b664f9b47940801f91a7d46407cdee00eee4077c0f96a7ed92cda1a3f5e3",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-rebase-conflicts.json",
+    "target": "rebase-conflicts.json",
+    "original_sha256": "804507559e4e08583bc047d67b85e9dff64a9718f534c00f0c8cccba576d3af3",
+    "export_sha256": "804507559e4e08583bc047d67b85e9dff64a9718f534c00f0c8cccba576d3af3",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-static-analysis.json",
+    "target": "static-analysis.json",
+    "original_sha256": "560b5acd5af2f4b2605edbe2a612d6fcc688005d6192ca5dfc3ea6afe4ac03d5",
+    "export_sha256": "560b5acd5af2f4b2605edbe2a612d6fcc688005d6192ca5dfc3ea6afe4ac03d5",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-formatting.txt",
+    "target": "formatting.txt",
+    "original_sha256": "0f599ade70f85aed51c69446298033f586fa73e902698c5357e3c373b20da850",
+    "export_sha256": "0f599ade70f85aed51c69446298033f586fa73e902698c5357e3c373b20da850",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-runner-import-provenance.json",
+    "target": "runner-import-provenance.json",
+    "original_sha256": "229f20e00a87e2c2e3db734e63e1af3aeea6aa1791400214408281b65b4e7c09",
+    "export_sha256": "229f20e00a87e2c2e3db734e63e1af3aeea6aa1791400214408281b65b4e7c09",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2728-closeout-receipt.json",
+    "target": "pr2728-closeout.json",
+    "original_sha256": "c2de26860a8b96a7d17660542452348349ddb2b31a42d408c2901357e04bcaec",
+    "export_sha256": "c2de26860a8b96a7d17660542452348349ddb2b31a42d408c2901357e04bcaec",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-001/evidence/result.json",
+    "target": "earlier-native/001-result.json",
+    "original_sha256": "29879b66a277205f628bbe128f845b15a91557f589b8ec88536a751eff7a6335",
+    "export_sha256": "29879b66a277205f628bbe128f845b15a91557f589b8ec88536a751eff7a6335",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-001/lifecycle.json",
+    "target": "earlier-native/001-lifecycle.json",
+    "original_sha256": "93a6879b7c3d35ff79f2bbb65ec42b153c8b9381aeebfa6d849e98c8119c8cf8",
+    "export_sha256": "93a6879b7c3d35ff79f2bbb65ec42b153c8b9381aeebfa6d849e98c8119c8cf8",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-002/evidence/result.json",
+    "target": "earlier-native/002-result.json",
+    "original_sha256": "2c199c38f98ecf9ce0d2f62750fb51e35258b2fd853810d4a9c172ffb74cc2b7",
+    "export_sha256": "2c199c38f98ecf9ce0d2f62750fb51e35258b2fd853810d4a9c172ffb74cc2b7",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-002/lifecycle.json",
+    "target": "earlier-native/002-lifecycle.json",
+    "original_sha256": "da8148e9140d741f2b64c5b251752545684c6b446e048d69a8673024ef3eab11",
+    "export_sha256": "da8148e9140d741f2b64c5b251752545684c6b446e048d69a8673024ef3eab11",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-approval-action-ownership/integration/native/result.json",
+    "target": "earlier-native/003-result.json",
+    "original_sha256": "870bc269e4d7844534745a1ef8719f6098acea9ffa8d7c1213b7f84b0ddb1eef",
+    "export_sha256": "870bc269e4d7844534745a1ef8719f6098acea9ffa8d7c1213b7f84b0ddb1eef",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-19-approval-action-ownership/integration/lifecycle.json",
+    "target": "earlier-native/003-lifecycle.json",
+    "original_sha256": "50abca01d2ee21d9a1b1ef1869e56438b54fe8e46e0d03ac0d3d79e20eb2cf93",
+    "export_sha256": "50abca01d2ee21d9a1b1ef1869e56438b54fe8e46e0d03ac0d3d79e20eb2cf93",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-ready-to-submit.svg",
+    "target": "native/textual-light-170x48-ready-to-submit.svg",
+    "original_sha256": "353eaf2b49e3552921826df53135e42de50b6d2637b6275954f4746ec9211a47",
+    "export_sha256": "90de07a0aee3bfe6ee750be329c0eec99355b3e3679ea4ef7bb178dccbd20c4d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-deny-all.txt",
+    "target": "native/textual-light-120x40-deny-all.txt",
+    "original_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "export_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-ready-to-submit.txt",
+    "target": "native/textual-dark-170x48-ready-to-submit.txt",
+    "original_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "export_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-deny-all.svg",
+    "target": "native/textual-light-120x40-deny-all.svg",
+    "original_sha256": "5a0f7b016e706f8016f9f1fb5ff190ba33dbcb2704e1967da0ecc97e98576953",
+    "export_sha256": "7153aed567aaa80e8b82c912b393dd8811c30118bfbadada199e7ec83a35a019",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-ready-to-submit.txt",
+    "target": "native/textual-light-170x48-ready-to-submit.txt",
+    "original_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "export_sha256": "d81680ed8ba2f1ed58f55d5feb243c512e3b32ecd747e3c85965fcc41109f7c6",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-ready-to-submit.svg",
+    "target": "native/textual-dark-170x48-ready-to-submit.svg",
+    "original_sha256": "eb544c93db254bb9ef238f504ae4845ab7a454a7aff9651f4e1841cfc128c12a",
+    "export_sha256": "d5e49fd2ad6c760b6dfbe89d51e30d2ac3c8577c3022de6268ea7290f51cab7d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/result.json",
+    "target": "native/result.json",
+    "original_sha256": "f75575c0a3b4bcc825ec3f4244f39f804e9760861b24f339ee1dce5b4ccede58",
+    "export_sha256": "f75575c0a3b4bcc825ec3f4244f39f804e9760861b24f339ee1dce5b4ccede58",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-deny-all.txt",
+    "target": "native/textual-dark-170x48-deny-all.txt",
+    "original_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "export_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-170x48-deny-all.svg",
+    "target": "native/textual-dark-170x48-deny-all.svg",
+    "original_sha256": "088e8a72c4d7715705a810b67c7e3f7c2f119bd43effa670f4e6dca5bc7e9569",
+    "export_sha256": "4b1166140af721374b75903f2404bc1e0af05a6588eb913518163a07d8b59cce",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-deny-all.svg",
+    "target": "native/textual-dark-120x40-deny-all.svg",
+    "original_sha256": "a2480cbf44bf635f80a30e2289b3ae1a73f191114378a50beff9a8567aaca79c",
+    "export_sha256": "65f232bcf11aafb1d82ef0604687f4613ac9055881d0e56a654017c63b76c63d",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-deny-all.txt",
+    "target": "native/textual-dark-120x40-deny-all.txt",
+    "original_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "export_sha256": "1c176073a07de9c6c4a0d18259f8a6d1a1e598f4867073263390a423e77b1a55",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-deny-all.svg",
+    "target": "native/textual-light-170x48-deny-all.svg",
+    "original_sha256": "01aba509ff4a3a7965552c7462c64b374240eda132b3084fb17dc7cdc69c3daf",
+    "export_sha256": "43d8b6fb2be439000ca07e964e60b43f0bbe1edc2c314643be624f1039b8b483",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-ready-to-submit.txt",
+    "target": "native/textual-dark-120x40-ready-to-submit.txt",
+    "original_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "export_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-ready-to-submit.svg",
+    "target": "native/textual-light-120x40-ready-to-submit.svg",
+    "original_sha256": "8b07521d88a82cdd76e7c13aa5098a95436db69e99235f30b5bebb2ae8fd3ecb",
+    "export_sha256": "3c426f3dabe65983991cd25c177d7c3ccdb9d46d47b70f8c6985003cac95d08f",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-dark-120x40-ready-to-submit.svg",
+    "target": "native/textual-dark-120x40-ready-to-submit.svg",
+    "original_sha256": "16fb06462ad0e1307ea8fef442080c1540e9735b3fb3c16a1a635f6cb4f5e355",
+    "export_sha256": "15d534ed0848f022ed5c4149e25be5b1cf48a4da54ec490ecc8ec85154c5932e",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-120x40-ready-to-submit.txt",
+    "target": "native/textual-light-120x40-ready-to-submit.txt",
+    "original_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "export_sha256": "c0b31bdfbdf2968b4aca298db146da3b587d5510d1cc4db4455cfb139574b777",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/evidence/textual-light-170x48-deny-all.txt",
+    "target": "native/textual-light-170x48-deny-all.txt",
+    "original_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "export_sha256": "5372b1627c73bbee40856f14161127795ad010f18b90df882b90a9db54cc4bef",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/preparation.json",
+    "target": "preparation.json",
+    "original_sha256": "a5b0781ec8ede71276529ea296370a9852c3924e607b50386d879afd5ed9aecb",
+    "export_sha256": "a5b0781ec8ede71276529ea296370a9852c3924e607b50386d879afd5ed9aecb",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/tldw-32841-integrated-native-006/lifecycle.json",
+    "target": "lifecycle.json",
+    "original_sha256": "5be3bdc055d290065520fddf5587c1d88f5b98607fa016db6e4b16fd2a1913e0",
+    "export_sha256": "5be3bdc055d290065520fddf5587c1d88f5b98607fa016db6e4b16fd2a1913e0",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-005.log",
+    "target": "tests/qodo-005.txt",
+    "original_sha256": "1f101fd6487d4d294ee4ab6d33b5ba00351888b7899760e8d4beb8524e1315aa",
+    "export_sha256": "1f101fd6487d4d294ee4ab6d33b5ba00351888b7899760e8d4beb8524e1315aa",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-005.xml",
+    "target": "tests/qodo-005.xml",
+    "original_sha256": "06e914846ebc5a5e93b01ea4f63ed021e03d708632709ee177d73bb2231798c4",
+    "export_sha256": "4a7267e9d25b6b4e6ec5ec6399a89ae208aca6ef305ef7af1550a3bcde773191",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-preflight-005.log",
+    "target": "preflight.txt",
+    "original_sha256": "fd818086c5df991c918b4bb2c8012698b22f50d92477320f79b749a7a4b76c70",
+    "export_sha256": "fd818086c5df991c918b4bb2c8012698b22f50d92477320f79b749a7a4b76c70",
+    "normalization": "trailing whitespace and final newline only"
+  },
+  {
+    "source": "/private/tmp/2730-qodo-visual-comparison.json",
+    "target": "qodo-visual-comparison.json",
+    "original_sha256": "5aa52c193b0bc35bec2578fb54cfe7f065073222f2627133522e5152e4e93b7f",
+    "export_sha256": "5aa52c193b0bc35bec2578fb54cfe7f065073222f2627133522e5152e4e93b7f",
+    "normalization": "trailing whitespace and final newline only"
+  }
+]

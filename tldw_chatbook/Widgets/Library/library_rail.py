@@ -623,7 +623,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self.lifecycle = lifecycle
         self.onboarding_all_empty = onboarding_all_empty
         #: task-32357 AC#2: the Details ▸ Diagnostics disclosure. Rail-local
-        #: and unpersisted, unlike the five ``LibraryRailPreferences``
+        #: and unpersisted, unlike the six ``LibraryRailPreferences``
         #: sections: diagnostics are something you go and look at once, so
         #: every visit starts closed. It survives the rail's own recomposes
         #: (same widget instance), which is all it has to survive.
@@ -899,7 +899,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Open or close Details ▸ Diagnostics without leaving the rail.
 
-        The screen's section-toggle handler persists the five
+        The screen's section-toggle handler persists the six
         ``LibraryRailPreferences`` sections by name, and this disclosure is
         deliberately not one of them (see ``diagnostics_open``), so the
         press is answered here and stopped before it reaches a handler that

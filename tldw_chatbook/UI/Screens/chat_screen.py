@@ -24563,7 +24563,10 @@ class ChatScreen(BaseAppScreen):
                 character_name=character_name,
                 activate=False,
             )
-            if opening_prompt:
+            # Single write path: the restore rehydrates the draft from
+            # the persisted console_agent_handoff key; this fill only
+            # covers a degraded restore-side read (empty draft).
+            if opening_prompt and not session.draft:
                 store.set_session_draft(session.id, opening_prompt)
             self._workspace._invalidate_console_persisted_rows_cache()
             self.run_worker(
