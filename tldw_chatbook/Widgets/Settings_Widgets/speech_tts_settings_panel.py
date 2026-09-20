@@ -750,6 +750,7 @@ class SpeechTTSSettingsPanel(Vertical):
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
         provider_test_evidence: ProcessProviderTestEvidenceStore | None = None,
         draft_snapshot: SpeechTTSPanelDraftSnapshot | None = None,
+        config_snapshot: Mapping[str, Any] | None = None,
         audio_cpp_result_cleanup_pending: Callable[[], bool] | None = None,
         audio_cpp_result_cleanup_mounted: (
             Callable[[SpeechTTSSettingsPanel], None] | None
@@ -891,8 +892,14 @@ class SpeechTTSSettingsPanel(Vertical):
         self._audio_cpp_result_cleanup_mounted = audio_cpp_result_cleanup_mounted
         self._audio_cpp_cleanup_action_mounted = False
         if restored is None:
-            # task-32804.8: one config load feeds both drafts (was ~13 reads).
-            _cfg = load_cli_config_and_ensure_existence()
+            # task-32804.8: build both drafts from ONE config mapping (was ~13
+            # separate reads). The settings screen already holds a runtime
+            # snapshot at construction; reuse it when passed, else load once.
+            _cfg = (
+                config_snapshot
+                if isinstance(config_snapshot, Mapping)
+                else load_cli_config_and_ensure_existence()
+            )
             self._realtime_original = _read_realtime_settings_draft(_cfg)
             self._realtime_draft = replace(self._realtime_original)
             self._pipeline_voice_original = _read_pipeline_voice_settings_draft(_cfg)

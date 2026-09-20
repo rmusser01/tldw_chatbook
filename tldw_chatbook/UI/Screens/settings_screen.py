@@ -20979,10 +20979,12 @@ class SettingsScreen(BaseAppScreen):
             ) = self._speech_tts_cached_runtime_state()
             try:
                 app_config = get_runtime_config_snapshot().values
-                speech_tts_state = load_global_speech_tts_state(
+                speech_tts_config = (
                     app_config if isinstance(app_config, Mapping) else {}
                 )
+                speech_tts_state = load_global_speech_tts_state(speech_tts_config)
             except (OSError, TypeError, ValueError):
+                speech_tts_config = {}
                 speech_tts_state = load_global_speech_tts_state({})
             if not self._speech_tts_profile_choices_requested:
                 self._speech_tts_profile_choices_requested = True
@@ -20994,6 +20996,7 @@ class SettingsScreen(BaseAppScreen):
                 draft_snapshot=self._speech_tts_draft_snapshot,
                 profiles=self._speech_tts_profile_choices,
                 profiles_unavailable=self._speech_tts_profile_choices_unavailable,
+                config_snapshot=speech_tts_config,
                 audio_cpp_observation=audio_cpp_observation,
                 audio_cpp_configuration_revision=provider_runtime_revisions.get(
                     "audio_cpp"
