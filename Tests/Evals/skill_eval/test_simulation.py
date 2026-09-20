@@ -125,3 +125,30 @@ def test_simulation_layer_counts_failures_and_cancel():
         _subject(), ["p1"], [], _CancelChat(), target=_target(),
         config=_config(), semaphore=asyncio.Semaphore(1), cancel=token))
     assert res.failure_rate == 1.0 or res.cells == ()  # all parsed cells failed
+
+
+def test_simulation_layer_records_error_cells():
+    class _FlakyChat:
+        """Raises on the first call, selects the subject afterwards."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, *, messages, target, temperature, max_tokens, seed):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            return '{"skill": "csv-cleaner", "reason": "r"}'
+
+    chat = _FlakyChat()
+    res = _run(run_simulation_layer(
+        _subject(), ["p1"], [], chat, target=_target(),
+        config=_config(), semaphore=asyncio.Semaphore(1)))
+    assert len(res.cells) == 6  # deep_sim_total=6; the error cell is recorded too
+    errors = [c for c in res.cells if c["error"] is not None]
+    assert len(errors) == 1
+    assert errors[0]["activated"] is None
+    assert errors[0]["error"] == "boom"
+    assert res.failure_rate == pytest.approx(1 / 6)
+    assert res.activation == pytest.approx(5 / 6)  # denominator includes the error cell
+    assert chat.calls == 6

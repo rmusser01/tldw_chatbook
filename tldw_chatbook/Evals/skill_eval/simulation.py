@@ -204,11 +204,15 @@ async def run_simulation_layer(
                     seed=config.seed + prompt_idx * 1000 + repeat,
                 )
             except Exception as exc:
-                return {"prompt_index": prompt_idx, "repeat": repeat,
+                # Error cells are counted as failures, never dropped
+                # (controller ruling, plan erratum 7): keep the run alive,
+                # but record the evidence and include it in the denominator.
+                cell = {"prompt_index": prompt_idx, "repeat": repeat,
                         "activated": None, "error": str(exc), "raw": ""}
-        verdict = parse_selection_reply(raw, subject.name)
-        cell = {"prompt_index": prompt_idx, "repeat": repeat,
-                "activated": verdict, "error": None, "raw": raw[:2000]}
+            else:
+                verdict = parse_selection_reply(raw, subject.name)
+                cell = {"prompt_index": prompt_idx, "repeat": repeat,
+                        "activated": verdict, "error": None, "raw": raw[:2000]}
         cells.append(cell)
         if progress is not None:
             try:
