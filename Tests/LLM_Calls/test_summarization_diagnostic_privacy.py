@@ -2328,8 +2328,9 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     )
     assert deleted_by_module == {
         "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
-        # TASK-32853 groq migration: the non-200 status log site joined the
-        # deleted ledger (10 -> 11).
+        # TASK-32853 groq migration: the non-200 status log site joined
+        # the deleted ledger (10 -> 11). deepseek/mistral keep their frozen
+        # status logs verbatim (bound to the typed error) per the freeze.
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 11,
     }
     for path, starting_count in MODULE_COUNTS.items():
@@ -5620,13 +5621,17 @@ def test_deepseek_stream_preserves_yields_and_hides_decode_and_key_failures(
             streaming=DEEPSEEK_PRIVATE_STREAMING_VALUE,
         )
         assert _is_lazy_provider_stream(stream)
-        assert response.iter_lines_started is False
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
-    assert chunks == ["fixed deepseek chunk", "fixed deepseek chunk"]
-    assert response.iter_lines_started is True
-    assert response.closed is False
+    # TASK-32853 re-key (defect fix): the old relay re-yielded the collected
+    # whole text after the deltas (every chunk-joining consumer got the
+    # summary twice) and never closed the response; the engine path yields
+    # each delta exactly once and closes exactly once.
+    assert chunks == ["fixed deepseek chunk"]
+    assert response.iter_content_started is True
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == DEEPSEEK_PRIVATE_STREAMING_VALUE
     assert post_calls[0][1]["stream"] is True
@@ -5668,13 +5673,14 @@ def test_mistral_stream_preserves_yields_and_hides_rejected_events(
             streaming=MISTRAL_PRIVATE_STREAMING_VALUE,
         )
         assert _is_lazy_provider_stream(stream)
-        assert response.iter_lines_started is False
+        assert response.iter_content_started is False
         assert response.closed is False
         chunks = list(stream)
 
     assert chunks == ["fixed mistral chunk"]
-    assert response.iter_lines_started is True
-    assert response.closed is False
+    assert response.iter_content_started is True
+    # TASK-32853: clean exhaustion closes the owned response exactly once.
+    assert response.closed is True
     assert len(post_calls) == 1
     assert post_calls[0][1]["json"]["stream"] == MISTRAL_PRIVATE_STREAMING_VALUE
     assert post_calls[0][1]["stream"] is True

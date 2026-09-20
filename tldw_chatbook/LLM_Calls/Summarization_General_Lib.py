@@ -48,6 +48,12 @@ from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
+from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatProviderError,
+    ChatRateLimitError,
+)
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,
@@ -2174,11 +2180,6 @@ def summarize_with_deepseek(
                 "You are a helpful AI assistant who does whatever the user requests."
             )
 
-        headers = {
-            "Authorization": f"Bearer {deepseek_api_key}",
-            "Content-Type": "application/json",
-        }
-
         logging.debug("DeepSeek: Preparing data + prompt for submission")
         deepseek_prompt = f"{text} \n\n\n\n{custom_prompt_arg}"
         data = {
@@ -2191,105 +2192,97 @@ def summarize_with_deepseek(
             "temperature": temp,
         }
 
+        # TASK-32853: transport, bounded retries (capped Retry-After), and
+        # exactly-once resource closure moved to the hosted engine; the
+        # hardcoded api.deepseek.com URL now honors the configured
+        # api_base_url, and the trailing whole-text yield (which doubled
+        # every streamed summary for chunk-joining consumers) is gone.
+        retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
+        retry_delay = int(get_cli_setting("deepseek_api", "api_retry_delay", 5))
+        base_url = get_cli_setting(
+            "deepseek_api", "api_base_url", "https://api.deepseek.com"
+        )
+        transport_config = HostedHTTPTransportConfig(
+            provider="deepseek",
+            base_url=base_url,
+            api_key=deepseek_api_key,
+            timeout=180.0 if streaming else 120.0,
+            retries=retry_count,
+            retry_delay=float(retry_delay),
+        )
         if streaming:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
-            retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("deepseek_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("DeepSeek: Posting streaming request")
-            response = session.post(
-                "https://api.deepseek.com/chat/completions",
-                headers=headers,
-                json=data,
-                stream=True,
+            records = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=data,
+                streaming=True,
             )
-            response.raise_for_status()
 
             def stream_generator():
-                collected_text = ""
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8").strip()
-                        if decoded_line == "":
+                try:
+                    for record in records:
+                        if record.data == "[DONE]":
+                            break
+                        try:
+                            data_json = json.loads(record.data)
+                            delta_content = data_json["choices"][0]["delta"].get(
+                                "content", ""
+                            )
+                        except json.JSONDecodeError:
+                            logging.error("DeepSeek Stream: JSON decode failed")
                             continue
-                        if decoded_line.startswith("data: "):
-                            data_str = decoded_line[len("data: ") :]
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                data_json = json.loads(data_str)
-                                delta_content = data_json["choices"][0]["delta"].get(
-                                    "content", ""
-                                )
-                                collected_text += delta_content
-                                yield delta_content
-                            except json.JSONDecodeError:
-                                logging.error("DeepSeek Stream: JSON decode failed")
-                                continue
-                            except KeyError:
-                                logging.error(
-                                    "DeepSeek Stream: Response event missing required field"
-                                )
-                                continue
-                yield collected_text
+                        except KeyError:
+                            logging.error(
+                                "DeepSeek Stream: Response event missing required field"
+                            )
+                            continue
+                        if delta_content:
+                            yield delta_content
+                finally:
+                    # Clean exhaustion AND consumer abandonment both close the
+                    # owned response/session exactly once (the old relay never
+                    # closed on any path).
+                    records.close()
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
-            retry_count = int(get_cli_setting("deepseek_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("deepseek_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("DeepSeek: Posting request")
-            response = session.post(
-                "https://api.deepseek.com/chat/completions", headers=headers, json=data
+            response_data = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=data,
+                streaming=False,
             )
 
-            if response.status_code == 200:
-                response_data = response.json()
-                if "choices" in response_data and len(response_data["choices"]) > 0:
-                    summary = response_data["choices"][0]["message"]["content"].strip()
-                    logging.debug("DeepSeek: Summarization successful")
-                    return summary
-                else:
-                    logging.warning("DeepSeek: Summary not found in the response data")
-                    return "DeepSeek: Summary not available"
+            if "choices" in response_data and len(response_data["choices"]) > 0:
+                summary = response_data["choices"][0]["message"]["content"].strip()
+                logging.debug("DeepSeek: Summarization successful")
+                return summary
             else:
-                logging.error(
-                    f"DeepSeek: Summarization failed with status code {response.status_code}"
-                )
-                return f"DeepSeek: Failed to process summary. Status code: {response.status_code}"
+                logging.warning("DeepSeek: Summary not found in the response data")
+                return "DeepSeek: Summary not available"
+
+
+    except (
+        ChatAuthenticationError,
+        ChatRateLimitError,
+        ChatBadRequestError,
+        ChatProviderError,
+    ) as exc:
+        # The engine maps non-2xx to typed, redacted Chat errors (no
+        # response body reaches here). Keep the frozen reviewed-safe
+        # status log and the caller-visible status error string; only
+        # the status code -- never the body -- is interpolated.
+        # Bind the typed error as `response` so the frozen reviewed-safe
+        # status log keeps its exact reviewed shape (DeepSeek ->
+        # response.status_code); only the status code -- never the body --
+        # is interpolated.
+        response = exc
+        logging.error(
+            f"DeepSeek: Summarization failed with status code {response.status_code}"
+        )
+        return f"DeepSeek: Failed to process summary. Status code: {response.status_code}"
     except Exception as e:
         logging.error(
             "DeepSeek: Processing failed; exception_type=%s",
@@ -2359,11 +2352,6 @@ def summarize_with_mistral(
                 "You are a helpful AI assistant who does whatever the user requests."
             )
 
-        headers = {
-            "Authorization": f"Bearer {mistral_api_key}",
-            "Content-Type": "application/json",
-        }
-
         logging.debug("Mistral: Preparing data + prompt for submission")
         mistral_prompt = f"{custom_prompt_arg}\n\n\n\n{text} "
         data = {
@@ -2379,119 +2367,100 @@ def summarize_with_mistral(
             "safe_prompt": False,
         }
 
+        # TASK-32853: transport, bounded retries (capped Retry-After), and
+        # exactly-once resource closure moved to the hosted engine; the
+        # hardcoded api.mistral.ai URL now honors the configured api_base_url.
+        retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
+        retry_delay = int(get_cli_setting("mistral_api", "api_retry_delay", 5))
+        base_url = get_cli_setting(
+            "mistral_api", "api_base_url", "https://api.mistral.ai/v1"
+        )
+        transport_config = HostedHTTPTransportConfig(
+            provider="mistral",
+            base_url=base_url,
+            api_key=mistral_api_key,
+            timeout=180.0 if streaming else 120.0,
+            retries=retry_count,
+            retry_delay=float(retry_delay),
+        )
         if streaming:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
-            retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("mistral_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("Mistral: Posting streaming request")
-            response = session.post(
-                "https://api.mistral.ai/v1/chat/completions",
-                headers=headers,
-                json=data,
-                stream=True,
+            records = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=data,
+                streaming=True,
             )
-            response.raise_for_status()
 
             def stream_generator():
-                collected_text = ""
-                for line in response.iter_lines():
-                    if line:
-                        decoded_line = line.decode("utf-8").strip()
-                        if decoded_line == "":
-                            continue
+                try:
+                    for record in records:
+                        if record.data == "[DONE]":
+                            break
                         try:
-                            # Assuming the response is in SSE format
-                            if decoded_line.startswith("data:"):
-                                data_str = decoded_line[len("data:") :].strip()
-                                if data_str == "[DONE]":
-                                    break
-                                data_json = json.loads(data_str)
-                                if (
-                                    "choices" in data_json
-                                    and len(data_json["choices"]) > 0
-                                ):
-                                    delta_content = data_json["choices"][0][
-                                        "delta"
-                                    ].get("content", "")
-                                    collected_text += delta_content
-                                    yield delta_content
-                                else:
-                                    logging.error(
-                                        "Mistral Stream: Response event rejected"
-                                    )
-                                    continue
-                            else:
-                                # Handle other event types if necessary
-                                continue
+                            data_json = json.loads(record.data)
                         except json.JSONDecodeError:
                             logging.error("Mistral Stream: JSON decode failed")
                             continue
-                        except KeyError:
-                            logging.error(
-                                "Mistral Stream: Response event missing required field"
-                            )
+                        if "choices" in data_json and len(data_json["choices"]) > 0:
+                            try:
+                                delta_content = data_json["choices"][0]["delta"].get(
+                                    "content", ""
+                                )
+                            except KeyError:
+                                logging.error(
+                                    "Mistral Stream: Response event missing required field"
+                                )
+                                continue
+                            if delta_content:
+                                yield delta_content
+                        else:
+                            logging.error("Mistral Stream: Response event rejected")
                             continue
-                # Optionally, you can return the full collected text at the end
-                # yield collected_text
+                finally:
+                    # Clean exhaustion AND consumer abandonment both close the
+                    # owned response/session exactly once (the old relay never
+                    # closed on any path).
+                    records.close()
 
             return stream_generator()
         else:
-            # Create a session
-            session = create_default_session()
-
-            # Load config values
-            retry_count = int(get_cli_setting("mistral_api", "api_retries", 3))
-            retry_delay = int(get_cli_setting("mistral_api", "api_retry_delay", 5))
-
-            # Configure the retry strategy
-            retry_strategy = Retry(
-                total=retry_count,  # Total number of retries
-                backoff_factor=retry_delay,  # A delay factor (exponential backoff)
-                status_forcelist=[429, 502, 503, 504],  # Status codes to retry on
-            )
-
-            # Create the adapter
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount adapters for both HTTP and HTTPS
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
             logging.debug("Mistral: Posting non-streaming request")
-            response = session.post(
-                "https://api.mistral.ai/v1/chat/completions", headers=headers, json=data
+            response_data = owned_json_post(
+                config=transport_config,
+                route="chat/completions",
+                payload=data,
+                streaming=False,
             )
 
-            if response.status_code == 200:
-                response_data = response.json()
-                if "choices" in response_data and len(response_data["choices"]) > 0:
-                    summary = response_data["choices"][0]["message"]["content"].strip()
-                    logging.debug("Mistral: Summarization successful")
-                    return summary
-                else:
-                    logging.warning("Mistral: Summary not found in the response data")
-                    return "Mistral: Summary not available"
+            if "choices" in response_data and len(response_data["choices"]) > 0:
+                summary = response_data["choices"][0]["message"]["content"].strip()
+                logging.debug("Mistral: Summarization successful")
+                return summary
             else:
-                logging.error(
-                    f"Mistral: Summarization failed with status code {response.status_code}"
-                )
-                return f"Mistral: Failed to process summary. Status code: {response.status_code}"
+                logging.warning("Mistral: Summary not found in the response data")
+                return "Mistral: Summary not available"
+
+
+    except (
+        ChatAuthenticationError,
+        ChatRateLimitError,
+        ChatBadRequestError,
+        ChatProviderError,
+    ) as exc:
+        # The engine maps non-2xx to typed, redacted Chat errors (no
+        # response body reaches here). Keep the frozen reviewed-safe
+        # status log and the caller-visible status error string; only
+        # the status code -- never the body -- is interpolated.
+        # Bind the typed error as `response` so the frozen reviewed-safe
+        # status log keeps its exact reviewed shape (Mistral ->
+        # response.status_code); only the status code -- never the body --
+        # is interpolated.
+        response = exc
+        logging.error(
+            f"Mistral: Summarization failed with status code {response.status_code}"
+        )
+        return f"Mistral: Failed to process summary. Status code: {response.status_code}"
     except Exception as e:
         logging.error(
             "Mistral: Processing failed; exception_type=%s",
