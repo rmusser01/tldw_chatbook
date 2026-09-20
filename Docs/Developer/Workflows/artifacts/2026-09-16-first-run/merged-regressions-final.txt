@@ -1,0 +1,80 @@
+....................................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+............... [  4%]
+........................................................................ [  9%]
+........................................................................ [ 13%]
+........................................................................ [ 18%]
+.................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.s.................................... [ 23%]
+........................................................................ [ 27%]
+........................................................................ [ 32%]
+........................................................................ [ 36%]
+........................................................................ [ 41%]
+........................................................................ [ 46%]
+........................................................................ [ 50%]
+........................................................................ [ 55%]
+........................................................................ [ 60%]
+........................................................................ [ 64%]
+........................................................................ [ 69%]
+........................................................................ [ 73%]
+........................................................................ [ 78%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+........................................................F............... [ 92%]
+.........................................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..{'compact': False, 'page_seconds': 0.007371583953499794, 'project_calls': 0, 'projected_bytes': 0}
+.{'compact': True, 'page_seconds': 0.0734294168651104, 'project_calls': 0, 'projected_bytes': 0}
+.......{'raw_edit_seconds': 0.041187709197402, 'max_heartbeat_gap_seconds': 0.0538395419716835}
+..................... [ 97%]
+............--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+................................                            [100%]
+=================================== FAILURES ===================================
+_ test_incomplete_field_is_repairable_across_fresh_screens[step:summarize-/steps/2/config/max_tokens--256] _
+Tests/UI/test_workflows_editor.py:306: in test_incomplete_field_is_repairable_across_fresh_screens
+    assert_hit(screen, field)
+Tests/UI/test_workflows_editor.py:58: in assert_hit
+    painted, _ = screen.get_widget_at(x, y)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/screen.py:646: in get_widget_at
+    return self._compositor.get_widget_at(x, y)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.venv/lib/python3.12/site-packages/textual/_compositor.py:848: in get_widget_at
+    raise errors.NoWidget(f"No widget under screen coordinate ({x}, {y})")
+E   textual.errors.NoWidget: No widget under screen coordinate (68, 38)
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED Tests/UI/test_workflows_editor.py::test_incomplete_field_is_repairable_across_fresh_screens[step:summarize-/steps/2/config/max_tokens--256]
+1 failed, 1555 passed, 1 skipped, 1 warning in 412.13s (0:06:52)

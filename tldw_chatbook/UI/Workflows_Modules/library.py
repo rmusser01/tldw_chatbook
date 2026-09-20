@@ -90,7 +90,7 @@ class ChoiceModal(ModalScreen[str | None]):
         Raises:
             DuplicateID: Multiple choices use the same option ID.
         """
-        with Vertical():
+        with Vertical(classes="workflow-choice-body"):
             yield Label(self.title_text)
             if self.scroll_detail:
                 with VerticalScroll(id="workflow-dialog-detail"):
@@ -223,7 +223,7 @@ class PagedChoiceModal(ChoiceModal):
         Yields:
             Widgets for loading and choosing a page item.
         """
-        with Vertical():
+        with Vertical(classes="workflow-choice-body"):
             yield Label(self.title_text)
             if self.searchable:
                 yield Input(
@@ -359,7 +359,7 @@ class StepChooser(ChoiceModal):
         Yields:
             Widgets for reviewing and confirming an available step type.
         """
-        with Vertical():
+        with Vertical(classes="workflow-choice-body"):
             yield Label(self.title_text)
             yield Input(
                 placeholder="Search actions or canonical types",

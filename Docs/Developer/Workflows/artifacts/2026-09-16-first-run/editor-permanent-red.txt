@@ -1,0 +1,16 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___ test_deferred_view_restore_preserves_newer_field_focus_and_invalid_paint ___
+Tests/UI/test_workflows_editor.py:392: in test_deferred_view_restore_preserves_newer_field_focus_and_invalid_paint
+    assert harness.focused is field
+E   AssertionError: assert TextArea(id='workflow-field-3', classes='form-textarea') is Input(id='workflow-field-4', classes='-valid form-input')
+E    +  where TextArea(id='workflow-field-3', classes='form-textarea') = WorkflowEditorHarness(title='WorkflowEditorHarness', classes={'-dark-mode'}, pseudo_classes={'nocolor', 'dark', 'focus'}).focused
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/requests/__init__.py:113
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED Tests/UI/test_workflows_editor.py::test_deferred_view_restore_preserves_newer_field_focus_and_invalid_paint
+1 failed, 1 warning in 2.87s
