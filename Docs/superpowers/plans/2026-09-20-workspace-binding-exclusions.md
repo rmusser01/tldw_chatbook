@@ -20,7 +20,7 @@
 - UI: `$ds-*` token classes only (ADR-150); single-letter htop-style keybindings per ADR-031; reuse existing settings CSS classes; footer hints only for implemented actions.
 - Tests: targeted runs only (repo policy) — never a full suite sweep unless the user asks.
 - Every registry write goes through `save_runtime_binding` (single serialized writer); SQL stays parameterized (existing methods).
-- ADR-172 must exist before code lands (Task 10 creates it; if tasks land before it, create the ADR first — see task ordering note).
+- ADR-173 must exist before code lands (Task 10 creates it; if tasks land before it, create the ADR first — see task ordering note).
 
 ---
 
@@ -1309,20 +1309,20 @@ git commit -m "feat: files-modal exclude/unexclude action with badge"
 
 ---
 
-### Task 10: ADR-172, docs, backlog task
+### Task 10: ADR-173, docs, backlog task
 
 **Files:**
-- Create: `backlog/decisions/172-workspace-binding-exclusions.md`
+- Create: `backlog/decisions/173-workspace-binding-exclusions.md`
 - Modify: `AGENTS.md` (Console file authority paragraph), `Docs/User_Guide/console/sessions-tabs-workspaces.md` (exclusions subsection)
 - Backlog task via CLI
 
 **Interfaces:**
 - Consumes: everything above.
 
-- [ ] **Step 1: Write ADR-172** (match the format of `backlog/decisions/102-...md`)
+- [ ] **Step 1: Write ADR-173** (match the format of `backlog/decisions/102-...md`)
 
 ```markdown
-# ADR-172: Per-workspace binding exclusions for agent file access
+# ADR-173: Per-workspace binding exclusions for agent file access
 
 Status: Accepted
 Date: 2026-09-20
@@ -1366,14 +1366,14 @@ and un-excludable there.
   literals cover the v1 need.
 ```
 
-- [ ] **Step 2: Update AGENTS.md** — in the "Special Systems → Tool Calling" section's "Console file authority" paragraph, append one sentence: "Workspace folder bindings may carry per-binding exclusions (exact user-marked paths, fully invisible to agent tools — see ADR-172)."
+- [ ] **Step 2: Update AGENTS.md** — in the "Special Systems → Tool Calling" section's "Console file authority" paragraph, append one sentence: "Workspace folder bindings may carry per-binding exclusions (exact user-marked paths, fully invisible to agent tools — see ADR-173)."
 
 - [ ] **Step 3: Update the user guide** — add an "Exclusions" subsection to `Docs/User_Guide/console/sessions-tabs-workspaces.md` covering: what excluding means (agent-invisible, user still sees it badged), both management surfaces, non-existent paths allowed, mid-run timing (additions next tool call; removals new runs).
 
 - [ ] **Step 4: Create/complete the backlog task**
 
 ```bash
-backlog task create "Workspace binding exclusions" -d "User-managed exact-path exclusions per workspace folder binding; agent-invisible enforcement via merged sensitive context" --ac "Registry CRUD validated,Agent tools refuse+omit excluded paths,Both UI surfaces,ADR-172"
+backlog task create "Workspace binding exclusions" -d "User-managed exact-path exclusions per workspace folder binding; agent-invisible enforcement via merged sensitive context" --ac "Registry CRUD validated,Agent tools refuse+omit excluded paths,Both UI surfaces,ADR-173"
 backlog task edit <id> --plan "Per implementation plan Docs/superpowers/plans/2026-09-20-workspace-binding-exclusions.md"
 ```
 
@@ -1382,8 +1382,8 @@ Then at completion: check all ACs, add Implementation Notes, set status Done per
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backlog/decisions/172-workspace-binding-exclusions.md AGENTS.md Docs/User_Guide/console/sessions-tabs-workspaces.md
-git commit -m "docs: ADR-172 and guides for workspace binding exclusions"
+git add backlog/decisions/173-workspace-binding-exclusions.md AGENTS.md Docs/User_Guide/console/sessions-tabs-workspaces.md
+git commit -m "docs: ADR-173 and guides for workspace binding exclusions"
 ```
 
 ---
