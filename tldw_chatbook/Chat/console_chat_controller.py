@@ -1378,6 +1378,38 @@ def _workspace_binding_authority_is_current(
     )
 
 
+def _exclusion_paths_provider(
+    registry: Any,
+    binding_id: str,
+    root: Path,
+    snapshot_rels: tuple[str, ...],
+) -> Callable[[], tuple[Path, ...]]:
+    """Effective exclusion paths: admission snapshot union a high-water mark.
+
+    Reads the binding's live exclusions on every call so a mid-run addition
+    refuses the NEXT tool call (fail-closed shrink); the high-water mark
+    keeps removals enforced for the rest of the run so run authority never
+    expands mid-run (spec 2026-09-20, ADR-102 discipline).
+    """
+    holder: dict[str, frozenset[str]] = {"effective": frozenset(snapshot_rels)}
+
+    def read() -> tuple[Path, ...]:
+        try:
+            binding = registry.get_runtime_binding(binding_id)
+            from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
+            live = frozenset(entry.path for entry in binding_exclusion_entries(binding))
+        except Exception:  # noqa: BLE001 -- degrade to last-known, never wider
+            live = frozenset()
+        holder["effective"] = holder["effective"] | live
+        return tuple(
+            (root / rel).resolve(strict=False)
+            for rel in sorted(holder["effective"])
+        )
+
+    return read
+
+
 def capture_run_admitted_workspace_roots(
     *,
     session: ConsoleChatSession | Any,
@@ -1437,6 +1469,15 @@ def capture_run_admitted_workspace_roots(
     roots = []
     for selection in selections:
         binding_id = str(selection.binding.binding_id)
+        from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
+        snapshot_rels = tuple(
+            entry.path
+            for entry in binding_exclusion_entries(selection.binding)
+        )
+        exclusions_provider = _exclusion_paths_provider(
+            registry, binding_id, selection.root, snapshot_rels
+        )
         if project_selection is not None and project_authority_guard is not None:
 
             def guard(
@@ -1469,6 +1510,7 @@ def capture_run_admitted_workspace_roots(
                 root_identity=selection.root_identity,
                 allow_write=selection.allow_write,
                 guard=guard,
+                exclusions_provider=exclusions_provider,
             )
         )
     return tuple(roots)

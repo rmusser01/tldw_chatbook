@@ -370,7 +370,7 @@ _MAX_BINDING_EXCLUSIONS = 200
 
 def binding_exclusion_entries(binding: Any) -> tuple[BindingExclusion, ...]:
     """Read a binding's exclusions defensively (unknown shapes dropped)."""
-    raw = (binding.metadata or {}).get("exclusions")
+    raw = (getattr(binding, "metadata", None) or {}).get("exclusions")
     if not isinstance(raw, list):
         return ()
     entries: list[BindingExclusion] = []

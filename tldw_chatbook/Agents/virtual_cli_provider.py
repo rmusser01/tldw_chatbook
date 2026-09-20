@@ -173,7 +173,8 @@ class VirtualCliProvider:
             for alias, authority in self._admitted_roots.items():
                 try:
                     executor = authority.workspace_executor or WorkspaceToolExecutor(
-                        authority.root
+                        authority.root,
+                        user_exclusion_paths=authority.exclusions_provider,
                     )
                     registry = VirtualCliRegistry(
                         authority.root,
