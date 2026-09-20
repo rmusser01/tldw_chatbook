@@ -22882,8 +22882,13 @@ class ConsoleChatController:
     ) -> tuple[DurableMessageSnapshot, ...] | None:
         """Capture the active durable lineage without leaking content to logs."""
         persistence = getattr(self.store, "persistence", None)
+        # task-32804.12 ([D2]): prefer the batch version reader so the
+        # snapshot capture is a few chunked SELECTs instead of one point read
+        # per active-path message per dispatch. Fall back to the per-message
+        # reader for persistence doubles that only implement the single form.
+        versions_reader = getattr(persistence, "get_message_versions", None)
         version_reader = getattr(persistence, "get_message_version", None)
-        if not callable(version_reader):
+        if not callable(versions_reader) and not callable(version_reader):
             return None
         try:
             active_ids = self.store.active_path_message_ids(session_id)
@@ -22893,6 +22898,20 @@ class ConsoleChatController:
             }
         except KeyError:
             return None
+        batched_versions: dict[str, int] | None = None
+        if callable(versions_reader):
+            persisted_ids = [
+                persisted
+                for persisted in (
+                    getattr(messages.get(native_id), "persisted_message_id", None)
+                    for native_id in active_ids
+                )
+                if persisted
+            ]
+            try:
+                batched_versions = versions_reader(persisted_ids)
+            except Exception:
+                return None
         snapshots: list[DurableMessageSnapshot] = []
         for native_id in active_ids:
             message = messages.get(native_id)
@@ -22910,12 +22929,19 @@ class ConsoleChatController:
                 if message.role is ConsoleMessageRole.SYSTEM:
                     continue
                 return None
-            try:
-                version = version_reader(persisted_id)
-            except Exception:
-                return None
-            if type(version) is not int or version < 1:
-                return None
+            if batched_versions is not None:
+                # A positive int if present; absent means missing/deleted/
+                # untrustworthy, which the point-read path treated as fatal.
+                version = batched_versions.get(persisted_id)
+                if version is None:
+                    return None
+            else:
+                try:
+                    version = version_reader(persisted_id)
+                except Exception:
+                    return None
+                if type(version) is not int or version < 1:
+                    return None
             variant_id: str | None = None
             variant_index: int | None = None
             if message.variants is not None:
