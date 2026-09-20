@@ -21,11 +21,13 @@ def test_library_rail_defaults():
     prefs = LibraryRailPreferences()
     assert LIBRARY_RAIL_SECTION_IDS == (
         "browse",
+        "artifacts",
         "create",
         "study",
         "ingest",
         "details",
     )
+    assert prefs.artifacts_open is True
     assert prefs.browse_open is True
     assert prefs.create_open is True
     assert prefs.study_open is True
@@ -43,10 +45,13 @@ def test_coerce_reads_fields_and_defaults_missing():
 
 
 def test_serialize_round_trips():
-    prefs = LibraryRailPreferences(details_open=True, create_open=False)
+    prefs = LibraryRailPreferences(
+        details_open=True, create_open=False, artifacts_open=False
+    )
     serialized = serialize_library_rail_preferences(prefs)
     assert serialized["details_open"] is True
     assert serialized["create_open"] is False
+    assert serialized["artifacts_open"] is False
     assert coerce_library_rail_preferences(serialized) == prefs
 
 
@@ -98,26 +103,26 @@ def test_lifecycle_round_trips_beside_section_preferences():
         assert coerce_library_lifecycle(serialized, is_new_profile=False) is lifecycle
 
 
-def test_lifecycle_aggregation_accepts_exactly_six_evidence_enums():
+def test_lifecycle_aggregation_accepts_exactly_seven_evidence_enums():
     assert tuple(inspect.signature(aggregate_library_lifecycle).parameters) == (
         "lifecycle",
         "evidence",
     )
-    empty = [LibraryContentEvidence.EMPTY] * 6
+    empty = [LibraryContentEvidence.EMPTY] * 7
     assert (
         aggregate_library_lifecycle(LibraryLifecycle.UNKNOWN, empty)
         is LibraryLifecycle.STARTER
     )
-    with pytest.raises(ValueError, match="exactly six"):
-        aggregate_library_lifecycle(LibraryLifecycle.UNKNOWN, empty[:5])
-    with pytest.raises(ValueError, match="exactly six"):
+    with pytest.raises(ValueError, match="exactly seven"):
+        aggregate_library_lifecycle(LibraryLifecycle.UNKNOWN, empty[:6])
+    with pytest.raises(ValueError, match="exactly seven"):
         aggregate_library_lifecycle(
             LibraryLifecycle.UNKNOWN, empty + [LibraryContentEvidence.EMPTY]
         )
     with pytest.raises(TypeError, match="LibraryContentEvidence"):
         aggregate_library_lifecycle(
             LibraryLifecycle.UNKNOWN,
-            [*empty[:5], "empty"],  # type: ignore[list-item]
+            [*empty[:6], "empty"],  # type: ignore[list-item]
         )
 
 
@@ -127,6 +132,7 @@ def test_lifecycle_aggregation_positive_wins_and_unknown_prevents_starter():
             LibraryLifecycle.UNKNOWN,
             [
                 LibraryContentEvidence.UNKNOWN,
+                LibraryContentEvidence.EMPTY,
                 LibraryContentEvidence.EMPTY,
                 LibraryContentEvidence.HAS_USER_CONTENT,
                 LibraryContentEvidence.EMPTY,
@@ -139,7 +145,7 @@ def test_lifecycle_aggregation_positive_wins_and_unknown_prevents_starter():
     assert (
         aggregate_library_lifecycle(
             LibraryLifecycle.UNKNOWN,
-            [LibraryContentEvidence.EMPTY] * 5 + [LibraryContentEvidence.UNKNOWN],
+            [LibraryContentEvidence.EMPTY] * 6 + [LibraryContentEvidence.UNKNOWN],
         )
         is LibraryLifecycle.UNKNOWN
     )
