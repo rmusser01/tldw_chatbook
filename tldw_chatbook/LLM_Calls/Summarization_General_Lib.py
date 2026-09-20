@@ -54,6 +54,7 @@ from tldw_chatbook.Utils.egress import create_default_session, default_session_t
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
@@ -64,10 +65,17 @@ from tldw_chatbook.Utils.egress import create_default_session, default_session_t
 >>>>>>> 3a97760163 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 =======
+>>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 939d3fcb59 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> f0bfd62695 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+>>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+>>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -76,6 +84,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -244,9 +255,20 @@ from tldw_chatbook.Chat.Chat_Deps import (
 =======
 >>>>>>> f18f5f639e (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 >>>>>>> 939d3fcb59 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> f0bfd62695 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> eaae3fd04a (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+<<<<<<< HEAD
 >>>>>>> d1352eb5d6 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+=======
+=======
+=======
+>>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+>>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+>>>>>>> 9d1599156d (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+>>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,

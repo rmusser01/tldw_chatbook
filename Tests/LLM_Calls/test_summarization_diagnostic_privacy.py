@@ -2354,6 +2354,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
@@ -2442,6 +2443,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> a31f8fbb6e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 =======
+>>>>>>> 9d1599156d (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
 >>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2470,6 +2473,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> a31aaaf3ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 =======
+>>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
 >>>>>>> 4ff2bf44fb (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 4aa3599028 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
@@ -2494,6 +2499,8 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 >>>>>>> 939d3fcb59 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
 >>>>>>> 70a8f901d0 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+>>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 =======
 >>>>>>> e5d67b55d1 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
@@ -2587,11 +2594,14 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 =======
 >>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+>>>>>>> fc611af42d (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
         # TASK-32853 groq + anthropic migrations: the non-200 status log
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
         # logs verbatim (bound to the typed error) per the freeze.
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
+<<<<<<< HEAD
 <<<<<<< HEAD
 >>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 <<<<<<< HEAD
@@ -2682,9 +2692,20 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
 =======
 >>>>>>> 183052a6ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 >>>>>>> 70a8f901d0 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> a31aaaf3ab (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> a31f8fbb6e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> 2af135a0cd (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+=======
+=======
+>>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+>>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+>>>>>>> 9d1599156d (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+>>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (
