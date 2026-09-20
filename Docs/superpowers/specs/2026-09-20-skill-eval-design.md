@@ -1,7 +1,8 @@
 # Skill Eval Sub-Harness — Design
 
 Date: 2026-09-20
-Status: Proposed (awaiting user review; no implementation until approved)
+Status: Reviewed — load-bearing assumptions verified against code (2026-09-20);
+awaiting go-ahead for implementation planning
 Influences: [PluginEval](https://github.com/amoustakas/claude-code-plugins/blob/main/docs/plugin-eval.md) (methodology shape), `Evals/character_probe/`, `Evals/word_bench/` (repo patterns)
 
 ## 1. Problem
@@ -31,10 +32,12 @@ score with provenance.
 
 - Score any skill visible to `LocalSkillsService` (trusted local store and
   project-discovered) without executing it — untrusted skills are safe to evaluate.
-- Three depth tiers with explicit cost: quick (0 LLM calls), standard (~16), deep (~66).
+- Three depth tiers with explicit cost: quick (0 LLM calls), standard (~16), deep (~67).
 - Every report attributable to an exact skill version: content digest, source path,
   trust tier, and methodology version stored as provenance.
-- Reproducible: seeded synthetic-prompt generation; decoy context recorded.
+- Re-runnable and attributable: seeded synthetic-prompt generation and recorded
+  decoy context make inputs identical across re-runs (model responses are inherently
+  non-deterministic; the claim is input fidelity, not bit-reproducibility).
 - Compare two skills via existing run-group comparison.
 
 **Non-goals (v1)**
@@ -63,10 +66,17 @@ tldw_chatbook/Evals/skill_eval/
   storage.py          # EvalsDB persistence following the character_probe pattern
 ```
 
-**Execution seam.** The runner takes an injected `ChatCallable` (same shape as
-`CharacterProbeRunner`). The UI wires it to `chat_api_call` through the worker-thread
-adapter with per-attempt timeout and a semaphore bound, per ADR-031. Tests inject
-fakes. No new provider surface.
+**Execution seam.** The runner takes an injected chat callable, following the
+`CharacterProbeRunner` mechanics (runner-owned `asyncio.Semaphore(config.concurrency)`
+plus `asyncio.to_thread` per call — there is no shared adapter in the repo to reuse).
+The callable's contract is deliberately *wider* than character probe's
+(`messages, model, temperature, max_tokens, seed`): it carries the resolved target —
+provider, model_id, api key — because judge/generator roles may be any configured
+provider, not just llama_cpp (the character-probe factory hardcodes one provider
+because its contract has nowhere to put another). The UI factory wraps
+`chat_api_call` and passes `request_timeout`, `request_retries`,
+`request_retry_delay` explicitly (the character-probe factory omits these; judge
+calls must not hang unbounded). Tests inject fakes.
 
 **Data flow.** UI subject picker → `SkillSubject` snapshot → runner executes layers by
 depth → `SkillEvalReport` → storage → results grid / inspector.
@@ -77,12 +87,19 @@ depth → `SkillEvalReport` → storage → results grid / inspector.
 
 - identity: name, description, body text, `allowed_tools`, script declarations
 - provenance: source path, content digest (sha256 of the definition), trust tier at
-  capture, discovery source (local store vs project)
+  capture, subject source (local store row vs directory path)
 - derived stats used by static checks: line counts, section headings, code blocks,
   imperative-directive counts, referenced files
 
-Skill packages (body + `references/`/`assets/` directories, scripts) are read for
-*structure only*. Nothing is ever executed.
+Skills are package *directories* (`store_dir/skills/<name>/SKILL.md` plus supporting
+files); the bundle manifest (per-file path/size/executable inventory) feeds the
+reference checks. Subject sources in v1: (a) the local store via
+`LocalSkillsService.list_skills()` (serialized `SkillSummary`, including trust
+fields), and (b) an arbitrary skill directory by path — the same snapshot builder,
+which covers project-dir skills and pre-install evaluation without waiting on
+workspace-binding integration. Auto-enumeration of project skills from Console
+bindings is future work. Packages are read for *structure only*; nothing is ever
+executed.
 
 ## 6. Layers
 
@@ -94,8 +111,11 @@ Sub-checks over the snapshot (weights are calibration constants, v1 values in §
   ("Use when…"-style intent statement present)
 - `body_structure` — headings, progressive disclosure: body length sweet spot,
   `references/`/`assets/` usage, layered ordering (summary → detail)
-- `tool_surface_sanity` — every `allowed_tools` entry resolves to a known catalog
-  namespace (builtin/local/skill/mcp); flags over-broad grants
+- `tool_surface_sanity` — `allowed_tools` entries are bare tool names matched
+  exactly against the builtin + local catalog names (the real narrowing semantics of
+  `intersect_skill_tools`); namespaced (`local:fs_read`) or MCP-style entries are
+  dead grants that can never match, and are flagged; grants never referenced in the
+  body are flagged as over-broad
 - `trust_surface` — consistency between trust tier, declared tools, and script
   presence (e.g. untrusted skill requesting broad local tools)
 - `token_efficiency` — body size vs information density, redundancy heuristics
@@ -105,8 +125,11 @@ Anti-pattern findings, each a 5% multiplicative penalty on the composite, floor 
 
 `EMPTY_DESCRIPTION`, `MISSING_TRIGGER`, `OVER_CONSTRAINED` (>15 MUST/ALWAYS/NEVER),
 `BLOATED_SKILL` (>800 lines, no `references/`), `ORPHAN_REFERENCE` (referenced file
-absent from the package), `UNKNOWN_TOOLS` (unresolvable `allowed_tools` entry),
-`NAME_COLLISION` (duplicate name within the evaluated store scope).
+absent from the package), `UNKNOWN_TOOLS` (entry matching no builtin/local tool name
+— including namespaced or MCP-style entries, which the exact-match narrowing can
+never grant), `NAME_COLLISION` (name colliding with another skill or with the
+builtin/local/library/profile/canvas/runtime tool names — the composition-time
+exclusion set).
 
 ### 6.2 Layer 2 — LLM judge (~16 calls at standard)
 
@@ -132,8 +155,9 @@ parse against a strict JSON schema.
 - K=5 repeats per prompt (deep default: 50 total sims, concurrency-bounded): each sim
   is one selection call — the subject skill presented alongside a **stable decoy
   set** (up to 8 other installed skills' name/description summaries, seeded
-  selection, digests recorded) so activation is measured against realistic
-  competition without whole-catalog drift.
+  selection, digests recorded; descriptions presented verbatim, matching
+  `SkillToolProvider`'s catalog presentation — it does not truncate) so activation
+  is measured against realistic competition without whole-catalog drift.
 - Metrics: activation rate (Wilson CI), output consistency (bootstrap CI, 1000
   resamples), failure rate (Clopper–Pearson; unparseable/refusal counts as
   failures). Pure Python; no new dependencies.
@@ -168,7 +192,9 @@ depth: quick → "Estimated", standard →
 - **Cost transparency**: the UI shows the estimated call count and target models
   before launch; the estimate is derived from config, not guessed.
 - **Preflight**: skill readable, models configured, API keys present — before any
-  call is spent (word_bench preflight precedent).
+  call is spent. Uses `Chat/provider_readiness.py::get_provider_readiness(provider,
+  app_config)` (pure, synchronous, provider-level); the API key it resolves is what
+  the chat factory passes to `chat_api_call` — no parallel key-resolution code.
 - **Cancellation**: `CancelToken` checked between cells; partial results persist on
   cancel with the run marked cancelled (ADR-031 behavior).
 - **Error isolation**: per-cell errors captured like character_probe's `CellError`;
@@ -179,15 +205,28 @@ depth: quick → "Estimated", standard →
 
 ## 9. Storage & provenance
 
-Follow the `character_probe` storage pattern against `EvalsDB`:
+Follow the `character_probe` storage pattern against `EvalsDB` — generic tables
+only, **no new tables in v1** (avoids the SCHEMA_VERSION migration ritual; dedicated
+tables are only warranted if a human-review surface lands later):
 
-- one run row per evaluation (run-grouped), status managed like existing runs
-- per-artifact result rows: each judge rating and each sim batch (raw judge JSON kept
-  for audit)
-- aggregate metrics row: per-dimension scores, composite, grade, confidence,
-  anti-pattern findings
-- run metadata JSON: subject provenance (digest, path, trust tier, discovery source),
-  decoy-set digests, seed, methodology version, depth, model refs
+- bench task row: `eval_tasks` with `task_type="generation"`,
+  `config_format="custom"`, `config_data["bench_type"]="skill_eval"` (the
+  discriminator convention; satisfies the `task_type` CHECK constraint)
+- one `eval_runs` row per evaluation sharing a `run_group_id`, with the full report
+  snapshot — per-dimension scores, composite, grade, confidence, anti-pattern
+  findings, and provenance (digest, path, trust tier, subject source, decoy-set
+  digests, seed, methodology version, depth, model refs) — in
+  `config_overrides["snapshot"]`
+- per-artifact `eval_results` rows: each judge rating and each simulation cell, with
+  distinct `sample_id`s (`judge-<name>`, `sim-<p>-<k>`; the table enforces
+  `UNIQUE(run_id, sample_id)`) and raw judge JSON in metadata for audit
+
+Storage gotchas the implementation must honor: `create_run` validates both FKs, so
+judge/generator targets must be live `eval_models` rows — the model pickers mint
+them where missing (bench_editor "+ New target" precedent); `update_run` /
+`update_task` return `False` on missing rows rather than raising (check returns);
+`store_result` is one-row-per-transaction (accepted non-atomicity, character-probe
+precedent); `get_run_results` is paginated and must be drained.
 
 Comparing two skills = comparing two runs; existing run comparison surfaces apply.
 
@@ -197,9 +236,14 @@ Comparing two skills = comparing two runs; existing run comparison surfaces appl
   (e.g. `skill_eval_panel.py`): subject picker listing skills with trust tiers,
   depth selector, generator/judge model pickers resolved from `eval_models`, launch
   button with cost estimate, live progress via Textual workers (`exclusive=True`).
-- Results render in the existing results grid + inspector: composite with grade and
-  confidence, per-dimension bars, anti-pattern findings with remediation text,
-  drill-down to judge artifacts and sim stats.
+- Run groups auto-appear in the library rail (any `run_group_id`-grouped runs do),
+  but skill-eval needs its **own detail-view branch** in the Evals screen:
+  `ResultsGrid` is word-bench-shaped top to bottom and misrenders other snapshot
+  shapes — the character-probe placeholder pane is the precedent for a dedicated
+  branch. The skill-eval detail view shows the composite with grade and confidence,
+  per-dimension bars, anti-pattern findings with remediation text, and drill-down to
+  judge artifacts and sim stats. The pre-launch cost estimate follows the
+  `CharacterBenchEstimate` precedent.
 - Styling uses `$ds-*` design tokens only (ADR-150); keybindings follow the
   htop-style single-letter convention and footer-hint rules (ADR-031 / decision 031).
 
@@ -207,7 +251,8 @@ Comparing two skills = comparing two runs; existing run comparison surfaces appl
 
 - Skills under test **never execute**; scripts are inspected as declarations only.
 - Untrusted skill content is data, not instructions: judge/sim prompts delimit the
-  skill body explicitly; judge system prompts state that rubric content is inert;
+  skill body and all decoy skill descriptions explicitly; judge system prompts state
+  that rubric content is inert;
   responses must satisfy a strict JSON schema — anything else is a retry-then-fail
   cell, never interpreted as instructions.
 - Body size fed to models is capped; oversize bodies are truncated with a
@@ -223,7 +268,8 @@ Comparing two skills = comparing two runs; existing run comparison surfaces appl
   malformed, injection-payload); prompt builders (snapshots).
 - **Integration**: runner with fake `ChatCallable` across all depths; cancel mid-run;
   all-judge-calls-fail degradation; storage round-trip into in-memory EvalsDB with
-  provenance assertions.
+  provenance assertions, plus the storage edge cases (FK-validated run creation,
+  missing-row `False` returns from update methods, paginated result draining).
 - **UI**: mount/worker wiring tests following existing Evals screen test patterns.
 
 Per repo policy, targeted runs only unless a full sweep is requested.
