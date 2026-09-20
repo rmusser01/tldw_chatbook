@@ -1205,8 +1205,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+<<<<<<< HEAD
       "call_count": 133,
       "diagnostic_digest": "7db71eb22661618ffcdf",
+=======
+      "call_count": 138,
+      "diagnostic_digest": "79496d15d614ace3c0f5",
+>>>>>>> 0472e17cfa (chore(diagnostic): re-pin production diagnostic inventory for the groq/openrouter profiles (TASK-32851))
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1640,6 +1645,7 @@
     },
     {
       "call_count": 3,
+<<<<<<< HEAD
       "diagnostic_digest": "70615959cf4152f88e44",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/deepseek.py",
@@ -1647,12 +1653,15 @@
     },
     {
       "call_count": 3,
+=======
+>>>>>>> 0472e17cfa (chore(diagnostic): re-pin production diagnostic inventory for the groq/openrouter profiles (TASK-32851))
       "diagnostic_digest": "58f935383e01ea4b1c07",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/groq.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+<<<<<<< HEAD
       "call_count": 3,
       "diagnostic_digest": "9408a1b296938f3dbb5d",
       "owner": "TASK-492",
@@ -1660,6 +1669,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+=======
+>>>>>>> 0472e17cfa (chore(diagnostic): re-pin production diagnostic inventory for the groq/openrouter profiles (TASK-32851))
       "call_count": 2,
       "diagnostic_digest": "27aed1a64689336b542f",
       "owner": "TASK-492",
@@ -11967,7 +11978,15 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
+<<<<<<< HEAD
     "owner_files": 615,
+=======
+<<<<<<< HEAD
+    "owner_files": 614,
+=======
+    "owner_files": 610,
+>>>>>>> 0472e17cfa (chore(diagnostic): re-pin production diagnostic inventory for the groq/openrouter profiles (TASK-32851))
+>>>>>>> 20c4e0493a (chore(diagnostic): re-pin production diagnostic inventory for the groq/openrouter profiles (TASK-32851))
     "path_privacy_candidate_calls": 701,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
