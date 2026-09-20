@@ -1,5 +1,22 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2713 merged; catalog refresh resumes
+
+[PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) merged as
+`5e0f9f82c3` on 2026-09-20 after owner approval of twelve native captures,
+zero remaining Qodo findings, all five review threads resolved, and current-head
+CI: 1,152 Fast Lane cases plus artifact, performance, CSS and backlog checks.
+The final merge tree exactly matches CI's merge with current dev `c768376092`.
+[TASK-32880 closeout receipt](../qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/merge-closeout.json).
+
+Existing draft [PR2714](https://github.com/rmusser01/tldw_chatbook/pull/2714)
+resumes from this merged dev on a fresh branch. TASK-32830 covers actual local
+catalog discovery during refresh, original connection state, permission denials,
+failure/retry and owned-process cleanup. Fresh targeted and native qualification,
+current review/CI and owner visual approval remain before its merge. Connected
+execution (PR2716), compact actions (PR2712) and wider screen reviews remain
+separate. Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2713 cancellation integration ready for review
 
 Saved [PR2713](https://github.com/rmusser01/tldw_chatbook/pull/2713) resumes on
