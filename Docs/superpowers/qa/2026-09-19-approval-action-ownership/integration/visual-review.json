@@ -1,0 +1,24 @@
+{
+  "run": "integrated-native-003",
+  "all_eight_captures_individually_inspected": true,
+  "themes": [
+    "textual-dark",
+    "textual-light"
+  ],
+  "sizes": [
+    [
+      120,
+      40
+    ],
+    [
+      170,
+      48
+    ]
+  ],
+  "states": [
+    "deny-all",
+    "ready-to-submit"
+  ],
+  "observations": "Both choice rows and all three action labels are painted and reachable; no setup overlay. Deny all sets both choices to Deny; Approve all sets both to Once, with Submit focused. No layout changes in this PR.",
+  "owner_approval": "pending"
+}

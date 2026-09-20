@@ -1,12 +1,77 @@
 """Queued approval gestures belong to the batch the user actually saw."""
 
 from copy import deepcopy
+from types import MethodType, SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from textual.widgets import Button
 
 from Tests.UI.test_console_mcp_approval import _CardHarnessApp, _sample_calls
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    ChatApprovalCard,
+    _ApprovalActionButton,
+)
+
+
+def test_published_press_keeps_its_generation_after_button_changes(monkeypatch):
+    published = []
+    monkeypatch.setattr(
+        Button,
+        "post_message",
+        lambda button, message: published.append(message) or True,
+    )
+    button = _ApprovalActionButton("Submit", generation=7)
+
+    assert button.post_message(Button.Pressed(button))
+    button.batch_generation = 8
+
+    assert len(published) == 1
+    event = published[0]
+    assert isinstance(event, _ApprovalActionButton.Pressed)
+    assert event.button is button and event.batch_generation == 7
+    assert event.handler_name == "on_button_pressed"
+
+
+@pytest.mark.parametrize("fast_first", [False, True])
+def test_mixed_submission_paths_lock_before_publishing_and_decide_once(fast_first):
+    select = SimpleNamespace(value="approve_session", disabled=False)
+    fast = SimpleNamespace(disabled=False)
+    toolbar = [SimpleNamespace(disabled=False) for _ in range(3)]
+    card = SimpleNamespace(
+        _batch_submitted=False,
+        _batch_phase="pending",
+        _batch_names=["call-1"],
+        _batch_round_id="round-1",
+        _batch_selects=[select],
+        _batch_fast_buttons=[fast],
+        query_one=Mock(side_effect=toolbar),
+        ApprovalDecided=ChatApprovalCard.ApprovalDecided,
+    )
+    card._disable_batch_submit_controls = MethodType(
+        ChatApprovalCard._disable_batch_submit_controls, card
+    )
+    published = []
+
+    def publish(message):
+        assert card._batch_submitted
+        assert select.disabled and fast.disabled and all(b.disabled for b in toolbar)
+        published.append(message)
+
+    card.post_message = publish
+    normal = lambda: ChatApprovalCard._submit_batch_decisions(card)
+    quick = lambda: ChatApprovalCard._submit_fast_decision(card, "deny")
+    first, second = (quick, normal) if fast_first else (normal, quick)
+
+    first()
+    second()
+    first()
+
+    assert len(published) == 1
+    assert published[0].round_id == "round-1"
+    assert published[0].decisions == {
+        "call-1": "deny" if fast_first else "approve_session"
+    }
 
 
 @pytest.mark.asyncio

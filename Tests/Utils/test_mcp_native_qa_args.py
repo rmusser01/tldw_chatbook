@@ -11,6 +11,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 RUNNERS = [
+    REPO / "Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-19-mcp-recovery-catalog/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-18-mcp-restored-roots/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-19-mcp-tools-header/native_check.py",
@@ -27,6 +28,7 @@ RUNNERS = [
     "runner",
     RUNNERS,
     ids=[
+        "approval-actions",
         "recovery-catalog",
         "restored-roots",
         "tools-header",

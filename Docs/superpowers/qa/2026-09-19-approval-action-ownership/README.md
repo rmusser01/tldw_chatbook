@@ -1,5 +1,8 @@
 # Console approval action ownership — TASK-32841
 
+**Current integration:** see [current-dev review](CURRENT-DEV-REVIEW.md) and
+[current gallery](GALLERY.md). The original-base evidence below is historical.
+
 A queued Approve all, Deny all or Submit press now belongs to the batch shown
 when it was published. Changed rounds/calls, clear and finishing transitions
 invalidate it. A batch can publish its decision only once; unchanged identified
@@ -39,7 +42,7 @@ gates; this evidence does not authorize merging.
 
 ## Native evidence
 
-[Eight inspected captures](GALLERY.md) show keyboard Deny all, Approve all and
+[Eight historical captures](HISTORICAL-GALLERY.md) show keyboard Deny all, Approve all and
 Submit in Textual dark/light at 120×40 and 170×48. Native run **003** uses the
 real app, LinuxDriver, terminal streams, approval card and controller
 request/resolve round trip. Two synthetic pending calls enter the controller;

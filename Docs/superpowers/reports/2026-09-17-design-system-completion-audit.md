@@ -1,5 +1,21 @@
 # Design-system completion ledger — 2026-09-17
 
+## Current checkpoint — PR2728 merged; PR2730 integrated
+
+[PR2728](https://github.com/rmusser01/tldw_chatbook/pull/2728) merged at
+`de10a62e67124a2b21b78edf1a4887cea03ff139` after owner visual approval,
+current-head CI and accumulated review; its actual tree equals the approved tree.
+[Merge receipt](../qa/2026-09-19-approval-action-ownership/integration/pr2728-closeout.json).
+
+Saved PR2730 / TASK-32841 is integrated onto that merged dev. Both report histories
+are retained; there were no product conflicts. [210 distinct targeted passes,
+19 reproduced baseline failures, seven guards and eight inspected current-source
+native captures](../qa/2026-09-19-approval-action-ownership/CURRENT-DEV-REVIEW.md)
+qualify the bounded Console approval ownership repair. Current-head CI/review and
+this PR's own final visual approval remain before merge. MCP inspector refresh,
+long-path/compact presentation and connected-runtime journeys remain follow-ups.
+PR2707's heartbeat stays paused. Earlier checkpoints below are historical.
+
 ## Current checkpoint — PR2727 merged; PR2728 integrated
 
 [PR2727](https://github.com/rmusser01/tldw_chatbook/pull/2727) merged at

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-19 15:02'
-updated_date: '2026-09-19 15:25'
+updated_date: '2026-09-20 07:52'
 labels: []
 dependencies: []
 ---
@@ -32,6 +32,17 @@ Prevent delayed bulk or submission gestures from changing or deciding a replacem
 ADR required: no
 ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md; backlog/decisions/150-design-token-system-and-design-language.md
 Reason: routine repair to existing approval-event ownership, with no new policy, persistence, service boundary or interaction model. The proposed MCP matrix bulk-actions ADR is not implemented by this review.
+
+## Current-dev integration (2026-09-20)
+
+1. Preserve saved head 10747313ea6ec2c8d40381518ca31708cc94fa68 and replay only TASK-32841 onto merged dev de10a62e67124a2b21b78edf1a4887cea03ff139. Retain both review histories and existing lessons; inspect every conflict and product overlap.
+2. Requalify the existing card/controller and ownership cases on this combined tree. Attribute remaining baseline failures against unchanged current dev before making regression claims. Port the saved native runner to the accepted shared CLI/image-warmup boundary only if needed, with its existing boundary tests.
+3. Run relevant artifact/static checks and independent review. Repeat the real private-profile native keyboard Deny all, Approve all and Submit matrix in both themes and sizes, inspect all captures, and verify normal shutdown and unchanged user defaults.
+4. Update the task, evidence and ledgers, push the existing bounded PR, address accumulated Qodo findings and exact-head CI, then present its own final visual approval. Do not merge without that approval or expand into remaining MCP journeys.
+
+ADR required: no
+ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md; backlog/decisions/150-design-token-system-and-design-language.md
+Reason: integration and qualification of the existing approved-scope event-ownership repair, preserving policy, layout, storage and service boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -46,4 +57,6 @@ Eight inspected native run-003 captures use the real card/controller at 120x40 a
 Evidence: Docs/superpowers/qa/2026-09-19-approval-action-ownership/README.md and GALLERY.md. Only owned files were copied into codex/approval-batch-action-review after concurrent branch switching/edits appeared in the original checkout; original and unrelated files are preserved. Census-selected TASK-32841 corrected the CLI's stale newly created 32829 before implementation; two uncommitted copies represent one logical task.
 
 ADR required: no new ADR. Existing backlog/decisions/032-local-agent-tool-permission-boundary.md and backlog/decisions/150-design-token-system-and-design-language.md govern this routine event-ownership fix. Independent draft against dev; current-head CI/review and final visual approval still required before merge. Wider component work remains open.
+
+Current-dev integration (2026-09-20): replayed only the saved approval fix onto merged dev de10a62e67 after PR2728 closeout. Both report conflicts retain all histories; no product conflict. Production code is unchanged from saved 10747313. Added three isolated publication/submission checks and moved the native runner to the shared CLI validator and application image warmup. Independent review caught editable-package import ordering; final runner pins the worktree before any project import and asserts six loaded module origins. Integrated native run 001 is unqualified, 002 superseded, and final 003 supplies all eight inspected dark/light captures and healthy lifecycle receipts. No tool dispatch or network attempt. Targeted union: 210 distinct passes (126 product, 84 runner); all 19 failures reproduce on unchanged current dev after normalizing process-specific object addresses in two assertions. No full sweep. Seven guards pass; no new static diagnostics and changed formatting passes. Current evidence and conflict choices: Docs/superpowers/qa/2026-09-19-approval-action-ownership/CURRENT-DEV-REVIEW.md. Existing ADR-032/150 apply; no new ADR. Local implementation/review complete; PR2730 current-head CI/Qodo and its own visual approval remain merge gates.
 <!-- SECTION:NOTES:END -->

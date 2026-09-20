@@ -12,14 +12,26 @@ import traceback
 from pathlib import Path
 
 
-def main():
-    root = Path(sys.argv[1]).resolve()
-    tmux_socket, session = sys.argv[2:4]
+def main() -> None:
+    """Run ROOT TMUX_SOCKET SESSION in an existing native tmux session.
+
+    ROOT is an unused, prepared private profile under /tmp. Shared validation
+    checks arguments, profile paths and tmux before app imports or output writes.
+    The journey records keyboard bulk choices, actual controller submission,
+    painted controls and normal shutdown in native.log and evidence/.
+
+    Raises:
+        SystemExit: Status 0 after success, 1 after a journey or application
+            failure, or 2 for invalid command-line input or profile paths.
+    """
     here = Path(__file__).resolve().parent
     repo = here.parents[3]
-    runpy.run_path(str(here.parent / "2026-09-16-ingest-lifecycle/native_check.py"))[
-        "validate_profile"
-    ](root)
+    sys.path.insert(0, str(repo))
+    args = runpy.run_path(str(here.parent / "native_runner_args.py"))[
+        "parse_native_args"
+    ]()
+    root, tmux_socket, session = args.root, args.tmux_socket, args.session
+    tmux_path = args.tmux_path
     os.environ.update(
         HOME=str(root / "home"),
         USERPROFILE=str(root / "home"),
@@ -39,24 +51,34 @@ def main():
         return original_connect(sock, address)
 
     socket.socket.connect = guard_connect
-    sys.path.insert(0, str(repo))
     from loguru import logger
     from textual.widgets import Button
-    from textual_image._terminal import probe_terminal
 
     from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.Utils.app_shutdown import claim_process_exit
+    from tldw_chatbook.Utils.terminal_utils import warm_up_image_protocol
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
+    module_origins = {
+        name: str(Path(sys.modules[name].__file__).resolve())
+        for name in (
+            "tldw_chatbook",
+            "tldw_chatbook.app",
+            "tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card",
+            "tldw_chatbook.Utils.input_validation",
+            "tldw_chatbook.Utils.path_validation",
+        )
+    }
+    assert all(Path(path).is_relative_to(repo) for path in module_origins.values())
     logger.remove()
     logger.add(root / "native.log", level="INFO")
     evidence = root / "evidence"
     evidence.mkdir(exist_ok=False)
     (root / "launch.json").write_text(json.dumps({"pid": os.getpid()}))
     claim_process_exit()
-    probe_terminal()
+    warm_up_image_protocol()
     app = TldwCli()
     sources = [
         "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
@@ -66,10 +88,12 @@ def main():
         "tldw_chatbook/css/widget_defaults_scoped.tcss",
         "tldw_chatbook/css/widget_defaults_self.tcss",
         "tldw_chatbook/css/core/_variables.tcss",
+        "Docs/superpowers/qa/native_runner_args.py",
     ]
     result = {
         "pid": os.getpid(),
         "cells": [],
+        "module_origins": module_origins,
         "source_hashes": {
             p: hashlib.sha256((repo / p).read_bytes()).hexdigest() for p in sources
         },
@@ -83,7 +107,7 @@ def main():
     async def tmux(*args):
         return await asyncio.to_thread(
             subprocess.run,
-            ["/opt/homebrew/bin/tmux", "-L", tmux_socket, *args],
+            [tmux_path, "-L", tmux_socket, *args],
             check=True,
             text=True,
             capture_output=True,
@@ -150,6 +174,10 @@ def main():
                 lambda: getattr(app.screen, "screen_name", None) == "chat", "Console"
             )
             controller = app.screen._ensure_console_chat_controller()
+            controller_module = type(controller).__module__
+            controller_path = Path(sys.modules[controller_module].__file__).resolve()
+            assert controller_path.is_relative_to(repo)
+            module_origins[controller_module] = str(controller_path)
             chat = controller.new_session(
                 title="Approval review fixture", ephemeral=True
             )
