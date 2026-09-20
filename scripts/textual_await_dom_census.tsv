@@ -42,8 +42,6 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_audit_mode	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_children	3
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_permissions_mode	3
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_inspector_hub_action_requested	2
-tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_inspector_reallow_requested	2
-tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_inspector_remove_arg_rule_requested	3
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_inspector_revoke_session_approval_requested	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_permissions_mode_state_cycle_requested	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_rail_scope_changed	1
@@ -91,6 +89,7 @@ tldw_chatbook/UI/Screens/research_workspace_screen.py::_load_quick_note_after_fl
 tldw_chatbook/UI/Screens/research_workspace_screen.py::apply	1
 tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py::action_move_owner	2
 tldw_chatbook/UI/Screens/workflows_screen.py::_activate_issue	1
+tldw_chatbook/UI/Screens/workflows_screen.py::_attach_session	1
 tldw_chatbook/UI/Screens/workflows_screen.py::_recovery_dialog	1
 tldw_chatbook/UI/Screens/workflows_screen.py::_render_authoring	4
 tldw_chatbook/UI/Sharing_Panel.py::create_share_token	3
