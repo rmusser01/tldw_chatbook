@@ -1,8 +1,9 @@
 # Design-system completion ledger — 2026-09-17
 
-## Current checkpoint — compact restored-root review ready
+## Current checkpoint — compact restored-root review saved in PR2759
 
-TASK-32879 repairs the restored MCP root review at 80×24: keyboard-scrollable,
+[Draft PR2759](https://github.com/rmusser01/tldw_chatbook/pull/2759) / TASK-32879
+repairs the restored MCP root review at 80×24: keyboard-scrollable,
 left-aligned complete paths and persistent Cancel/Use fresh MCP defaults actions.
 [116 targeted passes, two reproduced dev failures, seven preflight guards and
 16 inspected native captures](../qa/2026-09-20-mcp-compact-review/README.md)
