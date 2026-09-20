@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Callable
 
 from tldw_chatbook.STT.executor_process_tree import (
     ExecutorProcessTree,
@@ -32,7 +32,11 @@ from tldw_chatbook.Utils.filesystem_identity import (
 )
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
-    SensitiveExclusion, resolve_sensitive_context, sensitive_exclusions_under,
+    SensitiveExclusion,
+    SensitivePathContext,
+    merge_sensitive_context,
+    resolve_sensitive_context,
+    sensitive_exclusions_under,
 )
 
 WORKSPACE_HELPER_TIMEOUT_SECONDS = 300
@@ -120,7 +124,12 @@ def workspace_worker_environment(workspace_root: Path) -> dict[str, str]:
 class WorkspaceToolExecutor:
     """Launch one contained helper for one workspace operation."""
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        *,
+        user_exclusion_paths: Callable[[], tuple[Path, ...]] | None = None,
+    ) -> None:
         candidate = Path(os.path.abspath(workspace_root))
         try:
             self._workspace_root = validate_path(
@@ -133,6 +142,24 @@ class WorkspaceToolExecutor:
             raise WorkspaceToolExecutionError("invalid_request") from None
         self._authority_chain: DirectoryChain = capture_directory_chain(
             self._workspace_root
+        )
+        self._user_exclusion_paths = user_exclusion_paths
+
+    def _call_context(self) -> SensitivePathContext:
+        """Per-call deny context: base denylist merged with user exclusions."""
+        base = resolve_sensitive_context()
+        if self._user_exclusion_paths is None:
+            return base
+        try:
+            extra = tuple(self._user_exclusion_paths())
+        except Exception:  # provider failure falls back to the base denylist
+            return base
+        if not extra:
+            return base
+        return merge_sensitive_context(
+            base,
+            extra_files=tuple(path for path in extra if path.is_file()),
+            extra_dirs=tuple(path for path in extra if not path.is_file()),
         )
 
     def execute(
@@ -369,10 +396,11 @@ class WorkspaceToolExecutor:
                         raw_path,
                         chain.canonical_root,
                         intent="read",
+                        context=self._call_context(),
                     )
                     normalized["path"] = str(target.relative_to(chain.canonical_root))
             if operation in _GIT_OPERATIONS and type(arguments) is dict:
-                context = resolve_sensitive_context()
+                context = self._call_context()
                 root = resolve_workspace_path(
                     ".", chain.canonical_root, intent="list", context=context
                 )
@@ -389,7 +417,7 @@ class WorkspaceToolExecutor:
                     )
                     normalized["path"] = target.relative_to(root).as_posix() or "."
             if operation in _READ_OPERATIONS and type(arguments) is dict:
-                context = resolve_sensitive_context()
+                context = self._call_context()
                 root = resolve_workspace_path(
                     ".", chain.canonical_root, intent="list", context=context
                 )
@@ -419,7 +447,7 @@ class WorkspaceToolExecutor:
                 raw_path = arguments.get("path")
                 if type(raw_path) is not str:
                     raise ValueError("invalid mutation path")
-                context = resolve_sensitive_context()
+                context = self._call_context()
                 resolve_workspace_path(
                     raw_path,
                     chain.canonical_root,
@@ -437,7 +465,7 @@ class WorkspaceToolExecutor:
                 raw_diff = arguments.get("diff")
                 if type(raw_diff) is not str:
                     raise ValueError("invalid patch")
-                context = resolve_sensitive_context()
+                context = self._call_context()
                 targets: list[str] = []
                 for patch_file in parse_patch_targets(raw_diff):
                     rel_path = patch_file.new_path

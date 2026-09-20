@@ -2598,3 +2598,44 @@ def test_parent_exclusions_survive_root_replacement_and_worker_env_stripping(
     assert outcome == "result"
     assert "A_CONFIG_SECRET" not in value
     assert "B_CONFIG_SECRET" not in value
+
+
+def test_user_exclusion_refuses_read(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "secrets").mkdir()
+    (root / "secrets" / "key.pem").write_text("k")
+    executor = WorkspaceToolExecutor(root, user_exclusion_paths=lambda: (root / "secrets",))
+    with pytest.raises(WorkspaceToolExecutionError):
+        executor.execute("fs_read", {"path": "secrets/key.pem"}, intent="read")
+
+
+def test_user_exclusion_omits_from_listing(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "secrets").mkdir()
+    (root / "public.txt").write_text("p")
+    executor = WorkspaceToolExecutor(root, user_exclusion_paths=lambda: (root / "secrets",))
+    result = executor.execute("fs_list", {"path": "."}, intent="read")
+    assert "secrets" not in result
+    assert "public.txt" in result
+
+
+def test_user_exclusion_refuses_write_and_stat(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "notes.txt").write_text("n")
+    executor = WorkspaceToolExecutor(root, user_exclusion_paths=lambda: (root / "notes.txt",))
+    with pytest.raises(WorkspaceToolExecutionError):
+        executor.execute("fs_write", {"path": "notes.txt", "content": "x"}, intent="write")
+    with pytest.raises(WorkspaceToolExecutionError):
+        executor.execute("stat_path", {"path": "notes.txt"}, intent="read")
+
+
+def test_user_exclusion_provider_failure_keeps_base_context(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "ok.txt").write_text("o")
+
+    def broken():
+        raise RuntimeError("registry unavailable")
+
+    executor = WorkspaceToolExecutor(root, user_exclusion_paths=broken)
+    result = executor.execute("fs_read", {"path": "ok.txt"}, intent="read")
+    assert "o" in result
