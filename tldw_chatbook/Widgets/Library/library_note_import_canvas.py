@@ -594,7 +594,20 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
         if collision_only:
             self._sync_collision_controls(snapshot)
             return
+        # task-32804.11 #4: a review-row toggle recomposes the whole page and
+        # dropped keyboard focus to nothing (measured 120-175 ms at the 25-row
+        # ceiling). Capture the focused control's id so _after_recompose can
+        # restore it -- ids are stable, the same button is re-rendered.
+        self._focus_id_to_restore = self._focused_control_id()
         self.refresh(recompose=True)
+
+    def _focused_control_id(self) -> "str | None":
+        """The id of the currently-focused widget, for focus restoration."""
+        try:
+            focused = self.app.focused
+        except Exception:
+            return None
+        return getattr(focused, "id", None) if focused is not None else None
 
     def _sync_destination_controls(self, snapshot: LibraryNoteImportSnapshot) -> None:
         try:
@@ -663,6 +676,16 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
 
     def _after_recompose(self) -> None:
         self._tighten_run_disclosures()
+        # task-32804.11 #4: put keyboard focus back on the control the user was
+        # on before the review recompose (see sync_state). No-op if nothing was
+        # captured or the id is gone (a phase change legitimately moved focus).
+        focus_id = getattr(self, "_focus_id_to_restore", None)
+        self._focus_id_to_restore = None
+        if focus_id:
+            try:
+                self.query_one(f"#{focus_id}").focus()
+            except Exception:
+                pass
         self.call_after_refresh(self._update_overflow_hint)
         self.call_after_refresh(self._fit_source_summary)
 
