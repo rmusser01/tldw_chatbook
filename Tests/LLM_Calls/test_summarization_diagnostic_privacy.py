@@ -5145,12 +5145,14 @@ def test_openrouter_success_hides_credential_input_prompt_and_response(
     ]
     assert len(post_calls) == 1
     post_args, post_kwargs = post_calls[0]
-    assert post_args == ()
-    assert post_kwargs["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    # TASK-32853 re-key: the engine posts the url positionally and sends the
+    # payload as the json= dict (the old handler passed url= and a
+    # data=json.dumps string).
+    assert post_args == ("https://openrouter.ai/api/v1/chat/completions",)
     assert post_kwargs["headers"]["Authorization"] == (
         f"Bearer {OPENROUTER_CREDENTIAL_CANARY}"
     )
-    payload = json.loads(post_kwargs["data"])
+    payload = post_kwargs["json"]
     assert payload["messages"] == [
         {"role": "system", "content": "fixed system"},
         {
@@ -5195,9 +5197,10 @@ def test_openrouter_stream_hides_returned_content_and_consumes_lines(
         )
 
     assert result == OPENROUTER_STREAM_CANARY
-    assert response.iter_lines_started is True
+    assert response.iter_content_started is True
+    assert response.closed is True
     assert len(post_calls) == 1
-    assert json.loads(post_calls[0][1]["data"])["stream"] is True
+    assert post_calls[0][1]["json"]["stream"] is True
     assert post_calls[0][1]["stream"] is True
     assert OPENROUTER_STREAM_CANARY not in captured.text
     assert OPENROUTER_PRIVATE_STREAMING_VALUE not in captured.text
@@ -5232,13 +5235,14 @@ def test_openrouter_stream_non_string_content_preserves_historical_error_contrac
         "openrouter: Error occurred while processing stream: can only concatenate str "
         '(not "int") to str'
     )
-    assert response.iter_lines_started is True
-    assert response.closed is False
+    assert response.iter_content_started is True
+    assert response.closed is True
     assert len(post_calls) == 1
-    assert post_calls[0][0] == ()
-    assert post_calls[0][1]["url"] == ("https://openrouter.ai/api/v1/chat/completions")
+    assert post_calls[0][0] == (
+        "https://openrouter.ai/api/v1/chat/completions",
+    )
     assert post_calls[0][1]["stream"] is True
-    assert json.loads(post_calls[0][1]["data"])["stream"] is True
+    assert post_calls[0][1]["json"]["stream"] is True
     assert "OpenRouter Stream: Content received" in captured.text
     assert "OpenRouter Stream: Processing failed; exception_type=TypeError" in (
         captured.text
@@ -5265,10 +5269,11 @@ def test_openrouter_stream_status_failure_hides_body_and_preserves_return(
             streaming=True,
         )
 
-    assert result == (
-        "openrouter: Streaming API request failed with status code 429: "
-        f"{OPENROUTER_RESPONSE_CANARY}"
-    )
+    # TASK-32853 re-key: the engine maps the 429 to a typed, redacted Chat
+    # error, so the response BODY no longer reaches the return (the old
+    # branch interpolated response.text) or any log line.
+    assert result == "openrouter: Streaming API request failed with status code 429"
+    assert OPENROUTER_RESPONSE_CANARY not in result
     assert OPENROUTER_RESPONSE_CANARY not in captured.text
     assert "OpenRouter Stream: API request failed; status_code=429" in captured.text
 
@@ -5328,7 +5333,9 @@ def test_openrouter_nonstream_status_failure_hides_body_and_preserves_return(
             "fixed prompt",
         )
 
-    assert result == f"openrouter: API request failed: {OPENROUTER_RESPONSE_CANARY}"
+    # TASK-32853 re-key: same redaction as the streaming branch.
+    assert result == "openrouter: API request failed: 503"
+    assert OPENROUTER_RESPONSE_CANARY not in result
     assert OPENROUTER_RESPONSE_CANARY not in captured.text
     assert "OpenRouter: API request failed; status_code=503" in captured.text
 
