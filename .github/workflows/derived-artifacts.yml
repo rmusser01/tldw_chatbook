@@ -105,6 +105,7 @@ jobs:
       # (RecoveryRequired: raw_source_selection_changed). Their own
       # invocation, after the sandboxed one, keeps both green.
       - name: Run admission-sensitive suites
+        if: always()
         run: |
           pytest \
             Tests/UI/test_console_runtime_ownership.py \
