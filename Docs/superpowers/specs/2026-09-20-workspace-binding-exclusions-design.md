@@ -52,11 +52,16 @@ module contract ("a new agent-facing file tool joins one of these two
 families") is preserved, with user exclusions riding the same two seams the
 denylist rides today.
 
-One additive worker-protocol change is required: `stat_path` is the only
-operation whose request carries no `sensitive_exclusions` today, so a
-model-facing `vcli stat` on a denied path leaks existence/size/mtime through
-the pinned worker — a pre-existing gap this task closes for both the system
-denylist and user exclusions.
+The single injection point is the `SensitivePathContext`: user exclusions
+are folded into the per-call context (a pure merge helper), so
+`is_sensitive_path`, `sensitive_exclusions_under`, and
+`refuses_new_directory_chain` all enforce them with zero changes to their
+call sites — including the parent-side `resolve_workspace_path` validation
+that `WorkspaceToolExecutor._build_request` already runs on every
+operation's primary path (stat included) before the pinned request is
+built. No worker-protocol change is needed: `stat_path` needs no
+`sensitive_exclusions` field because its single path is parent-admitted and
+root-pinned.
 
 Rejected alternatives:
 
@@ -149,15 +154,13 @@ are therefore enforced on both families unconditionally — never per-surface.
 
 **Cross-cutting.**
 
-- **`stat_path` gap (pre-existing, closed by this task)**: `stat_path` is
-  the only worker operation whose request schema lacks
-  `sensitive_exclusions`, and the worker's `_stat_relative_path` checks
-  none — so a model-facing `vcli stat` on a denied path leaks
-  existence/size/mtime today. Fix: add `sensitive_exclusions` to the
-  `stat_path` request schema (additive optional field, mirroring `fs_read`)
-  and apply it in the worker's stat branch. The parent process spawns the
-  worker from the same install (`sys.executable -m <fixed module>`), so the
-  additive field has no cross-version concern.
+- **Injection point — merged context**: a pure merge helper
+  (`merge_sensitive_context(base, extra_files, extra_dirs)`) folds the
+  effective user exclusions into the per-call `SensitivePathContext`, and
+  every consumer (`is_sensitive_path`, `sensitive_exclusions_under`,
+  `refuses_new_directory_chain`, Git pathspec rendering) enforces them
+  without further changes. Refusal copy is byte-identical to the system
+  denylist's, satisfying the opacity rule by construction.
 - **No approval card for excluded paths**: `path_targets` preflight already
   funnels through `resolve_workspace_path` ("this preflight can never report
   a target the tool would then refuse to touch"), so extending the choke
@@ -227,9 +230,8 @@ Targeted runs only (repo policy; no full sweep unless requested):
   Location: `Tests/Tools/test_local_tool_*` family.
 - Pinned worker: user exclusions serialized in `sensitive_exclusions` and
   enforced inside the pinned root.
-- `stat_path` gap closure: `vcli stat` (worker path) refuses both
-  sensitive-path and user-excluded targets — regression coverage for the
-  pre-existing metadata leak.
+- `stat_path`: `vcli stat` and executor-routed `stat_path` refuse
+  excluded targets (parent-side choke point with merged context).
 - Builtin family: ReadFileTool/WriteFileTool/ListDirectoryTool equivalents
   refuse and omit excluded entries when run under a workspace binding
   authority.
