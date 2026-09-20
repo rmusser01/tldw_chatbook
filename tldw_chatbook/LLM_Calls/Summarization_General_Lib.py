@@ -55,6 +55,7 @@ from tldw_chatbook.Utils.egress import create_default_session, default_session_t
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 6c2eea6f89 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
 =======
@@ -76,6 +77,8 @@ from tldw_chatbook.Utils.egress import create_default_session, default_session_t
 =======
 >>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 >>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
+>>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
     ChatBadRequestError,
@@ -85,8 +88,11 @@ from tldw_chatbook.Chat.Chat_Deps import (
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
+>>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 =======
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -267,8 +273,16 @@ from tldw_chatbook.Chat.Chat_Deps import (
 =======
 >>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 >>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+<<<<<<< HEAD
 >>>>>>> 9d1599156d (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+<<<<<<< HEAD
 >>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
+=======
+=======
+>>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+>>>>>>> 7e7c2781d2 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+>>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     owned_json_post,

@@ -1243,6 +1243,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
       "call_count": 269,
       "diagnostic_digest": "e8225e3610bdbf11071a",
 <<<<<<< HEAD
@@ -1265,6 +1266,8 @@
 >>>>>>> a31f8fbb6e (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 =======
 >>>>>>> 9d1599156d (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
+>>>>>>> 7e7c2781d2 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
 =======
 >>>>>>> 9a88713194 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
 =======
@@ -1758,8 +1761,18 @@
       "diagnostic_digest": "e8225e3610bdbf11071a",
 >>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 >>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+<<<<<<< HEAD
 >>>>>>> 9d1599156d (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+<<<<<<< HEAD
 >>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
+=======
+=======
+      "call_count": 269,
+      "diagnostic_digest": "e8225e3610bdbf11071a",
+>>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+>>>>>>> 7e7c2781d2 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+>>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -12093,22 +12106,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
     "owner_files": 615,
-=======
-=======
->>>>>>> f100174781 (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
-<<<<<<< HEAD
-    "owner_files": 614,
-=======
-    "owner_files": 610,
->>>>>>> 0472e17cfa (chore(diagnostic): re-pin production diagnostic inventory for the groq/openrouter profiles (TASK-32851))
->>>>>>> 20c4e0493a (chore(diagnostic): re-pin production diagnostic inventory for the groq/openrouter profiles (TASK-32851))
     "path_privacy_candidate_calls": 701,
     "persistent_sink_files": 14,
     "task_31551_calls": 55,
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -12159,6 +12161,8 @@
 >>>>>>> 0ff58eda8e (chore(diagnostic): re-pin production diagnostic inventory for the deepseek/mistral profiles (TASK-32852))
 =======
 >>>>>>> 84f48be389 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+>>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
     "task_492_calls": 1355,
 =======
     "task_492_calls": 1356,
@@ -12238,7 +12242,12 @@
 =======
 =======
 >>>>>>> 1ec57fadcd (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+<<<<<<< HEAD
 >>>>>>> 84f48be389 (feat(llm): shared _post_with_retry transport; anthropic summarizer migrates onto it (TASK-32853 phase C 1/4))
+=======
+=======
+>>>>>>> 7e7c2781d2 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+>>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
     "task_492_calls": 1356,
 =======
 =======
@@ -12558,6 +12567,13 @@
 =======
 >>>>>>> 6d9dafd371 (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
 >>>>>>> a98eeabb9f (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+<<<<<<< HEAD
 >>>>>>> b32515d80a (fix: restore pre-rebase file states clobbered by rebase auto-resolution)
+=======
+=======
+    "task_492_calls": 1408,
+    "task_494_calls": 7770
+>>>>>>> 5c2b7edab3 (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
+>>>>>>> cc463920ff (fix: restore marker-clobbered files from the verified tip; re-pin for the dev base)
   }
 }
