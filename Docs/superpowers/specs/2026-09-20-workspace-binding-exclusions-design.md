@@ -70,6 +70,11 @@ per-candidate enumeration filters, the same Git pathspec translation, and the
 same serialized `sensitive_exclusions` field in ADR-101's one-shot pinned
 worker request. No new matching engine, no new enforcement seam, no worker
 protocol change.
+One additive worker-protocol change is required: `stat_path` is the only
+operation whose request carries no `sensitive_exclusions` today, so a
+model-facing `vcli stat` on a denied path leaks existence/size/mtime through
+the pinned worker — a pre-existing gap this task closes for both the system
+denylist and user exclusions.
 
 Rejected alternatives:
 
@@ -133,14 +138,16 @@ is the existing tripwire contract, not a new one.
   executor itself holds only a root path today). User exclusions serialize
   into the same `sensitive_exclusions` field, as `file`/`subtree` entries.
 - **Run admission**: `capture_run_admitted_workspace_roots` attaches the
-  frozen exclusion snapshot (paths + fingerprint) to each
+  frozen exclusion snapshot (tuple of relative paths) to each
   `RunAdmittedWorkspaceRoot`, following ADR-102's freeze-at-admission
   discipline.
-- **Per-call merge**: `WorkspaceToolExecutor.execute` already captures
+- **Per-call merge**: `WorkspaceToolExecutor.execute` re-captures
   `sensitive_exclusions_under(root, context)` on every call and serializes
-  them into the pinned worker request. User exclusions merge into that same
-  `sensitive_exclusions` request field; the closed worker protocol schema is
-  unchanged, and the pinned worker enforces per-candidate as it does today.
+  them into the pinned worker request. `_parent_read_exclusions` gains the
+  binding's effective user exclusions (the provider — which already re-reads
+  the live binding in its per-call authority check — passes them in; the
+  executor itself holds only a root path today). User exclusions serialize
+  into the same `sensitive_exclusions` field, as `file`/`subtree` entries.
 - **Mid-run semantics**: the executor keeps a per-run high-water mark.
   Effective set = frozen snapshot ∪ high-water mark of live registry sets
   observed at each call. Consequences:
@@ -179,6 +186,15 @@ are therefore enforced on both families unconditionally — never per-surface.
   `refuses_new_directory_chain`, Git pathspec rendering) enforces them
   without further changes. Refusal copy is byte-identical to the system
   denylist's, satisfying the opacity rule by construction.
+- **`stat_path` gap (pre-existing, closed by this task)**: `stat_path` is
+  the only worker operation whose request schema lacks
+  `sensitive_exclusions`, and the worker's `_stat_relative_path` checks
+  none — so a model-facing `vcli stat` on a denied path leaks
+  existence/size/mtime today. Fix: add `sensitive_exclusions` to the
+  `stat_path` request schema (additive optional field, mirroring `fs_read`)
+  and apply it in the worker's stat branch. The parent process spawns the
+  worker from the same install (`sys.executable -m <fixed module>`), so the
+  additive field has no cross-version concern.
 - **No approval card for excluded paths**: `path_targets` preflight already
   funnels through `resolve_workspace_path` ("this preflight can never report
   a target the tool would then refuse to touch"), so extending the choke
@@ -250,6 +266,9 @@ Targeted runs only (repo policy; no full sweep unless requested):
   enforced inside the pinned root.
 - `stat_path`: `vcli stat` and executor-routed `stat_path` refuse
   excluded targets (parent-side choke point with merged context).
+- `stat_path` gap closure: `vcli stat` (worker path) refuses both
+  sensitive-path and user-excluded targets — regression coverage for the
+  pre-existing metadata leak.
 - Builtin family: ReadFileTool/WriteFileTool/ListDirectoryTool equivalents
   refuse and omit excluded entries when run under a workspace binding
   authority.
