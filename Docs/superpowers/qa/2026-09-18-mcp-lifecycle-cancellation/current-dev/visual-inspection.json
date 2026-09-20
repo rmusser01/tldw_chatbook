@@ -20,5 +20,7 @@
     "existing_out_of_scope": "Compact server toolbar clipping remains in PR2712; no whole-destination qualification."
   },
   "rendering": "Original SVG captures are authoritative. Cairo inspection used the installed /opt/homebrew/lib library path; missing-glyph boxes in that renderer are not asserted terminal defects. Native terminal text preserved beside each SVG.",
-  "owner_visual_approval": "pending"
+  "owner_visual_approval": "pending",
+  "native_root": "/private/tmp/tldw-32880-native-002",
+  "post_qodo_all_twelve_reinspected": true
 }

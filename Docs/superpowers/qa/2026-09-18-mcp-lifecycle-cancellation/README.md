@@ -4,7 +4,7 @@
 
 PR2713 resumes on current dev with the later recovery and inspector changes
 preserved. [Current evidence, conflict choices and twelve-capture gallery](current-dev/README.md)
-record 72 targeted passes and fresh native qualification. TASK-32880 remains
+record 96 targeted passes and fresh native qualification. TASK-32880 remains
 In Progress pending current-head CI/review and final owner visual approval.
 The original task number below is historical; the landed task keeps that number.
 
@@ -50,11 +50,17 @@ timeout, permission and persistence contracts are unchanged; no CSS/token change
 
 ## Native evidence and visual review
 
-The [runner](native_check.py) drove real TldwCli, LinuxDriver and TTY streams in a
+The [archived runner source](https://github.com/rmusser01/tldw_chatbook/blob/2518d40bf77c67f53bf2989d20541bb05b266d9e/Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/native_check.py)
+drove real TldwCli, LinuxDriver and TTY streams in a
 fresh private profile. Only the client's connection call was replaced: its first
 attempt waits, catches cancellation and holds cleanup; retry raises a controlled
 connection error. The real UI, local profile/governance path, control-plane timeout
 wrapper, attempt persistence and final readiness projection remain active.
+
+The old executable copy is retired. Its pinned source preserves the historical
+runner hash without advertising an obsolete CLI. Use the supported
+[current runner](current-dev/native_check.py), which validates paths and tmux
+identifiers before startup and refuses an occupied fixture profile ID.
 
 [Final result](native-result.json) records four passing dark/light cells at 80×24
 and 170×48. All twelve SVG captures were rendered and visually inspected; terminal

@@ -8,7 +8,7 @@ landed task; this work is now TASK-32880. Cancellation retains per-server
 ownership until cleanup and final readiness collection finish, rejects retired
 Cancel controls, and supports immediate native worker completion.
 
-[72 targeted passes, seven guards, independent review and twelve inspected
+[96 targeted passes, seven guards, independent review and twelve inspected
 native captures](../qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/README.md)
 qualify the bounded integration. The one conflict retains both the current
 recovery-token checks and the saved displayed-operation identity. No CSS changes.

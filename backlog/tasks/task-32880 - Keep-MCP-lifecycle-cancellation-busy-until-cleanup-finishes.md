@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-19 01:17'
-updated_date: '2026-09-20 19:46'
+updated_date: '2026-09-20 20:10'
 labels:
   - mcp
   - ui
@@ -34,6 +34,8 @@ Cancelling a connection must not permit another action on the same server while 
 ADR required: no. ADR path: backlog/decisions/161-component-pattern-library.md. Reason: repair lifecycle worker admission and presentation lifetime within existing transport, timeout, permission and service contracts. 1. Pin slow cancellation cleanup, repeated Cancel, cancel-before-start and post-settlement retry with isolated mounted regressions. 2. Retain per-server ownership through actual worker settlement, defer service coroutine creation to execution, and make cancellation progress truthful. 3. Verify targeted lifecycle neighbors and real-app compact/wide dark/light cancellation and recovery evidence; document controlled delay and external transport boundaries. 4. Independent review, update the task and review ledgers, and save a separate bounded draft PR against dev. Preserve unrelated work and the separate PR2711/2712 gates.
 
 Resume PR2713 on current merged dev ab57681864 after PR2759. Reproduce saved regressions, integrate cancellation ownership while retaining all current recovery and inspector guards, run targeted neighbors and fresh native dark/light compact/wide evidence, then update the existing PR. Existing ADR-161 applies; no new ADR. This saved task was TASK-32829 on PR2713; current dev owns that ID for an unrelated landed task, so this work moves to TASK-32880. Keep In Progress pending current-head CI/review and fresh owner visual approval.
+
+Qodo follow-up: preserve the original native runner by a pinned historical source link and retire its executable copy; reject fixture ID collisions in the supported runner before any save/delete; add targeted real-store regression evidence and explicit test contracts. Re-run modified targeted cases and refresh review/CI receipts. Product/UI source and visual captures remain unchanged. Existing ADR-161; no new ADR.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -46,4 +48,6 @@ Saved independently as draft PR #2713 against dev: https://github.com/rmusser01/
 Real stdio follow-up reproduced native eager-worker completion leaving a SUCCESS worker busy on unchanged dev. The existing observer already fixes it; added an isolated regression using asyncio.eager_task_factory, red on dev and green here, with immediate retry. Total now 35 distinct passing cases. Real comparison connection/refresh/disconnect/reconnect exited cleanly; cached catalog refresh is a separate next-review issue. No production change in this follow-up.
 
 Resumed PR2713 on ab57681864. Old TASK-32829 collided with an unrelated landed task and is renumbered to TASK-32880; the landed file is unchanged. Integrated cancellation behavior while keeping current recovery-token checks and selected-tool refresh. 72 distinct targeted cases, seven guards, independent review and twelve fresh native captures pass. Bounded the saved held-render regression and verified red on unchanged dev / green on integrated source. Native exit, lock, ten DBs, defaults and exact hashes pass; no network attempts. Current evidence: Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/README.md. Existing ADR-161; no new ADR or CSS changes. Keep In Progress until current-head CI/review and fresh owner visual approval.
+
+Addressed all five Qodo findings: retired the obsolete executable runner while preserving its pinned historical source; added explicit lifecycle test contracts; rejected an occupied cleanup-demo profile before saving, and limited cleanup to the created fixture. Real-store collision baseline failed as expected and passes after the guard. 35 selected follow-up cases pass (eleven repeats, 24 additional runner/input cases), bringing the distinct local total to 96. Seven preflight guards and independent review pass. Repeated four-cell native qualification and all twelve captures match final runner and unchanged production hashes; exit/lock/databases/defaults remain clean. Current-head remote CI/review and fresh owner visual approval remain before merge.
 <!-- SECTION:NOTES:END -->

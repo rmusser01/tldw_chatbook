@@ -3,8 +3,12 @@
 import asyncio
 import gc
 import warnings
+from collections.abc import Coroutine
+from typing import Any, Literal
 
 import pytest
+from textual.message import Message
+from textual.pilot import Pilot
 from textual.widgets import Button
 from textual.worker import WorkerCancelled
 
@@ -14,13 +18,23 @@ from Tests.UI.test_mcp_workbench import (
     LifecycleFakeHubService,
     _capture_notifications,
 )
-from tldw_chatbook.MCP.readiness import ReadinessState
+from tldw_chatbook.MCP.readiness import ReadinessSnapshot, ReadinessState
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 
 
 class CleanupService(LifecycleFakeHubService):
-    def __init__(self, outcome="cancel"):
+    """Hold the first connection in cleanup to expose admission races."""
+
+    def __init__(
+        self, outcome: Literal["cancel", "success", "error"] = "cancel"
+    ) -> None:
+        """Choose whether held cleanup ends in cancellation, success or failure.
+
+        Args:
+            outcome: Terminal result after the cleanup gate is released.
+        """
         super().__init__()
         self.started = asyncio.Event()
         self.cancelling = asyncio.Event()
@@ -28,7 +42,19 @@ class CleanupService(LifecycleFakeHubService):
         self.interrupted = False
         self.outcome = outcome
 
-    async def connect_local_profile(self, profile_id):
+    async def connect_local_profile(self, profile_id: str) -> dict[str, Any]:
+        """Hold the first docs connection until cancellation cleanup is released.
+
+        Args:
+            profile_id: Fake server identity recorded for admission assertions.
+
+        Returns:
+            A deterministic tool catalog when the chosen outcome succeeds.
+
+        Raises:
+            asyncio.CancelledError: Cancellation remains the terminal outcome.
+            RuntimeError: The configured cleanup outcome is failure.
+        """
         self.lifecycle_calls.append(("connect", profile_id))
         if (
             self.lifecycle_calls.count(("connect", "docs")) == 1
@@ -51,7 +77,16 @@ class CleanupService(LifecycleFakeHubService):
         return {"tools": [{"name": "fixture"}]}
 
 
-async def ready(app, pilot):
+async def ready(app: LifecycleApp, pilot: Pilot) -> MCPWorkbench:
+    """Drain startup and select the docs profile before a lifecycle assertion.
+
+    Args:
+        app: Mounted workbench harness.
+        pilot: Pilot driving the harness message loop.
+
+    Returns:
+        The mounted workbench with the docs server selected.
+    """
     await pilot.pause()
     await finish(app)
     wb = app.query_one(MCPWorkbench)
@@ -59,7 +94,15 @@ async def ready(app, pilot):
     return wb
 
 
-async def finish(app):
+async def finish(app: LifecycleApp) -> None:
+    """Join all workers, including observers added during settlement.
+
+    Args:
+        app: Harness whose lifecycle and rendering workers must finish.
+
+    Raises:
+        BaseException: A worker failed for a reason other than cancellation.
+    """
     while workers := list(app.workers):
         results = await asyncio.gather(
             *(w.wait() for w in workers), return_exceptions=True
@@ -73,7 +116,14 @@ async def finish(app):
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_cancel_reserves_server_until_cleanup_then_permits_retry(request):
+async def test_cancel_reserves_server_until_cleanup_then_permits_retry(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Keep one server reserved through cleanup while another remains usable.
+
+    Args:
+        request: Pytest request used to select an isolated child profile.
+    """
     app = LifecycleApp()
     service = app.unified_mcp_service = CleanupService()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -122,19 +172,26 @@ async def test_cancel_reserves_server_until_cleanup_then_permits_retry(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_retired_cancel_cannot_stop_a_replacement_operation(
-    request, boundary, replacement
-):
+    request: pytest.FixtureRequest, boundary: str, replacement: str
+) -> None:
+    """Reject a queued Cancel after its displayed operation has retired.
+
+    Args:
+        request: Pytest request used to select an isolated child profile.
+        boundary: Queue either the button event or its cancellation message.
+        replacement: Profile receiving the later lifecycle operation.
+    """
     app = LifecycleApp()
     service = app.unified_mcp_service
     gates = [asyncio.Event(), asyncio.Event()]
     calls = []
     catalog = service.local_external_catalog
 
-    async def two_profiles():
+    async def two_profiles() -> list[dict[str, Any]]:
         rows = await catalog()
         return rows + [dict(rows[0], profile_id="other")]
 
-    async def connect(profile_id):
+    async def connect(profile_id: str) -> dict[str, Any]:
         index = len(calls)
         calls.append(profile_id)
         await gates[index].wait()
@@ -150,7 +207,7 @@ async def test_retired_cancel_cannot_stop_a_replacement_operation(
         post = inspector.post_message
         held = []
 
-        def hold(message):
+        def hold(message: Message) -> bool:
             if (
                 boundary == "button"
                 and isinstance(message, Button.Pressed)
@@ -184,13 +241,20 @@ async def test_retired_cancel_cannot_stop_a_replacement_operation(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_cancel_before_start_does_not_create_service_coroutine(request):
+async def test_cancel_before_start_does_not_create_service_coroutine(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Cancel before worker startup without creating service work or warnings.
+
+    Args:
+        request: Pytest request used to select an isolated child profile.
+    """
     app = LifecycleApp()
     service = app.unified_mcp_service
     original = service.connect_local_profile
     created = []
 
-    def create(profile_id):
+    def create(profile_id: str) -> Coroutine[Any, Any, dict[str, Any]]:
         created.append(profile_id)
         return original(profile_id)
 
@@ -219,8 +283,14 @@ async def test_cancel_before_start_does_not_create_service_coroutine(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_cancel_request_does_not_hide_the_actual_terminal_outcome(
-    request, outcome
-):
+    request: pytest.FixtureRequest, outcome: Literal["success", "error"]
+) -> None:
+    """Report the actual terminal result when cleanup suppresses cancellation.
+
+    Args:
+        request: Pytest request used to select an isolated child profile.
+        outcome: Success or failure produced after cancellation is requested.
+    """
     app = LifecycleApp()
     service = app.unified_mcp_service = CleanupService(outcome)
     async with app.run_test() as pilot:
@@ -241,14 +311,21 @@ async def test_cancel_request_does_not_hide_the_actual_terminal_outcome(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_success_keeps_admission_until_final_projection_is_collected(request):
+async def test_success_keeps_admission_until_final_projection_is_collected(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Keep admission reserved until the successful readiness projection settles.
+
+    Args:
+        request: Pytest request used to select an isolated child profile.
+    """
     app = LifecycleApp()
     async with app.run_test() as pilot:
         wb = await ready(app, pilot)
         collect = wb._collect_snapshots
         entered, release = asyncio.Event(), asyncio.Event()
 
-        async def held_collect():
+        async def held_collect() -> list[ReadinessSnapshot]:
             entered.set()
             await release.wait()
             return await collect()
@@ -275,12 +352,19 @@ async def test_success_keeps_admission_until_final_projection_is_collected(reque
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_cancel_render_keeps_original_operation_across_detail_await(request):
+async def test_cancel_render_keeps_original_operation_across_detail_await(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Keep Cancel bound to its original worker across an awaited render.
+
+    Args:
+        request: Pytest request used to select an isolated child profile.
+    """
     app = LifecycleApp()
     gates = [asyncio.Event(), asyncio.Event()]
     started = []
 
-    async def connect(profile_id):
+    async def connect(profile_id: str) -> dict[str, Any]:
         index = len(started)
         started.append(profile_id)
         await gates[index].wait()
@@ -298,13 +382,15 @@ async def test_cancel_render_keeps_original_operation_across_detail_await(reques
         update = inspector.update_readiness
         rendered = []
 
-        async def held_show(canvas, selected):
+        async def held_show(
+            canvas: MCPServersMode, selected: ReadinessSnapshot | None
+        ) -> None:
             if not entered.is_set():
                 entered.set()
                 await release.wait()
             await show(canvas, selected)
 
-        async def capture_binding(selected, **kwargs):
+        async def capture_binding(selected: ReadinessSnapshot, **kwargs: Any) -> None:
             if not rendered and selected.state is ReadinessState.CHECKING:
                 rendered.append(kwargs.get("cancel_operation"))
             await update(selected, **kwargs)
@@ -344,12 +430,18 @@ async def test_cancel_render_keeps_original_operation_across_detail_await(reques
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_immediate_native_worker_completion_releases_admission(request):
-    """Native App.run uses eager tasks; run_test normally hides this boundary."""
+async def test_immediate_native_worker_completion_releases_admission(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Release ownership when native eager scheduling completes work immediately.
+
+    Args:
+        request: Pytest request used to select an isolated child profile.
+    """
     app = LifecycleApp()
     calls = []
 
-    async def immediate(profile_id):
+    async def immediate(profile_id: str) -> dict[str, Any]:
         calls.append(profile_id)
         return {"tools": []}
 

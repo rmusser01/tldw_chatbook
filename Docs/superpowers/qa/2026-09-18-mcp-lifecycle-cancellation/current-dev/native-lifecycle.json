@@ -1,6 +1,6 @@
 {
-  "root": "/private/tmp/tldw-32829-current-native-002",
-  "pid": 11672,
+  "root": "/private/tmp/tldw-32880-native-002",
+  "pid": 30370,
   "pid_absent": true,
   "exit_code": 0,
   "app_run_returned": true,
@@ -79,16 +79,7 @@
     "data/default_user/faulthandler.log": 0
   },
   "errors": [],
-  "source_hashes_match": {
-    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": true,
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": true,
-    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": true,
-    "tldw_chatbook/css/tldw_cli_modular.tcss": true,
-    "tldw_chatbook/css/widget_defaults_scoped.tcss": true,
-    "tldw_chatbook/css/widget_defaults_self.tcss": true,
-    "tldw_chatbook/css/core/_variables.tcss": true,
-    "tldw_chatbook/css/components/_agentic_terminal.tcss": true
-  },
+  "source_hashes_match": true,
   "runner_hash_matches": true,
   "network_attempts": []
 }

@@ -6,6 +6,8 @@ Only the client's connection call is replaced by held cleanup followed by a
 controlled failed retry. No external server or successful transport is qualified.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -15,6 +17,38 @@ import subprocess
 import sys
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+
+async def _save_fixture_profile(service: UnifiedMCPControlPlaneService) -> str:
+    """Create the fixture only when its ID is unoccupied in the private store.
+
+    Args:
+        service: Control plane bound to the validated private profile.
+
+    Returns:
+        The ID created by this runner, which it may delete after qualification.
+
+    Raises:
+        ValueError: The fixture ID already belongs to an existing profile.
+    """
+    if service.local_service.store.get_profile("cleanup-demo") is not None:
+        raise ValueError("Native fixture profile cleanup-demo already exists")
+    await service.save_local_profile(
+        {
+            "profile_id": "cleanup-demo",
+            "command": "/usr/bin/false",
+            "args": [],
+            "env_placeholders": {},
+            "env_literals": {},
+        }
+    )
+    return "cleanup-demo"
 
 
 def main() -> None:
@@ -180,15 +214,7 @@ def main() -> None:
                 "MCP loaded",
             )
             service = app.unified_mcp_service
-            await service.save_local_profile(
-                {
-                    "profile_id": "cleanup-demo",
-                    "command": "/usr/bin/false",
-                    "args": [],
-                    "env_placeholders": {},
-                    "env_literals": {},
-                }
-            )
+            fixture_id = await _save_fixture_profile(service)
             client = service.local_service._get_client()
             original_connect = client.connect_to_server
             inspector = workbench.query_one(MCPInspector)
@@ -322,8 +348,8 @@ def main() -> None:
                     )
                     record()
             client.connect_to_server = original_connect
-            await service.delete_local_profile("cleanup-demo")
-            assert await service.local_external_catalog() == []
+            await service.delete_local_profile(fixture_id)
+            assert service.local_service.store.get_profile(fixture_id) is None
             assert not blocked_attempts()
             result["network_attempts"] = []
             result["passed"] = True
