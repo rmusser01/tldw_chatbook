@@ -461,3 +461,63 @@ async def test_status_lifecycle_does_not_wait_for_share_staging_lock(
             release.set()
             await task
         assert elapsed < 0.1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "urls",
+    [
+        ("http://127.0.0.1:8123",),
+        ("http://127.0.0.1:8123", "http://192.168.1.25:8123"),
+    ],
+)
+@private_profile_test
+async def test_share_strip_exposes_every_active_address_without_inventing_lan_url(
+    request, tmp_path, staged_controller, urls
+):
+    from tldw_chatbook.Web_Server.artifact_share import ShareStatus
+
+    service = LocalChatbookService(registry_path=tmp_path / "registry.json")
+    host = ShareHost(service, staged_controller)
+    async with host.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        status = ShareStatus("Trip", urls, 2, tmp_path / "staged")
+        host.library.sharing._render_status(status)
+        rendered = str(
+            host.library.query_one("#library-artifacts-share-status", Static).renderable
+        )
+        assert rendered == f"Sharing 2 Chatbooks · {' · '.join(urls)}"
+        host.library.sharing._render_status(None)
+        assert not host.library.query_one("#library-artifacts-share-strip").display
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["profile", "owner", "shutdown"])
+@private_profile_test
+async def test_accepted_but_unstarted_share_rechecks_application_authority(
+    request, tmp_path, monkeypatch, staged_controller, transition
+):
+    service, _ = await exported_registry(tmp_path)
+    host = ShareHost(service, staged_controller)
+    async with host.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        run_worker = host.run_worker
+        pending = []
+
+        def defer_action(work, **kwargs):
+            if kwargs.get("group") == "library-artifacts-share-action":
+                pending.append(work)
+                return None
+            return run_worker(work, **kwargs)
+
+        monkeypatch.setattr(host, "run_worker", defer_action)
+        await confirm_two(pilot, host)
+        assert len(pending) == 1
+        if transition == "profile":
+            host.app_config = {}
+        elif transition == "owner":
+            host.artifact_share_controller = None
+        else:
+            host._shutting_down = True
+        await pending.pop()
+        assert staged_controller.status is None

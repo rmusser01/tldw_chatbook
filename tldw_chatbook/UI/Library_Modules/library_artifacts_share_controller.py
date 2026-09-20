@@ -226,10 +226,21 @@ class LibraryArtifactsShareController:
     ) -> None:
         from ...Backup_Recovery.participants import run_finite_local_worker
 
+        def start_if_current() -> None:
+            # A queued app worker may begin after its profile/owner was retired.
+            # Screen disposal alone does not revoke an already-approved action.
+            if (
+                profile != self._profile()
+                or getattr(self._owner, "artifact_share_controller", None)
+                is not controller
+                or getattr(self._owner, "_shutting_down", False)
+                or getattr(self._owner, "_closing", False)
+            ):
+                return
+            controller.start_share(**options)
+
         try:
-            await asyncio.to_thread(
-                run_finite_local_worker, controller.start_share, **options
-            )
+            await asyncio.to_thread(run_finite_local_worker, start_if_current)
         except Exception:  # noqa: BLE001 - the existing owner reports staging failures
             logger.warning("Library Chatbook share could not start")
             if self._active() and profile == self._profile():
@@ -282,8 +293,13 @@ class LibraryArtifactsShareController:
         if self._strip is None or not self._strip.is_mounted:
             return
         self._strip.display = status is not None
+        description = ""
+        if status is not None:
+            description = " · ".join(
+                (f"Sharing {status.artifact_count} Chatbooks", *status.urls)
+            )
         self._strip.query_one("#library-artifacts-share-status", Static).update(
-            f"Sharing {status.artifact_count} Chatbooks" if status else ""
+            description
         )
 
     def stop_share(self) -> None:
