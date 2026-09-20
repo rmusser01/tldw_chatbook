@@ -32,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...STT.transcribe_cpp_config import is_gguf_file

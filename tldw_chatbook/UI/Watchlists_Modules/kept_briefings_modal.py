@@ -76,7 +76,6 @@ from typing import Any
 from loguru import logger
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
-from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -657,7 +656,7 @@ class KeptBriefingsModal(ModalScreen[None]):
             ConfirmationDialog(
                 title="Delete kept briefing",
                 message=(
-                    f'Delete the kept briefing from "{escape_markup(name)}"? '
+                    f'Delete the kept briefing from "{name}"? '
                     "This also deletes its kept scripts, and cannot be "
                     "undone."
                 ),

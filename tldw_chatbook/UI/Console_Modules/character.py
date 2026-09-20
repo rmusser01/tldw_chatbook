@@ -15,7 +15,7 @@ from functools import partial
 from typing import Any, Literal
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 from ...Character_Chat.visual_identity import normalize_expression_key
 from ...Chat.character_expression_playback import (

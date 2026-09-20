@@ -38,7 +38,7 @@ from uuid import uuid4
 import weakref
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 from tldw_chatbook.Agents.approval_provenance import (
     approval_key_unanswered,
