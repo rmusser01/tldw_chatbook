@@ -20505,10 +20505,15 @@ class SettingsScreen(BaseAppScreen):
 
         One row per bound folder with its access level and freshness
         (recomputed from disk by `list_folder_bindings`), a per-row
-        ro/rw toggle and remove button, then an add row. Toggle/remove
-        buttons stash `binding_id` as a plain attribute at compose time
-        (mirrors the conversation browser's `conversation_id` stash) so
-        the handler never has to parse a uuid out of the button id.
+        ro/rw toggle and remove button, then an add row. Below each
+        binding sit its exclusion rows (paths the agent cannot see) with
+        an Unexclude button each, plus a per-binding "Exclude" input row.
+        Toggle/remove buttons stash `binding_id` as a plain attribute at
+        compose time (mirrors the conversation browser's `conversation_id`
+        stash) so the handler never has to parse a uuid out of the button
+        id; exclusion buttons stash `exclusion_*` attributes instead (the
+        Unexclude button shares the folder-remove CSS class, and the
+        class-selected folder handler must stay a no-op on it).
         """
         yield Static("Folders (agent file-tool access)", classes="destination-section")
         for binding in registry.list_folder_bindings(workspace_id):
@@ -20540,6 +20545,43 @@ class SettingsScreen(BaseAppScreen):
                 remove_button.binding_id = binding.binding_id
                 yield remove_button
             yield self._workspace_folder_result_widget(workspace_id, binding.binding_id)
+            exclusions = binding.metadata.get("exclusions") or []
+            yield Static(
+                f"  Excluded ({len(exclusions)}): agent cannot see these",
+                classes="settings-detail-row",
+            )
+            for index, entry in enumerate(exclusions):
+                with Horizontal(classes="settings-input-row"):
+                    yield Static(
+                        f"  {entry.get('path', '')} ({entry.get('kind', 'directory')})",
+                        id=f"settings-workspace-excl-label-{binding.binding_id}-{index}",
+                        classes="settings-detail-row",
+                    )
+                    unexclude_button = Button(
+                        "Unexclude",
+                        id=f"settings-workspace-excl-remove-{binding.binding_id}-{index}",
+                        classes="settings-workspace-folder-remove",
+                        compact=True,
+                    )
+                    # ``exclusion_*`` rather than ``binding_id``: the legacy
+                    # folder-remove class handler also matches this class and
+                    # reads ``binding_id`` -- these attrs keep it a no-op here.
+                    unexclude_button.exclusion_binding_id = binding.binding_id
+                    unexclude_button.exclusion_path = str(entry.get("path", ""))
+                    yield unexclude_button
+            with Horizontal(classes="settings-input-row"):
+                yield Input(
+                    placeholder="path/to/exclude (relative to folder)",
+                    id=f"settings-workspace-excl-path-{binding.binding_id}",
+                    classes="settings-compact-input",
+                )
+                add_exclusion_button = Button(
+                    "Exclude",
+                    id=f"settings-workspace-excl-add-{binding.binding_id}",
+                    compact=True,
+                )
+                add_exclusion_button.exclusion_binding_id = binding.binding_id
+                yield add_exclusion_button
         with Horizontal(classes="settings-input-row"):
             yield Input(
                 placeholder="~/path/to/folder",
@@ -25440,6 +25482,71 @@ class SettingsScreen(BaseAppScreen):
         self._after_category_panes(
             self._restore_category_pane_focus, "settings-workspace-persona-picker"
         )
+
+    @on(Button.Pressed)
+    def handle_workspace_exclusion_button_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch the workspace-binding exclusion actions (id-prefix pattern).
+
+        Args:
+            event: The button press; only ids starting with
+                ``settings-workspace-excl-`` are consumed, every other
+                press is left untouched for the screen's other handlers.
+        """
+        button_id = str(getattr(event.button, "id", "") or "")
+        if not button_id.startswith("settings-workspace-excl-"):
+            return
+        event.stop()
+        if button_id.startswith("settings-workspace-excl-add-"):
+            self._settings_workspace_add_exclusion(event.button)
+            return
+        if button_id.startswith("settings-workspace-excl-remove-"):
+            self._settings_workspace_remove_exclusion(event.button)
+
+    def _settings_workspace_add_exclusion(self, button: Button) -> None:
+        """Exclude one binding-relative path from agent file tools (spec §3).
+
+        The binding id comes from `button.exclusion_binding_id`, stashed at
+        compose time (same stash idiom as the folder toggle/remove rows).
+        """
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(button, "exclusion_binding_id", "") or "")
+        if not binding_id:
+            return
+        raw = self.query_one(f"#settings-workspace-excl-path-{binding_id}", Input).value
+        try:
+            registry.add_binding_exclusion(workspace_id, binding_id, raw)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(f"Exclusion not added: {exc}")
+            return
+        self._set_settings_workspaces_result(
+            "Excluded — enforced on the next tool call"
+        )
+        self._refresh_settings_workspaces_pane()
+
+    def _settings_workspace_remove_exclusion(self, button: Button) -> None:
+        """Unexclude one path (effective for new runs, not the live one)."""
+        workspace_id = self._settings_selected_workspace_id
+        if not workspace_id:
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        binding_id = str(getattr(button, "exclusion_binding_id", "") or "")
+        path = str(getattr(button, "exclusion_path", "") or "")
+        if not binding_id or not path:
+            return
+        try:
+            registry.remove_binding_exclusion(workspace_id, binding_id, path)
+        except WorkspaceRegistryServiceError as exc:
+            self._set_settings_workspaces_result(f"Exclusion not removed: {exc}")
+            return
+        self._set_settings_workspaces_result("Unexcluded — effective for new runs")
+        self._refresh_settings_workspaces_pane()
 
     @on(OptionList.OptionSelected, "#settings-workspace-persona-picker")
     def handle_workspace_persona_selected(
