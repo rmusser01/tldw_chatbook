@@ -2351,7 +2351,11 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
         # TASK-32853 groq migration: the non-200 status log site joined the
         # deleted ledger (10 -> 11).
         "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 11,
+<<<<<<< HEAD
 >>>>>>> c96066bcf5 (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+=======
+>>>>>>> 1d5af77c8f (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
+>>>>>>> 7555b9044d (feat(llm): migrate summarize_with_groq onto the hosted engine (TASK-32853 phase B 1/6))
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (
