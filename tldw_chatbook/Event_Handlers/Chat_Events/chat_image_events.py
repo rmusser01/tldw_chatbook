@@ -59,12 +59,17 @@ class ChatImageHandler:
             raise FileNotFoundError(f"Image file not found: {file_path}")
 
         from tldw_chatbook.Chat.attachment_core import (
+            load_chat_images_config,
             max_image_bytes,
             supported_image_formats,
         )
 
+        # One [chat.images] read feeds both the allowlist and the size cap
+        # (each reader would otherwise re-enter the storage-admission scope).
+        chat_images_cfg = load_chat_images_config()
+
         # Check file extension against the effective (config-driven) allowlist
-        effective_formats = supported_image_formats()
+        effective_formats = supported_image_formats(chat_images_cfg)
         if path.suffix.lower() not in effective_formats:
             raise ValueError(
                 f"Unsupported image format: {path.suffix}. "
@@ -73,7 +78,7 @@ class ChatImageHandler:
 
         # Check file size against the config-driven cap
         file_size = path.stat().st_size
-        size_cap = max_image_bytes()
+        size_cap = max_image_bytes(chat_images_cfg)
         if file_size > size_cap:
             raise ValueError(
                 f"Image file too large ({file_size / 1024 / 1024:.1f}MB). "
@@ -182,6 +187,10 @@ class ChatImageHandler:
             svg_rendering_available,
         )
 
+        # One resize-bound read reused by the SVG raster path and the resize
+        # check below (was two admission passes in one payload build).
+        resize_max_dimension = image_resize_max_dimension()
+
         if extension == ".svg":
             if not svg_rendering_available():
                 raise ValueError(
@@ -191,7 +200,7 @@ class ChatImageHandler:
             import cairosvg
 
             kwargs = ChatImageHandler._svg_raster_kwargs(
-                image_data, image_resize_max_dimension()
+                image_data, resize_max_dimension
             )
             try:
                 # NOTE: cairosvg's `unsafe` parameter stays at its default
@@ -203,7 +212,7 @@ class ChatImageHandler:
 
         pil_image = PILImage.open(BytesIO(image_data))
         actual_format = (pil_image.format or "").upper()
-        max_dimension = image_resize_max_dimension()
+        max_dimension = resize_max_dimension
         needs_resize = (
             pil_image.width > max_dimension or pil_image.height > max_dimension
         )

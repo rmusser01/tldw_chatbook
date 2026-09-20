@@ -242,3 +242,57 @@ def test_image_url_part_and_content_parts_agree():
 # Tests/Chat/test_image_payload.py::test_process_attachment_bytes_fallback_probes_mime,
 # which injects the failure at the seam actually called (prepare_image_payload)
 # and additionally asserts the fallback's probed mime. Removed per TASK-230.
+
+
+# --- task-32804.12: [chat.images] readers accept a preloaded section --------
+# Per-attachment validation reads the format allowlist AND the size cap; the
+# payload build reads the resize bound. Each reader used to re-enter the
+# storage-admission scope (~7 ms a pass). They now accept a section loaded once
+# via load_chat_images_config(); the section path must not touch get_cli_setting
+# and must equal the live read.
+
+
+def test_chat_images_readers_section_path_skips_get_cli_setting(monkeypatch):
+    import tldw_chatbook.config as cfg
+
+    def _boom(*a, **k):
+        raise AssertionError("get_cli_setting called on the section path")
+
+    monkeypatch.setattr(cfg, "get_cli_setting", _boom)
+    section = {
+        "supported_formats": [".png", "jpg", ".png"],  # dedup + dot-normalize
+        "max_size_mb": 3,
+        "resize_max_dimension": 512,
+    }
+    assert attachment_core.supported_image_formats(section) == (".png", ".jpg")
+    assert attachment_core.max_image_bytes(section) == 3 * 1024 * 1024
+    assert attachment_core.image_resize_max_dimension(section) == 512
+
+
+def test_chat_images_readers_section_path_defaults_on_missing_keys(monkeypatch):
+    import tldw_chatbook.config as cfg
+
+    monkeypatch.setattr(
+        cfg, "get_cli_setting", lambda *a, **k: (_ for _ in ()).throw(AssertionError())
+    )
+    # empty section -> documented defaults, no live read
+    assert attachment_core.max_image_bytes({}) == attachment_core.MAX_IMAGE_BYTES
+    assert (
+        attachment_core.image_resize_max_dimension({})
+        == attachment_core.DEFAULT_RESIZE_MAX_DIMENSION
+    )
+    # None section (absent [chat.images]) behaves like empty
+    assert attachment_core.max_image_bytes(None) == attachment_core.MAX_IMAGE_BYTES
+
+
+def test_chat_images_readers_section_equals_live_read(monkeypatch):
+    section = {"max_size_mb": 7, "resize_max_dimension": 640}
+    monkeypatch.setattr(
+        attachment_core, "load_chat_images_config", lambda: section
+    )
+    # unset-section path (fetches via load_chat_images_config) == passing it in
+    assert attachment_core.max_image_bytes() == attachment_core.max_image_bytes(section)
+    assert (
+        attachment_core.image_resize_max_dimension()
+        == attachment_core.image_resize_max_dimension(section)
+    )

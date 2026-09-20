@@ -81,28 +81,52 @@ def svg_rendering_available() -> bool:
     return ensure_svg_rendering()
 
 
-def _chat_images_setting(key: str, default):
-    """Read one [chat.images] key. get_cli_setting resolves top-level sections
-    only (flat lookup), so the nested table is fetched via ("chat", "images")
-    and the key resolved locally; a missing section or key yields the default.
+#: Sentinel distinguishing "caller did not pass a section" (fetch it live)
+#: from a caller passing `None` (a genuinely absent [chat.images] section).
+_SECTION_UNSET: object = object()
+
+
+def load_chat_images_config():
+    """Fetch the whole [chat.images] section once (one storage-admission pass).
+
+    `get_cli_setting` resolves top-level sections only (flat lookup), so the
+    nested table is fetched via ("chat", "images"). Callers reading more than
+    one key -- e.g. per-attachment validation reading both the format allowlist
+    and the size cap -- load this once and pass it to the readers below instead
+    of each reader re-entering the admission scope (~7 ms a pass). No process
+    caching: the section is re-read per call, so a runtime settings edit is
+    always reflected.
+
+    Returns:
+        The [chat.images] section dict, or None when it is absent.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    return get_cli_setting("chat", "images", None)
+
+
+def _chat_images_setting(key: str, default, *, section=_SECTION_UNSET):
+    """Read one [chat.images] key, from a preloaded section when supplied.
 
     Args:
         key: The [chat.images] key to read (e.g. "max_size_mb").
         default: Value returned when the section or key is absent.
+        section: A preloaded [chat.images] section (from
+            `load_chat_images_config()`); when unset the section is fetched
+            live, byte-identical to the original per-key behaviour.
 
     Returns:
         The configured value for `key`, or `default` when the [chat.images]
         section or the key itself is missing.
     """
-    from tldw_chatbook.config import get_cli_setting
-
-    section = get_cli_setting("chat", "images", None)
+    if section is _SECTION_UNSET:
+        section = load_chat_images_config()
     if isinstance(section, dict) and key in section:
         return section[key]
     return default
 
 
-def supported_image_formats() -> tuple[str, ...]:
+def supported_image_formats(chat_images=_SECTION_UNSET) -> tuple[str, ...]:
     """Effective image extension allowlist from [chat.images].supported_formats.
 
     Entries are normalized (lowercased, dotted, deduped in order); .svg is
@@ -114,7 +138,9 @@ def supported_image_formats() -> tuple[str, ...]:
         attachment, in configured order.
     """
     raw = _chat_images_setting(
-        "supported_formats", list(DEFAULT_SUPPORTED_IMAGE_FORMATS)
+        "supported_formats",
+        list(DEFAULT_SUPPORTED_IMAGE_FORMATS),
+        section=chat_images,
     )
     formats: list[str] = []
     if isinstance(raw, (list, tuple)):
@@ -144,13 +170,15 @@ def supported_image_formats() -> tuple[str, ...]:
     return tuple(formats)
 
 
-def max_image_bytes() -> int:
+def max_image_bytes(chat_images=_SECTION_UNSET) -> int:
     """Image byte cap from [chat.images].max_size_mb (default 10 MB).
 
     Returns:
         The maximum allowed image size in bytes.
     """
-    raw = _chat_images_setting("max_size_mb", MAX_IMAGE_BYTES / (1024 * 1024))
+    raw = _chat_images_setting(
+        "max_size_mb", MAX_IMAGE_BYTES / (1024 * 1024), section=chat_images
+    )
     try:
         value = float(raw)
     except (TypeError, ValueError):
@@ -161,13 +189,15 @@ def max_image_bytes() -> int:
     return int(value * 1024 * 1024)
 
 
-def image_resize_max_dimension() -> int:
+def image_resize_max_dimension(chat_images=_SECTION_UNSET) -> int:
     """Resize bound from [chat.images].resize_max_dimension (default 2048).
 
     Returns:
         The maximum width/height, in pixels, images are resized to.
     """
-    raw = _chat_images_setting("resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION)
+    raw = _chat_images_setting(
+        "resize_max_dimension", DEFAULT_RESIZE_MAX_DIMENSION, section=chat_images
+    )
     try:
         value = int(raw)
     except (TypeError, ValueError):
