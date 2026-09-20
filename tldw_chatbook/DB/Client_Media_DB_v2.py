@@ -1355,7 +1355,15 @@ class MediaDatabase:
             if not in_outer:
                 conn.commit()
                 logging.debug("Committed transaction.")
-        except Exception as e:
+        # TASK-32801.5: BaseException, not Exception. A CancelledError or
+        # KeyboardInterrupt raised inside the block is not an Exception, so
+        # the rollback used to be skipped and the transaction stayed open --
+        # and because `transaction()` treats an already-open transaction as
+        # nested, every later write on that thread then rode it uncommitted
+        # and was lost at close. Proven on Prompts_DB: a write after an
+        # escaped KeyboardInterrupt did not survive close+reopen.
+        # Library_Collections_DB and Workflows_DB already do this.
+        except BaseException as e:
             if not in_outer:
                 logging.error(
                     "Transaction failed; rolling back (error_type=%s).",
@@ -5425,73 +5433,78 @@ class MediaDatabase:
         new_uuid = self._generate_uuid()
         new_version = 1  # Sync version for the DocumentVersion entity itself
 
-        # Assumes called within an existing transaction (e.g., from add_media_with_keywords)
-        conn = self.get_connection()
+        # TASK-32801.1: the sibling of `update_keywords_for_media`, with the
+        # same contract and the same defect. Documented as transaction-only,
+        # it took the raw connection, so a caller that opened none left an
+        # implicit transaction that nothing committed -- and every later Media
+        # write on that thread was rolled back at close. `transaction()` joins
+        # an open outer transaction, so wrapping callers are unaffected.
         try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT uuid FROM Media WHERE id = ? AND deleted = 0", (media_id,)
-            )  # Ensure parent active
-            media_info = cursor.fetchone()
-            if not media_info:
-                raise InputError(f"Parent Media ID {media_id} not found or deleted.")
-            media_uuid = media_info["uuid"]
+            with self.transaction() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT uuid FROM Media WHERE id = ? AND deleted = 0", (media_id,)
+                )  # Ensure parent active
+                media_info = cursor.fetchone()
+                if not media_info:
+                    raise InputError(f"Parent Media ID {media_id} not found or deleted.")
+                media_uuid = media_info["uuid"]
 
-            cursor.execute(
-                "SELECT COALESCE(MAX(version_number), 0) + 1 FROM DocumentVersions WHERE media_id = ?",
-                (media_id,),
-            )
-            local_version_number = cursor.fetchone()[0]
-            logger.debug(
-                f"Creating document version {local_version_number} for media ID {media_id}, UUID {new_uuid}"
-            )
-
-            insert_data = {  # Prepare dict for easier payload generation
-                "media_id": media_id,
-                "version_number": local_version_number,
-                "content": content,
-                "prompt": prompt,
-                "analysis_content": analysis_content,
-                "created_at": current_time,  # Set created_at
-                "uuid": new_uuid,
-                "last_modified": current_time,  # Set last_modified
-                "version": new_version,
-                "client_id": client_id,
-                "deleted": 0,
-                "media_uuid": media_uuid,  # Add parent uuid for context in payload
-            }
-            cursor.execute(
-                """INSERT INTO DocumentVersions (media_id, version_number, content, prompt, analysis_content, created_at,
-                   uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    insert_data["media_id"],
-                    insert_data["version_number"],
-                    insert_data["content"],
-                    insert_data["prompt"],
-                    insert_data["analysis_content"],
-                    insert_data["created_at"],  # Pass created_at
-                    insert_data["uuid"],
-                    insert_data["last_modified"],  # Pass last_modified
-                    insert_data["version"],
-                    insert_data["client_id"],
-                    insert_data["deleted"],
-                ),
-            )
-            version_id = cursor.lastrowid
-            if not version_id:
-                raise DatabaseError(
-                    "Failed to get last row ID for new document version."
+                cursor.execute(
+                    "SELECT COALESCE(MAX(version_number), 0) + 1 FROM DocumentVersions WHERE media_id = ?",
+                    (media_id,),
+                )
+                local_version_number = cursor.fetchone()[0]
+                logger.debug(
+                    f"Creating document version {local_version_number} for media ID {media_id}, UUID {new_uuid}"
                 )
 
-            self._log_sync_event(
-                conn, "DocumentVersions", new_uuid, "create", new_version, insert_data
-            )
-            return {
-                "id": version_id,
-                "uuid": new_uuid,
-                "media_id": media_id,
-                "version_number": local_version_number,
-            }
+                insert_data = {  # Prepare dict for easier payload generation
+                    "media_id": media_id,
+                    "version_number": local_version_number,
+                    "content": content,
+                    "prompt": prompt,
+                    "analysis_content": analysis_content,
+                    "created_at": current_time,  # Set created_at
+                    "uuid": new_uuid,
+                    "last_modified": current_time,  # Set last_modified
+                    "version": new_version,
+                    "client_id": client_id,
+                    "deleted": 0,
+                    "media_uuid": media_uuid,  # Add parent uuid for context in payload
+                }
+                cursor.execute(
+                    """INSERT INTO DocumentVersions (media_id, version_number, content, prompt, analysis_content, created_at,
+                       uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        insert_data["media_id"],
+                        insert_data["version_number"],
+                        insert_data["content"],
+                        insert_data["prompt"],
+                        insert_data["analysis_content"],
+                        insert_data["created_at"],  # Pass created_at
+                        insert_data["uuid"],
+                        insert_data["last_modified"],  # Pass last_modified
+                        insert_data["version"],
+                        insert_data["client_id"],
+                        insert_data["deleted"],
+                    ),
+                )
+                version_id = cursor.lastrowid
+                if not version_id:
+                    raise DatabaseError(
+                        "Failed to get last row ID for new document version."
+                    )
+
+                self._log_sync_event(
+                    conn, "DocumentVersions", new_uuid, "create", new_version, insert_data
+                )
+                return {
+                    "id": version_id,
+                    "uuid": new_uuid,
+                    "media_id": media_id,
+                    "version_number": local_version_number,
+                }
         except (InputError, DatabaseError, sqlite3.Error) as e:
             if "foreign key constraint failed" in str(e).lower():
                 logger.error(
@@ -5543,99 +5556,111 @@ class MediaDatabase:
         valid_keywords = sorted(
             list(set([k.strip().lower() for k in keywords if k and k.strip()]))
         )
-        # Assumes called within an existing transaction
-        conn = self.get_connection()
+        # TASK-32801.1: this used to say "assumes called within an existing
+        # transaction" and take the raw connection. The connection keeps the
+        # legacy isolation level, so a caller that opened none left an IMPLICIT
+        # transaction open here that nothing committed -- and `transaction()`
+        # then saw `in_transaction` already True, treated itself as nested, and
+        # skipped its own commit. Every later Media write on that thread rode
+        # the uncommitted transaction and was rolled back at close. The shipped
+        # reading-list re-import is exactly such a caller
+        # (`local_media_reading_service.py:3525`).
+        #
+        # `transaction()` joins an already-open outer transaction and leaves the
+        # commit to it, so callers that DO wrap this keep their all-or-nothing
+        # behaviour; the assumption is now enforced instead of documented.
         try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT uuid FROM Media WHERE id = ? AND deleted = 0", (media_id,)
-            )  # Check parent active
-            media_info = cursor.fetchone()
-            if not media_info:
-                raise InputError(
-                    f"Cannot update keywords: Media ID {media_id} not found or deleted."
-                )
-            media_uuid = media_info["uuid"]
-
-            cursor.execute(
-                "SELECT mk.keyword_id, k.uuid AS keyword_uuid FROM MediaKeywords mk JOIN Keywords k ON k.id = mk.keyword_id WHERE mk.media_id = ? AND k.deleted = 0",
-                (media_id,),
-            )
-            current_links = {
-                row["keyword_id"]: row["keyword_uuid"] for row in cursor.fetchall()
-            }
-            current_keyword_ids = set(current_links.keys())
-
-            target_keyword_data = {}
-            if valid_keywords:
-                for kw_text in valid_keywords:
-                    kw_id, kw_uuid = self.add_keyword(
-                        kw_text
-                    )  # Handles create/undelete/logging/FTS for Keywords
-                    if kw_id and kw_uuid:
-                        target_keyword_data[kw_id] = kw_uuid
-                    else:
-                        raise DatabaseError(f"Failed get/add keyword '{kw_text}'")
-
-            target_keyword_ids = set(target_keyword_data.keys())
-            ids_to_add = target_keyword_ids - current_keyword_ids
-            ids_to_remove = current_keyword_ids - target_keyword_ids
-            link_sync_version = 1
-
-            if ids_to_remove:
-                remove_placeholders = ",".join("?" * len(ids_to_remove))
+            with self.transaction() as conn:
+                cursor = conn.cursor()
                 cursor.execute(
-                    f"DELETE FROM MediaKeywords WHERE media_id = ? AND keyword_id IN ({remove_placeholders})",
-                    (media_id, *list(ids_to_remove)),
-                )
-                for removed_id in ids_to_remove:
-                    keyword_uuid = current_links.get(removed_id)
-                    if keyword_uuid:
-                        link_uuid = f"{media_uuid}_{keyword_uuid}"
-                        payload = {
-                            "media_uuid": media_uuid,
-                            "keyword_uuid": keyword_uuid,
-                        }
-                        self._log_sync_event(
-                            conn,
-                            "MediaKeywords",
-                            link_uuid,
-                            "unlink",
-                            link_sync_version,
-                            payload,
-                        )
+                    "SELECT uuid FROM Media WHERE id = ? AND deleted = 0", (media_id,)
+                )  # Check parent active
+                media_info = cursor.fetchone()
+                if not media_info:
+                    raise InputError(
+                        f"Cannot update keywords: Media ID {media_id} not found or deleted."
+                    )
+                media_uuid = media_info["uuid"]
 
-            if ids_to_add:
-                insert_params = [(media_id, kid) for kid in ids_to_add]
-                cursor.executemany(
-                    "INSERT OR IGNORE INTO MediaKeywords (media_id, keyword_id) VALUES (?, ?)",
-                    insert_params,
+                cursor.execute(
+                    "SELECT mk.keyword_id, k.uuid AS keyword_uuid FROM MediaKeywords mk JOIN Keywords k ON k.id = mk.keyword_id WHERE mk.media_id = ? AND k.deleted = 0",
+                    (media_id,),
                 )
-                # Log links - Note: IGNORE means we might log links that weren't actually inserted if race condition. Robust check is complex.
-                for added_id in ids_to_add:
-                    keyword_uuid = target_keyword_data.get(added_id)
-                    if keyword_uuid:
-                        link_uuid = f"{media_uuid}_{keyword_uuid}"
-                        payload = {
-                            "media_uuid": media_uuid,
-                            "keyword_uuid": keyword_uuid,
-                        }
-                        self._log_sync_event(
-                            conn,
-                            "MediaKeywords",
-                            link_uuid,
-                            "link",
-                            link_sync_version,
-                            payload,
-                        )
+                current_links = {
+                    row["keyword_id"]: row["keyword_uuid"] for row in cursor.fetchall()
+                }
+                current_keyword_ids = set(current_links.keys())
 
-            if ids_to_add or ids_to_remove:
-                logger.debug(
-                    f"Keywords updated media {media_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}."
-                )
-            else:
-                logger.debug(f"No keyword changes media {media_id}.")
-            return True
+                target_keyword_data = {}
+                if valid_keywords:
+                    for kw_text in valid_keywords:
+                        kw_id, kw_uuid = self.add_keyword(
+                            kw_text
+                        )  # Handles create/undelete/logging/FTS for Keywords
+                        if kw_id and kw_uuid:
+                            target_keyword_data[kw_id] = kw_uuid
+                        else:
+                            raise DatabaseError(f"Failed get/add keyword '{kw_text}'")
+
+                target_keyword_ids = set(target_keyword_data.keys())
+                ids_to_add = target_keyword_ids - current_keyword_ids
+                ids_to_remove = current_keyword_ids - target_keyword_ids
+                link_sync_version = 1
+
+                if ids_to_remove:
+                    remove_placeholders = ",".join("?" * len(ids_to_remove))
+                    cursor.execute(
+                        f"DELETE FROM MediaKeywords WHERE media_id = ? AND keyword_id IN ({remove_placeholders})",
+                        (media_id, *list(ids_to_remove)),
+                    )
+                    for removed_id in ids_to_remove:
+                        keyword_uuid = current_links.get(removed_id)
+                        if keyword_uuid:
+                            link_uuid = f"{media_uuid}_{keyword_uuid}"
+                            payload = {
+                                "media_uuid": media_uuid,
+                                "keyword_uuid": keyword_uuid,
+                            }
+                            self._log_sync_event(
+                                conn,
+                                "MediaKeywords",
+                                link_uuid,
+                                "unlink",
+                                link_sync_version,
+                                payload,
+                            )
+
+                if ids_to_add:
+                    insert_params = [(media_id, kid) for kid in ids_to_add]
+                    cursor.executemany(
+                        "INSERT OR IGNORE INTO MediaKeywords (media_id, keyword_id) VALUES (?, ?)",
+                        insert_params,
+                    )
+                    # Log links - Note: IGNORE means we might log links that weren't actually inserted if race condition. Robust check is complex.
+                    for added_id in ids_to_add:
+                        keyword_uuid = target_keyword_data.get(added_id)
+                        if keyword_uuid:
+                            link_uuid = f"{media_uuid}_{keyword_uuid}"
+                            payload = {
+                                "media_uuid": media_uuid,
+                                "keyword_uuid": keyword_uuid,
+                            }
+                            self._log_sync_event(
+                                conn,
+                                "MediaKeywords",
+                                link_uuid,
+                                "link",
+                                link_sync_version,
+                                payload,
+                            )
+
+                if ids_to_add or ids_to_remove:
+                    logger.debug(
+                        f"Keywords updated media {media_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}."
+                    )
+                else:
+                    logger.debug(f"No keyword changes media {media_id}.")
+                return True
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
             logger.opt(exception=True).error(
                 f"Error updating keywords media {media_id}: {e}"

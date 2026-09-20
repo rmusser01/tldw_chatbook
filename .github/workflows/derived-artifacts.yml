@@ -194,6 +194,20 @@ jobs:
           # built; milliseconds, so it does not move this job's ~90 s budget.
           python scripts/check_index_plan_pins.py
 
+      - name: Textual workers and post-await DOM lookups keep their contract
+        if: ${{ !cancelled() }}
+        run: |
+          # TASK-32800.4. Three of the four P0s in the 2026-09-17 core-runtime
+          # review were one defect class with no guard: a synchronous callable
+          # handed to run_worker (Worker._run_async raises, exit_on_error
+          # defaults to True, the app exits), and a query_one that resumes
+          # after an await into a subtree something else removed. W001 is a
+          # hard gate -- the tree has zero violations, so any new one is real.
+          # W002 is a census ratchet over the 279 pre-existing post-await
+          # lookups, because whether one can crash is not statically decidable
+          # and failing on all of them would be a guard that gets muted. Pure
+          # AST scan, stdlib only; seconds.
+          python scripts/check_textual_worker_contract.py
       - name: Timestamp writers go through the shared UTC helper
         if: ${{ !cancelled() }}
         run: |
@@ -203,3 +217,4 @@ jobs:
           # shrinks as TASK-32803.5 adopts Utils/timestamps.py. Fails on a new
           # or grown naive-timestamp writer. Pure AST scan, no database built.
           python scripts/check_timestamp_writers.py
+

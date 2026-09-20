@@ -20,7 +20,12 @@ from uuid import uuid4
 
 import toml
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
+# The narrow rich escape is kept for the call sites below whose value
+# reaches a markup-OFF sink, where any escape shows the reader a literal
+# backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
+# widening the escape would make that leak worse rather than fix it.
+from rich.markup import escape as _escape_for_markup_off_sink  # TASK-32802.4
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult, ScreenStackError
@@ -4869,7 +4874,7 @@ class ChatScreen(BaseAppScreen):
             )
             if authority_summary is not None:
                 authority_rows = tuple(
-                    (escape_markup(label), escape_markup(value))
+                    (_escape_for_markup_off_sink(label), _escape_for_markup_off_sink(value))
                     for label, value in authority_summary.contextual_help_rows()
                 )
                 shortcut_groups = (
@@ -4888,7 +4893,7 @@ class ChatScreen(BaseAppScreen):
                 context_data = None
             else:
                 context_data = getattr(tray, "_workspace_tree_context_data", None)
-            label = escape_markup(
+            label = _escape_for_markup_off_sink(
                 str(getattr(context_data, "raw_label", "") or "Workspace tree")
             )
             shortcut_groups = (

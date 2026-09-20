@@ -14,9 +14,7 @@ and forwarded streamed usage, exactly one ``[DONE]``); pinned in
 
 from __future__ import annotations
 
-import json
 import time
-from collections.abc import Iterator
 from typing import Any
 
 from loguru import logger
@@ -38,6 +36,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     hosted_chat_request,
 )
+from tldw_chatbook.LLM_Calls.legacy_line_stream import LegacyLineStream
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -83,41 +82,6 @@ class OpenRouterFinishPolicy:
 
 
 _FINISH_POLICY = OpenRouterFinishPolicy()
-
-
-class OpenRouterStream(Iterator[str]):
-    """Legacy raw-line view over the engine's normalized stream events.
-
-    Closing is a method forward to the engine stream, never a
-    yield-after-exit, so a consumer Stop closes the owned response/session
-    exactly once and without ``RuntimeError``.
-    """
-
-    def __init__(self, stream: HostedChatStream) -> None:
-        self._stream = stream
-        self._sentinel_sent = False
-
-    def __iter__(self) -> OpenRouterStream:
-        return self
-
-    def __next__(self) -> str:
-        if self._sentinel_sent:
-            raise StopIteration
-        try:
-            event = next(self._stream)
-        except StopIteration:
-            self._sentinel_sent = True
-            return "data: [DONE]\n\n"
-        return f"data: {json.dumps(event)}\n"
-
-    @property
-    def terminal_turn(self) -> HostedChatTurn:
-        """Terminal metadata after clean stream exhaustion."""
-        return self._stream.terminal_turn
-
-    def close(self) -> None:
-        """Close the owned response/session pair exactly once."""
-        self._stream.close()
 
 
 class OpenRouterResponse(dict):
@@ -372,7 +336,7 @@ def chat_with_openrouter(
     )
 
     if isinstance(result, HostedChatStream):
-        return OpenRouterStream(result)
+        return LegacyLineStream(result)
     if result.usage is not None:
         _log_usage_metrics(current_model, result.usage)
     return _openrouter_turn_response(result)

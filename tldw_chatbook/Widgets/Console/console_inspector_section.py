@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from rich.cells import cell_len
-from rich.markup import escape
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding

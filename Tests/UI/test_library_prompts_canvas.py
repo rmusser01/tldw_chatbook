@@ -35,6 +35,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from loguru import logger
 from textual.app import App
+from textual import events
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -832,6 +833,101 @@ async def test_prompt_more_actions_is_inline_and_escape_restores_opener_focus():
         await pilot.pause()
         assert region.display is False
         assert opener.has_focus
+
+
+@pytest.mark.asyncio
+async def test_escape_after_more_actions_survives_recompose_out_of_editor_mode():
+    """Escape must not kill the app once the more-actions region is gone.
+
+    TASK-32800.2. ``more_actions_open`` is set while the editor branch is
+    composed, but ``compose()`` only builds
+    ``#library-prompt-more-actions-region`` in editor mode. A recompose into
+    list mode removes the region while leaving the flag set, and ``on_key``
+    then dereferenced it unguarded: ``NoMatches`` propagated into
+    ``App._exception`` and took the whole app down.
+    """
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        editor_mode="basic",
+        can_update_original=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+
+        await pilot.click("#library-prompt-more-actions")
+        await pilot.pause()
+        assert canvas.more_actions_open is True
+
+        # Recompose out of editor mode. `mode` is a plain attribute, so this is
+        # the same DOM transition `sync_state` produces via refresh(recompose=True).
+        canvas.mode = "list"
+        canvas.editor_state = None
+        canvas.refresh(recompose=True)
+        await pilot.pause()
+        assert not canvas.query("#library-prompt-more-actions-region")
+
+        # Drive the handler directly. Routing an Escape through the pilot is
+        # not enough: after the recompose the canvas no longer holds focus, so
+        # `on_key` is never reached and the assertion would pass vacuously.
+        canvas.on_key(events.Key("escape", None))
+
+
+@pytest.mark.asyncio
+async def test_sync_state_out_of_editor_mode_clears_more_actions_flag():
+    """The flag must not outlive the region `compose()` builds it for.
+
+    TASK-32800.2, root cause. `sync_state` is the controller's only funnel, so
+    that is where the invariant "more_actions_open implies editor mode" is
+    restored.
+    """
+    app = _CanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        editor_mode="basic",
+        can_update_original=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        await pilot.click("#library-prompt-more-actions")
+        await pilot.pause()
+        assert canvas.more_actions_open is True
+
+        canvas.sync_state(
+            state=None,
+            sort_mode="newest",
+            filter_value="",
+            browse_result=None,
+            pager=None,
+            mode="list",
+            editor_state=None,
+            conflict=False,
+            status="",
+            show_open_existing=False,
+            import_open=False,
+            import_path="",
+            import_status="",
+            dirty=False,
+            can_update_original=False,
+            include_starter_content=False,
+            history_state=None,
+            history_current_compatible=True,
+            collection_label="",
+            membership_state=None,
+            sort_choices_visible=False,
+            page_actions_disabled=False,
+            delete_receipt=None,
+        )
+        await pilot.pause()
+
+        assert canvas.more_actions_open is False
+        assert not canvas.query("#library-prompt-more-actions-region")
 
 
 @pytest.mark.asyncio

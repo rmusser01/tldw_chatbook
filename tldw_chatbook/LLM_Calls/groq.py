@@ -3,12 +3,10 @@
 Transport, bounded retries, strict SSE framing, streamed usage capture, and
 exactly-once resource closure live in :mod:`tldw_chatbook.LLM_Calls.hosted_chat`;
 this module owns Groq's request resolution, payload allowlist, finish policy,
-and the legacy consumer surfaces:
-
-- ``GroqStream``: newline-terminated ``data: ...`` lines with exactly one
-  trailing ``data: [DONE]\\n\\n`` sentinel (the pre-migration raw-line relay
-  contract, minus its defects).
-- ``GroqResponse``: the legacy choices/usage dict shape.
+and the legacy consumer surfaces: the shared
+:class:`~tldw_chatbook.LLM_Calls.legacy_line_stream.LegacyLineStream`
+(newline data lines, one trailing sentinel) and the legacy ``GroqResponse``
+choices/usage dict.
 
 Defects the migration fixes, each pinned in
 ``Tests/LLM_Calls/test_groq_openrouter_migration_characterization.py``:
@@ -21,9 +19,7 @@ plus a synthetic one); and the metric series name ``groq``.
 
 from __future__ import annotations
 
-import json
 import time
-from collections.abc import Iterator
 from typing import Any
 
 from loguru import logger
@@ -45,6 +41,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     hosted_chat_request,
 )
+from tldw_chatbook.LLM_Calls.legacy_line_stream import LegacyLineStream
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -90,41 +87,6 @@ class GroqFinishPolicy:
 
 
 _FINISH_POLICY = GroqFinishPolicy()
-
-
-class GroqStream(Iterator[str]):
-    """Legacy raw-line view over the engine's normalized stream events.
-
-    Closing is a method forward to the engine stream, never a
-    yield-after-exit, so a consumer Stop closes the owned response/session
-    exactly once and without ``RuntimeError``.
-    """
-
-    def __init__(self, stream: HostedChatStream) -> None:
-        self._stream = stream
-        self._sentinel_sent = False
-
-    def __iter__(self) -> GroqStream:
-        return self
-
-    def __next__(self) -> str:
-        if self._sentinel_sent:
-            raise StopIteration
-        try:
-            event = next(self._stream)
-        except StopIteration:
-            self._sentinel_sent = True
-            return "data: [DONE]\n\n"
-        return f"data: {json.dumps(event)}\n"
-
-    @property
-    def terminal_turn(self) -> HostedChatTurn:
-        """Terminal metadata after clean stream exhaustion."""
-        return self._stream.terminal_turn
-
-    def close(self) -> None:
-        """Close the owned response/session pair exactly once."""
-        self._stream.close()
 
 
 class GroqResponse(dict):
@@ -359,7 +321,7 @@ def chat_with_groq(
     )
 
     if isinstance(result, HostedChatStream):
-        return GroqStream(result)
+        return LegacyLineStream(result)
     if result.usage is not None:
         _log_usage_metrics(current_model, result.usage)
     return _groq_turn_response(result)

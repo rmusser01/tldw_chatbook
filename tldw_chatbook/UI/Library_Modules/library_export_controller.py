@@ -227,7 +227,12 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from loguru import logger
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
+# The narrow rich escape is kept for the call sites below whose value
+# reaches a markup-OFF sink, where any escape shows the reader a literal
+# backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
+# widening the escape would make that leak worse rather than fix it.
+from rich.markup import escape as _escape_for_markup_off_sink  # TASK-32802.4
 from textual import on
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static
@@ -1206,7 +1211,7 @@ class LibraryExportController:
             return
         self._library_export_running = False
         self._library_export_status = ""
-        self._library_export_error = escape_markup(str(message))
+        self._library_export_error = _escape_for_markup_off_sink(str(message))
         self._sync_library_emergency_guard_presentation()
         self._update_library_export_canvas_after_run()
 

@@ -9,7 +9,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Protocol
 from uuid import uuid4
 
-from rich.markup import escape as escape_markup
+from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding

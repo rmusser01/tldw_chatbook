@@ -116,6 +116,8 @@ run_check "chachanotes table allowlist" \
   "$PYTHON" scripts/check_schema_table_allowlist.py
 run_check "index plan pins" \
   "$PYTHON" scripts/check_index_plan_pins.py
+run_check "textual worker contract" \
+  "$PYTHON" scripts/check_textual_worker_contract.py
 run_check "timestamp writers" \
   "$PYTHON" scripts/check_timestamp_writers.py
 

@@ -1,0 +1,603 @@
+tldw_chatbook/UI/Console_Modules/archive.py	142	proceed(name)
+tldw_chatbook/UI/Console_Modules/archive.py	201	proceed()
+tldw_chatbook/UI/Console_Modules/dictation.py	1890	self.app_instance.push_screen_wait(dialog)
+tldw_chatbook/UI/Console_Modules/dictation.py	2017	self._stop_console_dictation(session)
+tldw_chatbook/UI/Console_Modules/dictation.py	2118	self._discard_console_dictation_session(session)
+tldw_chatbook/UI/Console_Modules/dictation.py	2172	self._start_console_dictation()
+tldw_chatbook/UI/Console_Modules/hands_free.py	1427	self._run_pending_console_voice_action(sending_session_id)
+tldw_chatbook/UI/Console_Modules/hands_free.py	2020	self._speak_console_hands_free_utterance(text, token, sessio
+tldw_chatbook/UI/Console_Modules/image.py	432	self._fetch_remote_transcript_image(url, key)
+tldw_chatbook/UI/Console_Modules/left_rail.py	1470	self._replace_character_avatar_for_geometry(generation, targ
+tldw_chatbook/UI/Console_Modules/message.py	1494	saver(message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1527	self._capture_console_answer_as_note(message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1535	self._summarize_console_span_as_note(message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1543	self._save_console_transcript_as_note(message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1709	self._retry_console_message(controller, message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1757	self._regenerate_console_message(controller, message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1807	self._save_console_message_image(message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1817	self._save_console_video_copy(message_id)
+tldw_chatbook/UI/Console_Modules/message.py	1863	self._continue_console_message(controller, message_id)
+tldw_chatbook/UI/Console_Modules/message.py	2355	self._write_console_note(
+                title=draft.title,
+tldw_chatbook/UI/Console_Modules/message.py	2688	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/message.py	2704	self._edit_resend_console_message(controller, message_id, re
+tldw_chatbook/UI/Console_Modules/message.py	2803	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py	256	self._dispatch(action, state)
+tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py	535	self._dispatch(action)
+tldw_chatbook/UI/Console_Modules/right_rail.py	666	self._library_activity_retry()
+tldw_chatbook/UI/Console_Modules/session.py	1287	self._resync_console_after_first_chat_rollback(prior_focused
+tldw_chatbook/UI/Console_Modules/session.py	1761	self._preview_console_reaction(option, picker_ref, generatio
+tldw_chatbook/UI/Console_Modules/session.py	2066	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/session.py	2715	self.push_screen_wait(dialog)
+tldw_chatbook/UI/Console_Modules/session.py	3037	acknowledge_after_paint()
+tldw_chatbook/UI/Console_Modules/session.py	3756	self._promote_console_temporary_session()
+tldw_chatbook/UI/Console_Modules/session.py	3822	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/session.py	5028	refresh()
+tldw_chatbook/UI/Console_Modules/wiring.py	644	screen.app.push_screen_wait(modal)
+tldw_chatbook/UI/Console_Modules/wiring.py	1261	partial(_seed_console_fleet_history, wake)
+tldw_chatbook/UI/Console_Modules/wiring.py	1283	screen._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/wiring.py	2149	screen._append_native_console_system_message(
+              
+tldw_chatbook/UI/Console_Modules/workspace.py	1728	self.load_workspace_tree_page(target, cursor)
+tldw_chatbook/UI/Console_Modules/workspace.py	2374	self.refresh_workspace_tree_search(query)
+tldw_chatbook/UI/Console_Modules/workspace.py	2436	self._refresh_console_conversation_browser_search(query, tok
+tldw_chatbook/UI/Console_Modules/workspace.py	3484	partial(
+                        self._refresh_console_persi
+tldw_chatbook/UI/Console_Modules/workspace.py	4320	_open()
+tldw_chatbook/UI/Console_Modules/workspace.py	4373	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/workspace.py	4400	_restore(name)
+tldw_chatbook/UI/Console_Modules/workspace.py	4434	_prepare()
+tldw_chatbook/UI/Console_Modules/workspace.py	4471	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/workspace.py	4676	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/workspace.py	4698	_prepare()
+tldw_chatbook/UI/Console_Modules/workspace.py	4798	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/workspace.py	5014	self._apply_console_workspace_scope_save(workspace_id, scope
+tldw_chatbook/UI/Console_Modules/workspace.py	5221	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Console_Modules/workspace.py	6137	self._refresh_workspace_files_availability_snapshot()
+tldw_chatbook/UI/Console_Modules/workspace.py	6971	self._write_console_conversation_appearance_off_loop(
+      
+tldw_chatbook/UI/Console_Modules/workspace.py	7096	self._toggle_console_conversation_star_off_loop(
+           
+tldw_chatbook/UI/Console_Modules/workspace.py	7136	self._set_console_conversation_state_off_loop(
+             
+tldw_chatbook/UI/Console_Modules/workspace.py	7265	_run()
+tldw_chatbook/UI/Console_Modules/workspace.py	7336	_run()
+tldw_chatbook/UI/Console_Modules/worktree.py	44	open_recovery(screen, session_id=session_id, after_run_id=ru
+tldw_chatbook/UI/Console_Modules/worktree.py	66	recover()
+tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py	354	self._refresh_owned(token, offset=offset)
+tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py	456	self._apply_owned(token, request, context)
+tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py	507	self._bootstrap_library_conversation_reader(
+               
+tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py	522	self._load_library_conversation_reader(request)
+tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py	814	self._load_library_conversation_reader(request)
+tldw_chatbook/UI/Library_Modules/library_conversations_controller.py	982	self._load_library_conversation_page(
+                reques
+tldw_chatbook/UI/Library_Modules/library_conversations_controller.py	1457	self._retry_pending_library_conversation_open(pending)
+tldw_chatbook/UI/Library_Modules/library_conversations_controller.py	1637	self._conversation_recovery().undo()
+tldw_chatbook/UI/Library_Modules/library_ingest_controller.py	2484	self._open_library_external_media_detail(str(remote_media_id
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	2162	self._refresh_library_media_detail(
+                media_id
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	2473	self._load_library_media_image_preview(
+                requ
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	3168	self._open_library_item_by_id("media", str(media_id))
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	3272	self._review_these_worker()
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	3302	self._review_selected_worker(tuple(backing_ids))
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	3317	self._review_set_picker_worker()
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	3503	self._add_library_media_highlight(
+                media_id,
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	3573	self._delete_library_media_highlight(media_id, highlight_id)
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	4544	self._toggle_library_media_read_later(
+                media
+tldw_chatbook/UI/Library_Modules/library_media_controller.py	4667	self._save_library_media_analysis(
+                media_id,
+tldw_chatbook/UI/Library_Modules/library_navigation_controller.py	120	screen._apply_navigation_context_after_flush(
+              
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3455	self._refresh_library_note_detail(
+                note_id,
+
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3463	self._load_library_note_backlinks(note_id)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3468	self._load_library_note_location(note_id)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3473	self._locate_library_notes_tree_target(
+                note
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3790	self._save_library_note(
+                explicit=False,
+   
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3810	self._save_library_note(explicit=True)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	3930	self._load_library_note_location(snapshot.note_id)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	4156	self._resolve_library_note_conflict(overwrite=True)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	4169	self._resolve_library_note_conflict(overwrite=False)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	5233	self._library_notes_sync_controller.show_conflict_comparison
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	5485	self._run_library_note_import_check()
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	5505	self._run_library_note_import_check()
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	5598	self._run_library_note_import_execution(execution)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	5706	self._refresh_library_note_detail(note_id)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	6005	self._undo_library_note_delete(receipt)
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	6020	self._load_library_notes_trash()
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	6190	self._create_library_note(
+                title=LIBRARY_NOT
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	6222	self._create_library_note(
+                title=title,
+    
+tldw_chatbook/UI/Library_Modules/library_notes_controller.py	6258	self._discard_new_library_note(create_token)
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	1202	self._library_prompt_collections_controller.load_memberships
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	1526	self._await_library_prompt_durable_call(
+                sel
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	1564	self._refresh_library_prompt_detail(
+                prompt_
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	1729	self._await_library_prompt_durable_call(
+                sel
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	2312	self._await_library_prompt_durable_call(
+                sel
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	2499	self._persist_library_prompt_editor_mode(requested)
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	2597	self._await_library_prompt_save_call(
+                self._
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	2615	self._await_library_prompt_save_call(
+                self._
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	2633	self._await_library_prompt_save_call(
+                self._
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	2933	self._await_library_prompt_save_call(self._save_library_prom
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	4372	self._undo_library_prompt_delete(receipt, mutation_token)
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	4505	self._open_library_prompt_colliding_with_current_name()
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	4571	self._refresh_library_prompt_detail(candidate_id)
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	4970	self._await_library_prompt_save_call(
+                    se
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py	4993	self._await_library_prompt_save_call(
+                self._
+tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py	1623	self._mirror_library_rag_scope_recovery()
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	1854	self._persist_library_skill_editor_mode(requested)
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	1889	self._refresh_library_skill_detail(
+                name,
+  
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	2298	self._refresh_library_skill_detail(name)
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	2648	self._load_library_skill_script_grant(name, generation, gran
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	2738	self._setup_library_skill_trust()
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	2795	self._do_library_skill_trust_reset()
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	2866	self._refresh_library_skill_detail(skill_name)
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	2889	self._bootstrap_library_skill_trust()
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	2987	self._unlock_library_skill_trust()
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	3064	self._approve_library_skill_trust()
+tldw_chatbook/UI/Library_Modules/library_skills_controller.py	3079	self._revoke_library_skill_script_grant()
+tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py	421	_load_library_unavailable_conversation_page(
+            sel
+tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py	816	self._open_pending_library_source()
+tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py	834	self._load_library_collections_capture_entry()
+tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py	363	self._load_catalog(query=query, offset=offset, request_token
+tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py	515	self._run_mutation(
+                action,
+                
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	1742	self._persist_advanced_open(not collapsed)
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	3294	partial(self._load_advanced_section, self._sections[0][1])
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	3435	partial(self._load_advanced_section, str(event.value))
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	3592	partial(self._toggle_advanced)
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	3598	self._run_advanced_action()
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	3622	self._mount_test_tool_panel()
+tldw_chatbook/UI/MCP_Modules/mcp_inspector.py	3651	self._close_test_tool_panel()
+tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py	480	self.update_overview(
+                    self._snapshots,
+ 
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	954	self._reload_guarded()
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	3143	self._prepare_mcp_recovery_review(token)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	3217	self._record_mcp_recovery_review(token[1], review)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	3673	self._consume_pending_view_state()
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	4058	self._save_tools_mode_local_enabled(event.enabled)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	4111	self._save_tools_mode_workspace_root(event.workspace_root)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	4622	partial(self._open_audit_tool, tool, context)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	4722	partial(self._open_audit_permission, tool, context)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5112	self._prepare_tool_test_preview(tool, generation, context)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5265	self._revoke_test_nonce(event.preview_nonce)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5335	partial(
+                    self._run_prepared_tool_test_wi
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5721	self._save_builtin_flag(event.key, event.value)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5776	self._save_tool_gate(event.section, event.key, event.value)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5839	self._delete_local_profile(event.server_key, profile_id)
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5885	self._save_local_profile(
+                dict(event.payload
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	5996	self._run_server_mutation(event.action, dict(event.payload))
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	6088	self._load_import_file(str(file_path))
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	6170	self._apply_import(list(event.candidates))
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	6226	self._sync_children()
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	6262	self._lifecycle_wrapper(server_key, profile_id, action, coro
+tldw_chatbook/UI/MCP_Modules/mcp_workbench.py	6273	self._sync_children()
+tldw_chatbook/UI/Navigation/buddy_conversation.py	159	self._restore_saved(binding)
+tldw_chatbook/UI/Navigation/buddy_conversation.py	317	self._submit(binding, text)
+tldw_chatbook/UI/Navigation/buddy_conversation.py	424	self._finish_voice(owner, capture)
+tldw_chatbook/UI/Navigation/buddy_conversation.py	453	self._start_voice(owner, capture)
+tldw_chatbook/UI/Navigation/buddy_conversation.py	525	self._open_bound(binding)
+tldw_chatbook/UI/Navigation/buddy_conversation.py	558	self._activate_bound(binding, workspace)
+tldw_chatbook/UI/Navigation/buddy_management.py	166	self._open()
+tldw_chatbook/UI/Navigation/buddy_management.py	173	self._set_visibility(action)
+tldw_chatbook/UI/Navigation/buddy_management.py	655	self._apply_and_report(choice)
+tldw_chatbook/UI/Navigation/buddy_management.py	972	self._finish_binding_promotion(binding)
+tldw_chatbook/UI/Navigation/buddy_workspace.py	141	self._open_entry(entry)
+tldw_chatbook/UI/Persona_Modules/personas_conversations_controller.py	1123	self._resume_in_console()
+tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py	497	self._run_reply()
+tldw_chatbook/UI/Screens/chat_screen.py	2224	self._workspace.retry_workspace_tree_page(event.workspace_id
+tldw_chatbook/UI/Screens/chat_screen.py	2775	self._console_dictionary_attach_worker()
+tldw_chatbook/UI/Screens/chat_screen.py	2784	self._console_dictionary_detach_worker()
+tldw_chatbook/UI/Screens/chat_screen.py	2793	self._console_worldbook_attach_worker()
+tldw_chatbook/UI/Screens/chat_screen.py	2802	self._console_worldbook_detach_worker()
+tldw_chatbook/UI/Screens/chat_screen.py	3628	self._reopen_suspended_console_settings(
+                   
+tldw_chatbook/UI/Screens/chat_screen.py	3908	self._restore_claimed_conversation_settings_return()
+tldw_chatbook/UI/Screens/chat_screen.py	4361	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	4635	self._drain_console_roleplay_persistence()
+tldw_chatbook/UI/Screens/chat_screen.py	4645	partial(self._await_console_roleplay_persistence_task, task)
+tldw_chatbook/UI/Screens/chat_screen.py	4726	self._character._refresh_active_character_avatar_if_scope_ch
+tldw_chatbook/UI/Screens/chat_screen.py	5479	self.action_open_console_session_switcher(
+                i
+tldw_chatbook/UI/Screens/chat_screen.py	5562	self._open_console_settings(focus_model=True, transfer=resul
+tldw_chatbook/UI/Screens/chat_screen.py	5649	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	6105	self._session._create_native_console_session_from_active_con
+tldw_chatbook/UI/Screens/chat_screen.py	6126	self._session._create_native_console_session_from_active_con
+tldw_chatbook/UI/Screens/chat_screen.py	6143	self._open_console_settings()
+tldw_chatbook/UI/Screens/chat_screen.py	6155	self._open_console_new_endpoint()
+tldw_chatbook/UI/Screens/chat_screen.py	6218	self._prompts._open_console_prompt_picker_for_insert("")
+tldw_chatbook/UI/Screens/chat_screen.py	6247	self._open_console_style_picker_for_insert()
+tldw_chatbook/UI/Screens/chat_screen.py	6256	self._open_console_system_prompt_editor()
+tldw_chatbook/UI/Screens/chat_screen.py	6847	self._open_console_workspace_action_menu(
+                  
+tldw_chatbook/UI/Screens/chat_screen.py	6857	self._open_console_tree_conversation_action_menu(
+          
+tldw_chatbook/UI/Screens/chat_screen.py	6934	self._create_console_chat_in_workspace(workspace_id)
+tldw_chatbook/UI/Screens/chat_screen.py	6941	self._workspace.request_workspace_files(
+                   
+tldw_chatbook/UI/Screens/chat_screen.py	6954	self._workspace._open_console_workspace_scope_picker()
+tldw_chatbook/UI/Screens/chat_screen.py	7111	self._write_console_markdown_file(chosen, markdown)
+tldw_chatbook/UI/Screens/chat_screen.py	7172	self._copy_console_conversation_markdown(
+                  
+tldw_chatbook/UI/Screens/chat_screen.py	7181	self._save_console_conversation_markdown(target)
+tldw_chatbook/UI/Screens/chat_screen.py	7233	self._workspace._open_console_workspace_scope_picker()
+tldw_chatbook/UI/Screens/chat_screen.py	11005	self._handle_console_attach_context()
+tldw_chatbook/UI/Screens/chat_screen.py	11011	self._open_console_generate_image_modal()
+tldw_chatbook/UI/Screens/chat_screen.py	11015	self._run_console_impersonate()
+tldw_chatbook/UI/Screens/chat_screen.py	12101	self._retrieval._apply_console_retrieval_scope_save(session,
+tldw_chatbook/UI/Screens/chat_screen.py	12471	self._character._apply_console_character_choice_async(choice
+tldw_chatbook/UI/Screens/chat_screen.py	12949	self._retrieval._refresh_console_effective_scope_and_sync(se
+tldw_chatbook/UI/Screens/chat_screen.py	14165	self._workspace.request_workspace_files(
+                eve
+tldw_chatbook/UI/Screens/chat_screen.py	15314	self._discover_local_servers_for_setup_card()
+tldw_chatbook/UI/Screens/chat_screen.py	15421	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	16539	self._prompt_queue.handle_primary_intent(
+                  
+tldw_chatbook/UI/Screens/chat_screen.py	16793	self._skill._refresh_console_skill_candidates()
+tldw_chatbook/UI/Screens/chat_screen.py	16815	self._consume_resume_navigation_startup()
+tldw_chatbook/UI/Screens/chat_screen.py	17860	self._discover_console_citation_counts(
+                    
+tldw_chatbook/UI/Screens/chat_screen.py	17915	self._discover_console_citation_counts(
+                repo
+tldw_chatbook/UI/Screens/chat_screen.py	18259	self._prep_console_images(pending_images)
+tldw_chatbook/UI/Screens/chat_screen.py	18490	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	18657	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	19614	_run_research()
+tldw_chatbook/UI/Screens/chat_screen.py	19641	self.app_instance.push_screen_wait(screen)
+tldw_chatbook/UI/Screens/chat_screen.py	19980	worker(
+                        controller,
+                
+tldw_chatbook/UI/Screens/chat_screen.py	20255	self._process_console_attachment(str(file_path))
+tldw_chatbook/UI/Screens/chat_screen.py	20275	self._paste_console_clipboard_image()
+tldw_chatbook/UI/Screens/chat_screen.py	20691	self._run_console_turn_undo(token, card, provider, plan)
+tldw_chatbook/UI/Screens/chat_screen.py	21095	self._open_console_canvas_selection(
+                    ses
+tldw_chatbook/UI/Screens/chat_screen.py	21566	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	22052	self._prompt_queue.handle_primary_intent(
+                se
+tldw_chatbook/UI/Screens/chat_screen.py	22864	self._console_review_notes_flow(event.anchor_message_id)
+tldw_chatbook/UI/Screens/chat_screen.py	23116	self._process_console_attachment(dropped.path)
+tldw_chatbook/UI/Screens/chat_screen.py	23268	self._open_console_system_prompt_editor()
+tldw_chatbook/UI/Screens/chat_screen.py	23645	self._skill._refresh_console_skill_candidates()
+tldw_chatbook/UI/Screens/chat_screen.py	23648	self._character_context.refresh_if_scope_changed()
+tldw_chatbook/UI/Screens/chat_screen.py	23695	self._poll_console_watchlists_operations()
+tldw_chatbook/UI/Screens/chat_screen.py	23804	service.cancel_run(run_id)
+tldw_chatbook/UI/Screens/chat_screen.py	23811	self._retry_console_watchlists_operation(event.operation_id)
+tldw_chatbook/UI/Screens/chat_screen.py	24498	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	24699	self._persist_sidebar_state_off_loop()
+tldw_chatbook/UI/Screens/chat_screen.py	24945	self._sync_native_console_chat_ui()
+tldw_chatbook/UI/Screens/chat_screen.py	25000	self._workspace.retry_workspace_tree_search()
+tldw_chatbook/UI/Screens/library_screen.py	5298	self._reload_library_notes_browse_return_receipt(receipt, gu
+tldw_chatbook/UI/Screens/library_screen.py	7558	self._persist_library_reader_preference(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	7613	self._persist_library_reader_preference(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	7636	self._persist_library_reader_preference(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	7684	self._persist_library_reader_preference(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	7746	self._persist_library_reader_preference(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	7768	self._persist_library_reader_preference(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	7790	self._persist_library_reader_preference(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	7810	self._persist_library_reader_preference(
+                "me
+tldw_chatbook/UI/Screens/library_screen.py	8897	self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+tldw_chatbook/UI/Screens/library_screen.py	8917	self.action_library_notes_new()
+tldw_chatbook/UI/Screens/library_screen.py	9246	consume_prepared_character_inspection(self)
+tldw_chatbook/UI/Screens/library_screen.py	9371	self._load_library_collections_capture_entry()
+tldw_chatbook/UI/Screens/library_screen.py	9461	self._refresh_library_note_detail(
+                    self.
+tldw_chatbook/UI/Screens/library_screen.py	9497	self._refresh_library_media_detail(
+                    self
+tldw_chatbook/UI/Screens/library_screen.py	9529	self._open_pending_library_source()
+tldw_chatbook/UI/Screens/library_screen.py	9535	self._unavailable_navigation._open_pending_library_character
+tldw_chatbook/UI/Screens/library_screen.py	17240	LibraryScreen._run_library_notes_tree_slice_request(
+       
+tldw_chatbook/UI/Screens/library_screen.py	18680	self._execute_library_notes_tree_mutation(
+                o
+tldw_chatbook/UI/Screens/library_screen.py	18914	self._load_library_skills_trust_posture(posture_fn)
+tldw_chatbook/UI/Screens/library_screen.py	21105	self._gather_library_onboarding_evidence(
+                ge
+tldw_chatbook/UI/Screens/library_screen.py	21410	self._drain_library_lifecycle_persistence()
+tldw_chatbook/UI/Screens/library_screen.py	21596	self._refresh_library_details_db_sizes()
+tldw_chatbook/UI/Screens/library_screen.py	21797	self._open_library_item_by_id(
+                source_type,
+
+tldw_chatbook/UI/Screens/library_screen.py	22284	self._load_library_collections_capture_entry()
+tldw_chatbook/UI/Screens/library_screen.py	22493	self._refresh_library_details_db_sizes()
+tldw_chatbook/UI/Screens/library_screen.py	23959	self._run_library_notes_filter(submitted)
+tldw_chatbook/UI/Screens/library_screen.py	24568	self._refresh_library_skill_detail(name)
+tldw_chatbook/UI/Screens/library_screen.py	24625	self._library_skill_import_coordinator.run(raw_path, runtime
+tldw_chatbook/UI/Screens/library_screen.py	24669	coordinator.run(raw_path, runtime_app=self.app)
+tldw_chatbook/UI/Screens/library_screen.py	24802	self._library_skill_import_coordinator.run_candidate(
+      
+tldw_chatbook/UI/Screens/library_screen.py	24851	self._refresh_library_skill_detail(skill_name)
+tldw_chatbook/UI/Screens/library_screen.py	24997	self._run_library_skill_save()
+tldw_chatbook/UI/Screens/library_screen.py	25815	self._run_library_skill_delete(
+                self._skills
+tldw_chatbook/UI/Screens/library_screen.py	25935	self._review_restored_skill_trust()
+tldw_chatbook/UI/Screens/library_screen.py	25943	self._unlock_library_skill_trust()
+tldw_chatbook/UI/Screens/library_screen.py	26030	self._open_library_skill_editor_for_review(blocked_name)
+tldw_chatbook/UI/Screens/library_screen.py	26061	self._review_library_skill_trust()
+tldw_chatbook/UI/Screens/library_screen.py	26465	self._refresh_library_prompt_detail(
+                prompt_
+tldw_chatbook/UI/Screens/library_screen.py	27257	self._delete_library_prompts(
+                targets,
+     
+tldw_chatbook/UI/Screens/library_screen.py	27378	self._library_note_import_controller.recognise_selected_fold
+tldw_chatbook/UI/Screens/library_screen.py	27650	self._run_library_note_import_execution(execution)
+tldw_chatbook/UI/Screens/library_screen.py	29648	LibraryScreen._run_library_notes_filter(
+                   
+tldw_chatbook/UI/Screens/library_screen.py	30134	self._delete_library_note(admission)
+tldw_chatbook/UI/Screens/library_screen.py	30316	self._undo_library_note_delete(receipt)
+tldw_chatbook/UI/Screens/library_screen.py	31659	self._review_dismiss_undo_worker(receipt)
+tldw_chatbook/UI/Screens/library_screen.py	31866	self._auto_resume_review_set_worker()
+tldw_chatbook/UI/Screens/library_screen.py	32731	self._drain_library_media_progress_writes()
+tldw_chatbook/UI/Screens/library_screen.py	33363	self._generate_library_media_analysis(
+                media
+tldw_chatbook/UI/Screens/library_screen.py	33619	self._analyze_library_media_selection(
+                media
+tldw_chatbook/UI/Screens/library_screen.py	33870	self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+tldw_chatbook/UI/Screens/library_screen.py	33891	self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+tldw_chatbook/UI/Screens/library_screen.py	34536	self._refresh_library_prompt_detail(
+                    par
+tldw_chatbook/UI/Screens/library_screen.py	34608	self._refresh_library_media_detail(
+                    reco
+tldw_chatbook/UI/Screens/personas_screen.py	1514	self._apply_mode("characters")
+tldw_chatbook/UI/Screens/personas_screen.py	1941	self._load_after_mount()
+tldw_chatbook/UI/Screens/personas_screen.py	3186	self._character_tts_refresh_worker(
+                request_
+tldw_chatbook/UI/Screens/personas_screen.py	3438	self._character_tts_assignment_worker(
+                    m
+tldw_chatbook/UI/Screens/personas_screen.py	3456	self._character_tts_preview_worker(
+                    mess
+tldw_chatbook/UI/Screens/personas_screen.py	3466	self._character_tts_edit_worker(
+                    message
+tldw_chatbook/UI/Screens/personas_screen.py	4074	self._tag_filter_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	4136	self._render_search_query(query=query, mode=mode)
+tldw_chatbook/UI/Screens/personas_screen.py	4825	self._actor_pack_export_dialog_worker(authority)
+tldw_chatbook/UI/Screens/personas_screen.py	4958	self._actor_pack_import_dialog_worker(controller, importer)
+tldw_chatbook/UI/Screens/personas_screen.py	5254	self._render_inspector_avatar()
+tldw_chatbook/UI/Screens/personas_screen.py	5627	self._dictionary_export_worker(message.fmt)
+tldw_chatbook/UI/Screens/personas_screen.py	5813	self._dictionary_attach_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	5977	self._character_dictionary_attach_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	6128	self._character_worldbook_attach_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	6293	self._dictionary_revert_worker(message.revision)
+tldw_chatbook/UI/Screens/personas_screen.py	6698	self._lore_export_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	6834	self._lore_attach_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	8272	self._configure_persona_shared_visual_identity(
+            
+tldw_chatbook/UI/Screens/personas_screen.py	8290	self._configure_persona_visual(visual_snapshot)
+tldw_chatbook/UI/Screens/personas_screen.py	10007	self._preview_persona_visual_state(message.state)
+tldw_chatbook/UI/Screens/personas_screen.py	10018	self._stage_persona_visual_clear(message.state)
+tldw_chatbook/UI/Screens/personas_screen.py	10032	self._persona_visual_replace_dialog(message.state)
+tldw_chatbook/UI/Screens/personas_screen.py	10084	self._persona_visual_custom_dialog()
+tldw_chatbook/UI/Screens/personas_screen.py	10110	review_buddy_character(self, archive=message.archive)
+tldw_chatbook/UI/Screens/personas_screen.py	10125	review_petdex_import(self)
+tldw_chatbook/UI/Screens/personas_screen.py	10142	export_native_buddy(self)
+tldw_chatbook/UI/Screens/personas_screen.py	10157	self._persona_visual_import_dialog()
+tldw_chatbook/UI/Screens/personas_screen.py	10189	self._save_persona_visual_pack()
+tldw_chatbook/UI/Screens/personas_screen.py	10200	self._cancel_persona_visual_authoring()
+tldw_chatbook/UI/Screens/personas_screen.py	10244	self._configure_character_visual_identity(snapshot)
+tldw_chatbook/UI/Screens/personas_screen.py	10657	self._run_field_generation(field)
+tldw_chatbook/UI/Screens/personas_screen.py	10702	self._run_whole_character_generation(concept)
+tldw_chatbook/UI/Screens/personas_screen.py	10718	self._run_field_generation(field)
+tldw_chatbook/UI/Screens/personas_screen.py	11019	self._render_persona_shared_visual_identity_preview(
+       
+tldw_chatbook/UI/Screens/personas_screen.py	11057	self._render_visual_identity_pack_preview(snapshot)
+tldw_chatbook/UI/Screens/personas_screen.py	12250	self._generate_visual_identity_assets((message.asset,))
+tldw_chatbook/UI/Screens/personas_screen.py	12263	self._generate_visual_identity_pack_all()
+tldw_chatbook/UI/Screens/personas_screen.py	12285	self._save_persona_shared_visual_identity_pack()
+tldw_chatbook/UI/Screens/personas_screen.py	12293	self._save_visual_identity_pack(browser.pack if browser else
+tldw_chatbook/UI/Screens/personas_screen.py	12307	self._visual_identity_replace_dialog(
+                messag
+tldw_chatbook/UI/Screens/personas_screen.py	12468	self._render_character_editor_avatar()
+tldw_chatbook/UI/Screens/personas_screen.py	12620	self._expression_upload_dialog_worker(character_id, message.
+tldw_chatbook/UI/Screens/personas_screen.py	12709	self._generate_expression_image_worker(character_id, message
+tldw_chatbook/UI/Screens/personas_screen.py	12762	self._generate_expression_image_worker(character_id, "avatar
+tldw_chatbook/UI/Screens/personas_screen.py	12808	self._generate_all_expression_images_worker(character_id)
+tldw_chatbook/UI/Screens/personas_screen.py	12839	self._expression_style_pick_dialog_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	12858	self._clear_expression_slot(character_id, message.state)
+tldw_chatbook/UI/Screens/personas_screen.py	13048	self._render_character_editor_avatar()
+tldw_chatbook/UI/Screens/personas_screen.py	13374	self._expression_set_import_dialog_worker(character_id)
+tldw_chatbook/UI/Screens/personas_screen.py	13473	self._export_expression_set_worker(character_id, name)
+tldw_chatbook/UI/Screens/personas_screen.py	13574	self._avatar_upload_dialog_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	13623	self._import_dialog_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	13702	self._run_durable_character_import(path)
+tldw_chatbook/UI/Screens/personas_screen.py	14026	self._lore_import_dialog_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	14136	self._dictionary_import_dialog_worker()
+tldw_chatbook/UI/Screens/personas_screen.py	14302	self._export_marked_json_worker(tuple(self._marked_rows))
+tldw_chatbook/UI/Screens/personas_screen.py	14416	self._export_dialog_worker(fmt)
+tldw_chatbook/UI/Screens/personas_screen.py	14673	self._delete_marked_worker(marks)
+tldw_chatbook/UI/Screens/personas_screen.py	14870	self._delete_dialog_worker(kind, entity_id, name, version)
+tldw_chatbook/UI/Screens/personas_screen.py	15686	self._configure_persona_shared_visual_identity(shared_snapsh
+tldw_chatbook/UI/Screens/personas_screen.py	15694	self._configure_persona_visual(visual_snapshot)
+tldw_chatbook/UI/Screens/personas_screen.py	16084	self._confirm_then_run(continuation)
+tldw_chatbook/UI/Screens/settings_screen.py	3540	self._swap_category_panes(revision=self._category_swap_revis
+tldw_chatbook/UI/Screens/settings_screen.py	4380	panel.apply_listing(listing)
+tldw_chatbook/UI/Screens/settings_screen.py	22729	self._confirm_speech_tts_category_leave(
+                   
+tldw_chatbook/UI/Screens/settings_screen.py	23568	self._perform_runtime_source_switch(result)
+tldw_chatbook/UI/Screens/settings_screen.py	24195	_prepare()
+tldw_chatbook/UI/Screens/settings_screen.py	24297	_undo()
+tldw_chatbook/UI/Screens/settings_screen.py	24372	_restore()
+tldw_chatbook/UI/Screens/settings_screen.py	26268	self._prepare_local_model_review(token)
+tldw_chatbook/UI/Screens/settings_screen.py	26320	self._record_local_model_review(review.fingerprint)
+tldw_chatbook/UI/Screens/settings_screen.py	26365	self._prepare_openai_reconnect_review(token)
+tldw_chatbook/UI/Screens/settings_screen.py	26410	self._record_openai_reconnect_review(review)
+tldw_chatbook/UI/Screens/settings_screen.py	27493	self._persist_briefing_schedules_gate(enabled)
+tldw_chatbook/UI/Screens/settings_screen.py	28105	apply_policy()
+tldw_chatbook/UI/Screens/settings_screen.py	28297	self._web_search_model().save()
+tldw_chatbook/UI/Screens/settings_screen.py	28331	self._save_snapshot_preferences_draft(
+                     
+tldw_chatbook/UI/Screens/settings_screen.py	29121	self._revert_snapshot_preferences()
+tldw_chatbook/UI/Screens/settings_screen.py	29151	panel.revert_to_saved()
+tldw_chatbook/UI/Screens/settings_screen.py	29170	self._handle_image_gen_revert()
+tldw_chatbook/UI/Screens/settings_screen.py	29229	panel.revert()
+tldw_chatbook/UI/Screens/settings_screen.py	29263	self._revert_snapshot_preferences()
+tldw_chatbook/Widgets/Console/console_agent_history_modal.py	71	self._read_page(self._generation, self._cursors[-1])
+tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py	707	self.apply(self.selected_scope, self.selected_detail)
+tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py	716	self.set_capture_enabled(not self.snapshot.enabled)
+tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py	725	self.delete_full_captures()
+tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py	1002	self.apply_privacy()
+tldw_chatbook/Widgets/Console/console_character_picker_modal.py	274	self._refresh_results(query)
+tldw_chatbook/Widgets/Console/console_citation_sources_modal.py	287	self._load_sources(generation)
+tldw_chatbook/Widgets/Console/console_composer_bar.py	3687	self._prompt_history.load()
+tldw_chatbook/Widgets/Console/console_composer_bar.py	5300	self._move_history(-1)
+tldw_chatbook/Widgets/Console/console_composer_bar.py	5317	self._move_history(1)
+tldw_chatbook/Widgets/Console/console_conversation_action_menu.py	305	self._show_page("root")
+tldw_chatbook/Widgets/Console/console_conversation_action_menu.py	332	self._show_page(page)
+tldw_chatbook/Widgets/Console/console_conversation_inspector.py	1064	self._load_turn_captures(collapsible, turn)
+tldw_chatbook/Widgets/Console/console_conversation_inspector.py	1357	self._load_exchange_turn(collapsible, turn)
+tldw_chatbook/Widgets/Console/console_conversation_inspector.py	1629	self.action_viewer_profile()
+tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py	226	self.export_selected()
+tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py	233	self.export_selected()
+tldw_chatbook/Widgets/Console/console_message_more_menu.py	152	self._owner.dismiss_message_more_menu()
+tldw_chatbook/Widgets/Console/console_prompt_picker_modal.py	227	self._run_search(query=query, token=token)
+tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py	416	self._confirm_remove_selected()
+tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py	447	self._confirm_remove_selected()
+tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py	454	self._confirm_clear_waiting()
+tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py	461	self._toggle_pause()
+tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py	475	self._recover(action)
+tldw_chatbook/Widgets/Console/console_prompts_modal.py	350	self.reload_browse()
+tldw_chatbook/Widgets/Console/console_prompts_modal.py	1067	self._run_improvement_activation(activation_id)
+tldw_chatbook/Widgets/Console/console_prompts_modal.py	1181	self._run_improvement(mode, request_id)
+tldw_chatbook/Widgets/Console/console_prompts_modal.py	1720	self.reload_browse(token_already_started=True)
+tldw_chatbook/Widgets/Console/console_prompts_modal.py	1856	self._coordinate_apply(result, guard, _generation=generation
+tldw_chatbook/Widgets/Console/console_prompts_modal.py	2130	self._apply_review_candidate(generation)
+tldw_chatbook/Widgets/Console/console_prompts_modal.py	2181	self._back_internal()
+tldw_chatbook/Widgets/Console/console_scope_picker_modal.py	397	self._load_top_tags()
+tldw_chatbook/Widgets/Console/console_scope_picker_modal.py	440	self._run_refresh(token=token)
+tldw_chatbook/Widgets/Console/console_scope_picker_modal.py	733	self._render_tag_suggestions(())
+tldw_chatbook/Widgets/Console/console_scope_picker_modal.py	750	self._run_tag_search(query)
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py	650	partial(self._refresh_results, query)
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py	1326	self._refresh_results(query, reset_page=True)
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py	1877	self._refresh_results(query)
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py	1907	self._refresh_results(query)
+tldw_chatbook/Widgets/Console/console_settings_modal.py	4343	self._compact_context_now_worker()
+tldw_chatbook/Widgets/Console/console_settings_modal.py	4686	partial(self._run_model_discovery, discovery_identity, ident
+tldw_chatbook/Widgets/Console/console_settings_modal.py	6033	self._run_generation_test(request, token)
+tldw_chatbook/Widgets/Console/console_settings_modal.py	6182	partial(self._run_model_discovery, discovery_identity, ident
+tldw_chatbook/Widgets/Console/console_side_chat_modal.py	224	self._run_sidechat(request_id, prompt)
+tldw_chatbook/Widgets/Console/console_style_picker_modal.py	238	self._apply_filter(query)
+tldw_chatbook/Widgets/Console/console_system_prompt_modal.py	150	self._run_save_to_library(name, text)
+tldw_chatbook/Widgets/Console/console_turn_file_card.py	366	self._load_rows()
+tldw_chatbook/Widgets/Console/console_workspace_action_menu.py	295	self._show_page("root")
+tldw_chatbook/Widgets/Console/console_workspace_action_menu.py	322	self._show_page(page)
+tldw_chatbook/Widgets/Console/trace_export_dialog.py	268	self._browse_flow()
+tldw_chatbook/Widgets/Console/trace_export_dialog.py	299	self._export_flow()
+tldw_chatbook/Widgets/Console/trace_export_dialog.py	304	self._export_flow()
+tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py	2851	partial(
+                self._render_commit_review_notes,
+ 
+tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py	3229	partial(
+                self._render_rows,
+                
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	2290	self._probe_repository(binding, service)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	2370	self._initialize()
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	4773	self._render_git_status(task, binding)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	4831	self._observe_commit_review(operation, key, operation_id)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	4849	self._observe_commit_child_start(operation, key, operation_i
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	4855	self._observe_commit_outcome(operation, key, operation_id)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	4864	self._observe_commit_outcome(operation, key, operation_id)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	6268	self.refresh_files()
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	6308	self._observe_save_task(task)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	6545	self._run_search(query, generation)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	6658	self._review_pairing()
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	6801	self._change_root_with_deadline(path)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	7053	self._open_session_git()
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	7119	self._open_session_git(force_prompt=True)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	7526	self._observe_commit_review(
+                operation,
+    
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	7706	self._observe_commit_child_start(operation, key, operation_i
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	7712	self._observe_commit_outcome(operation, key, operation_id)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	7946	self._observe_commit_outcome(operation, key, operation_id)
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py	8058	self._render_git_action(
+                task,
+             
+tldw_chatbook/Widgets/Library/library_ingest_canvas.py	1960	self._fetch_chunk_templates()
+tldw_chatbook/Widgets/Library/library_search_rag_panel.py	108	self._fetch_legacy_chunk_report()
+tldw_chatbook/Widgets/Library/notes_recovery_dialog.py	109	self._confirm()
+tldw_chatbook/Widgets/Persona_Widgets/buddy_management_modal.py	328	self._review(event.button.id)
+tldw_chatbook/Widgets/Persona_Widgets/buddy_management_modal.py	458	self._commit(choice)
+tldw_chatbook/Widgets/Persona_Widgets/buddy_workspace_modal.py	182	self._mark_seen(entry)
+tldw_chatbook/Widgets/Persona_Widgets/persona_buddy_widget.py	516	partial(self._resolution_loop)
+tldw_chatbook/Widgets/Persona_Widgets/petdex_import_review.py	244	self._load(event.button.id)
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py	1035	self._delete_after_confirmation(record)
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py	1043	self._choose_plaintext_export()
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py	1304	self._remove_after_confirmation()
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py	1332	self._start_fresh_after_confirmation()
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py	1401	self._choose_recovery_export()
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	4123	self._revalidate_guided_save(
+                    request_id
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	5251	self._change_configure_provider(
+                requested_p
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	5438	self._rebuild_after_custom_id(axis)
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	5480	self._open_lab(
+                SpeechTTSNavigationTarget(
+ 
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	5646	self._scan_audio_cpp_package(path, revision)
+tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py	5919	self._open_lab(
+                SpeechTTSNavigationTarget(
+ 
+tldw_chatbook/Widgets/audio_troubleshooting_dialog.py	226	self._initialize_audio()
+tldw_chatbook/Widgets/dictation_performance_widget.py	319	self.refresh_metrics()
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	163	self._refresh()
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	453	self.service.browse_catalog(self._offsets[-1])
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	457	self._save_preferences(action == "snapshot-reload")
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	514	self.service.delete_snapshot(record.snapshot_id)
+tldw_chatbook/Widgets/llamacpp_snapshot_manager.py	532	self._save_preferences(True)
+tldw_chatbook/Widgets/model_search_picker.py	328	partial(
+                self.load_provider,
+               
+tldw_chatbook/Widgets/project_skills_import_modal.py	329	self._run_import(selected)
+tldw_chatbook/Widgets/settings_advanced_config_panel.py	64	self.model.inspect_current()
+tldw_chatbook/Widgets/settings_advanced_config_panel.py	133	self.model.replace_draft(source, revision)
+tldw_chatbook/Widgets/settings_advanced_config_panel.py	152	self.model.replace_draft(source, revision)
+tldw_chatbook/Widgets/settings_advanced_config_panel.py	172	getattr(self.model, action)()
+tldw_chatbook/Widgets/settings_internal_prompts_panel.py	164	self._apply_editor_result(prompt_id, result)
+tldw_chatbook/Widgets/settings_web_search_panel.py	275	self.model.test_saved()
+tldw_chatbook/app.py	2781	self._resume_settled_research_source_operation(
+            
+tldw_chatbook/app.py	2829	self._reconcile_research_source_held_jobs()
+tldw_chatbook/app.py	2835	scheduler.resume_startup()
+tldw_chatbook/app.py	2841	self._sweep_research_paste_staging()
+tldw_chatbook/app.py	9048	request_conversation_resume(self, conversation_id)
+tldw_chatbook/app.py	9723	controller.migrate_legacy_selection(library)
+tldw_chatbook/app.py	13134	self._run_personal_context_link()
+tldw_chatbook/app.py	13694	self._run_admitted_screen_navigation(message)
+tldw_chatbook/app.py	14706	self._offer_tts_global_override(event.global_override_token)
+tldw_chatbook/app.py	15573	self._reconcile_research_quick_notes_startup()
+tldw_chatbook/app.py	16355	self._apply_first_run_recovery_result(result)
+tldw_chatbook/app.py	16665	navigate_then_schedule_catalog_consent()
+tldw_chatbook/app.py	17050	self.scheduler_loop.run()
