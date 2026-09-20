@@ -731,26 +731,29 @@ def format_size_bytes(size_bytes: int) -> str:
 
     Uses binary (1024) divisors and thresholds so the scale is monotonic.
 
+    Scales through PB so it can serve file/repo-size displays (which exceed GB),
+    not just the sub-GB database-size case (TASK-32808.1): values up to and
+    including GB are unchanged from the original GB-capped helper, so existing
+    callers and their pins are unaffected.
+
     Args:
         size_bytes: A non-negative byte count. Negative values are clamped
             to 0 (a byte count is never negative; TASK-32808.1 / Qodo #3).
 
     Returns:
-        A string such as ``"512 B"``, ``"1.0 KB"``, ``"3.5 MB"`` or
-        ``"2.0 GB"`` (capped at GB).
+        A string such as ``"512 B"``, ``"1.0 KB"``, ``"3.5 MB"``, ``"2.0 GB"``,
+        ``"4.0 TB"`` or ``"1.5 PB"`` (capped at PB).
     """
     if size_bytes < 0:
         size_bytes = 0
     if size_bytes < 1024:
         return f"{size_bytes} B"
-    size_kb = size_bytes / 1024
-    if size_kb < 1024:
-        return f"{size_kb:.1f} KB"
-    size_mb = size_kb / 1024
-    if size_mb < 1024:
-        return f"{size_mb:.1f} MB"
-    size_gb = size_mb / 1024
-    return f"{size_gb:.1f} GB"
+    size = size_bytes / 1024.0
+    for unit in ("KB", "MB", "GB", "TB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} PB"
 
 
 #: Back-compat private alias (TASK-32808.1: this is now the package's one

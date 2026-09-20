@@ -468,6 +468,12 @@ def test_canonical_public_byte_formatter_exists():
     assert format_size_bytes(512) == "512 B"
     assert format_size_bytes(1024) == "1.0 KB"
     assert format_size_bytes(1024 * 1024) == "1.0 MB"
+    assert format_size_bytes(1024 ** 3) == "1.0 GB"
+    # TASK-32808.1: scales past GB so it can serve file/repo-size displays.
+    assert format_size_bytes(2 * 1024 ** 4) == "2.0 TB"
+    assert format_size_bytes(int(1.5 * 1024 ** 5)) == "1.5 PB"
+    # ≤GB is unchanged from the original GB-capped helper.
+    assert format_size_bytes(1023 * 1024 ** 3) == "1023.0 GB"
     # Qodo #3: a negative byte count is clamped to 0, never "-5 B".
     assert format_size_bytes(-5) == "0 B"
 
