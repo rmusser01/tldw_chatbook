@@ -1,0 +1,15 @@
+{
+  "reviewer": "mcp_compact_review",
+  "saved_head": "5d3e1cb97b029a27d43fd68339e2b6c35b3900a5",
+  "target_head": "f810b64a37181a7fb00112ea8f62a1ac94562f6d",
+  "mode": "read-only; no tests/native",
+  "findings": [],
+  "notes": [
+    "Actual MCPClient.sessions contains _StdioJSONRPCConnection; tools/call content consists of decoded dictionary blocks.",
+    "Remote HTTP is a separate MCPUnifiedClient path, not an SDK session injected here.",
+    "Server errors become existing control-plane failure records with result=None without logging untrusted bodies.",
+    "No new await/cleanup changes response lifetime; same connection and cancellation contracts remain.",
+    "Eight saved real stdio cases cover errors, absent/false flag, text-only fallback, retry and audit/log sentinel exclusion."
+  ],
+  "remaining": "Modernize fixture/native harness; re-run regression and native evidence after integration on merged dev."
+}

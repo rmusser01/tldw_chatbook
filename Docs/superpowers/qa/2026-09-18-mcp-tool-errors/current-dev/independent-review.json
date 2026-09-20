@@ -1,0 +1,15 @@
+{
+  "production_and_fixture": {
+    "reviewer": "mcp_compact_review",
+    "mode": "read-only; no tests or native run",
+    "findings": [],
+    "notes": "Actual stdio dictionary result shapes, error propagation, ownership/retry and audit secrecy are coherent. Both fixture CLI boundaries are validated before I/O; malformed requests receive bounded errors and continue."
+  },
+  "native_runner": {
+    "reviewer": "mcp_server_action_review",
+    "mode": "read-only; no tests or native run",
+    "finding": "Hardcoded Homebrew tmux path ignored the validated PATH discovery.",
+    "resolution": "Use args.tmux_path; reviewer verified correction before either native launch.",
+    "remaining_blockers": []
+  }
+}

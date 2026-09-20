@@ -1,0 +1,13 @@
+...........                                                              [100%]
+============================= slowest 25 durations =============================
+1.19s call     Tests/MCP/test_tool_error_results.py::test_control_plane_audits_tool_failure_without_error_body_and_recovers
+1.06s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content0-Fixture tool failed.]
+1.05s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content1-First error.\nSecond error.]
+1.05s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content2-MCP tool reported an error.]
+1.03s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content3-MCP tool reported an error.]
+1.03s call     Tests/MCP/test_tool_error_results.py::test_success_with_absent_or_false_error_flag_keeps_existing_shape[None]
+1.02s call     Tests/MCP/test_tool_error_results.py::test_success_with_absent_or_false_error_flag_keeps_existing_shape[False]
+1.02s call     Tests/MCP/test_tool_error_results.py::test_stdio_tool_error_uses_text_only_failure_and_keeps_connection[content4-MCP tool reported an error.]
+
+(17 durations < 1s hidden.)
+11 passed in 9.51s

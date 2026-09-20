@@ -1,0 +1,44 @@
+{
+  "pid": 56897,
+  "cells": [],
+  "requested_size": [
+    80,
+    24
+  ],
+  "module_origins": {
+    "tldw_chatbook.MCP.client": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/client.py",
+    "tldw_chatbook.MCP.local_control_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/local_control_service.py",
+    "tldw_chatbook.MCP.unified_control_plane_service": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/MCP/unified_control_plane_service.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_inspector": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_inspector.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_tools_mode": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_tools_mode.py",
+    "tldw_chatbook.UI.MCP_Modules.mcp_workbench": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/tldw_chatbook/app.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py": "b9074142052cce2d258f25bc96398f280d43435c401571a1d3746c6d6303b94d",
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": "f62f4f0afb60af704a4a395505b2ab3ddcad2173448b2428ccffaafcf725c253",
+    "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py": "24416e71d1362c13f1a4b84b984ae29322d637a2680b18ba864a1a3c0ab5651a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "671f887d71a3f96ecacfd2df5e1b6b62ca5b584dd49b3683f720f67d939dd0df",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "6a4983ec1031aa4097ed23ca789cf97c7e57f956ee0ef39291fd99222a37d72a",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "3aeb9b52ea4f5daca198c505b7a9566bd63299460173f72ae11ed98eada1fd92",
+    "tldw_chatbook/css/core/_variables.tcss": "91879d9683bf8d5502583f400330606b12fa90be70e64c8942cfa8951d45041a",
+    "tldw_chatbook/css/components/_agentic_terminal.tcss": "c9041cb85e08dc51ec5ea11bde6ba6f512f119275e11aae09437c525c4261917",
+    "tldw_chatbook/MCP/client.py": "e23a7106296652e57a22f8828b0a3a5a5fc4fff7278d6affbf631d321ac15ed7",
+    "tldw_chatbook/MCP/local_control_service.py": "87fcb22bb68c35476fe3de259980fa99bd88010866ac298e255fa32ebd30142d",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "b3bea92cb53ba0a257fc99f648c718a3c7bbf265cd355971486cfe16785f2c86",
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": "cd7a4ae19bc1bfcde77d136623e1fcf861c7c26547e9910162f55fb28a3bfcca",
+    "Tests/MCP/fixtures/stdio_tool_result_server.py": "00a85b39db22a3578562bc4103d223b76467bf034935eb2a6a7f010253f353d6"
+  },
+  "runner_sha256": "b42d427fa5f54ce308ae47936fb93806ab9f7cc447725b05a74c552e02c94e88",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "tool selected",
+  "fixture_pid": 57001,
+  "passed": false,
+  "error": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py\", line 303, in journey\n    await focus(\"#mcp-inspector-test-tool\")\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py\", line 229, in focus\n    visible(control)\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/approval-batch-action-review/Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py\", line 203, in visible\n    region, clip = app.screen._compositor.visible_widgets[control]\n                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^\nKeyError: Button(id='mcp-inspector-test-tool', classes='console-action-primary -style-default -textual-compact')\n",
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

@@ -1,5 +1,26 @@
 # Design-system completion ledger — 2026-09-17
 
+## PR2716 tool-error qualification — 2026-09-20
+
+PR2714 merged into dev as `e4096e2059` after owner approval and all CI/review gates;
+TASK-32830 is Done. The fresh follow-up branch integrates existing PR2716 without
+conflicts. Server-reported tool errors now reach the existing failed result and
+Audit path; successful retry uses the same connection. Only client result handling
+changes in production, with existing ADR-111/161 and no new architecture.
+
+67 distinct targeted cases, eight artifact guards and independent reviews pass.
+Fresh native dark/light 170×48 passes with eight inspected SVGs, real error/success
+audit records, clean app/child shutdown, healthy private databases, unchanged
+defaults/sentinels and matching source hashes. The separate 80×24 attempt fails
+before execution because Test Tool is offscreen even after focus/scroll; it exits
+1 with verified clean shutdown. Compact execution remains unqualified, and its
+layout repair stays separate from this client-only PR.
+
+[Current evidence](../qa/2026-09-18-mcp-tool-errors/current-dev/README.md).
+TASK-32831 remains In Progress pending fresh owner visual approval, current-head
+CI, accumulated review and merge. Full Audit navigation, raw-response expansion,
+complete permission flows and remaining screen reviews stay open.
+
 ## PR2714 merged; PR2716 resumed — 2026-09-20
 
 PR2714 merged into dev at `e4096e2059` after owner visual approval, zero open Qodo

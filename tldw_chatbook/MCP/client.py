@@ -475,7 +475,9 @@ class _StdioJSONRPCConnection:
                 "arguments": arguments,
             },
         )
-        return SimpleNamespace(content=result.get("content", []))
+        return SimpleNamespace(
+            content=result.get("content", []), isError=result.get("isError", False)
+        )
 
     @guarded
     @producer_call
@@ -1379,7 +1381,9 @@ class MCPClient:
             arguments: Tool arguments
 
         Returns:
-            Tool execution result
+            Existing result payload on success, or an error with the server's
+            nonblank text details (a generic message when none are available).
+            A server-reported tool error leaves the connection available for retry.
         """
         try:
             session = self.sessions.get(server_id)
@@ -1387,6 +1391,20 @@ class MCPClient:
                 return {"error": f"Server {server_id} not connected"}
 
             result = await session.call_tool(tool_name, arguments)
+
+            if getattr(result, "isError", False) is True:
+                content = getattr(result, "content", None)
+                text = "\n".join(
+                    block["text"].strip()
+                    for block in (content if isinstance(content, list) else [])
+                    if isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                    and block["text"].strip()
+                )
+                # Tool failures are successful protocol responses. Return the
+                # existing error shape without logging untrusted result bodies.
+                return {"error": text or "MCP tool reported an error."}
 
             if hasattr(result, "content"):
                 return {"result": result.content}

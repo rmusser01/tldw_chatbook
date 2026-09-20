@@ -11,8 +11,11 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 RUNNERS = [
-    REPO / "Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/current-dev/native_check.py",
-    REPO / "Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/native_check.py",
+    REPO / "Docs/superpowers/qa/2026-09-18-mcp-tool-errors/current-dev/native_check.py",
+    REPO
+    / "Docs/superpowers/qa/2026-09-18-mcp-connection-refresh/current-dev/native_check.py",
+    REPO
+    / "Docs/superpowers/qa/2026-09-18-mcp-lifecycle-cancellation/current-dev/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-20-mcp-inspector-refresh/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-19-approval-action-ownership/native_check.py",
     REPO / "Docs/superpowers/qa/2026-09-19-mcp-recovery-catalog/native_check.py",
@@ -31,6 +34,7 @@ RUNNERS = [
     "runner",
     RUNNERS,
     ids=[
+        "tool-errors",
         "connection-refresh",
         "lifecycle-cancellation",
         "inspector-refresh",
